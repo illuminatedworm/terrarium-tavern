@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "terrarium-tavern"
+version = "0.1.0"
+description = "Local-first roleplay agents powered by KohakuTerrarium"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "kohakuterrarium @ https://github.com/Kohaku-Lab/KohakuTerrarium/archive/c01854de42eacf280d09b2dcdaeae51bab28d5ef.zip",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  "python-multipart>=0.0.20",
+  "jieba>=0.42.1,<0.43",
+  "SudachiPy>=0.6.10,<0.7",
+  "SudachiDict-core>=20250129",
+  "numpy>=2,<3",
+  "playwright>=1.51,<2",
+  "pillow>=11",
+  "jsonpatch>=1.33",
+  "httpx>=0.27",
+  "tiktoken>=0.12,<1",
+]
+
+[project.optional-dependencies]
+retrieval = ["torch==2.11.0", "transformers>=4.51,<5", "huggingface-hub>=0.30,<1", "safetensors>=0.5"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.11"]
+
+[project.scripts]
+tavern = "tavern.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tavern"]
+artifacts = ["src/tavern/static/**", "src/tavern/tokenizer_data/**", "src/tavern/skills/**"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]

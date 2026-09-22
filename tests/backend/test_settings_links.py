@@ -1,0 +1,55 @@
+import pytest
+from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
+
+from tavern.application.api import create_app
+from tavern.core.models import Settings
+
+
+@pytest.mark.parametrize("changes", [
+    {"history_message_cap": 7}, {"history_message_cap": 1001}, {"chunk_size": 101},
+    {"daily_context_budget": 1}, {"memory_interval_turns": 101},
+    {"memory_interval_turns": 101}, {"context_tokens": 4096},
+    {"context_pressure_target": .85}, {"context_pressure_trigger": .05},
+    {"chunk_mode": "tokens", "chunk_max_tokens": 29000},
+    {"memory_timeout": 181}, {"background":{"reply_tokens":65537}},
+])
+def test_invalid_linked_settings_are_rejected(changes):
+    with pytest.raises(ValidationError):
+        Settings(**changes)
+
+
+def test_boundary_and_off_mode_values():
+    assert Settings().memory_timeout == 120
+    assert Settings(memory_timeout=60).memory_timeout == 60
+    cfg = Settings(history_message_cap=8, chunk_size=2, memory_interval_turns=1)
+    assert cfg.history_message_cap == 8
+    assert Settings(chunk_mode="off", chunk_size=3, ).chunk_size == 3
+    assert Settings(history_message_cap=1000, chunk_size=100, memory_interval_turns=50).memory_interval_turns == 50
+
+
+async def test_api_validates_merged_settings_and_does_not_silently_adjust(tmp_path):
+    app = create_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        before = (await client.get("/api/settings")).json()
+        for change in ({"chunk_size": 101}, {"history_message_cap": 7}, {"memory_interval_turns": 101}):
+            result = await client.put("/api/settings", json=change)
+            assert result.status_code == 400
+            assert (await client.get("/api/settings")).json() == before
+        result = await client.put("/api/settings", json={"history_message_cap": 8, "chunk_size": 2,
+                                                       "memory_interval_turns": 1})
+        assert result.status_code == 200
+        assert result.json()["history_message_cap"] == 8
+
+
+def test_lore_allowances_defaults_and_validation():
+    cfg = Settings()
+    assert (cfg.lore_max_entries, cfg.lore_max_chars) == (5, 3000)
+    for changes in ({"lore_max_entries": 0}, {"lore_max_chars": 0}, {"lore_max_chars": 1.5}):
+        with pytest.raises(ValidationError):
+            Settings(**changes)
+
+
+def test_mixed_lore_windows_have_no_parity_or_timer_formula():
+    cfg = Settings(history_message_cap=12, chunk_size=3, memory_interval_turns=100)
+    assert cfg.chunk_size == 3 and cfg.memory_interval_turns == 100

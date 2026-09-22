@@ -1,0 +1,787 @@
+{
+  "description": "90 manually authored synthetic queries (30 per language), 10 multilingual fictional facts. This fixture is a regression baseline, not a representative production benchmark. Hard-rule and ambiguity cases are covered separately in test_hybrid_retrieval.py.",
+  "entries": [
+    {
+      "id": "harbor",
+      "comment": "雾港",
+      "keys": [
+        "雾港",
+        "bronze bell harbor",
+        "港の銅の鐘"
+      ],
+      "content": "铜铃在浓雾到来时敲响。雾港的铜铃由守卫负责。\nA bronze bell rings when fog arrives. The harbor guard maintains the bell.\n霧が来ると港の銅の鐘が鳴る。港の警備員が鐘を管理する。"
+    },
+    {
+      "id": "key",
+      "comment": "银钥匙",
+      "keys": [
+        "银钥匙",
+        "silver key",
+        "銀の鍵"
+      ],
+      "content": "银钥匙藏在石井底部，能打开北塔的铁门。\nThe silver key is hidden at the bottom of a stone well and opens the north tower iron door.\n銀の鍵は石の井戸の底に隠され、北の塔の鉄の扉を開ける。"
+    },
+    {
+      "id": "healer",
+      "comment": "青禾",
+      "keys": [
+        "青禾",
+        "Aoba",
+        "アオバ"
+      ],
+      "content": "药师青禾用蓝色蘑菇配制解毒药，只在清晨营业。\nHealer Aoba makes antidote from blue mushrooms and opens only at dawn.\n薬師アオバは青いキノコで解毒薬を作り、夜明けだけ営業する。"
+    },
+    {
+      "id": "train",
+      "comment": "末班车",
+      "keys": [
+        "末班车",
+        "last train",
+        "終電"
+      ],
+      "content": "末班车午夜从旧车站出发，车票必须用一枚贝壳交换。\nThe last train leaves the old station at midnight. A seashell pays for the ticket.\n終電は真夜中に旧駅を出発する。切符は貝殻一枚と交換する。"
+    },
+    {
+      "id": "library",
+      "comment": "无声馆",
+      "keys": [
+        "无声馆",
+        "silent library",
+        "静寂図書館"
+      ],
+      "content": "无声馆禁止说话，书页遇到月光就会浮现地图。\nThe silent library forbids speech. Moonlight reveals a map on its pages.\n静寂図書館では会話が禁じられる。月光を浴びたページに地図が浮かぶ。"
+    },
+    {
+      "id": "dragon",
+      "comment": "赤翼",
+      "keys": [
+        "赤翼",
+        "Redwing",
+        "赤翼"
+      ],
+      "content": "赤翼住在火山口，害怕冰晶，守着一颗琥珀蛋。\nRedwing lives in a volcanic crater, fears ice crystals, and guards an amber egg.\n赤翼は火口に住み、氷の結晶を恐れ、琥珀の卵を守っている。"
+    },
+    {
+      "id": "bridge",
+      "comment": "回声桥",
+      "keys": [
+        "回声桥",
+        "Echo bridge",
+        "こだま橋"
+      ],
+      "content": "回声桥只能承受两个人同时通过，桥下的水会重复昨日的声音。\nEcho bridge supports only two people at once. Water below repeats yesterday’s voices.\nこだま橋は同時に二人まで渡れる。下の水は昨日の声を繰り返す。"
+    },
+    {
+      "id": "clock",
+      "comment": "逆时钟",
+      "keys": [
+        "逆时钟",
+        "reverse clock",
+        "逆時計"
+      ],
+      "content": "逆时钟每逢雨天倒转一小时，不能改变已经写下的契约。\nThe reverse clock turns back one hour on rainy days but cannot change a written contract.\n逆時計は雨の日に一時間戻るが、書かれた契約を変更できない。"
+    },
+    {
+      "id": "island",
+      "comment": "白沙岛",
+      "keys": [
+        "白沙岛",
+        "White Sand Island",
+        "白砂島"
+      ],
+      "content": "白沙岛在退潮时露出通道，岛上的镜子只映出真实姓名。\nWhite Sand Island has a path at low tide. Its mirror reveals only a true name.\n白砂島への道は干潮時に現れる。島の鏡には本当の名前だけが映る。"
+    },
+    {
+      "id": "forge",
+      "comment": "星炉",
+      "keys": [
+        "星炉",
+        "Star Forge",
+        "星の炉"
+      ],
+      "content": "星炉用陨铁锻造护甲，熄火后必须用雷电重新点燃。\nStar Forge makes armor from meteoric iron and requires lightning to relight its fire.\n星の炉は隕鉄で鎧を鍛え、消えた火を再び灯すには稲妻が必要だ。"
+    }
+  ],
+  "queries": [
+    {
+      "language": "zh",
+      "text": "浓雾出现时谁敲铜铃",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "守卫负责的港口报警信号",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "雾港的铜铃",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Who rings the bronze bell in fog",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "The harbor alarm signal maintained by a guard",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "bronze bell harbor",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "霧が来た時に鐘を鳴らすのは誰",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "警備員が管理する港の警報",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "港の銅の鐘",
+      "relevant": [
+        "harbor"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "北塔铁门怎么打开",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "石井底部藏着什么",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "银钥匙",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "How to open the iron door of the north tower",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "What is hidden at the bottom of the stone well",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "silver key",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "北の塔の鉄の扉を開く方法",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "石の井戸の底に隠された物",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "銀の鍵",
+      "relevant": [
+        "key"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "谁用蓝色蘑菇制药",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "清晨能买到解毒药的地方",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "青禾",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Who makes antidote from blue mushrooms",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Where to buy medicine at dawn",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Aoba",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "青いキノコで解毒薬を作る人",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "夜明けに薬を買える場所",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "アオバ",
+      "relevant": [
+        "healer"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "午夜旧车站的交通工具",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "用贝壳换车票",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "末班车",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Transport leaving the old station at midnight",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Exchange a seashell for a ticket",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "last train",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "真夜中に旧駅から出る乗り物",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "貝殻で切符を買う",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "終電",
+      "relevant": [
+        "train"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "哪种光能让书页显示地图",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "禁止说话的藏书地点",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "无声馆",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Which light reveals a map on pages",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Place with books where speech is forbidden",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "silent library",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "ページに地図が浮かぶ光",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "会話を禁じる本の保管場所",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "静寂図書館",
+      "relevant": [
+        "library"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "火山口的生物害怕什么",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "谁守着琥珀蛋",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "赤翼",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "What scares the creature in the volcanic crater",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Who guards the amber egg",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Redwing",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "火口に住む生き物が恐れる物",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "琥珀の卵を守る存在",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "赤翼",
+      "relevant": [
+        "dragon"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "最多两个人能同时通过的地方",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "哪里能听见昨日的声音",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "回声桥",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Where can only two people cross at once",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Where to hear yesterday’s voices",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Echo bridge",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "同時に二人まで渡れる場所",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "昨日の声が聞こえる場所",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "こだま橋",
+      "relevant": [
+        "bridge"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "雨天会倒转一小时的东西",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "什么无法改变已经写下的契约",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "逆时钟",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "What turns back one hour on rainy days",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "What cannot change a written contract",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "reverse clock",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "雨の日に一時間戻る物",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "書かれた契約を変えられない物",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "逆時計",
+      "relevant": [
+        "clock"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "退潮时出现的通道通向哪里",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "映出真实姓名的镜子在哪",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "白沙岛",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Where does the path at low tide lead",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Location of the mirror revealing a true name",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "White Sand Island",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "干潮時に現れる道の行き先",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "本当の名前が映る鏡の場所",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "白砂島",
+      "relevant": [
+        "island"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "陨铁护甲在哪里锻造",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "熄灭的锻炉需要什么重新点燃",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "zh",
+      "text": "星炉",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Where armor is forged from meteoric iron",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "What relights the extinguished forge",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "en",
+      "text": "Star Forge",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "隕鉄の鎧を鍛える場所",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "消えた炉を再点火するために必要な物",
+      "relevant": [
+        "forge"
+      ]
+    },
+    {
+      "language": "ja",
+      "text": "星の炉",
+      "relevant": [
+        "forge"
+      ]
+    }
+  ],
+  "cross_language_queries": [
+    {
+      "language": "zh",
+      "text": "浓雾来临时敲响的青铜警铃由谁管理",
+      "relevant": [
+        "harbor"
+      ],
+      "document_language": "en"
+    },
+    {
+      "language": "ja",
+      "text": "霧の中で警報を鳴らす港の警備員",
+      "relevant": [
+        "harbor"
+      ],
+      "document_language": "en"
+    },
+    {
+      "language": "en",
+      "text": "Where is the silver key that opens the tower gate hidden",
+      "relevant": [
+        "key"
+      ],
+      "document_language": "zh"
+    },
+    {
+      "language": "ja",
+      "text": "塔の鉄の扉を開く銀の鍵を隠した井戸",
+      "relevant": [
+        "key"
+      ],
+      "document_language": "zh"
+    },
+    {
+      "language": "zh",
+      "text": "用蓝蘑菇制作解毒剂的清晨药师",
+      "relevant": [
+        "healer"
+      ],
+      "document_language": "ja"
+    },
+    {
+      "language": "en",
+      "text": "An antidote made from blue mushrooms by a healer at dawn",
+      "relevant": [
+        "healer"
+      ],
+      "document_language": "ja"
+    }
+  ]
+}
