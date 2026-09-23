@@ -185,10 +185,42 @@ const layout = ref({
   fontFamily: 'sans',
   leftCollapsed: window.innerWidth < 760,
   rightCollapsed: window.innerWidth < 760,
-  rightWidth: 320,
+  rightWidth: 380,
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
 });
 watch(layout, (value) => localStorage.setItem('tavern-layout', JSON.stringify(value)), { deep: true });
+const mobileSidebarQuery = window.matchMedia('(max-width: 620px)');
+const mobileSidebar = ref(mobileSidebarQuery.matches);
+const rightOverlayQuery = window.matchMedia('(max-width: 760px)');
+const rightOverlay = ref(rightOverlayQuery.matches);
+const rightDrawerOpen = computed(
+  () => rightOverlay.value && !!session.value && !pageMode.value && !layout.value.rightCollapsed,
+);
+const leftSidebarClose = ref<HTMLButtonElement | null>(null);
+const mobileSidebarButton = ref<HTMLButtonElement | null>(null);
+const rightSidebarToggle = ref<HTMLButtonElement | null>(null);
+function syncMobileSidebar(event: MediaQueryListEvent) {
+  mobileSidebar.value = event.matches;
+}
+function syncRightOverlay(event: MediaQueryListEvent) {
+  rightOverlay.value = event.matches;
+}
+async function toggleLeftSidebar() {
+  if (layout.value.leftCollapsed && mobileSidebar.value) layout.value.rightCollapsed = true;
+  layout.value.leftCollapsed = !layout.value.leftCollapsed;
+  if (!mobileSidebar.value) return;
+  await nextTick();
+  (layout.value.leftCollapsed ? mobileSidebarButton.value : leftSidebarClose.value)?.focus();
+}
+function toggleRightSidebar() {
+  if (layout.value.rightCollapsed && rightOverlay.value) layout.value.leftCollapsed = true;
+  layout.value.rightCollapsed = !layout.value.rightCollapsed;
+}
+async function closeRightSidebar() {
+  layout.value.rightCollapsed = true;
+  await nextTick();
+  rightSidebarToggle.value?.focus();
+}
 const readingStyle = computed(() => ({
   '--story-font-size': layout.value.fontSize + 'px',
   '--story-line-height': layout.value.lineHeight,
@@ -620,6 +652,7 @@ async function importCard(event: Event) {
     sidebarSection.value = 'cards';
     pageMode.value = 'card';
     panel.value = '';
+    if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   });
   (event.target as HTMLInputElement).value = '';
 }
@@ -1144,6 +1177,8 @@ async function frameAction(
   }
 }
 onMounted(() => {
+  mobileSidebarQuery.addEventListener('change', syncMobileSidebar);
+  rightOverlayQuery.addEventListener('change', syncRightOverlay);
   document.addEventListener('pointerdown', closeDeleteOnOutside);
   document.addEventListener('scroll', closeDeleteOnViewportChange, true);
   window.addEventListener('resize', closeDeleteOnViewportChange);
@@ -1169,6 +1204,8 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
+  mobileSidebarQuery.removeEventListener('change', syncMobileSidebar);
+  rightOverlayQuery.removeEventListener('change', syncRightOverlay);
   clearEditNotice();
   clearTimeout(contextRefreshTimer);
   document.removeEventListener('pointerdown', closeDeleteOnOutside);
@@ -1185,11 +1222,20 @@ useTimedError(error);
     ><div v-if="notification" class="app-notification" role="alert">{{ notification }}</div></Teleport
   >
   <div class="shell" :style="readingStyle" :inert="!!panel">
-    <aside class="sidebar" :class="{ collapsed: layout.leftCollapsed }">
+    <aside
+      id="primary-sidebar"
+      class="sidebar"
+      :class="{ collapsed: layout.leftCollapsed }"
+      :inert="rightDrawerOpen"
+      @keydown.esc="mobileSidebar && !layout.leftCollapsed && toggleLeftSidebar()"
+    >
       <button
+        ref="leftSidebarClose"
         class="sidebar-collapse"
-        @click="layout.leftCollapsed = !layout.leftCollapsed"
+        @click="toggleLeftSidebar"
         :aria-label="layout.leftCollapsed ? '展开左侧栏' : '折叠左侧栏'"
+        :aria-expanded="!layout.leftCollapsed"
+        aria-controls="primary-sidebar"
       >
         {{ layout.leftCollapsed ? '›' : '‹' }}
       </button>
@@ -1297,11 +1343,23 @@ useTimedError(error);
       </div>
     </aside>
 
-    <main>
+    <button
+      v-if="mobileSidebar && !layout.leftCollapsed"
+      class="sidebar-scrim"
+      type="button"
+      aria-label="关闭左侧栏"
+      @click="toggleLeftSidebar"
+    />
+
+    <main :inert="(mobileSidebar && !layout.leftCollapsed) || rightDrawerOpen">
       <button
+        ref="mobileSidebarButton"
+        v-show="layout.leftCollapsed"
         class="mobile-nav quiet shell-navigation"
-        @click="layout.leftCollapsed = !layout.leftCollapsed"
+        @click="toggleLeftSidebar"
         aria-label="切换左侧栏"
+        :aria-expanded="!layout.leftCollapsed"
+        aria-controls="primary-sidebar"
       >
         ☰
       </button>
@@ -1698,23 +1756,26 @@ useTimedError(error);
                 rows="2"
               />
               <div class="compose-bottom">
-                <button
-                  v-if="latestReply || retryableTurn"
-                  class="quiet regenerate-toggle"
-                  :aria-expanded="rewriteExpanded"
-                  :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
-                  :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                  @click="rewriteExpanded = !rewriteExpanded"
-                >
-                  ↻ 重新生成</button
-                ><EffortControl :value="quickEffort" :options="effortOptions" @change="setEffort" /><button
-                  class="quiet"
-                  @click="inspectContext"
-                >
-                  ◫ 上下文</button
-                ><button class="quiet" @click="storyView = 'work'">
-                  ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span></button
-                ><span class="turn-options"
+                <div class="compose-actions">
+                  <button
+                    v-if="latestReply || retryableTurn"
+                    class="quiet regenerate-toggle"
+                    :aria-expanded="rewriteExpanded"
+                    :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
+                    :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+                    @click="rewriteExpanded = !rewriteExpanded"
+                  >
+                    ↻ 重新生成</button
+                  ><EffortControl :value="quickEffort" :options="effortOptions" @change="setEffort" /><button
+                    class="quiet"
+                    @click="inspectContext"
+                  >
+                    ◫ 上下文</button
+                  ><button class="quiet" @click="storyView = 'work'">
+                    ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
+                  </button>
+                </div>
+                <span class="turn-options"
                   ><label
                     ><input
                       v-model="updateVariables"
@@ -1758,11 +1819,20 @@ useTimedError(error);
         </div>
       </section>
     </main>
+    <button
+      v-if="rightDrawerOpen"
+      class="right-sidebar-scrim"
+      type="button"
+      aria-label="关闭右侧栏"
+      @click="closeRightSidebar"
+    />
     <aside
       v-if="session && !pageMode"
       class="right-sidebar"
       :class="{ collapsed: layout.rightCollapsed, 'scene-active': inspectorTab === 'scene' }"
       :style="{ '--right-sidebar-width': layout.rightWidth + 'px' }"
+      :inert="mobileSidebar && !layout.leftCollapsed"
+      @keydown.esc="rightDrawerOpen && closeRightSidebar()"
     >
       <div
         v-if="!layout.rightCollapsed"
@@ -1776,11 +1846,13 @@ useTimedError(error);
         @keydown.right.prevent="resizeRightBy(-20)"
       ></div>
       <button
+        ref="rightSidebarToggle"
         class="sidebar-collapse"
-        @click="layout.rightCollapsed = !layout.rightCollapsed"
+        @click="toggleRightSidebar"
         :aria-label="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
+        :aria-expanded="!layout.rightCollapsed"
       >
-        {{ layout.rightCollapsed ? '‹' : '›' }}
+        {{ layout.rightCollapsed ? '‹' : rightOverlay ? '×' : '›' }}
       </button>
       <div v-if="!layout.rightCollapsed" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
@@ -1823,10 +1895,12 @@ useTimedError(error);
           </details>
         </section>
         <section v-show="inspectorTab === 'scene'" class="scene-memory" aria-label="场景">
-          <h2>场景</h2>
-          <button :disabled="busy || activeTurn?.status === 'awaiting_review'" @click="editSessionLore">
-            编辑对话世界书
-          </button>
+          <div class="scene-heading">
+            <h2>场景</h2>
+            <button :disabled="busy || activeTurn?.status === 'awaiting_review'" @click="editSessionLore">
+              编辑对话世界书
+            </button>
+          </div>
           <p class="inspector-note">
             这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
             保存。记忆随剧情进度保存，继承进度时会带入新对话。

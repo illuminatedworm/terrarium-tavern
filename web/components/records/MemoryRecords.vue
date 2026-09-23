@@ -178,12 +178,14 @@ function toggleGroup(id: string) {
   bottom: 0;
   flex: none;
   padding: 10px 0 2px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border-subtle);
   background: var(--surface-sidebar);
 }
 .memory-search input {
   width: 100%;
+  min-height: 40px;
   margin: 0;
+  font-size: 13px;
 }
 .memory-help,
 .memory-source p {
@@ -191,23 +193,26 @@ function toggleGroup(id: string) {
   line-height: 1.6;
 }
 .memory-group {
-  margin-block: 1rem;
+  margin: 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .memory-group > summary {
   cursor: pointer;
   color: var(--text-secondary);
   font-weight: 600;
-  margin: 0 0 0.5rem;
-}
-.memory-group:not([open]) > summary {
   margin-bottom: 0;
+  min-height: 44px;
+  padding: 11px 2px;
+  font-size: 13px;
 }
 .memory-group small {
-  color: var(--muted);
+  float: right;
+  color: var(--text-muted);
   font-weight: normal;
+  font-size: 11px;
 }
 .memory-record {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border-subtle);
   padding: 0.7rem 0;
   min-width: 0;
 }
@@ -219,8 +224,13 @@ function toggleGroup(id: string) {
   margin: 0.4rem 0;
 }
 .memory-tags {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 0.78rem;
+}
+.memory-records-scroll > button {
+  min-height: 38px;
+  margin-top: 14px;
+  font-size: 12.5px;
 }
 .memory-actions button,
 .memory-source button {

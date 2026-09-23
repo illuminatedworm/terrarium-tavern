@@ -86,6 +86,7 @@ Desktop.ini
 *~
 
 # Local agent configuration and model weights
+/.agents/
 .codex/
 .claude/
 auth.json

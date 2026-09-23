@@ -122,21 +122,30 @@ useTimedError(error);
   </p>
   <h3>召回方案</h3>
   <p class="muted">默认关键词＋BM25，无需神经模型。中英日分词由后端执行；混合方案按加权 RRF 合并。</p>
-  <label
+  <div
     v-for="[key, label] in [
       ['keyword', '关键词'],
       ['bm25', 'BM25'],
       ['embedding', 'Embedding 向量'],
     ]"
     :key="key"
-    ><input type="checkbox" v-model="settings.retrieval.channels" :value="key" />{{ label }} · 融合权重<input
-      aria-label="通道权重"
-      type="number"
-      min="0.01"
-      max="100"
-      step="0.1"
-      v-model.number="settings.retrieval.weights[key]"
-  /></label>
+    class="retrieval-channel"
+  >
+    <label class="retrieval-channel-choice">
+      <input type="checkbox" v-model="settings.retrieval.channels" :value="key" />{{ label }}
+    </label>
+    <label class="retrieval-channel-weight">
+      融合权重
+      <input
+        :aria-label="`${label}融合权重`"
+        type="number"
+        min="0.01"
+        max="100"
+        step="0.1"
+        v-model.number="settings.retrieval.weights[key]"
+      />
+    </label>
+  </div>
   <details>
     <summary>高级召回参数</summary>
     <label v-for="[key, label] in parameters" :key="key"

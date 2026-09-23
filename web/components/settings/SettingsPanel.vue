@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import FieldHelp from '../common/FieldHelp.vue';
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { maintenanceLimit, settingsErrors } from '../../lib/settingsValidation';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import ModelSettings from './ModelSettings.vue';
@@ -15,6 +15,26 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ save: []; probe: [] }>();
 const page = ref('model');
+const pagesNav = ref<HTMLElement | null>(null);
+function revealCurrentPage() {
+  const nav = pagesNav.value;
+  if (!nav || nav.scrollWidth <= nav.clientWidth) return;
+  const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
+  if (!active) return;
+  const navBounds = nav.getBoundingClientRect();
+  const activeBounds = active.getBoundingClientRect();
+  if (activeBounds.left < navBounds.left + 8) {
+    nav.scrollLeft -= navBounds.left + 8 - activeBounds.left;
+  } else if (activeBounds.right > navBounds.right - 8) {
+    nav.scrollLeft += activeBounds.right - navBounds.right + 8;
+  }
+}
+watch(page, async () => {
+  await nextTick();
+  revealCurrentPage();
+});
+onMounted(() => window.addEventListener('resize', revealCurrentPage));
+onUnmounted(() => window.removeEventListener('resize', revealCurrentPage));
 function promptOwner(path: string) {
   const parts = path.split('.');
   return parts.length === 1 ? props.settings : props.settings[parts[0]];
@@ -43,10 +63,11 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
 </script>
 
 <template>
-  <div class="eyebrow">MAKE IT YOURS</div>
-  <h2>设置</h2>
+  <header class="settings-header">
+    <h2>设置</h2>
+  </header>
   <div class="settings-layout">
-    <nav class="settings-pages" aria-label="设置页面">
+    <nav ref="pagesNav" class="settings-pages" aria-label="设置页面">
       <button
         :class="{ active: page === 'model' }"
         :aria-current="page === 'model' ? 'page' : undefined"
@@ -54,11 +75,27 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
       >
         模型与偏好
       </button>
-      <button @click="page = 'retrieval'" :class="{ active: page === 'retrieval' }">
+      <button
+        @click="page = 'retrieval'"
+        :class="{ active: page === 'retrieval' }"
+        :aria-current="page === 'retrieval' ? 'page' : undefined"
+      >
         混合召回与本地模型
       </button>
-      <button @click="page = 'storage'" :class="{ active: page === 'storage' }">存储与维护</button>
-      <button @click="page = 'network'" :class="{ active: page === 'network' }">网络与代理</button>
+      <button
+        @click="page = 'storage'"
+        :class="{ active: page === 'storage' }"
+        :aria-current="page === 'storage' ? 'page' : undefined"
+      >
+        存储与维护
+      </button>
+      <button
+        @click="page = 'network'"
+        :class="{ active: page === 'network' }"
+        :aria-current="page === 'network' ? 'page' : undefined"
+      >
+        网络与代理
+      </button>
       <button
         :class="{ active: page === 'lore' }"
         :aria-current="page === 'lore' ? 'page' : undefined"
