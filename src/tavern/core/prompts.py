@@ -19,19 +19,16 @@ DEFAULT_MEMORY_PROMPT = '你是后台 Tracker，负责当前分支的周期记�
 
 
 DEFAULT_RETRIEVAL_PROTOCOL = """按以下顺序输出：故事正文 → 检索线索区块。
-检索线索区块出现一次，使用完整的 <tavern_retrieval> 与 </tavern_retrieval> 标签包裹检索线索。该区块供 Roleplay Runtime 检索世界书使用。MVU 变量由独立后台任务更新，本次不要输出变量更新内容。"""
+检索线索区块出现一次，使用完整的 <tavern_retrieval> 与 </tavern_retrieval> 标签包裹检索线索。该区块供 Roleplay Runtime 检索世界书使用。"""
+
+LEGACY_DEFAULT_RETRIEVAL_PROTOCOL = (DEFAULT_RETRIEVAL_PROTOCOL
+    + "MVU 变量由独立后台任务更新，本次不要输出变量更新内容。")
 
 DEFAULT_MAINTENANCE_PROMPT = """你是后台 Tracker，当前处于授权设定维护模式。本次任务是完成玩家明确提出的设定修改。
 查阅相关资料，使用工具保存所需变更，保持其余设定与剧情状态一致。完成后简要说明修改结果。最多使用四次模型调用。"""
 
 DEFAULT_PREFERENCE_PROMPT = """以下是当前用户指定的特别创作偏好："""
 
-
-WRITER_FINAL_INSTRUCTION = "本次仅生成故事正文与检索线索。MVU 变量由独立后台任务更新；不要输出变量更新块或变量操作指令。"
-
-
-def writer_request_messages(messages):
-    return [*messages, {"role": "system", "content": WRITER_FINAL_INSTRUCTION}]
 
 DEFAULT_REGENERATE_PROMPT = """以下创作要求仅适用于本次回复："""
 

@@ -10,7 +10,6 @@ from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import context_breakpoint_index
 from tavern.conversation.context import compile_context, get_path, search
 from tavern.core.model_view import ModelView, state_for_model
-from tavern.core.prompts import writer_request_messages
 from tavern.core.tokens import count_text, counting_info, request_tokens
 from tavern.search.retrieval_text import RetrievalParser, split_retrieval
 
@@ -176,8 +175,6 @@ class TurnAgent:
                     "content": self.settings.maintenance_system_prompt,
                 }
             ]
-        else:
-            self.compiled["messages"] = writer_request_messages(self.compiled["messages"])
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
 

@@ -6,7 +6,6 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate, Settings
-from tavern.core.prompts import WRITER_FINAL_INSTRUCTION
 from tavern.storage.store import Store
 
 
@@ -71,7 +70,7 @@ async def test_messages_preview_exports_full_writer_array_without_committing(sto
         response = await client.post(path + '/messages-preview', json={'text': '继续'})
         assert response.status_code == 200
         messages = response.json()
-        assert messages == context['messages'] + [
-            {'role': 'system', 'content': WRITER_FINAL_INSTRUCTION}]
+        assert messages == context['messages']
+        assert all('MVU' not in message['content'] for message in messages)
         assert all(set(message) == {'role', 'content'} for message in messages)
     assert store.session(session['id'])['revision'] == session['revision']

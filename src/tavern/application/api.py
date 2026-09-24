@@ -30,7 +30,6 @@ from tavern.core.models import (
     Settings,
     TurnRequest,
 )
-from tavern.core.prompts import writer_request_messages
 from tavern.search.retrieval_config import Provider
 from tavern.storage.store import Conflict, Store, dump
 
@@ -549,7 +548,7 @@ def create_app(data_dir=None):
     @app.post("/api/sessions/{sid}/messages-preview")
     def messages_preview(sid: str, payload: dict):
         result, _ = compile_preview(sid, payload.get("text", ""))
-        return writer_request_messages(result["messages"])
+        return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)
     async def submit(sid: str, req: TurnRequest):

@@ -4,7 +4,9 @@ from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
+    DEFAULT_RETRIEVAL_PROTOCOL,
     DEFAULT_SYSTEM_PROMPT,
+    LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
     PROMPT_DEFINITIONS,
 )
 from tavern.memories.memory import render_memory
@@ -24,6 +26,21 @@ def test_defaults_and_custom_prompts():
     for item in PROMPT_DEFINITIONS:
         assert read_path(defaults, item["path"]) == item["default"]
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
+    assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
+
+
+def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):
+    from tavern.storage.store import Store
+
+    store = Store(tmp_path)
+    settings = store.settings()
+    settings.retrieval.protocol_prompt = LEGACY_DEFAULT_RETRIEVAL_PROTOCOL
+    store.save_settings(settings)
+    assert Store(tmp_path).settings().retrieval.protocol_prompt == DEFAULT_RETRIEVAL_PROTOCOL
+
+    settings.retrieval.protocol_prompt = "自定义检索协议"
+    store.save_settings(settings)
+    assert Store(tmp_path).settings().retrieval.protocol_prompt == "自定义检索协议"
 
 
 async def test_all_prompts_save_reload_and_restore_default(tmp_path):

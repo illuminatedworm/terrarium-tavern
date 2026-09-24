@@ -11,6 +11,7 @@ from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card
 from tavern.core.models import Settings, TurnRequest
+from tavern.core.prompts import DEFAULT_RETRIEVAL_PROTOCOL, LEGACY_DEFAULT_RETRIEVAL_PROTOCOL
 
 
 def uid():
@@ -248,9 +249,12 @@ class Store:
 
     def settings(self):
         with self.connection() as db:
-            return Settings.model_validate_json(
+            settings = Settings.model_validate_json(
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
+        if settings.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
+            settings.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
+        return settings
 
     def save_settings(self, settings):
         with self.connection() as db:
