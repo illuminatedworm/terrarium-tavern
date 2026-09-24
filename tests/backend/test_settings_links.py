@@ -26,6 +26,17 @@ def test_boundary_and_off_mode_values():
     assert cfg.history_message_cap == 8
     assert Settings(chunk_mode="off", chunk_size=3, ).chunk_size == 3
     assert Settings(history_message_cap=1000, chunk_size=100, memory_interval_turns=50).memory_interval_turns == 50
+    assert (Settings().memory_current_max_records, Settings().memory_episode_cooldown_rounds) == (5, 20)
+    assert Settings(memory_current_max_records=1, memory_episode_cooldown_rounds=0).memory_episode_cooldown_rounds == 0
+
+
+@pytest.mark.parametrize("change", [
+    {"memory_current_max_records": 0}, {"memory_current_max_records": 101},
+    {"memory_episode_cooldown_rounds": -1}, {"memory_episode_cooldown_rounds": 10001},
+])
+def test_memory_retention_settings_validate(change):
+    with pytest.raises(ValidationError):
+        Settings(**change)
 
 
 async def test_api_validates_merged_settings_and_does_not_silently_adjust(tmp_path):
@@ -40,6 +51,11 @@ async def test_api_validates_merged_settings_and_does_not_silently_adjust(tmp_pa
                                                        "memory_interval_turns": 1})
         assert result.status_code == 200
         assert result.json()["history_message_cap"] == 8
+        result = await client.put("/api/settings", json={"memory_current_max_records": 8,
+                                                         "memory_episode_cooldown_rounds": 30})
+        assert result.status_code == 200
+        assert result.json()["memory_current_max_records"] == 8
+        assert (await client.get("/api/settings")).json()["memory_episode_cooldown_rounds"] == 30
 
 
 def test_lore_allowances_defaults_and_validation():

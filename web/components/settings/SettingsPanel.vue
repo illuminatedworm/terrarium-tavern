@@ -317,12 +317,30 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
         </div>
         <label
           >活跃记忆容量（tokens）<FieldHelp
-            tooltip="默认4096，范围512–65536。限制交给Writer的记忆文本；重要信息无法合并到容量内时保留旧记忆并提示，不静默删掉未完成事项。增大也会增加之后Writer与Tracker的输入。" /><input
+            tooltip="默认4096，范围512–65536。超过容量时按来源时间从旧到新退出自动生成的经历；仍超限则保留其他分类并提示。增大也会增加之后Writer与Tracker的输入。" /><input
             type="number"
             min="512"
             max="65536"
             v-model.number="settings.memory_capacity_tokens"
         /></label>
+        <div class="form-row">
+          <label
+            >当前进展条数上限<FieldHelp
+              tooltip="默认5条，范围1–100。只计算自动生成的当前进展，超出时按最新剧情来源从旧到新退出；手工条目不占额度。" /><input
+              type="number"
+              min="1"
+              max="100"
+              v-model.number="settings.memory_current_max_records"
+          /></label>
+          <label
+            >经历冷却轮数<FieldHelp
+              tooltip="默认20轮，范围0–10000；0关闭按轮数退出。自经历最新引用的已完成剧情轮次起算。达到轮数后自动退出，容量超限时也会先退出最旧经历。手工条目不参与。" /><input
+              type="number"
+              min="0"
+              max="10000"
+              v-model.number="settings.memory_episode_cooldown_rounds"
+          /></label>
+        </div>
         <label class="check"
           ><input type="checkbox" v-model="settings.memory_review_enabled" />允许一次疑难复核</label
         >

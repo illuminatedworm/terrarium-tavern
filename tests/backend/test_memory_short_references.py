@@ -84,6 +84,45 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
     assert record["setting_refs"] == [extra["id"]]
 
 
+async def test_questions_can_reference_unnamed_adds_by_position():
+    async def generate(prompt, **kwargs):
+        return json.dumps({"operations": [
+            {"op": "add", "record": {"category": category, "content": content,
+                                     "sources": ["S1"]}}
+            for category, content in [("episode", "一"), ("uncertain", "二待确认"),
+                                      ("episode", "三"), ("uncertain", "四待确认")]
+        ], "questions": [
+            {"topic": "completion", "query": "第二项", "record_ids": ["N2"]},
+            {"topic": "knowledge", "query": "第四项", "record_ids": ["N4"]},
+        ]}, ensure_ascii=False)
+
+    result = await consolidate(history(["一、二、三、四。"]),
+        Settings(memory_review_enabled=False), generate, memory={"version": 1, "records": []})
+    assert [r["content"] for r in result["records"]] == ["一", "二待确认", "三", "四待确认"]
+    assert [r["category"] for r in result["records"]] == ["episode", "uncertain", "episode", "uncertain"]
+    assert len({r["id"] for r in result["records"]}) == 4
+
+
+def test_explicit_new_alias_takes_precedence_over_positional_alias():
+    refs = References()
+    proposal = {"operations": [{"op": "add", "record": {}},
+                               {"op": "add", "id": "N1", "record": {}}],
+                "questions": [{"record_ids": ["N1"]}]}
+    resolved = refs.resolve(proposal)
+    assert resolved["questions"][0]["record_ids"] == [resolved["operations"][1]["id"]]
+    assert resolved["operations"][0]["id"] != resolved["operations"][1]["id"]
+
+
+async def test_question_outside_add_positions_still_rejects_batch():
+    async def generate(prompt, **kwargs):
+        return answer({"category": "uncertain", "content": "待确认", "sources": ["S1"]},
+                      questions=[{"topic": "knowledge", "query": "谁知情", "record_ids": ["N2"]}])
+
+    with pytest.raises(ValueError, match="实际存在的待确认记忆"):
+        await consolidate(history(["一件待确认的事。"]), Settings(memory_review_enabled=False),
+            generate, memory={"version": 1, "records": []})
+
+
 @pytest.mark.parametrize("sources,match", [(["S999"], "未知"), (["M1"], "未知"), (["S2"], "本批新增")])
 async def test_unknown_or_background_only_citation_preserves_old_memory(sources, match):
     old = {"version": 1, "records": []}

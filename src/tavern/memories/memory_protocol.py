@@ -100,19 +100,26 @@ class References:
             raise ValueError("记忆返回格式无效：需要 operations 列表")
         result = copy.deepcopy(parsed)
         aliases = dict(self.records)
-        # New items may omit ID entirely. N1/N2 are only needed when questions
-        # refer to a newly proposed item; they never become persistent IDs.
+        # A question may use the ordinal of an unnamed add (N1 = first add),
+        # as well as an explicitly named N handle. Explicit handles win if
+        # both forms occur in one response; neither form is persisted.
+        unnamed = {}
+        add_number = 0
         for op in result["operations"]:
             if not isinstance(op, dict):
                 raise ValueError("记忆操作必须是对象")
             rid = op.get("id")
             if op.get("op") == "add":
+                add_number += 1
                 if rid is None:
                     op["id"] = uuid.uuid4().hex
+                    unnamed[f"N{add_number}"] = op["id"]
                 elif isinstance(rid, str) and re.fullmatch(r"N[1-9]\d*", rid):
                     if rid in aliases:
                         raise ValueError("本次新增记忆短编号重复")
                     aliases[rid] = uuid.uuid4().hex
+        for alias, persistent_id in unnamed.items():
+            aliases.setdefault(alias, persistent_id)
         kept = []
         for op in result["operations"]:
             rid = op.get("id")

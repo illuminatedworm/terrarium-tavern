@@ -121,6 +121,8 @@ class Settings(BaseModel):
         if self.memory_evidence_tokens >= self.memory_input_tokens:
             raise ValueError("记忆辅助资料预算必须小于整理输入上限")
         if self.memory_output_tokens + 2048 >= self.background.context_tokens:
+    memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
+    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")

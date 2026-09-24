@@ -621,11 +621,9 @@ class Store:
             raise ValueError("当前分支没有可保存档案的消息")
         snapshot = copy.deepcopy(session["snapshot"])
         memory = manual_edit(read_memory(snapshot), edit)
-        from tavern.core.tokens import count_text
-        from tavern.memories.memory_records import render_document
-        cfg = self.settings().for_role("background")
-        if edit.action != "delete" and count_text(render_document(memory), cfg) > cfg.memory_capacity_tokens:
-            raise ValueError("活跃记忆超过容量；请先提高记忆容量或缩短条目")
+        if edit.action != "delete":
+            from tavern.memories.memory_retention import retain_memory
+            memory = retain_memory(memory, session["messages"], self.settings().for_role("background"))
         install_memory(snapshot, memory)
         return self._save_memory_snapshot(sid, session, snapshot, edit.expected_revision)
 

@@ -9,6 +9,7 @@ LABELS = {
     "memory_review_started": "疑难复核开始", "memory_review_result": "疑难复核结果",
     "memory_rebuild_estimate": "重建批次估算",
     "memory_records_discarded": "可选原话记录已丢弃",
+    "memory_retention": "记忆条目准出",
     "variable_rules": "MVU 规则注入",
     "variable_update_started": "变量分析开始", "variable_update_completed": "变量更新完成",
     "variable_update_failed": "变量更新失败",
@@ -36,7 +37,7 @@ def background_records(events):
             phase = "narrative"
             continue
         purpose = payload.get("purpose", phase if kind == "activity" else "runtime")
-        if kind in ("memory_chunk", "memory_ready", "memory_failed", "memory_window_reset"):
+        if kind in ("memory_chunk", "memory_ready", "memory_failed", "memory_window_reset", "memory_retention"):
             purpose = "memory"
         elif kind in ("state_proposal", "content_proposal", "maintenance_started", "maintenance_completed"):
             purpose = "maintenance"

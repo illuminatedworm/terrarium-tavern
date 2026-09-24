@@ -21,6 +21,10 @@ export function settingsErrors(s: any): string[] {
   integer('chunk_max_tokens', '历史预算（tokens）', 512, 2000000);
   integer('memory_timeout', '维护超时', 5, 180);
   integer('memory_interval_turns', '记忆周期', 1, 100);
+  if (s.memory_current_max_records !== undefined)
+    integer('memory_current_max_records', '当前进展条数上限', 1, 100);
+  if (s.memory_episode_cooldown_rounds !== undefined)
+    integer('memory_episode_cooldown_rounds', '经历冷却轮数', 0, 10000);
   for (const [key, label, min, max] of [
     ['memory_input_tokens', '记忆输入上限', 2048, 2000000],
     ['memory_evidence_tokens', '辅助资料预算', 0, 32768],

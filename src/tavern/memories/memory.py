@@ -148,6 +148,16 @@ class Tracker:
                 draft["memory_warning"] = message
                 self.store.event(tid, "memory_failed",
                                  {"message": message, "kept_original": True})
+        from tavern.memories.memory_records import install_memory, read_memory
+        from tavern.memories.memory_retention import retain_memory
+
+        try:
+            retained = retain_memory(read_memory(draft), history, settings.for_role("background"),
+                event=lambda kind, payload: self.store.event(tid, kind, payload))
+            install_memory(draft, retained)
+        except ValueError as error:
+            draft["memory_warning"] = str(error)
+            self.store.event(tid, "memory_failed", {"message": str(error), "kept_original": True})
         if trimming:
             if any(draft.get(key, {}).get("covered_count", 0) < count for key in ("memory_archive",)):
                 raise ValueError("裁剪前的记忆整理失败，原窗口已保留；请重试或调整窗口与维护预算")

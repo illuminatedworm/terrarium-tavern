@@ -16,13 +16,14 @@ from tavern.core.tokens import count_text, request_tokens
 from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget
 from tavern.memories.memory_evidence import evidence_pool, select_evidence
 from tavern.memories.memory_protocol import MemoryRequest, References
-from tavern.memories.memory_records import Record, digest, render_document, source_hash
+from tavern.memories.memory_records import Record, digest, source_hash
+from tavern.memories.memory_retention import retain_memory
 
 PROTOCOL = """【程序输出契约】
 本节统一规定返回格式、来源和操作边界。上文的整理原则只约束内容取舍，不得改为完整快照或其他输出格式。
 输入 previous_result 是现有分类记忆；messages 是本批新增原文；background_messages 仅用于理解，不能当成新发展；evidence 是设定/状态参考，不是已发生的剧情。
 historical=false 的材料是当前版本回退，不能证明过去设定。状态快照不能证明原因、角色知情或事件时间。
-operations 仅包含本次增量修改，未提及的旧条目原样保留。op 为 add/revise/complete/merge/remove。新增 add 可不写 id，程序分配永久ID；需要 questions 引用新条目时才用 N1、N2 等本次临时编号。修改旧条目只选 previous_result 的 R1、R2 等短编号。merge 另附 merge_ids，使用旧条目短编号，不能合并或修改手工、已删除、原文已改动的条目。完成事项须有本批证据，不删除仍有效约定或关键疑问。
+operations 仅包含本次增量修改，未提及的旧条目原样保留。op 为 add/revise/complete/merge/remove。新增 add 可不写 id，程序分配永久ID；questions 可用 N1、N2 等按本次 add 出现顺序引用新条目（不计其他操作），也可在 add.id 显式填写 N 编号。显式编号优先且不能重复。修改旧条目只选 previous_result 的 R1、R2 等短编号。merge 另附 merge_ids，使用旧条目短编号，不能合并或修改手工、已删除、原文已改动的条目。完成事项须有本批证据，不删除仍有效约定或关键疑问。
 record 的 category 为 current/episode/open/uncertain，kind 为 fact/claim/inference，status 为 active/completed/superseded。未知 people/known_to 使用 []，未知 story_time 使用“未知”；known_to 只包含原文明确支持的知情对象。
 每个新增或修改的 record 必须有 sources，格式为 ["S1","S2"]，只选择支持该内容的原文片段 ref，且至少一处来自 messages。不要抄写原话、message_id、excerpt 或 fingerprint：真实消息ID、逐字摘录和指纹全部由程序回填。S 编号对应输入 passages，H 编号对应工具实际返回的 passages；M 编号只标识消息，不能作为 sources。setting_refs 只选择 evidence 的 E1、E2 等短编号，没有引用可省略。所有编号只在本次请求中有效，不沿用上批编号。
 已有记忆不足以理解本批变化时，可用只读 tavern_recall_history 搜索旧剧情或按搜索返回的段编号读取原文；整次维护合计最多3次，分批及复核共享额度。补查只作背景或补充依据，不替代分类记录、不把旧事当作本批新进展，也不自动修复已编辑的旧记忆。引用补查只选返回的 H 编号，变化仍须至少引用一处本批新增原文。
@@ -78,7 +79,7 @@ def _merge_history_sources(supplied, additional):
 
 
 def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids, settings, review_ids=None,
-                     on_invalid=None):
+                     on_invalid=None, defer_retention=False):
     if not isinstance(parsed, dict) or not isinstance(parsed.get("operations"), list):
         raise ValueError("记忆返回格式无效：需要 operations 列表；自定义提示词不得要求旧 text/memories 协议")
     if len(parsed["operations"]) > 100:
@@ -177,16 +178,7 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
         else:
             result["records"].append(record)
             by_id[rid] = record
-    callbacks = [r for r in result["records"] if r.get("callback") and r["status"] == "active"]
-    # Optional texture may expire, important continuity never disappears to fit.
-    while callbacks and (len(callbacks) > 3 or count_text("\n".join(r["content"] for r in callbacks), settings) > 300):
-        callbacks.pop(0)["status"] = "superseded"
-    if count_text(render_document(result), settings) > settings.memory_capacity_tokens:
-        raise ValueError("活跃记忆超过容量；未截断重要信息，请提高记忆容量或手动合并条目")
-    # Keep tombstones compact, without dropping their protected identity/content.
-    # Superseded automatic items are recoverable in prior message snapshots.
-    result["records"] = [r for r in result["records"] if r["status"] != "superseded" or r.get("manual")]
-    return result
+    return result if defer_retention else retain_memory(result, list(originals.values()), settings)
 
 
 def _messages(memory, original, expanded, start, end, evidence, settings, document=None, persona=None):
@@ -275,7 +267,7 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
         _merge_history_sources(supplied, getattr(response, "history_sources", {}))
         fresh = {m["id"] for m in expanded[start:end]}
         memory = apply_operations(memory, parsed, originals, supplied, evidence, fresh_ids=fresh, settings=settings,
-                                  on_invalid=lambda p: event("memory_records_discarded", p))
+                                  on_invalid=lambda p: event("memory_records_discarded", p), defer_retention=True)
         questions = parsed.get("questions", [])
         if not isinstance(questions, list):
             raise ValueError("questions 必须是列表")
@@ -329,10 +321,12 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
                             if response.get("questions"):
                                 raise ValueError("疑难复核不能再次请求核验")
                             memory = apply_operations(memory, response, originals, supplied, evidence + extra,
-                                fresh_ids=fresh, settings=settings, review_ids={r["id"] for r in targets})
+                                fresh_ids=fresh, settings=settings, review_ids={r["id"] for r in targets},
+                                defer_retention=True)
                             reason = "疑难复核完成；未解决的条目仍保持待确认"
                         except Exception as error:
                             reason = "疑难复核失败，保留待确认内容：" + str(error)
             event("memory_review_result", {"purpose": "memory_review", "message": reason})
+        memory = retain_memory(memory, history[:end], settings, event=event)
         start = end
     return memory
