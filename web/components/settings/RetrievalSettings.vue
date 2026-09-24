@@ -244,7 +244,9 @@ useTimedError(error);
   </p>
   <label
     >待准备的对话<select v-model="selectedSession">
-      <option v-for="s in sessions" :key="s.id" :value="s.id">{{ s.name }} · {{ s.persona }}</option>
+      <option v-for="s in sessions" :key="s.id" :value="s.id">
+        {{ s.title || s.name }} · {{ s.persona }}
+      </option>
     </select></label
   >
   <button :disabled="!selectedSession || rebuilding()" @click="rebuild">

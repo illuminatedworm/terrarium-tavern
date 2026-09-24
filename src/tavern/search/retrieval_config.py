@@ -17,6 +17,7 @@ class Provider(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     use_proxy: bool = True
+    api_mode: Literal["chat_completions", "responses"] = "chat_completions"
 
     @model_validator(mode="after")
     def valid_url(self):
@@ -32,7 +33,14 @@ class ModelProfile(BaseModel):
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     context_tokens: int = Field(32768, ge=2048, le=2000000)
     reply_tokens: int = Field(2048, ge=128, le=65536)
-    temperature: float = Field(0.8, ge=0, le=2)
+    temperature: float | None = Field(0.8, ge=0, le=2)
+    top_p: float | None = Field(None, ge=0, le=1)
+    top_k: int | None = Field(None, ge=0)
+    frequency_penalty: float | None = Field(None, ge=-2, le=2)
+    presence_penalty: float | None = Field(None, ge=-2, le=2)
+    prompt_cache_key: str | None = Field(None, max_length=256)
+    prompt_cache_mode: Literal["default", "no_write", "instructions"] = "default"
+    prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
     reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh"] = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"

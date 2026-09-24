@@ -572,8 +572,55 @@ header {
 }
 .message {
   display: flex;
+  position: relative;
+  padding-left: 28px;
   gap: 17px;
   margin: 0 0 32px;
+}
+.cache-breakpoint-dot {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: 2px solid #ffe184;
+  border-radius: 50%;
+  background: #f2b928;
+  box-shadow: 0 0 0 4px rgba(242, 185, 40, 0.17);
+  cursor: pointer;
+}
+.cache-breakpoint-dot:hover,
+.cache-breakpoint-dot:focus-visible {
+  box-shadow: 0 0 0 6px rgba(242, 185, 40, 0.3);
+  outline: 2px solid #ffe184;
+  outline-offset: 2px;
+}
+.cache-breakpoint-dot.manual {
+  box-shadow:
+    0 0 0 4px rgba(242, 185, 40, 0.17),
+    inset 0 0 0 3px #674b12;
+}
+.cache-breakpoint-dot:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.message > .cache-breakpoint-dot {
+  position: absolute;
+  left: 0;
+  top: 7px;
+}
+.cache-breakpoint-fallback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+  margin: 0 0 24px;
+  padding-left: 28px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.cache-breakpoint-fallback .cache-breakpoint-dot {
+  margin-left: -28px;
 }
 .avatar {
   width: 35px;
@@ -608,6 +655,10 @@ header {
 .message-meta small {
   font-size: 9px;
   color: var(--text-faint);
+}
+.message-meta .cache-breakpoint-status {
+  color: #d8ad39;
+  font-size: 10px;
 }
 .prose {
   font-size: 14px;
@@ -1939,11 +1990,42 @@ header {
 }
 .session-list .session-open {
   margin: 0;
-  padding-right: 54px;
+  padding-right: 94px;
   background: transparent;
 }
 .session-list .session-open:hover {
   background: transparent;
+}
+.session-list .session-rename {
+  position: absolute;
+  z-index: 1;
+  right: 43px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: block;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.session-title-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+}
+.session-title-editor input {
+  min-width: 0;
+  flex: 1;
+}
+.session-list .session-title-editor button {
+  width: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px;
+  white-space: nowrap;
 }
 .session-list .session-delete {
   position: absolute;
@@ -2244,13 +2326,16 @@ header {
   border-top: 1px solid #694044;
 }
 .session-list .session-delete,
-.session-row.active .session-delete {
+.session-row.active .session-delete,
+.session-list .session-rename {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 .session-row:hover .session-delete,
-.session-row:focus-within .session-delete {
+.session-row:focus-within .session-delete,
+.session-row:hover .session-rename,
+.session-row:focus-within .session-rename {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -3003,6 +3088,9 @@ header {
 .message-actions button.icon-action:hover {
   background: var(--surface-hover);
   color: var(--accent-hover);
+}
+.message-actions button.cache-set-action.active {
+  color: #f2b928;
 }
 
 /* Shared native-select geometry, including compact forms and scoped components. */
@@ -4045,6 +4133,7 @@ main,
 }
 @media (hover: none), (pointer: coarse) {
   .session-list .session-delete,
+  .session-list .session-rename,
   .session-row.active .session-delete,
   .card-row-actions {
     opacity: 1;

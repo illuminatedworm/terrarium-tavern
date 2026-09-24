@@ -22,9 +22,11 @@ from tavern.core.models import (
     PersonaEdit,
     RevisionRequest,
     SceneRefreshRequest,
+    SessionCacheBreakpoint,
     SessionCreate,
     SessionFork,
     SessionOptions,
+    SessionTitle,
     Settings,
     TurnRequest,
 )
@@ -158,16 +160,21 @@ def create_app(data_dir=None):
             old_profile = old[role] or old["background"]
             provider = next(p for p in new.providers if p.id == profile.provider_id)
             old_provider = next((p for p in old["providers"] if p["id"] == old_profile["provider_id"]), {})
-            if (profile.model, profile.provider_id, provider.base_url) != (old_profile["model"], old_profile["provider_id"], old_provider.get("base_url")):
+            if (profile.model, profile.provider_id, provider.base_url, provider.api_mode) != (
+                    old_profile["model"], old_profile["provider_id"], old_provider.get("base_url"),
+                    old_provider.get("api_mode", "chat_completions")):
                 profile.capability, profile.capability_key = "unknown", ""
 
         resolved = new.for_role("foreground")
-        for field in ("base_url", "api_key", "model", "tokenizer", "context_tokens", "reply_tokens", "temperature",
+        for field in ("base_url", "api_key", "api_mode", "model", "tokenizer", "context_tokens", "reply_tokens",
+                      "temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty",
+                      "prompt_cache_key", "prompt_cache_mode", "prompt_cache_retention",
                       "reasoning_effort", "reasoning_format", "proxy", "use_proxy"):
             setattr(new, field, getattr(resolved, field))
         if urlparse(new.base_url).scheme not in ("http", "https"):
             raise ValueError("模型地址必须为 HTTP(S)")
-        if (old["base_url"], old["model"]) != (new.base_url, new.model):
+        if (old["base_url"], old["model"], old.get("api_mode", "chat_completions")) != (
+                new.base_url, new.model, new.api_mode):
             new.capability, new.capability_key = "unknown", ""
         new = Settings.model_validate(new.model_dump())
         store.save_settings(new)
@@ -275,7 +282,8 @@ def create_app(data_dir=None):
             config.capability = (
                 "accepted" if preserved and "TAVERN_MID_42" in result.content else "unsupported"
             )
-            config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|chat-completions"
+            mode_key = "chat-completions" if config.api_mode == "chat_completions" else "responses"
+            config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|{mode_key}"
             effective_role = "background" if role == "card_editor" and saved_config.card_editor is None else role
             getattr(saved_config, effective_role).capability = config.capability
             getattr(saved_config, effective_role).capability_key = config.capability_key
@@ -421,6 +429,15 @@ def create_app(data_dir=None):
         return result
 
     @app.delete("/api/sessions/{sid}")
+    @app.put("/api/sessions/{sid}/title")
+    async def session_title(sid: str, payload: SessionTitle):
+        return store.update_session(sid, payload.expected_revision, title=payload.title)
+
+    @app.put("/api/sessions/{sid}/cache-breakpoint")
+    async def session_cache_breakpoint(sid: str, payload: SessionCacheBreakpoint):
+        return store.set_cache_breakpoint(sid, payload.expected_revision,
+                                          payload.automatic, payload.message_id)
+
     async def delete_session(sid: str):
         await service.delete_session(sid)
         return {"deleted": sid}

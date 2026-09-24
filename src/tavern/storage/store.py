@@ -48,6 +48,9 @@ class Store:
                 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, card TEXT NOT NULL,
                     head TEXT, revision INTEGER NOT NULL DEFAULT 0,
                     persona TEXT NOT NULL, policy TEXT, recipe TEXT NOT NULL, created REAL NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1,
+                    cache_breakpoint_message TEXT,
                     persona_data TEXT NOT NULL DEFAULT '{}', turn_preference TEXT NOT NULL DEFAULT '',
                     card_data TEXT NOT NULL, lore_injection_mode TEXT NOT NULL, greeting_id TEXT);
                 CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, session TEXT NOT NULL,
@@ -70,6 +73,16 @@ class Store:
             """)
             db.execute("INSERT OR IGNORE INTO meta VALUES ('settings',?)", (Settings().model_dump_json(),))
             db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','1')")
+            if "title" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''")
+                db.execute("""UPDATE sessions SET title=COALESCE(
+                    (SELECT name FROM cards WHERE cards.id=sessions.card),
+                    json_extract(card_data,'$.name'), '对话')""")
+            session_columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "cache_breakpoint_auto" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1")
+            if "cache_breakpoint_message" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_message TEXT")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
 
@@ -264,7 +277,7 @@ class Store:
             if not db.execute("SELECT 1 FROM cards WHERE id=?", (card["id"],)).fetchone():
                 raise KeyError("角色卡不存在或已删除")
             db.execute(
-                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,persona_data,lore_injection_mode,card_data,greeting_id) VALUES (?,?,?,0,?,?,?,?,?,?,?,?)",
+                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,title,persona_data,lore_injection_mode,card_data,greeting_id) VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?)",
                 (
                     sid,
                     card["id"],
@@ -273,6 +286,7 @@ class Store:
                     options.policy,
                     recipe.model_dump_json(),
                     time.time(),
+                    card["name"],
                     dump(persona_data),
                     self.settings().lore_injection_mode,
                     dump({**card, "session_id": sid, "dependencies": self.card_manifest(card)}),
@@ -319,6 +333,12 @@ class Store:
             if card_data:
                 card_data["dependencies"] = self.card_manifest(card_data)
                 card_data["session_id"] = new_sid
+            base_title = (source["title"] or (card_data or {}).get("name") or "对话")[:90]
+            title = f"{base_title} · 副本"
+            index = 2
+            while db.execute("SELECT 1 FROM sessions WHERE title=?", (title,)).fetchone():
+                title = f"{base_title} · 副本 {index}"
+                index += 1
             ids = {m["id"]: uid() for m in prefix}
             copies = []
             for index, message in enumerate(prefix):
@@ -342,11 +362,12 @@ class Store:
                         cloned["snapshot"].pop(archive_key)
                 copies.append(cloned)
             db.execute(
-                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,persona_data,turn_preference,card_data,lore_injection_mode) "
-                "VALUES (?,?,?,0,?,?,?,?,?,?,?,?)",
+                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,title,persona_data,turn_preference,card_data,lore_injection_mode,cache_breakpoint_auto,cache_breakpoint_message) "
+                "VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?,?,?)",
                 (new_sid, source["card"], ids[head], source["persona"],
-                 source["policy"], source["recipe"], time.time(), source["persona_data"], source["turn_preference"],
-                 dump(card_data) if card_data else None, source["lore_injection_mode"]),
+                 source["policy"], source["recipe"], time.time(), title, source["persona_data"], source["turn_preference"],
+                 dump(card_data) if card_data else None, source["lore_injection_mode"],
+                 source["cache_breakpoint_auto"], ids.get(source["cache_breakpoint_message"])),
             )
             db.executemany(
                 "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -380,7 +401,11 @@ class Store:
             if result["messages"]
             else {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}, "scopes": {}, "content": None}
         )
-        result["policy_effective"] = result["policy"] or self.settings().policy
+        settings = self.settings()
+        result["policy_effective"] = result["policy"] or settings.policy
+        result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
+        from tavern.conversation.cache_breakpoint import effective_message_id
+        result["cache_breakpoint_effective_id"] = effective_message_id(result, settings.for_role("foreground"))
         from tavern.memories.memory_records import read_memory, with_source_status
         result["memory_view"] = with_source_status(read_memory(result["snapshot"]), result["messages"])
         return result
@@ -593,8 +618,14 @@ class Store:
         return result
 
     def update_session(self, sid, expected, **fields):
-        if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference"}):
+        if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "title",
+                                                  "cache_breakpoint_auto", "cache_breakpoint_message"}):
             raise ValueError("无效会话字段")
+        if "title" in fields:
+            title = fields["title"].strip()
+            if not title or len(title) > 100:
+                raise ValueError("对话标题须为 1 到 100 个字符")
+            fields["title"] = title
         if fields.get("head"):
             self.history(sid, fields["head"])
         with self.connection() as db:
@@ -612,6 +643,14 @@ class Store:
             if r.rowcount != 1:
                 raise Conflict("会话已改变，请刷新后重试")
         return self.session(sid)
+
+    def set_cache_breakpoint(self, sid, expected, automatic, message_id):
+        session = self.session(sid)
+        if not automatic and message_id is not None:
+            if not any(m["id"] == message_id and m["role"] == "assistant" for m in session["messages"]):
+                raise ValueError("请选择当前分支上的 AI 回复")
+        return self.update_session(sid, expected, cache_breakpoint_auto=int(automatic),
+                                   cache_breakpoint_message=None if automatic else message_id)
 
 
     def edit_memory_record(self, sid, edit):

@@ -41,11 +41,37 @@ def test_fork_copies_only_selected_prefix_and_survives_original_deletion(story):
     assert fork["persona_data"] == original["persona_data"]
     assert fork["recipe"] == original["recipe"]
     assert fork["card"] == original["card"]
+    assert fork["title"] == f"{original['title']} · 副本"
     assert fork["turns"] == [] and fork["revision"] == 0
     store.edit_message(fork["id"], fork["head"], "另一条剧情", 0)
     assert store.session(original["id"]) == original
     store.delete_session(original["id"])
     assert store.session(fork["id"])["messages"][-1]["raw"] == "另一条剧情"
+
+
+def test_session_titles_are_persisted_and_forks_get_distinct_titles(story):
+    store, original = story
+    renamed = store.update_session(original["id"], original["revision"], title="  灯塔线  ")
+    assert renamed["title"] == "灯塔线"
+    assert store.sessions()[0]["title"] == "灯塔线"
+    first = store.fork_session(original["id"], renamed["head"], renamed["revision"])
+    second = store.fork_session(original["id"], renamed["head"], renamed["revision"])
+    assert first["title"] == "灯塔线 · 副本"
+    assert second["title"] == "灯塔线 · 副本 2"
+    assert store.session(original["id"])["title"] == "灯塔线"
+    with pytest.raises(Conflict):
+        store.update_session(original["id"], original["revision"], title="过期修改")
+    with pytest.raises(ValueError):
+        store.update_session(original["id"], renamed["revision"], title="   ")
+
+
+def test_existing_schema_adds_titles_without_losing_sessions(story):
+    store, original = story
+    with store.connection() as db:
+        db.execute("ALTER TABLE sessions DROP COLUMN title")
+    reopened = Store(store.root)
+    assert reopened.session(original["id"])["title"] == store.card(original["card"])["name"]
+    assert reopened.session(original["id"])["messages"] == original["messages"]
 
 
 def test_fork_preserves_window_with_recomputed_fingerprint(story):
@@ -103,3 +129,15 @@ async def test_fork_endpoint_returns_independent_conversation(story):
         assert response.status_code == 201
         assert len(response.json()["messages"]) == 3
         assert response.json()["id"] != original["id"]
+
+
+async def test_title_endpoint_updates_session_and_list(story):
+    store, original = story
+    app = create_app(store.root)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.put(f"/api/sessions/{original['id']}/title",
+                                    json={"title": "另一条线", "expected_revision": original["revision"]})
+        assert response.status_code == 200
+        assert response.json()["title"] == "另一条线"
+        listing = await client.get("/api/sessions")
+        assert listing.json()[0]["title"] == "另一条线"

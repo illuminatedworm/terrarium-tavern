@@ -68,6 +68,7 @@ class Settings(BaseModel):
         provider = next(p for p in self.providers if p.id == profile.provider_id)
         return self.model_copy(update={**profile.model_dump(exclude={"provider_id"}),
             "base_url": provider.base_url, "api_key": provider.api_key,
+            "api_mode": provider.api_mode,
             "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
 
     base_url: str = "https://api.openai.com/v1"
@@ -87,7 +88,15 @@ class Settings(BaseModel):
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     proxy: str = ""
     use_proxy: bool = True
-    temperature: float = Field(default=0.8, ge=0, le=2)
+    api_mode: Literal["chat_completions", "responses"] = "chat_completions"
+    temperature: float | None = Field(default=0.8, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    top_k: int | None = Field(default=None, ge=0)
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    prompt_cache_key: str | None = Field(default=None, max_length=256)
+    prompt_cache_mode: Literal["default", "no_write", "instructions"] = "default"
+    prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
     context_tokens: int = Field(default=32768, ge=2048, le=2000000, strict=True)
     reply_tokens: int = Field(default=2048, ge=128, le=65536, strict=True)
     policy: Policy = "directed"
@@ -112,6 +121,8 @@ class Settings(BaseModel):
     memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
     memory_output_tokens: int = Field(default=4096, ge=256, le=65536, strict=True)
     memory_capacity_tokens: int = Field(default=4096, ge=512, le=65536, strict=True)
+    memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
+    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
     memory_review_enabled: bool = Field(default=True, strict=True)
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
 
@@ -121,8 +132,6 @@ class Settings(BaseModel):
         if self.memory_evidence_tokens >= self.memory_input_tokens:
             raise ValueError("记忆辅助资料预算必须小于整理输入上限")
         if self.memory_output_tokens + 2048 >= self.background.context_tokens:
-    memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
-    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
@@ -179,6 +188,17 @@ class RevisionRequest(BaseModel):
 class SessionFork(BaseModel):
     expected_revision: int
     message_id: str
+
+
+class SessionTitle(BaseModel):
+    expected_revision: int
+    title: str = Field(min_length=1, max_length=100)
+
+
+class SessionCacheBreakpoint(BaseModel):
+    expected_revision: int
+    automatic: bool
+    message_id: str | None = None
 
 
 class MessageEdit(BaseModel):
