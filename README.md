@@ -40,7 +40,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 ## 技术路线
 
-前端使用 **Vue 3、TypeScript 和 Vite**；后端使用 **Python、FastAPI 和 SQLite**，以 Kohaku Terrarium 作为智能体运行基座，借助隔离的 Chromium 环境运行角色卡脚本。
+前端使用 **Vue 3、TypeScript 和 Vite**；后端使用 **Python、FastAPI 和 SQLite**，以 Kohaku Terrarium 作为 agent 运行基座，借助隔离的 Chromium 环境运行角色卡脚本。
 
 - **前台写作（Writer）**：负责叙事，普通正文生成不调用工具。
 - **后台整理（Tracker）**：负责积累式记忆、按需变量分析，以及经用户授权的设定维护。
@@ -88,7 +88,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 ## 当前局限与未完部分
 
-- **角色卡编辑智能体仍比较粗糙。** 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。请人工审阅修改结果，尤其是初始化、脚本与世界书用途的调整。
+- **角色卡编辑 agent 仍比较粗糙。** 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。请人工审阅修改结果，尤其是初始化、脚本与世界书用途的调整。
 - **角色卡兼容范围有限。** 项目不是完整的 SillyTavern 运行环境，不能保证任意扩展、远程脚本或复杂 MVU 卡片都能直接使用，详见[兼容范围](docs/guides/compatibility.md)。
 - **长篇叙事质量仍在探索。** 通过开发者个人游玩体验，初步确认中篇体验较好。具体模型、系统提示词、各种机制的参数数字都显著影响体验质量。
 - **记忆系统对模型智能有要求** 由于记忆系统的复杂性和格式化输出要求，经测试，GPT-5.6-Luna 故障、错误率极高，至少需要配置 GPT-5.6-Terra 水平的模型才能正常工作。
@@ -113,15 +113,19 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 常用开发命令：
 
 ```powershell
-npm.cmd run dev
+npm.cmd run dev            # 同时启动后端与 Vite，访问 http://127.0.0.1:5173，前端修改即时更新
+npm.cmd run dev:web        # 仅启动 Vite；需另行运行 .\start.ps1
 npm.cmd run build
+.\build.ps1               # 更新 dist/ 和后端使用的静态页面
 npm.cmd test
 .venv/Scripts/python.exe -m pytest -q
 ```
 
+也可直接运行 `.\run-dev.ps1`。若 8000 端口已有本项目后端，开发脚本会复用它；否则会启动后端并在退出时关闭。访问 8000 端口仍使用上次构建的页面；需要更新该页面时运行 `.\build.ps1`（等同于 `npm.cmd run build`）。
+
 ## 致谢
 
-- [Kohaku Terrarium](https://github.com/Kohaku-Lab/KohakuTerrarium)：提供智能体运行基座，是本项目的重要基础。
+- [Kohaku Terrarium](https://github.com/Kohaku-Lab/KohakuTerrarium)：提供 agent 运行基座，是本项目的重要基础。
 - [SillyTavern](https://github.com/SillyTavern/SillyTavern)：角色卡、世界书和互动叙事工作流的重要灵感来源。
 - [MagVarUpdate](https://github.com/MagicalAstrogy/MagVarUpdate)：提供 MVU 变量更新核心。
 - [Tavern Helper](https://github.com/n0vi028/JS-Slash-Runner)：为角色卡脚本接口适配提供参考。

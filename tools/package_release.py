@@ -11,7 +11,7 @@ FILES = (
     ".gitignore", ".python-version", ".prettierrc.json", "README.md",
     "THIRD_PARTY_NOTICES.md", "pyproject.toml", "uv.lock", "package.json", "package-lock.json",
     "compatibility.lock.json", "index.html", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
-    "setup.ps1", "start.ps1", "stop.ps1",
+    "setup.ps1", "start.ps1", "stop.ps1", "run-dev.ps1", "build.ps1",
 )
 DIRECTORIES = ("src", "web", "compat", "vendor", "samples", "docs", "tests", "tools", ".agents")
 
