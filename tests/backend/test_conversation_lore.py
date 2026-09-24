@@ -46,7 +46,7 @@ def test_first_turn_uses_greeting_or_user_anchor_and_system_role(greeting):
     i = next(i for i, item in enumerate(out["trace"]) if item.get("lore_ids") == ["e"])
     assert out["trace"][i]["role"] == "system"
     assert out["trace"][i + 1]["message_id"] == record["anchor_id"]
-    assert out["trace"][i]["content"] == "灯塔：北岸"
+    assert out["trace"][i]["content"] == "<lorebook>\n灯塔：北岸\n</lorebook>"
     assert all(set(m) == {"role", "content"} for m in out["messages"])
 
 
@@ -60,7 +60,7 @@ def test_later_turn_and_repeated_trigger_keep_frozen_original_injection():
     hist += [message("new-user", "user", "灯塔"), message("a2", "assistant", "继续")]
     out = compile(document(content="已修改正文", probability=0), hist, snap)
     assert out["next_lore_injections"] == [record]
-    assert [m["content"] for m in out["trace"] if m.get("lore_ids") == ["e"]] == ["灯塔：北岸"]
+    assert [m["content"] for m in out["trace"] if m.get("lore_ids") == ["e"]] == ["<lorebook>\n灯塔：北岸\n</lorebook>"]
     assert not any("recovery_roll" in n for n in out["diagnostics"])
     assert out["next_lore"] == {"e": {"present": True}}
 
@@ -112,6 +112,7 @@ def test_constant_keeps_original_position_and_ignores_cooldown_probability():
     item = next(m for m in out["trace"] if m.get("lore_ids") == ["e"])
     assert item["lore_region"] == "constant"
     assert item["required"] is True
+    assert item["content"] == "<lorebook>\n灯塔：{{getvar::place}}\n</lorebook>"
     assert out["next_lore_injections"] == [] and out["next_lore"] == {"e": {"present": True}}
 
 
@@ -157,6 +158,19 @@ def test_all_constant_positions_stay_in_one_protected_region(mode):
     assert indices[-1] < next(i for i, item in enumerate(trace) if item["source"] == "history")
     assert all(trace[i]["required"] for i in indices)
     assert [trace[i]["lore_ids"] for i in indices] == [[str(i)] for i in range(8)]
+
+
+def test_each_st_top_lore_entry_has_its_own_wrapper():
+    entries = [{"id": str(i), "keys": ["灯塔"], "content": f"灯塔设定{i}", "position": position,
+                "outletName": "special"} for i, position in enumerate((0, 0, 1, 2, 4, 5, 6, 7))]
+    doc = {"name": "角色", "character_book": {"entries": entries}}
+    s = session("st_top")
+    s["recipe"]["blocks"].append({"id": "special", "source": "outlet:special"})
+    out = compile_context(doc, s, [message("g", "assistant", "开场")], {"state": {}},
+                          "灯塔", Settings(lore_max_entries=20), "seed")
+    for i in range(len(entries)):
+        content = "\n".join(m["content"] for m in out["trace"] if str(i) in m.get("lore_ids", []))
+        assert content.count(f"<lorebook>\n灯塔设定{i}\n</lorebook>") == 1
 
 
 def test_constant_over_model_budget_errors_instead_of_silent_omission():

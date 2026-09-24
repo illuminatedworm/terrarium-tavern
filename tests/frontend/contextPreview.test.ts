@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { groupContext } from '../../web/lib/contextPreview';
+import { groupContext, summarizeBudgetSources } from '../../web/lib/contextPreview';
+
+describe('context preview budget summary', () => {
+  it('combines sources with the same visible category before rounding percentages', () => {
+    const sources = {
+      'lore:first': 3,
+      history: 20,
+      'lore:second': 2,
+      chat_framing: 1,
+    };
+    const summary = summarizeBudgetSources(sources, 26, (source) =>
+      source.startsWith('lore:') ? '世界书（按设定位置）' : source,
+    );
+    expect(summary).toEqual([
+      { label: '世界书（按设定位置）', tokens: 5, percent: 19.23 },
+      { label: 'history', tokens: 20, percent: 76.92 },
+      { label: 'chat_framing', tokens: 1, percent: 3.85 },
+    ]);
+  });
+  it('keeps small nonzero percentages and rounds to two decimal places', () => {
+    const summary = summarizeBudgetSources({ small: 1, rest: 799 }, 800, (source) => source);
+    expect(summary[0].percent).toBe(0.13);
+    expect(summary[0].percent.toFixed(2)).toBe('0.13');
+  });
+});
 
 describe('context preview categories', () => {
   it('shows the entire constant region as one top lore group', () => {

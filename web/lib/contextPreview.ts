@@ -3,6 +3,23 @@ export function contextKind(source: string): string {
   return /^lore(?:_|:|$)/.test(value) ? 'lore' : value.replace(/_.*/, '') || 'other';
 }
 
+export function summarizeBudgetSources(
+  sources: Record<string, number> | null | undefined,
+  total: number,
+  labelFor: (source: string) => string,
+) {
+  const totals = new Map<string, number>();
+  for (const [source, tokens] of Object.entries(sources || {})) {
+    const label = labelFor(source);
+    totals.set(label, (totals.get(label) || 0) + Number(tokens));
+  }
+  return Array.from(totals, ([label, tokens]) => ({
+    label,
+    tokens,
+    percent: Math.round((tokens / Math.max(1, total)) * 10000) / 100,
+  }));
+}
+
 export function groupContext(items: any[], labelFor: (source: string) => string) {
   const groups: Array<{
     id: string;

@@ -30,6 +30,7 @@ from tavern.core.models import (
     Settings,
     TurnRequest,
 )
+from tavern.core.prompts import writer_request_messages
 from tavern.search.retrieval_config import Provider
 from tavern.storage.store import Conflict, Store, dump
 
@@ -428,7 +429,6 @@ def create_app(data_dir=None):
         service.prepare_indexes(sid)
         return result
 
-    @app.delete("/api/sessions/{sid}")
     @app.put("/api/sessions/{sid}/title")
     async def session_title(sid: str, payload: SessionTitle):
         return store.update_session(sid, payload.expected_revision, title=payload.title)
@@ -438,6 +438,7 @@ def create_app(data_dir=None):
         return store.set_cache_breakpoint(sid, payload.expected_revision,
                                           payload.automatic, payload.message_id)
 
+    @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
         await service.delete_session(sid)
         return {"deleted": sid}
@@ -526,20 +527,29 @@ def create_app(data_dir=None):
                      else ContextRecipe.model_validate(payload["recipe"]))
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
-    @app.post("/api/sessions/{sid}/preview")
-    def preview(sid: str, payload: dict):
+    def compile_preview(sid: str, text: str):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
         s = store.session(sid)
         c = store.session_card(sid)
         document = (s["snapshot"].get("content") or {}).get("document", c["document"])
         result = compile_context(
-            document, s, s["messages"], s["snapshot"], payload.get("text", ""), store.settings().for_role("foreground"), "preview",
+            document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
             read_only=True,
         )
+        return result, s
+
+    @app.post("/api/sessions/{sid}/preview")
+    def preview(sid: str, payload: dict):
+        result, s = compile_preview(sid, payload.get("text", ""))
         result["usage"] = store.latest_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
         return result
+
+    @app.post("/api/sessions/{sid}/messages-preview")
+    def messages_preview(sid: str, payload: dict):
+        result, _ = compile_preview(sid, payload.get("text", ""))
+        return writer_request_messages(result["messages"])
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)
     async def submit(sid: str, req: TurnRequest):

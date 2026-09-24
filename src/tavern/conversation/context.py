@@ -61,6 +61,10 @@ def macros(text, character, persona, state):
     return re.sub(r"\{\{([^{}]+)}}", sub, text)
 
 
+def wrap_lorebook(content):
+    return f"<lorebook>\n{content}\n</lorebook>"
+
+
 def matches(key, text, entry):
     key = str(key)
     # Bare Latin ability codes require explicit word matching or a /regex/ pattern.
@@ -372,13 +376,13 @@ def compile_context(
             continue
         pos = e.get("position", 0)
         if pos in ("before_char", 0):
-            sources["lore_before"] += "\n" + e.get("content", "")
+            sources["lore_before"] += "\n" + wrap_lorebook(e.get("content", ""))
             source_lore_ids.setdefault("lore_before", []).append(e["id"])
         elif pos in ("after_char", 1):
-            sources["lore_after"] += "\n" + e.get("content", "")
+            sources["lore_after"] += "\n" + wrap_lorebook(e.get("content", ""))
             source_lore_ids.setdefault("lore_after", []).append(e["id"])
         elif pos in (2, 3):
-            sources["author_note"] += "\n" + e.get("content", "")
+            sources["author_note"] += "\n" + wrap_lorebook(e.get("content", ""))
             source_lore_ids.setdefault("author_note", []).append(e["id"])
         elif pos in (5, 6):
             positioned.append({**e, "anchor": "examples", "side": "before" if pos == 5 else "after"})
@@ -386,7 +390,7 @@ def compile_context(
             outlet = e.get("outletName", "")
             if outlet:
                 sources["outlet:" + outlet] = (
-                    sources.get("outlet:" + outlet, "") + "\n" + e.get("content", "")
+                    sources.get("outlet:" + outlet, "") + "\n" + wrap_lorebook(e.get("content", ""))
                 )
                 source_lore_ids.setdefault("outlet:" + outlet, []).append(e["id"])
             else:
@@ -483,7 +487,7 @@ def compile_context(
                 at,
                 {
                     "role": role,
-                    "content": expand(e.get("content", "")),
+                    "content": wrap_lorebook(expand(e.get("content", ""))),
                     "source": "lore:" + e["id"],
                     "lore_ids": [e["id"]],
                     "priority": 80,
@@ -494,7 +498,7 @@ def compile_context(
         if not history_override.get("with_depth_entries", True):
             continue
         pending_depth.append(
-            (int(e.get("depth", 0) or 0), role, e.get("content", ""), "lore:" + e["id"], 80, False,
+            (int(e.get("depth", 0) or 0), role, wrap_lorebook(e.get("content", "")), "lore:" + e["id"], 80, False,
              [e["id"]])
         )
     for depth, role, content, source, priority, required, lore_ids in pending_depth:
@@ -599,7 +603,7 @@ def compile_context(
                 actual_records.append(record)
                 continue
             messages.insert(at, {
-                "role": "system", "content": record["content"], "title": record["title"],
+                "role": "system", "content": wrap_lorebook(record["content"]), "title": record["title"],
                 "source": "lore:" + record["id"], "lore_ids": [record["id"]],
                 "anchor_id": record["anchor_id"], "priority": 60, "required": record["id"] in retained_ids,
             })
@@ -638,6 +642,10 @@ def compile_context(
     if retrieval_protocol:
         messages.insert(0, {"role": "system", "content": query_instruction(settings.retrieval),
                             "source": "retrieval_protocol", "priority": 100, "required": True})
+    # These application-owned instructions always lead in a fixed order.
+    leading_sources = ("rules", "retrieval_protocol", "session_preference")
+    messages = ([m for source in leading_sources for m in messages if m["source"] == source]
+                + [m for m in messages if m["source"] not in leading_sources])
     available = settings.context_tokens - settings.reply_tokens - 2048
     # Constants form one protected request region. Card positions are local to
     # this region, never offsets into conversation history or recipe blocks.
@@ -653,7 +661,7 @@ def compile_context(
         if isinstance(role, int):
             role = {0: "system", 1: "user", 2: "assistant"}.get(role, "system")
         constant_messages.append({
-            "role": role, "content": expand(entry["content"]),
+            "role": role, "content": wrap_lorebook(expand(entry["content"])),
             "source": "lore:" + entry["id"], "lore_ids": [entry["id"]],
             "lore_region": "constant", "priority": 100, "required": True,
         })

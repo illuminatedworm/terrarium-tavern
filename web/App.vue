@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { notification } from './lib/notifications';
+import { notification, notify } from './lib/notifications';
 import { useTimedError } from './composables/useTimedError';
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from './lib/api';
@@ -23,7 +23,7 @@ import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
 import { observeTurn } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
-import { contextKind, groupContext } from './lib/contextPreview';
+import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
 import { HISTORY_BATCH, useStoryHistory } from './lib/storyHistory';
 
 const orphanDrafts = ref<any[]>([]);
@@ -49,6 +49,7 @@ const panel = ref(''),
 const preview = ref<any>(null),
   trace = ref<any[]>([]),
   savingRecipe = ref(false);
+const previewMessagesBusy = ref(false);
 const savingSettings = ref(false);
 const startupModels = ref<any>(null);
 const contextStats = ref<any>(null);
@@ -140,7 +141,6 @@ const memoryProgress = computed(() => {
     : '正在准备重建记忆…';
 });
 const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } | null>(null);
-const sceneSubmitting = ref<'memory' | null>(null);
 const cacheBreakpointBusy = ref(false);
 const writerResponseCache = computed(() => {
   const profile = settings.value?.foreground;
@@ -148,6 +148,7 @@ const writerResponseCache = computed(() => {
   return !!session.value && provider?.api_mode === 'responses' && profile?.prompt_cache_mode !== 'no_write';
 });
 const cacheBreakpointId = computed(() => session.value?.cache_breakpoint_effective_id || null);
+const sceneSubmitting = ref<'memory' | null>(null);
 const storyView = ref<'dialogue' | 'work'>('dialogue');
 const sceneUpdating = computed(
   () => sceneSubmitting.value || (busy.value ? activeTurn.value?.request?.scene_refresh : null),
@@ -381,6 +382,13 @@ async function removeLore(record: LoreRecord) {
   }
 }
 const contextGroups = computed(() => groupContext(preview.value?.trace || [], contextLabel));
+const budgetSourceSummary = computed(() =>
+  summarizeBudgetSources(
+    preview.value?.budget_sources,
+    Number(preview.value?.estimated_tokens || 0),
+    contextLabel,
+  ),
+);
 function contextItemTitle(item: any) {
   if (item.title) return item.title;
   const source = String(item.source || '');
@@ -590,14 +598,6 @@ async function deleteSession(item: any) {
     await load();
   });
 }
-function trackScroll() {
-  const el = chat.value;
-  if (el) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
-}
-function pauseFollow(event: WheelEvent) {
-  if (event.deltaY < 0 && chat.value && chat.value.scrollHeight > chat.value.clientHeight)
-    followLatest.value = false;
-}
 function editSessionTitle(item: any) {
   editingSessionTitleId.value = item.id;
   sessionTitleDraft.value = item.title || item.name || '';
@@ -643,6 +643,14 @@ async function saveSessionTitle(item: any) {
   } finally {
     savingSessionTitle.value = false;
   }
+}
+function trackScroll() {
+  const el = chat.value;
+  if (el) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+}
+function pauseFollow(event: WheelEvent) {
+  if (event.deltaY < 0 && chat.value && chat.value.scrollHeight > chat.value.clientHeight)
+    followLatest.value = false;
 }
 async function showEarlierMessages() {
   const token = viewScope.current();
@@ -1042,6 +1050,29 @@ async function inspectContext() {
     panel.value = 'context';
   });
 }
+async function exportNextMessages() {
+  if (!session.value || busy.value || previewMessagesBusy.value) return;
+  previewMessagesBusy.value = true;
+  try {
+    await guarded(async () => {
+      const sid = session.value.id;
+      const messages = await viewApi(`/sessions/${sid}/messages-preview`, { text: input.value });
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),
+      );
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `messages-preview-${sid}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      notify('已导出完整 messages 数组。只读预览未运行神经召回，实际发送时的世界书命中可能不同。');
+    });
+  } finally {
+    previewMessagesBusy.value = false;
+  }
+}
 async function showForkPoints() {
   if (
     !session.value ||
@@ -1087,37 +1118,6 @@ async function createFork() {
     creatingFork.value = false;
   }
 }
-async function saveSettings() {
-  if (savingSettings.value) return;
-  savingSettings.value = true;
-  try {
-    await guarded(async () => {
-      settings.value = await api('/settings', settings.value, 'PUT');
-      panel.value = '';
-    });
-  } finally {
-    savingSettings.value = false;
-  }
-}
-async function probe() {
-  await guarded(async () => {
-    preview.value = await api('/settings/probe', {});
-    settings.value = await api('/settings');
-    panel.value = 'probe';
-  });
-}
-async function saveOptions() {
-  await guarded(async () => {
-    session.value = await viewApi(
-      `/sessions/${session.value.id}/options`,
-      {
-        persona: session.value.persona,
-        persona_data: session.value.persona_data,
-        policy: session.value.policy,
-        turn_preference: session.value.turn_preference || '',
-        expected_revision: session.value.revision,
-      },
-      'PUT',
 async function saveCacheBreakpoint(automatic: boolean, messageId: string | null = null) {
   if (
     !session.value ||
@@ -1155,6 +1155,37 @@ function toggleCacheBreakpointFollow() {
   const automatic = !session.value?.cache_breakpoint_auto;
   void saveCacheBreakpoint(automatic, automatic ? null : cacheBreakpointId.value);
 }
+async function saveSettings() {
+  if (savingSettings.value) return;
+  savingSettings.value = true;
+  try {
+    await guarded(async () => {
+      settings.value = await api('/settings', settings.value, 'PUT');
+      panel.value = '';
+    });
+  } finally {
+    savingSettings.value = false;
+  }
+}
+async function probe() {
+  await guarded(async () => {
+    preview.value = await api('/settings/probe', {});
+    settings.value = await api('/settings');
+    panel.value = 'probe';
+  });
+}
+async function saveOptions() {
+  await guarded(async () => {
+    session.value = await viewApi(
+      `/sessions/${session.value.id}/options`,
+      {
+        persona: session.value.persona,
+        persona_data: session.value.persona_data,
+        policy: session.value.policy,
+        turn_preference: session.value.turn_preference || '',
+        expected_revision: session.value.revision,
+      },
+      'PUT',
     );
     optionsNotice.value = '已保存';
   });
@@ -1547,7 +1578,11 @@ useTimedError(error);
               @click="showForkPoints"
             >
               剧情分支
-            </button>
+            </button><button
+              :disabled="busy || previewMessagesBusy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+              title="导出当前分支和输入编译的完整 messages；只读预览不运行神经召回"
+              @click="exportNextMessages"
+            >{{ previewMessagesBusy ? '正在预览…' : '预览下次 messages' }}</button>
           </div>
         </div>
         <nav class="story-view-tabs" aria-label="游玩界面">
@@ -1580,6 +1615,26 @@ useTimedError(error);
           @wheel.passive="pauseFollow"
         >
           <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
+          <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
+            <button
+              class="cache-breakpoint-dot"
+              :class="{ manual: !session.cache_breakpoint_auto }"
+              :disabled="
+                busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
+              "
+              :title="
+                session.cache_breakpoint_auto
+                  ? '缓存断点自动跟进中；点击固定当前位置'
+                  : '缓存断点已手动固定；点击恢复自动跟进'
+              "
+              :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
+              @click="toggleCacheBreakpointFollow"
+            />
+            <span
+              >缓存断点：常驻世界书末尾（无常驻条目时为角色设定） ·
+              {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
+            >
+          </div>
           <nav
             v-if="session.messages.length > HISTORY_BATCH"
             class="history-controls"
@@ -1588,6 +1643,16 @@ useTimedError(error);
             <span>显示 {{ visibleMessages.length }} / {{ session.messages.length }} 条消息</span>
             <button v-if="hiddenMessages" @click="showEarlierMessages">
               显示更早消息（{{ Math.min(HISTORY_BATCH, hiddenMessages) }} 条）
+            </button>
+            <button
+              v-if="
+                writerResponseCache &&
+                cacheBreakpointId &&
+                !visibleMessages.some((item: any) => item.id === cacheBreakpointId)
+              "
+              @click="historyView.reveal(cacheBreakpointId)"
+            >
+              显示缓存断点
             </button>
             <button
               v-if="visibleMessages.length > HISTORY_BATCH"
@@ -1615,45 +1680,35 @@ useTimedError(error);
                   regenerating: message.id === regeneratingId,
                   'source-message-highlight': sourceHighlight?.id === message.id,
                 },
-          <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
-            <button
-              class="cache-breakpoint-dot"
-              :class="{ manual: !session.cache_breakpoint_auto }"
-              :disabled="
-                busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
-              "
-              :title="
-                session.cache_breakpoint_auto
-                  ? '缓存断点自动跟进中；点击固定当前位置'
-                  : '缓存断点已手动固定；点击恢复自动跟进'
-              "
-              :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
-              @click="toggleCacheBreakpointFollow"
-            />
-            <span
-              >缓存断点：常驻世界书末尾（无常驻条目时为角色设定） ·
-              {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
-            >
-          </div>
               ]"
               :aria-busy="message.id === regeneratingId"
             >
+              <button
+                v-if="writerResponseCache && cacheBreakpointId === message.id"
+                class="cache-breakpoint-dot"
+                :class="{ manual: !session.cache_breakpoint_auto }"
+                :disabled="
+                  busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
+                "
+                :title="
+                  session.cache_breakpoint_auto
+                    ? '缓存断点自动跟进中；点击固定在此回复末尾'
+                    : '缓存断点已固定；点击恢复自动跟进'
+                "
+                :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
+                @click="toggleCacheBreakpointFollow"
+              />
               <div class="avatar">{{ message.role === 'user' ? '你' : name.slice(0, 1) }}</div>
               <div class="message-body">
                 <div class="message-meta">
                   <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
+                  <small
+                    v-if="writerResponseCache && cacheBreakpointId === message.id"
+                    class="cache-breakpoint-status"
+                    >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
+                  >
                 </div>
                 <div v-if="editingMessageId === message.id" class="inline-message-editor">
-            <button
-              v-if="
-                writerResponseCache &&
-                cacheBreakpointId &&
-                !visibleMessages.some((item: any) => item.id === cacheBreakpointId)
-              "
-              @click="historyView.reveal(cacheBreakpointId)"
-            >
-              显示缓存断点
-            </button>
                   <textarea
                     v-model="editingMessageText"
                     rows="5"
@@ -1683,30 +1738,10 @@ useTimedError(error);
                 <details v-if="message.retrieval_query" class="retrieval-clue">
                   <summary>检索线索</summary>
                   <p>{{ message.retrieval_query }}</p>
-              <button
-                v-if="writerResponseCache && cacheBreakpointId === message.id"
-                class="cache-breakpoint-dot"
-                :class="{ manual: !session.cache_breakpoint_auto }"
-                :disabled="
-                  busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
-                "
-                :title="
-                  session.cache_breakpoint_auto
-                    ? '缓存断点自动跟进中；点击固定在此回复末尾'
-                    : '缓存断点已固定；点击恢复自动跟进'
-                "
-                :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
-                @click="toggleCacheBreakpointFollow"
-              />
                 </details>
                 <div
                   v-if="sourceHighlight?.id === message.id && sourceHighlight?.fallback"
                   class="source-excerpt"
-                  <small
-                    v-if="writerResponseCache && cacheBreakpointId === message.id"
-                    class="cache-breakpoint-status"
-                    >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
-                  >
                 >
                   <small>引用原文</small><mark>{{ sourceHighlight?.excerpt }}</mark>
                 </div>
@@ -1805,6 +1840,39 @@ useTimedError(error);
                       />
                     </svg>
                   </button>
+                  <button
+                    v-if="message.role === 'assistant' && writerResponseCache"
+                    class="icon-action cache-set-action"
+                    :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
+                    :disabled="
+                      busy ||
+                      cacheBreakpointBusy ||
+                      !!editingMessageId ||
+                      activeTurn?.status === 'awaiting_review'
+                    "
+                    :aria-label="
+                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
+                        ? '缓存断点已固定在此回复末尾'
+                        : '将缓存断点固定在此回复末尾'
+                    "
+                    :title="
+                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
+                        ? '缓存断点已固定在此回复末尾'
+                        : '将缓存断点固定在此回复末尾'
+                    "
+                    @click="saveCacheBreakpoint(false, message.id)"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path
+                        d="M4 4v12m0-2h11l-2.5-3L15 8H4"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <circle cx="4" cy="4" r="2" fill="currentColor" />
+                    </svg>
+                  </button>
                 </div>
               </div></article
           ></template>
@@ -1840,39 +1908,6 @@ useTimedError(error);
                   </div>
                 </template>
               </div>
-                  <button
-                    v-if="message.role === 'assistant' && writerResponseCache"
-                    class="icon-action cache-set-action"
-                    :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
-                    :disabled="
-                      busy ||
-                      cacheBreakpointBusy ||
-                      !!editingMessageId ||
-                      activeTurn?.status === 'awaiting_review'
-                    "
-                    :aria-label="
-                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-                        ? '缓存断点已固定在此回复末尾'
-                        : '将缓存断点固定在此回复末尾'
-                    "
-                    :title="
-                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-                        ? '缓存断点已固定在此回复末尾'
-                        : '将缓存断点固定在此回复末尾'
-                    "
-                    @click="saveCacheBreakpoint(false, message.id)"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                      <path
-                        d="M4 4v12m0-2h11l-2.5-3L15 8H4"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                      <circle cx="4" cy="4" r="2" fill="currentColor" />
-                    </svg>
-                  </button>
             </article>
           </template>
           <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
@@ -2388,9 +2423,8 @@ useTimedError(error);
               tokens；预览不会加载神经模型，下方诊断会注明不完整的召回。
             </p>
             <div class="budget-sources">
-              <span v-for="(tokens, source) in preview?.budget_sources" :key="source"
-                >{{ contextLabel(String(source)) }}
-                {{ Math.round((Number(tokens) / Math.max(1, preview.estimated_tokens)) * 100) }}%</span
+              <span v-for="source in budgetSourceSummary" :key="source.label"
+                >{{ source.label }} {{ source.percent.toFixed(2) }}%</span
               >
             </div>
             <div class="context-overview">

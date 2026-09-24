@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate, Settings
+from tavern.core.prompts import WRITER_FINAL_INSTRUCTION
 from tavern.storage.store import Store
 
 
@@ -27,6 +28,8 @@ def test_preference_is_optional_required_system_supplement_even_with_custom_orde
     assert not any(m['source'] == 'session_preference' for m in preview(store, session)['trace'])
     changed = store.update_session(session['id'], 0, turn_preference='  节奏放缓，多用对话推进。  ')
     compiled = preview(store, changed, generate={'ordered_prompts': ['user_input']})
+    assert [m['source'] for m in compiled['trace'][:3]] == [
+        'rules', 'retrieval_protocol', 'session_preference']
     preference = next(m for m in compiled['trace'] if m['source'] == 'session_preference')
     assert preference['role'] == 'system' and preference['required']
     assert preference['content'].endswith('节奏放缓，多用对话推进。')
@@ -57,3 +60,18 @@ async def test_options_save_clear_and_partial_updates_preserve_preference(story)
         assert partial.status_code == 200 and partial.json()['turn_preference'] == '保持慢节奏。'
         cleared = await client.put(url, json={'expected_revision': 2, 'turn_preference': ''})
         assert cleared.status_code == 200 and cleared.json()['turn_preference'] == ''
+
+
+async def test_messages_preview_exports_full_writer_array_without_committing(story):
+    store, session = story
+    app = create_app(store.root)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
+        path = f"/api/sessions/{session['id']}"
+        context = (await client.post(path + '/preview', json={'text': '继续'})).json()
+        response = await client.post(path + '/messages-preview', json={'text': '继续'})
+        assert response.status_code == 200
+        messages = response.json()
+        assert messages == context['messages'] + [
+            {'role': 'system', 'content': WRITER_FINAL_INSTRUCTION}]
+        assert all(set(message) == {'role', 'content'} for message in messages)
+    assert store.session(session['id'])['revision'] == session['revision']
