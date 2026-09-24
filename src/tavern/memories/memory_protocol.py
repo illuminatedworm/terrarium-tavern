@@ -10,6 +10,8 @@ import copy
 import re
 import uuid
 
+from tavern.memories.memory_records import is_retained_record
+
 
 def split_passages(text):
     """Lossless, bounded passages; splitting never drops a long message's tail."""
@@ -66,6 +68,8 @@ class References:
     def previous(self, memory):
         records = []
         for record in memory["records"]:
+            if not is_retained_record(record):
+                continue
             alias = f"R{len(self.records) + 1}"
             self.records[alias] = record["id"]
             # Old citations are not newly supplied evidence. Hide persistent

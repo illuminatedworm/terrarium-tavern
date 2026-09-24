@@ -16,15 +16,15 @@ from tavern.core.tokens import count_text, request_tokens
 from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget
 from tavern.memories.memory_evidence import evidence_pool, select_evidence
 from tavern.memories.memory_protocol import MemoryRequest, References
-from tavern.memories.memory_records import Record, digest, source_hash
+from tavern.memories.memory_records import Record, digest, is_retained_record, source_hash
 from tavern.memories.memory_retention import retain_memory
 
 PROTOCOL = """【程序输出契约】
 本节统一规定返回格式、来源和操作边界。上文的整理原则只约束内容取舍，不得改为完整快照或其他输出格式。
 输入 previous_result 是现有分类记忆；messages 是本批新增原文；background_messages 仅用于理解，不能当成新发展；evidence 是设定/状态参考，不是已发生的剧情。
 historical=false 的材料是当前版本回退，不能证明过去设定。状态快照不能证明原因、角色知情或事件时间。
-operations 仅包含本次增量修改，未提及的旧条目原样保留。op 为 add/revise/complete/merge/remove。新增 add 可不写 id，程序分配永久ID；questions 可用 N1、N2 等按本次 add 出现顺序引用新条目（不计其他操作），也可在 add.id 显式填写 N 编号。显式编号优先且不能重复。修改旧条目只选 previous_result 的 R1、R2 等短编号。merge 另附 merge_ids，使用旧条目短编号，不能合并或修改手工、已删除、原文已改动的条目。完成事项须有本批证据，不删除仍有效约定或关键疑问。
-record 的 category 为 current/episode/open/uncertain，kind 为 fact/claim/inference，status 为 active/completed/superseded。未知 people/known_to 使用 []，未知 story_time 使用“未知”；known_to 只包含原文明确支持的知情对象。
+operations 仅包含本次增量修改，未提及的旧条目原样保留。previous_result 中 status=deleted 只表示用户手工删除：用户不希望它作为独立记忆保留，通常认为它不重要或冗余；这不否定剧情原文。不要恢复、修改或引用该条目。程序自动移除的条目已彻底移走，不会作为 deleted 返回。op 为 add/revise/complete/merge/remove。新增 add 可不写 id，程序分配永久ID；questions 可用 N1、N2 等按本次 add 出现顺序引用新条目（不计其他操作），也可在 add.id 显式填写 N 编号。显式编号优先且不能重复。修改旧条目只选 previous_result 的 R1、R2 等短编号。merge 另附 merge_ids，使用旧条目短编号，不能合并或修改手工、已删除、原文已改动的条目。完成事项须有本批证据，不删除仍有效约定或关键疑问。
+record 的 category 为 current/episode/open/uncertain，kind 为 fact/claim/inference；status 如需填写只用 active/completed。移除用 remove 操作，合并用 merge 操作；superseded 只是程序内部待移除标记，deleted 只由用户手工删除产生，模型都不要填写。未知 people/known_to 使用 []，未知 story_time 使用“未知”；known_to 只包含原文明确支持的知情对象。
 每个新增或修改的 record 必须有 sources，格式为 ["S1","S2"]，只选择支持该内容的原文片段 ref，且至少一处来自 messages。不要抄写原话、message_id、excerpt 或 fingerprint：真实消息ID、逐字摘录和指纹全部由程序回填。S 编号对应输入 passages，H 编号对应工具实际返回的 passages；M 编号只标识消息，不能作为 sources。setting_refs 只选择 evidence 的 E1、E2 等短编号，没有引用可省略。所有编号只在本次请求中有效，不沿用上批编号。
 已有记忆不足以理解本批变化时，可用只读 tavern_recall_history 搜索旧剧情或按搜索返回的段编号读取原文；整次维护合计最多3次，分批及复核共享额度。补查只作背景或补充依据，不替代分类记录、不把旧事当作本批新进展，也不自动修复已编辑的旧记忆。引用补查只选返回的 H 编号，变化仍须至少引用一处本批新增原文。
 callback 是 record 内的布尔字段，只能用于 episode；最多三条、合计300 tokens，只补充本批原话/动作，不为此请求复核。
@@ -79,14 +79,22 @@ def _merge_history_sources(supplied, additional):
 
 
 def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids, settings, review_ids=None,
-                     on_invalid=None, defer_retention=False):
+                     on_invalid=None, on_suppressed=None, suppressed_ids=None, defer_retention=False):
     if not isinstance(parsed, dict) or not isinstance(parsed.get("operations"), list):
         raise ValueError("记忆返回格式无效：需要 operations 列表；自定义提示词不得要求旧 text/memories 协议")
     if len(parsed["operations"]) > 100:
         raise ValueError("单次记忆操作超过100条")
     result = copy.deepcopy(memory)
+    result["records"] = [r for r in result["records"] if is_retained_record(r)]
     by_id = {r["id"]: r for r in result["records"]}
     supplied = {r["id"] for r in evidence}
+    blocked_ids = suppressed_ids if suppressed_ids is not None else set()
+
+    def suppress(rid, message):
+        blocked_ids.add(rid)
+        if on_suppressed:
+            on_suppressed({"count": 1, "message": message})
+
     for op in parsed["operations"]:
         if not isinstance(op, dict):
             raise ValueError("记忆操作必须是对象；原记忆保留")
@@ -113,32 +121,34 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
                 continue
         if action not in ("add", "revise", "complete", "merge", "remove") or not isinstance(rid, str) or not 0 < len(rid) <= 100:
             raise ValueError("记忆操作或条目ID无效；原记忆保留")
+        if rid in blocked_ids or (action == "merge" and any(other in blocked_ids for other in op.get("merge_ids", []))):
+            suppress(rid, "已忽略一条依赖手工删除内容的记忆操作")
+            continue
         old = by_id.get(rid)
         if review_ids is not None and (action != "revise" or rid not in review_ids):
             raise ValueError("复核不能修改无关条目")
+        # A tombstone is an expected consequence of a user's delete. Ignore a
+        # model's attempt to touch it without throwing away unrelated changes.
+        if old and old.get("status") == "deleted":
+            suppress(rid, "已忽略一条涉及手工删除记忆的操作")
+            continue
         if action == "add" and old:
-            raise ValueError("新增记忆ID已存在（包括手工删除的条目）")
+            raise ValueError("新增记忆ID已存在")
         if action != "add" and not old:
             raise ValueError("修改的记忆条目不存在")
-        if old and (old.get("manual") or old.get("status") == "deleted" or old.get("source_stale")):
-            raise ValueError("不可自动修改手工、已删除或原文已改动的记忆；请另记待确认内容")
+        if old and (old.get("manual") or old.get("source_stale")):
+            raise ValueError("不可自动修改手工或原文已改动的记忆；请另记待确认内容")
         data = {**(old or {}), **op.get("record", {}), "id": rid, "manual": False}
         data["setting_refs"] = op.get("record", {}).get("setting_refs", [])
         if data.get("category") not in ("current", "episode", "open", "uncertain"):
             raise ValueError("自动记忆必须使用四种剧情分类")
         record = Record.model_validate(data).model_dump()
-        if any(r.get("status") == "deleted" and (
-            (r.get("deleted_hash") == digest(record["content"].strip()) and (
-                not r.get("deleted_sources") or any(s["message_id"] == d["message_id"]
-                    for s in record["sources"] for d in r["deleted_sources"]))) or
-            any(s["message_id"] == d["message_id"] and digest(s["excerpt"]) == d["excerpt_hash"]
-                for s in record["sources"] for d in r.get("deleted_sources", [])))
-               for r in result["records"]):
-            raise ValueError("该内容已被手工删除，不能通过新ID重新加入")
         if not record["content"].strip() or not record["sources"]:
             raise ValueError("关键记忆缺少内容或来源；不推进覆盖水位")
         if record["status"] == "deleted":
             raise ValueError("自动操作不得制造手工删除状态")
+        if record["status"] == "superseded" and action != "remove":
+            raise ValueError("模型不能直接设置自动移除状态；请使用 remove 或 merge 操作")
         for source in record["sources"]:
             mid = source["message_id"]
             if mid not in expanded or source["excerpt"] not in expanded[mid].get("model", expanded[mid]["raw"]):
@@ -151,6 +161,19 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
             raise ValueError("变化必须引用本批新增剧情，不能重复应用背景历史")
         if not set(record["setting_refs"]) <= supplied:
             raise ValueError("记忆引用了未提供的设定片段")
+        if any(r.get("status") == "deleted" and (
+            (r.get("deleted_hash") == digest(record["content"].strip()) and (
+                not r.get("deleted_sources") or any(s["message_id"] == d["message_id"]
+                    for s in record["sources"] for d in r["deleted_sources"]))) or
+            any(s["message_id"] == d["message_id"] and digest(s["excerpt"]) == d["excerpt_hash"]
+                for s in record["sources"] for d in r.get("deleted_sources", [])))
+               for r in result["records"]):
+            suppress(rid, "已忽略一条试图恢复手工删除内容的记忆操作")
+            continue
+        if action == "merge" and any(by_id.get(other, {}).get("status") == "deleted"
+                                     for other in op.get("merge_ids", [])):
+            suppress(rid, "已忽略一条涉及手工删除记忆的合并操作")
+            continue
         record["setting_sources"] = [{k: e[k] for k in (
             "id", "identity", "version", "reference", "anchor", "kind", "historical", "offset") if k in e}
             for e in evidence if e["id"] in record["setting_refs"]]
@@ -244,6 +267,7 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
     budget = budget or CallBudget()
     event = event or (lambda kind, payload: None)
     memory = copy.deepcopy(memory)
+    memory["records"] = [r for r in memory["records"] if is_retained_record(r)]
     expanded = archive_history(history, document, persona)
     originals = {m["id"]: m for m in history}
     while start < len(history):
@@ -266,8 +290,11 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
         supplied = {m["id"]: m for m in expanded[beginning:end]}
         _merge_history_sources(supplied, getattr(response, "history_sources", {}))
         fresh = {m["id"] for m in expanded[start:end]}
+        suppressed_ids = set()
         memory = apply_operations(memory, parsed, originals, supplied, evidence, fresh_ids=fresh, settings=settings,
-                                  on_invalid=lambda p: event("memory_records_discarded", p), defer_retention=True)
+                                  on_invalid=lambda p: event("memory_records_discarded", p),
+                                  on_suppressed=lambda p: event("memory_tombstone_suppressed", p),
+                                  suppressed_ids=suppressed_ids, defer_retention=True)
         questions = parsed.get("questions", [])
         if not isinstance(questions, list):
             raise ValueError("questions 必须是列表")
@@ -275,6 +302,12 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
             raise ValueError("一次整理最多提出八个局部疑难问题")
         questions = [q for q in questions if isinstance(q, dict) and q.get("topic") in (
             "ownership", "identity", "knowledge", "injury", "relationship", "completion")]
+        # Neither a suppressed add nor a deleted old record can be reviewed.
+        # Keep unrelated questions and the rest of this batch.
+        deleted_ids = {r["id"] for r in memory["records"] if r["status"] == "deleted"}
+        questions = [q for q in questions if not (isinstance(q.get("record_ids"), list) and
+                     any(isinstance(r, str) and (r in suppressed_ids or r in deleted_ids)
+                         for r in q["record_ids"]))]
         available_ids = {r["id"] for r in memory["records"] if not r.get("manual") and r["status"] == "active"}
         for question in questions:
             refs = question.get("record_ids")

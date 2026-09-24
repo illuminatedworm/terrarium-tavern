@@ -60,6 +60,22 @@ def test_completed_promise_becomes_history_instead_of_an_open_loop():
     assert result["records"][0]["category"] == "episode"
 
 
+def test_automatic_remove_leaves_no_tombstone_but_manual_delete_does():
+    memory = apply(empty(), proposal())
+    removed = apply(memory, proposal(op="remove", mid="m3", excerpt="她收回了戒指。",
+                                     content="戒指借出记录已过时"))
+    assert removed["records"] == []
+    deleted = manual_edit(memory, RecordEdit(expected_revision=0, action="delete", id="ring"))
+    assert len(deleted["records"]) == 1
+    assert deleted["records"][0]["status"] == "deleted"
+    assert deleted["records"][0]["manual"]
+
+
+def test_model_cannot_discard_a_record_by_setting_superseded_status():
+    with pytest.raises(ValueError, match="remove 或 merge"):
+        apply(empty(), proposal(status="superseded"))
+
+
 @pytest.mark.parametrize("fields", [
     {"kind": "claim", "category": "episode", "content": "他否认杀人，事实尚未确认"},
     {"category": "open", "content": "承诺明早交物，尚未兑现"},
@@ -97,8 +113,12 @@ def test_manual_edit_deletion_and_changed_sources_are_protected():
     with pytest.raises(ValueError, match="手工"):
         apply(manual, proposal(op="revise"))
     deleted = manual_edit(memory, RecordEdit(expected_revision=0, action="delete", id="ring"))
-    with pytest.raises(ValueError, match="删除"):
-        apply(deleted, proposal(rid="renamed"))
+    notices = []
+    suppressed = set()
+    unchanged = apply(deleted, proposal(rid="renamed"), on_suppressed=notices.append,
+                      suppressed_ids=suppressed)
+    assert unchanged == deleted
+    assert suppressed == {"renamed"} and len(notices) == 1
     # Deleting an old record must not suppress a genuinely new event forever,
     # even when the resulting ownership sentence happens to be the same.
     later = history()
@@ -112,6 +132,52 @@ def test_manual_edit_deletion_and_changed_sources_are_protected():
     assert memory["records"][0]["content"] == view["records"][0]["content"]
     with pytest.raises(ValueError, match="改动"):
         apply(view, proposal(op="revise"))
+
+
+async def test_deleted_memory_does_not_block_other_changes_or_coverage():
+    old = apply(empty(), proposal())
+    deleted = manual_edit(old, RecordEdit(expected_revision=0, action="delete", id="ring"))
+    events = []
+
+    async def generate(prompt, **kwargs):
+        response = {"operations": [
+            {"op": "add", "id": "N1", "record": {"category": "current", "content": "戒指暂由玩家保管",
+                                                 "sources": ["S2"]}},
+            {"op": "add", "id": "N2", "record": {"category": "episode", "content": "她随后收回了戒指",
+                                                 "sources": ["S4"]}},
+        ], "questions": [
+            {"topic": "ownership", "query": "戒指归属", "record_ids": ["N1"]},
+            {"topic": "ownership", "query": "已删除的戒指归属", "record_ids": ["R1"]},
+        ]}
+        return json.dumps(response, ensure_ascii=False)
+
+    result = await consolidate(history(), Settings(), generate, memory=deleted,
+                               event=lambda kind, payload: events.append((kind, payload)))
+    assert [r["content"] for r in result["records"] if r["status"] != "deleted"] == ["她随后收回了戒指"]
+    assert any(kind == "memory_tombstone_suppressed" for kind, _ in events)
+    assert not any(kind == "memory_review_started" for kind, _ in events)
+
+
+def test_tombstone_does_not_hide_invalid_source_of_other_operation():
+    deleted = manual_edit(apply(empty(), proposal()),
+                          RecordEdit(expected_revision=0, action="delete", id="ring"))
+    out = proposal(rid="renamed")
+    out["operations"].append(proposal(rid="bad", excerpt="原文里没有这句话")["operations"][0])
+    with pytest.raises(ValueError, match="摘录"):
+        apply(deleted, out)
+
+
+def test_merge_with_deleted_source_is_ignored_without_changing_survivor():
+    memory = apply(empty(), proposal())
+    memory = apply(memory, proposal(rid="other", content="她曾借出戒指"))
+    deleted = manual_edit(memory, RecordEdit(expected_revision=0, action="delete", id="ring"))
+    out = proposal(rid="other", op="merge", mid="m3", excerpt="她收回了戒指。",
+                   content="戒指交易已结束")
+    out["operations"][0]["merge_ids"] = ["ring"]
+    suppressed = set()
+    result = apply(deleted, out, suppressed_ids=suppressed)
+    assert result == deleted
+    assert suppressed == {"other"}
 
 
 async def test_incremental_input_and_shared_budget_are_bounded():

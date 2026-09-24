@@ -60,6 +60,31 @@ async def test_existing_record_alias_updates_stable_id_and_preserves_omitted_ite
     assert old["records"][0]["content"] == "戒指借出"
 
 
+async def test_only_manual_deletion_is_returned_to_tracker():
+    old = {"version": 1, "records": [
+        Record(id="automatic-retired", category="episode", content="自动退出的旧事",
+               status="superseded").model_dump(),
+        Record(id="automatic-deleted", category="episode", content="旧版自动删除项",
+               status="deleted").model_dump(),
+        Record(id="manual-deleted", category="episode", content="用户删掉的细节",
+               status="deleted", manual=True).model_dump(),
+        Record(id="active", category="current", content="仍需保留的进展").model_dump(),
+    ]}
+    projected = References().previous(old)
+    assert [r["content"] for r in projected["records"]] == ["用户删掉的细节", "仍需保留的进展"]
+    assert [r["id"] for r in projected["records"]] == ["R1", "R2"]
+
+    async def generate(prompt, **kwargs):
+        payload = json.loads(prompt[-1]["content"])
+        assert payload["previous_result"] == projected
+        assert "通常认为它不重要或冗余" in prompt[0]["content"]
+        assert "superseded 只是程序内部待移除标记" in prompt[0]["content"]
+        return '{"operations":[],"questions":[]}'
+
+    result = await consolidate(history(["继续。"]), Settings(), generate, memory=old)
+    assert [r["id"] for r in result["records"]] == ["manual-deleted", "active"]
+
+
 async def test_setting_and_review_aliases_restore_versions_and_new_record_identity(monkeypatch):
     first = {"id": "random-setting-id-first", "text": "戒指归艾琳", "version": "random-version-one", "historical": True}
     extra = {"id": "random-setting-id-extra", "text": "借出不改变所有权", "version": "random-version-two", "historical": True}
@@ -133,14 +158,27 @@ async def test_unknown_or_background_only_citation_preserves_old_memory(sources,
     assert old == {"version": 1, "records": []}
 
 
-@pytest.mark.parametrize("protected", ["manual", "source_stale", "deleted"])
+@pytest.mark.parametrize("protected", ["manual", "source_stale"])
 async def test_short_record_ids_do_not_bypass_edit_protection(protected):
     record = Record(id="persistent-protected", category="current", content="保留").model_dump()
-    record["status" if protected == "deleted" else protected] = "deleted" if protected == "deleted" else True
+    record[protected] = True
     async def generate(prompt, **kwargs):
         return answer({"content": "试图覆盖", "sources": ["S1"]}, action="revise", rid="R1")
     with pytest.raises(ValueError, match="不可自动修改"):
         await consolidate(history(["新事件。"]), Settings(), generate, memory={"version": 1, "records": [record]})
+
+
+async def test_short_deleted_record_id_is_suppressed():
+    record = Record(id="persistent-protected", category="current", content="保留",
+                    status="deleted", manual=True).model_dump()
+    events = []
+    async def generate(prompt, **kwargs):
+        return answer({"content": "试图覆盖", "sources": ["S1"]}, action="revise", rid="R1")
+    result = await consolidate(history(["新事件。"]), Settings(), generate,
+                               memory={"version": 1, "records": [record]},
+                               event=lambda kind, payload: events.append(kind))
+    assert result["records"][0]["status"] == "deleted"
+    assert "memory_tombstone_suppressed" in events
 
 
 def test_passages_are_lossless_and_never_join_disjoint_tool_results():

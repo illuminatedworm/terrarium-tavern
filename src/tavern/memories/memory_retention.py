@@ -9,7 +9,7 @@ not the model's wording or the time a consolidation request happened.
 import copy
 
 from tavern.core.tokens import count_text
-from tavern.memories.memory_records import render_document, source_hash
+from tavern.memories.memory_records import is_retained_record, render_document, source_hash
 
 
 def _round_positions(history):
@@ -85,7 +85,7 @@ def retain_memory(memory, history, settings, *, event=None):
             raise ValueError("活跃记忆超过容量；可退出的经历已用尽，请提高容量或手动合并受保护条目")
         retire(min(episodes, key=age_key), "episode_budget")
 
-    result["records"] = [r for r in records if r["status"] != "superseded" or r.get("manual")]
+    result["records"] = [r for r in records if is_retained_record(r)]
     if event and any(removed.values()):
         counts = {key: len(value) for key, value in removed.items()}
         event("memory_retention", {"purpose": "memory", "counts": counts, "record_ids": removed,

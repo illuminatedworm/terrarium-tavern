@@ -75,6 +75,11 @@ def read_memory(snapshot):
     return copy.deepcopy(memory)
 
 
+def is_retained_record(record):
+    """Only a user's deletion leaves a tombstone in the current memory."""
+    return record["status"] != "superseded" and (record["status"] != "deleted" or record.get("manual"))
+
+
 def render_document(memory):
     parts = []
     for category, title in CATEGORIES.items():
