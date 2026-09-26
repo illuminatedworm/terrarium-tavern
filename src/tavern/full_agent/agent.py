@@ -121,6 +121,9 @@ class FullAgent:
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
+                self.event("full_agent_response", {"content": response.content or "",
+                    "finish_reason": getattr(response, "finish_reason", None),
+                    "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls]})
                 if getattr(response, "finish_reason", None) in ("length", "content_filter"):
                     raise ValueError("Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应")
                 if not calls:
@@ -133,13 +136,22 @@ class FullAgent:
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                     raise ValueError("模型返回了无效的工具调用序列")
                 window_id = self.state["window"]["id"]
+                assistant_seq = len(self.new_trace) + 1
                 assistant = {"role": "assistant", "content": response.content or "", "tool_calls": [
                     {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
                     for c in calls]}
                 assistant.update({k: v for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
                                   if k in ("reasoning_content", "reasoning_details", "reasoning")})
                 self.append(assistant, window_id)
-                for call in calls:
+                if assistant["content"]:
+                    self.event("full_agent_assistant", {"activity_id": f"text-{assistant_seq}",
+                        "order": assistant_seq * 10, "content": assistant["content"]})
+                for index, call in enumerate(calls):
+                    activity = {"activity_id": f"call-{assistant_seq}-{index}",
+                                "order": assistant_seq * 10 + index + 1,
+                                "name": call.name, "arguments": call.arguments}
+                    self.event("full_agent_tool_started", activity)
+                    tool_started = time.perf_counter()
                     try:
                         if call.name == "new_context" and len(calls) != 1:
                             raise ValueError("new_context 必须单独调用；当前批次没有换窗")
@@ -154,7 +166,8 @@ class FullAgent:
                             "notice": "结果已归档，请用 read_history 分页读取。"})
                         message["_archive_content"] = raw_result
                     self.append(message, window_id)
-                    self.event("full_agent_tool", {"name": call.name, "arguments": call.arguments, "result": result,
+                    self.event("full_agent_tool", {**activity, "result": result,
+                                                  "duration_s": time.perf_counter() - tool_started,
                                                   "message": call.name + (" · 参数/权限错误" if "error" in result else " · 完成")})
                 if self.rolled:
                     self.continuation = []

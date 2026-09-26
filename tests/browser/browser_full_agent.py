@@ -58,7 +58,35 @@ async def main():
                 await page.locator(".message.assistant").nth(1).wait_for(timeout=30000)
                 await page.get_by_role("button", name="发送", exact=True).wait_for()
                 await expect(page.locator(".message.assistant").nth(1)).to_contain_text("她点头应下")
-                assert "工作过程" not in await page.locator(".messages").inner_text()
+                assert "工作过程" not in await page.locator(".message.assistant").nth(1).inner_text()
+                activity = page.locator(".agent-message-activity")
+                await expect(activity.locator(".activity-name")).to_have_text(["read_history", "write_note", "new_context"])
+                assert await activity.locator("details[open]").count() == 0
+                assert await page.evaluate("""() => {
+                    const activity = document.querySelector('.agent-message-activity');
+                    const user = document.querySelector('.message.user');
+                    const reply = document.querySelectorAll('.message.assistant')[1];
+                    return !!(user.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING)
+                        && !!(activity.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING);
+                }""")
+                read_call = activity.locator('.agent-activity').filter(has=page.locator('.activity-name', has_text='read_history'))
+                await read_call.locator('summary').click()
+                await expect(read_call.get_by_role('region', name='调用参数')).to_contain_text('H2')
+                await expect(read_call.get_by_role('region', name='工具返回')).to_contain_text('我答应明天在钟楼见面')
+                await read_call.locator('summary').press('Enter')
+                await expect(read_call).not_to_have_attribute('open', '')
+                await page.reload()
+                await expect(page.locator('.activity-name')).to_have_text(['read_history', 'write_note', 'new_context'])
+                assert await page.locator('.agent-message-activity details[open]').count() == 0
+                await page.get_by_role('button', name='Agent 工作记录', exact=True).click()
+                await expect(page.locator('.work-toolbar h2')).to_contain_text('Debug')
+                assert await page.locator('.work-turn[open]').count() == 0
+                await page.locator('.work-turn > summary').click()
+                tool_event = page.locator('.work-event').filter(has_text='Full Agent 工具调用').first
+                await tool_event.locator(':scope > summary').click()
+                await tool_event.get_by_role('button', name='原始 JSON', exact=True).click()
+                await expect(tool_event.locator('.work-raw-json')).to_contain_text('read_history')
+                await page.get_by_role('button', name='对话', exact=True).click()
                 if not await page.get_by_role("button", name="场景", exact=True).is_visible():
                     await page.get_by_role("button", name="展开右侧栏", exact=True).click()
                 await page.get_by_role("button", name="场景", exact=True).click()
@@ -83,6 +111,14 @@ async def main():
                 await modal.get_by_role("button", name="Full Agent", exact=True).click()
                 await expect(modal.get_by_label("每回合模型调用上限", exact=True)).to_have_value("24")
                 await page.screenshot(path=str(output / "settings.png"))
+                await modal.get_by_role('button', name='关闭', exact=True).click()
+                await page.get_by_placeholder('说些什么，或描述你的行动…').fill('我们再确认一次明天的约定。')
+                await page.get_by_role('button', name='发送', exact=True).click()
+                await expect(page.locator('.message.assistant')).to_have_count(3)
+                await page.get_by_role('button', name='Agent 工作记录', exact=True).click()
+                await expect(page.locator('.work-turn-preview')).to_have_text([
+                    '我答应明天在钟楼见面。', '我们再确认一次明天的约定。',
+                ])
                 assert not errors, errors
                 await browser.close()
         finally:

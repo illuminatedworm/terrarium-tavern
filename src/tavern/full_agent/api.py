@@ -1,9 +1,12 @@
 """User-visible checkpoint/notes and explicit recovery from a full window."""
 import copy
+from typing import Literal
 
-from pydantic import Field
+from fastapi import Query
+from pydantic import BaseModel, Field
 
 from tavern.core.tokens import count_text
+from tavern.full_agent.activity import compact, message_items, part_page, turn_items
 from tavern.full_agent.state import full_state, note_view, rollover
 from tavern.full_agent.tools import Checkpoint
 from tavern.storage.store import Conflict, dump
@@ -15,6 +18,10 @@ class ContextEdit(Checkpoint):
     keep_recent: int = Field(default=0, ge=0, le=12)
 
 
+class ActivityQuery(BaseModel):
+    message_ids: list[str] = Field(min_length=1, max_length=100)
+
+
 def require_full(store, sid):
     session = store.session(sid)
     if session["agent_mode"] != "full_agent":
@@ -23,6 +30,28 @@ def require_full(store, sid):
 
 
 def register_full_agent_routes(app, store):
+    @app.post("/api/sessions/{sid}/full-agent/activity")
+    def dialogue_activity(sid: str, query: ActivityQuery):
+        groups = message_items(store, require_full(store, sid), query.message_ids)
+        return {"messages": {mid: compact(items) for mid, items in groups.items()}}
+
+    @app.get("/api/sessions/{sid}/full-agent/messages/{mid}/activity/{activity_id}")
+    def dialogue_activity_part(sid: str, mid: str, activity_id: str,
+                               part: Literal["arguments", "result", "content"], offset: int = Query(0, ge=0)):
+        items = message_items(store, require_full(store, sid), [mid])[mid]
+        return part_page(items, activity_id, part, offset)
+
+    @app.get("/api/sessions/{sid}/full-agent/turns/{tid}/activity")
+    def pending_activity(sid: str, tid: str):
+        require_full(store, sid)
+        return {"items": compact(turn_items(store, sid, tid))}
+
+    @app.get("/api/sessions/{sid}/full-agent/turns/{tid}/activity/{activity_id}")
+    def pending_activity_part(sid: str, tid: str, activity_id: str,
+                              part: Literal["arguments", "result", "content"], offset: int = Query(0, ge=0)):
+        require_full(store, sid)
+        return part_page(turn_items(store, sid, tid), activity_id, part, offset)
+
     @app.get("/api/sessions/{sid}/full-agent")
     def full_agent_state(sid: str):
         session = require_full(store, sid)

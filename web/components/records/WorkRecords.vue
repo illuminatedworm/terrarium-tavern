@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { api, rawApi } from '../../lib/api';
 import WorkData from './WorkData.vue';
+import { mergeWorkTurns } from '../../lib/workRecords';
 
-const props = defineProps<{ sessionId: string; turnId?: string; events: any[] }>();
+const props = defineProps<{ sessionId: string; turnId?: string; events: any[]; agentMode?: string }>();
+const isFullAgent = computed(() => props.agentMode === 'full_agent');
+const heading = computed(() => (isFullAgent.value ? 'Agent 工作记录 · Debug' : '后台工作记录'));
 const turns = ref<any[]>([]),
   next = ref<string | null>(null),
   loading = ref(false),
@@ -17,6 +20,7 @@ const fetching = ref(new Set<string>()),
   openedEvents = ref(new Set<number>());
 const category = ref('all');
 const expanded = ref(false);
+const rawEvents = ref(new Set<number>());
 let generation = 0,
   timer: ReturnType<typeof setTimeout> | undefined;
 const purposes: Record<string, string> = {
@@ -38,6 +42,8 @@ const statuses: Record<string, string> = {
 };
 const statusLabel = (status: string) => statuses[status] || status;
 function title(turn: any) {
+  if (isFullAgent.value)
+    return turn.mode === 'regenerate' ? 'Full Agent · 重新生成' : 'Full Agent · 对话回合';
   return turn.kind === 'memory'
     ? '重新生成记忆'
     : turn.kind === 'maintenance'
@@ -56,9 +62,9 @@ function time(value: number) {
   });
 }
 function filtered(turnId: string) {
-  return (records.value[turnId]?.items || []).filter(
-    (e) => category.value === 'all' || e.purpose === category.value,
-  );
+  return (records.value[turnId]?.items || [])
+    .filter((e) => category.value === 'all' || e.purpose === category.value)
+    .sort((a, b) => a.seq - b.seq);
 }
 const total = computed(() => turns.value.length);
 
@@ -73,15 +79,7 @@ async function load(more = false) {
       `/sessions/${sid}/work-records${more && next.value ? `?before=${next.value}` : ''}`,
     );
     if (version !== generation) return;
-    if (more)
-      turns.value.push(...result.items.filter((t: any) => !turns.value.some((old) => old.id === t.id)));
-    else {
-      const existing = new Map(turns.value.map((t) => [t.id, t]));
-      for (const t of result.items) existing.set(t.id, t);
-      turns.value = Array.from(existing.values()).sort(
-        (a, b) => b.created - a.created || b.id.localeCompare(a.id),
-      );
-    }
+    turns.value = mergeWorkTurns(turns.value, result.items);
     if (more || turns.value.length <= 20) next.value = result.next;
     for (const turn of turns.value) if (openedTurns.value.has(turn.id)) await loadEvents(turn.id);
   } catch (e: any) {
@@ -132,7 +130,7 @@ async function loadPayload(tid: string, seq: number) {
   payloadErrors.value = { ...payloadErrors.value, [seq]: '' };
   fetching.value.add(String(seq));
   try {
-    const value = await api(`/sessions/${sid}/work-records/${tid}/events/${seq}`);
+    const value = await rawApi(`/sessions/${sid}/work-records/${tid}/events/${seq}`);
     if (version === generation) payloads.value = { ...payloads.value, [seq]: value };
   } catch (e: any) {
     if (version === generation) payloadErrors.value = { ...payloadErrors.value, [seq]: e.message };
@@ -161,6 +159,7 @@ watch(
     records.value = {};
     payloads.value = {};
     payloadErrors.value = {};
+    rawEvents.value.clear();
     next.value = null;
     loading.value = false;
     fetching.value.clear();
@@ -185,11 +184,15 @@ useTimedError(error);
 </script>
 
 <template>
-  <section class="work-records" aria-label="后台工作记录">
+  <section class="work-records" :aria-label="heading">
     <div class="work-toolbar">
       <div>
-        <h2>后台工作记录</h2>
-        <p>记忆、维护工具与回合处理。展开回合，再按需查看数据。</p>
+        <h2>{{ heading }}</h2>
+        <p>
+          {{
+            isFullAgent ? '模型请求与响应、工具数据、用量及运行时事件。' : '记忆、维护工具与回合处理。'
+          }}按时间从旧到新，展开查看结构化数据或原始 JSON。
+        </p>
       </div>
       <div class="work-controls">
         <select v-model="category" aria-label="记录类型">
@@ -203,6 +206,9 @@ useTimedError(error);
     <p v-if="!total" class="work-empty">
       {{ loading ? '正在读取工作记录…' : '还没有工作记录。发送消息或手动更新记忆后，记录会保存在这里。' }}
     </p>
+    <button v-if="next" class="work-load-more" :disabled="loading" @click="load(true)">
+      {{ loading ? '加载中…' : '加载更早回合' }}
+    </button>
     <details
       v-for="turn in turns"
       :key="turn.id"
@@ -217,6 +223,9 @@ useTimedError(error);
         ><time>{{ time(turn.created) }}</time>
       </summary>
       <div v-if="openedTurns.has(turn.id)" class="work-events">
+        <p class="work-debug-meta">
+          Turn <code>{{ turn.id }}</code> · {{ turn.mode }} · {{ turn.status }}
+        </p>
         <AppNotification :message="turn.error || ''" />
         <p v-if="!records[turn.id]" class="work-empty">正在读取本回合记录…</p>
         <details
@@ -236,12 +245,24 @@ useTimedError(error);
             ><time>{{ time(event.created) }}</time>
           </summary>
           <div v-if="openedEvents.has(event.seq)" class="work-payload">
+            <div class="work-debug-meta">
+              <code>#{{ event.seq }} · {{ event.kind }}</code>
+              <button
+                v-if="Object.hasOwn(payloads, event.seq)"
+                @click="rawEvents.has(event.seq) ? rawEvents.delete(event.seq) : rawEvents.add(event.seq)"
+              >
+                {{ rawEvents.has(event.seq) ? '结构化查看' : '原始 JSON' }}
+              </button>
+            </div>
             <WorkData
-              v-if="Object.hasOwn(payloads, event.seq)"
+              v-if="Object.hasOwn(payloads, event.seq) && !rawEvents.has(event.seq)"
               :value="payloads[event.seq]"
               label="记录数据"
               root
             />
+            <pre v-else-if="Object.hasOwn(payloads, event.seq)" class="work-raw-json">{{
+              JSON.stringify(payloads[event.seq], null, 2)
+            }}</pre>
             <AppNotification v-else-if="payloadErrors[event.seq]" :message="payloadErrors[event.seq]" />
             <p v-else class="work-empty">正在读取数据…</p>
           </div>
@@ -261,8 +282,29 @@ useTimedError(error);
         </button>
       </div>
     </details>
-    <button v-if="next" class="work-load-more" :disabled="loading" @click="load(true)">
-      {{ loading ? '加载中…' : '加载更早回合' }}
-    </button>
   </section>
 </template>
+
+<style scoped>
+.work-debug-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+  color: var(--text-muted);
+  font: 11px/1.6 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+.work-debug-meta button {
+  margin-left: auto;
+  font-size: 11px;
+}
+.work-raw-json {
+  max-height: 520px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.7 monospace;
+}
+</style>

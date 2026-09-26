@@ -7,6 +7,9 @@ import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue'
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
 import FullAgentNotes from './components/story/FullAgentNotes.vue';
+import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
+import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
+import DialogueMessage from './components/story/DialogueMessage.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
@@ -148,6 +151,7 @@ const memoryProgress = computed(() => {
 const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } | null>(null);
 const cacheBreakpointBusy = ref(false);
 const writerResponseCache = computed(() => {
+  if (isFullAgent.value) return false;
   const profile = settings.value?.foreground;
   const provider = settings.value?.providers?.find((item: any) => item.id === profile?.provider_id);
   return !!session.value && provider?.api_mode === 'responses' && profile?.prompt_cache_mode !== 'no_write';
@@ -1588,12 +1592,16 @@ useTimedError(error);
               :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
               @click="showForkPoints"
             >
-              剧情分支
-            </button><button
-              :disabled="busy || previewMessagesBusy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+              剧情分支</button
+            ><button
+              :disabled="
+                busy || previewMessagesBusy || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+              "
               title="导出当前分支和输入编译的完整 messages；只读预览不运行神经召回"
               @click="exportNextMessages"
-            >{{ previewMessagesBusy ? '正在预览…' : '预览下次 messages' }}</button>
+            >
+              {{ previewMessagesBusy ? '正在预览…' : '预览下次 messages' }}
+            </button>
           </div>
         </div>
         <nav class="story-view-tabs" aria-label="游玩界面">
@@ -1616,6 +1624,7 @@ useTimedError(error);
           v-if="storyView === 'work'"
           :key="session.id"
           :session-id="session.id"
+          :agent-mode="session.agent_mode"
           :turn-id="activeTurn?.id"
           :events="trace"
         />
@@ -1674,269 +1683,123 @@ useTimedError(error);
               收起到最近 {{ HISTORY_BATCH }} 条
             </button>
           </nav>
-          <template v-for="message in visibleMessages" :key="message.id"
-            ><LoreInjectionRecords
-              v-if="loreRecords.has(message.id)"
-              :records="loreRecords.get(message.id)!"
-              :removable="!pendingVisible"
-              :disabled="
-                busy || removingLore || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-              "
-              @remove="removeLore" />
-            <article
-              :data-message-id="message.id"
-              class="message"
-              :class="[
-                message.role,
-                {
-                  regenerating: message.id === regeneratingId,
-                  'source-message-highlight': sourceHighlight?.id === message.id,
-                },
-              ]"
-              :aria-busy="message.id === regeneratingId"
-            >
-              <button
-                v-if="writerResponseCache && cacheBreakpointId === message.id"
-                class="cache-breakpoint-dot"
-                :class="{ manual: !session.cache_breakpoint_auto }"
+          <component
+            :is="isFullAgent ? FullAgentDialogue : HalfAgentDialogue"
+            :key="session.id"
+            :messages="visibleMessages"
+            v-bind="
+              isFullAgent
+                ? { sessionId: session.id, turn: activeTurn, events: trace, pending: !!pendingVisible }
+                : {}
+            "
+            @content-change="scroll()"
+          >
+            <template #before-message="{ message }">
+              <LoreInjectionRecords
+                v-if="loreRecords.has(message.id)"
+                :records="loreRecords.get(message.id)!"
+                :removable="!pendingVisible"
                 :disabled="
-                  busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
+                  busy || removingLore || !!editingMessageId || activeTurn?.status === 'awaiting_review'
                 "
-                :title="
-                  session.cache_breakpoint_auto
-                    ? '缓存断点自动跟进中；点击固定在此回复末尾'
-                    : '缓存断点已固定；点击恢复自动跟进'
-                "
-                :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
-                @click="toggleCacheBreakpointFollow"
+                @remove="removeLore"
               />
-              <div class="avatar">{{ message.role === 'user' ? '你' : name.slice(0, 1) }}</div>
-              <div class="message-body">
-                <div class="message-meta">
-                  <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
-                  <small
-                    v-if="writerResponseCache && cacheBreakpointId === message.id"
-                    class="cache-breakpoint-status"
-                    >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
-                  >
-                </div>
-                <div v-if="editingMessageId === message.id" class="inline-message-editor">
-                  <textarea
-                    v-model="editingMessageText"
-                    rows="5"
-                    autofocus
-                    @keydown.escape.prevent="cancelMessageEdit"
-                    @keydown.ctrl.enter.prevent="saveMessageEdit(message)"
-                  />
-                  <div>
-                    <span>Ctrl + Enter 保存 · Esc 取消</span><button @click="cancelMessageEdit">取消</button
-                    ><button
-                      class="primary"
-                      :disabled="!editingMessageText.trim()"
-                      @click="saveMessageEdit(message)"
-                    >
-                      保存修改
-                    </button>
-                  </div>
-                </div>
-                <StoryMessage
-                  v-else
-                  :hide-panel="!!mvuPanel"
-                  :message="message"
-                  :session="session"
-                  :enabled="!!currentCard?.permission"
-                  @action="frameAction"
-                />
-                <details v-if="message.retrieval_query" class="retrieval-clue">
-                  <summary>检索线索</summary>
-                  <p>{{ message.retrieval_query }}</p>
-                </details>
-                <div
-                  v-if="sourceHighlight?.id === message.id && sourceHighlight?.fallback"
-                  class="source-excerpt"
+            </template>
+            <template #message="{ message }">
+              <DialogueMessage
+                :message="message"
+                :session="session"
+                :name="name"
+                :source-highlight="sourceHighlight"
+                :writer-response-cache="writerResponseCache"
+                :cache-breakpoint-id="cacheBreakpointId"
+                :cache-breakpoint-busy="cacheBreakpointBusy"
+                @toggle-cache-breakpoint="toggleCacheBreakpointFollow"
+                @set-cache-breakpoint="saveCacheBreakpoint(false, $event)"
+                :regenerating-id="regeneratingId"
+                :busy="busy"
+                :switching-version="switchingVersion"
+                :editing-message-id="editingMessageId"
+                v-model:editing-message-text="editingMessageText"
+                :reviewing="activeTurn?.status === 'awaiting_review'"
+                :hide-panel="!!mvuPanel"
+                :enabled="!!currentCard?.permission"
+                @cancel-edit="cancelMessageEdit"
+                @save-edit="saveMessageEdit"
+                @edit="beginMessageEdit"
+                @fork="askFork"
+                @switch-version="switchReplyVersion"
+                @action="frameAction"
+              />
+            </template>
+            <template #pending>
+              <template v-if="pendingVisible">
+                <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
+                <article
+                  v-if="
+                    visiblePendingInput && !session.messages.some((m: any) => m.id === visiblePendingInput.id)
+                  "
+                  class="message user"
                 >
-                  <small>引用原文</small><mark>{{ sourceHighlight?.excerpt }}</mark>
-                </div>
-                <div v-if="editingMessageId !== message.id" class="message-actions">
-                  <template v-if="message.role === 'assistant' && message.id === session.head">
-                    <button
-                      class="icon-action"
-                      :disabled="
-                        busy ||
-                        switchingVersion ||
-                        !!editingMessageId ||
-                        activeTurn?.status === 'awaiting_review' ||
-                        !message.version_index
-                      "
-                      aria-label="上一个版本"
-                      title="上一个版本（更旧）"
-                      @click="switchReplyVersion(message, -1)"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                        <path
-                          d="m12 4-6 6 6 6"
-                          stroke="currentColor"
-                          stroke-width="1.4"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </button>
-                    <span class="muted" aria-live="polite"
-                      >{{ (message.version_index ?? 0) + 1 }} / {{ message.versions?.length || 1 }}</span
-                    >
-                    <button
-                      class="icon-action"
-                      :disabled="
-                        busy ||
-                        switchingVersion ||
-                        !!editingMessageId ||
-                        activeTurn?.status === 'awaiting_review' ||
-                        (message.version_index ?? 0) >= (message.versions?.length || 1) - 1
-                      "
-                      aria-label="下一个版本"
-                      title="下一个版本（更新）"
-                      @click="switchReplyVersion(message, 1)"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                        <path
-                          d="m8 4 6 6-6 6"
-                          stroke="currentColor"
-                          stroke-width="1.4"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    </button>
-                  </template>
-                  <button
-                    :disabled="busy || !!editingMessageId"
-                    :class="{ 'icon-action': message.role === 'assistant' }"
-                    aria-label="编辑"
-                    title="编辑回复"
-                    @click="beginMessageEdit(message)"
-                  >
-                    <svg
-                      v-if="message.role === 'assistant'"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      aria-hidden="true"
-                    >
-                      <path
-                        d="m12.5 3.5 4 4M3 17l1-4L14 3a2.1 2.1 0 0 1 3 3L7 16l-4 1Z"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      /></svg
-                    ><template v-else>编辑</template></button
-                  ><button
-                    v-if="message.role === 'assistant'"
-                    class="icon-action"
-                    :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                    aria-label="分支"
-                    title="继承此处进度，新建对话"
-                    @click="askFork(message)"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                      <circle cx="5" cy="4" r="2" stroke="currentColor" stroke-width="1.4" />
-                      <circle cx="5" cy="16" r="2" stroke="currentColor" stroke-width="1.4" />
-                      <circle cx="15" cy="4" r="2" stroke="currentColor" stroke-width="1.4" />
-                      <path
-                        d="M5 6v8m0-4h5a5 5 0 0 0 5-4"
-                        stroke="currentColor"
-                        stroke-width="1.4"
-                        stroke-linecap="round"
+                  <div class="avatar">你</div>
+                  <div class="message-body">
+                    <div class="message-meta">
+                      <strong>{{ session.persona }}</strong>
+                    </div>
+                    <div v-if="editingMessageId === '__pending__'" class="inline-message-editor">
+                      <textarea
+                        v-model="editingMessageText"
+                        aria-label="编辑最新用户消息"
+                        @keydown.ctrl.enter.prevent="savePendingEdit"
+                        @keydown.escape.prevent="cancelMessageEdit"
                       />
-                    </svg>
-                  </button>
-                  <button
-                    v-if="message.role === 'assistant' && writerResponseCache"
-                    class="icon-action cache-set-action"
-                    :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
-                    :disabled="
-                      busy ||
-                      cacheBreakpointBusy ||
-                      !!editingMessageId ||
-                      activeTurn?.status === 'awaiting_review'
-                    "
-                    :aria-label="
-                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-                        ? '缓存断点已固定在此回复末尾'
-                        : '将缓存断点固定在此回复末尾'
-                    "
-                    :title="
-                      cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-                        ? '缓存断点已固定在此回复末尾'
-                        : '将缓存断点固定在此回复末尾'
-                    "
-                    @click="saveCacheBreakpoint(false, message.id)"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                      <path
-                        d="M4 4v12m0-2h11l-2.5-3L15 8H4"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
+                      <div class="actions">
+                        <button @click="cancelMessageEdit">取消</button
+                        ><button :disabled="!editingMessageText.trim()" @click="savePendingEdit">保存</button>
+                      </div>
+                    </div>
+                    <template v-else>
+                      <StoryProse
+                        :text="visiblePendingInput.display || visiblePendingInput.raw"
+                        :breaks="true"
                       />
-                      <circle cx="4" cy="4" r="2" fill="currentColor" />
-                    </svg>
-                  </button>
-                </div>
-              </div></article
-          ></template>
-          <template v-if="pendingVisible">
-            <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
-            <article
-              v-if="
-                visiblePendingInput && !session.messages.some((m: any) => m.id === visiblePendingInput.id)
-              "
-              class="message user"
-            >
-              <div class="avatar">你</div>
-              <div class="message-body">
-                <div class="message-meta">
-                  <strong>{{ session.persona }}</strong>
-                </div>
-                <div v-if="editingMessageId === '__pending__'" class="inline-message-editor">
-                  <textarea
-                    v-model="editingMessageText"
-                    aria-label="编辑最新用户消息"
-                    @keydown.ctrl.enter.prevent="savePendingEdit"
-                    @keydown.escape.prevent="cancelMessageEdit"
-                  />
-                  <div class="actions">
-                    <button @click="cancelMessageEdit">取消</button
-                    ><button :disabled="!editingMessageText.trim()" @click="savePendingEdit">保存</button>
+                      <div v-if="retryableTurn" class="message-actions">
+                        <button :disabled="busy || !!editingMessageId" @click="beginPendingEdit">编辑</button>
+                      </div>
+                    </template>
+                  </div>
+                </article>
+              </template>
+            </template>
+            <template #draft>
+              <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
+                <div class="avatar">{{ name.slice(0, 1) }}</div>
+                <div class="message-body">
+                  <div class="message-meta">
+                    <strong>{{ name }}</strong
+                    ><span class="badge">{{
+                      updatingVariables ? '正在更新变量' : busy ? '正在书写' : '未提交草稿'
+                    }}</span>
+                  </div>
+                  <div class="draft">
+                    <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
                   </div>
                 </div>
-                <template v-else>
-                  <StoryProse :text="visiblePendingInput.display || visiblePendingInput.raw" :breaks="true" />
-                  <div v-if="retryableTurn" class="message-actions">
-                    <button :disabled="busy || !!editingMessageId" @click="beginPendingEdit">编辑</button>
-                  </div>
-                </template>
+              </article>
+            </template>
+            <template #waiting>
+              <div v-if="busy && !draft" class="thinking">
+                ✦
+                {{
+                  isFullAgent
+                    ? 'Agent 正在处理当前回合…'
+                    : activeTurn?.request?.scene_refresh
+                      ? '正在重新整理记忆…'
+                      : '正在读取设定，酝酿下一个瞬间…'
+                }}
               </div>
-            </article>
-          </template>
-          <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
-            <div class="avatar">{{ name.slice(0, 1) }}</div>
-            <div class="message-body">
-              <div class="message-meta">
-                <strong>{{ name }}</strong
-                ><span class="badge">{{
-                  updatingVariables ? '正在更新变量' : busy ? '正在书写' : '未提交草稿'
-                }}</span>
-              </div>
-              <div class="draft"><StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span></div>
-            </div>
-          </article>
-          <div v-if="busy && !draft" class="thinking">
-            ✦ {{ activeTurn?.request?.scene_refresh ? '正在重新整理记忆…' : '正在读取设定，酝酿下一个瞬间…' }}
-          </div>
+            </template>
+          </component>
           <div v-if="activeTurn?.status === 'awaiting_review'" class="review">
             <strong>本轮状态或设定有修改，等待你的决定</strong>
             <details>

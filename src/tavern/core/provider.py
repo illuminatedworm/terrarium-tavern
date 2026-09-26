@@ -115,5 +115,3 @@ async def make_provider(settings, capture=None, *, request_timeout=120):
     )
     provider._client = AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=client)
     return provider
-
-
