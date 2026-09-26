@@ -55,11 +55,11 @@ export function settingsErrors(s: any): string[] {
   if (s.retrieval && !s.retrieval.channels.length) errors.push('至少选择一种召回方案。');
   if (s.retrieval && s.retrieval.chunk_overlap >= s.retrieval.chunk_tokens)
     errors.push('切片重叠必须小于切片长度。');
-  for (const role of ['foreground', 'background', 'card_editor']) {
+  for (const role of ['foreground', 'background', 'card_editor', 'full_agent']) {
     const profile = s[role];
     if (profile && profile.context_tokens <= profile.reply_tokens + 2048)
       errors.push(
-        `${role === 'foreground' ? '前台 Writer' : role === 'card_editor' ? 'Card Editor' : '后台 Tracker'}模型上下文窗口必须大于输出预算加 2048 tokens。`,
+        `${role === 'foreground' ? '前台 Writer' : role === 'card_editor' ? 'Card Editor' : role === 'full_agent' ? 'Full Agent' : '后台 Tracker'}模型上下文窗口必须大于输出预算加 2048 tokens。`,
       );
     if (profile && !s.providers?.some((p: any) => p.id === profile.provider_id))
       errors.push('所选提供商不存在。');

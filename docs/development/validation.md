@@ -9,12 +9,15 @@ npm.cmd run build
 .venv/Scripts/python.exe -m ruff check src tests tools
 .venv/Scripts/python.exe -m pytest -q
 .venv/Scripts/python.exe -m tests.browser.browser_release
+.venv/Scripts/python.exe -m tests.browser.browser_full_agent
 ```
 
 - `tests/backend/`：API、存储、回合、记忆、检索、模型数据边界及脚本运行时回归。全套包含 200 轮 Terrarium/Chromium 长测，需要数分钟。
 - `tests/frontend/`：前端状态、渲染、事件和 MVU 兼容测试，由 Vitest 收集。
 - `tests/browser/`：使用独立数据的浏览器专项检查。使用 `python -m tests.browser.browser_名称` 运行；发行入口使用 8015/8016 端口，须预先空闲。
 - `tests/support/` 和 `tests/fixtures/`：共享辅助函数及合成数据。夹具是测试输入，不是历史测量记录。
+
+Full Agent 专项：`tests/backend/test_full_agent.py` 覆盖原生工具 HTTP 请求、换窗与回读、来源分页、检索仲裁、分支/重生成/编辑、取消回滚及真实 MVU/审核提交；浏览器专项覆盖模式选择、笔记、人工换窗和桌面/手机布局。
 
 浏览器发行检查覆盖设置、角色编辑、故事、重生成、记录、上下文、分支与 MVU，并检查 1440×900、1280×720、390×844 和 720×450 的视口。最后一种是 200% 等效 CSS 视口，不能代替所有浏览器的原生缩放验证。
 

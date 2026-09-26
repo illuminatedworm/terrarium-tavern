@@ -34,7 +34,7 @@ function setOptionalNumber(role: string, field: string, event: Event) {
 function removeProvider(provider: any) {
   if (props.settings.providers.length <= 1) return;
   const fallback = props.settings.providers.find((item: any) => item.id !== provider.id);
-  for (const role of ['foreground', 'background', 'card_editor']) {
+  for (const role of ['foreground', 'background', 'card_editor', 'full_agent']) {
     if (props.settings[role]?.provider_id === provider.id) {
       props.settings[role].provider_id = fallback.id;
     }
@@ -45,11 +45,12 @@ function removeProvider(provider: any) {
   result.value = `已移除 ${provider.name || '提供商'}；原先使用它的模型配置已切换到 ${fallback.name || '剩余提供商'}。`;
 }
 function roleLabel(role: string) {
+  if (role === 'full_agent') return 'Full Agent';
   return role === 'foreground'
-    ? '前台 Writer'
+    ? 'Half Agent · 前台 Writer'
     : role === 'card_editor'
       ? 'Card Editor 编辑 Agent'
-      : '后台 Tracker';
+      : 'Half Agent · 后台 Tracker';
 }
 function roleMode(role: string) {
   return (
@@ -123,8 +124,23 @@ async function probe(role: string) {
   <p v-if="!settings.card_editor" class="muted">
     编辑 Agent 当前沿用后台 Tracker 的模型与全部参数；启用独立配置后可分别调整。
   </p>
+  <label
+    ><input
+      type="checkbox"
+      :checked="!!settings.full_agent"
+      @change="
+        settings.full_agent = ($event.target as HTMLInputElement).checked
+          ? JSON.parse(JSON.stringify(settings.foreground))
+          : null
+      "
+    />
+    为 Full Agent 单独配置模型</label
+  >
+  <p v-if="!settings.full_agent" class="muted">
+    Full Agent 沿用 Writer 的连接与预算配置，使用独立的系统提示词和工具循环。
+  </p>
   <section
-    v-for="role in ['foreground', 'background', 'card_editor'].filter((r) => settings[r])"
+    v-for="role in ['foreground', 'background', 'card_editor', 'full_agent'].filter((r) => settings[r])"
     :key="role"
     class="model-profile"
   >

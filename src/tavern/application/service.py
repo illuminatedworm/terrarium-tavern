@@ -59,6 +59,8 @@ class RoleplayRuntime:
         await self.runtime.close()
 
     def submit(self, sid, request):
+        if self.store.session(sid).get("agent_mode", "half_agent") != "half_agent":
+            raise ValueError("Full Agent 会话须由独立引擎执行")
         if (self.memory_provider_factory if request.scene_refresh else self.provider_factory) is None:
             import os
 

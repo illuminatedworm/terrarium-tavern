@@ -14,6 +14,17 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 ## 核心设计
 
+### 两种独立运行模式
+
+创建故事时可选择 **Half Agent**（原有模式）或 **Full Agent**（新模式）。旧会话默认 Half Agent，剧情分支继承原模式。
+
+| 模式 | 写作与记忆 | 上下文管理 |
+|---|---|---|
+| Half Agent | Writer 写正文，Tracker 整理分类记忆、分析变量 | 运行时规划窗口与周期维护 |
+| Full Agent | 一个 Agent 通过工具检索、维护笔记、更新变量并生成正文 | 当前窗口 + checkpoint + 可搜索原始历史 + 模型主动换窗 |
+
+Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 query 调用同一索引。记忆采用随窗口携带的交接笔记与按需读取的自由笔记，不运行后台分类记忆整理。详见 [Full Agent 架构、工具与消息边界](docs/design/full-agent.md)。
+
 ### 在对话中途注入世界书
 
 不同于 ST 默认的顶部可变世界书条目注入，本应用的上下文设计中，只有常驻条目被注入到顶部且不会变化。
@@ -32,7 +43,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 三路并行召回并启用 reranker 时，即便只使用 Qwen3 0.6B 系列模型，在 RTX 12G 显卡上已能够达到低延迟快响应、高召回准确率之间的良好平衡。
 
-### 周期性触发的积累式记忆
+### Half Agent：周期性触发的积累式记忆
 
 后台按周期整理已提交剧情，默认每五轮触发一次；历史即将退出上下文时，还会检查相关剧情是否已经完成记忆整理。
 
@@ -45,6 +56,8 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 - **前台写作（Writer）**：负责叙事，普通正文生成不调用工具。
 - **后台整理（Tracker）**：负责积累式记忆、按需变量分析，以及经用户授权的设定维护。
 - **角色扮演运行时**：负责检索、上下文组装、分支、权限和事务提交。模型输出与脚本处理成功后，正文和状态才一起生效。
+
+上述 Writer / Tracker / Roleplay Runtime 属于 Half Agent。Full Agent 使用独立的单模型工具循环和轻量执行宿主，共享检索、存储、模型传输和卡片脚本等底层能力。
 
 ## 安装
 
@@ -81,7 +94,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 1. **配置模型**：在设置中添加 API 提供商，为前台写作和后台整理选择模型，并检查接口能力。后台历史补查等功能需要模型支持工具调用。
 2. **导入角色卡**：可以先试用 `samples/雾港来信.json`；`samples/星航状态卡.json` 用于体验 HTML/MVU，**使用前需启用该卡的脚本权限**。
-3. **开始故事**：选择角色卡、玩家身份和开场，输入行动或对白。需要更新变量或修改设定时，按界面提示明确授权。
+3. **开始故事**：选择角色卡、运行模式、玩家身份和开场。Full Agent 需要支持原生工具调用的模型，可单独配置，否则沿用 Writer 的连接与预算。需要更新变量或修改设定时，按界面提示明确授权。
 4. **查看与调整**：通过上下文预览查看注入内容，通过后台记录了解整理过程；可编辑记忆、重新生成回复，或从选定进度创建独立分支。
 
 数据默认位于 `data/`，其中包含游玩剧情、角色资源和模型配置。
@@ -98,7 +111,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
   > 开发者个人认为，此类沉重的提示词工程有妨碍输出质量之可能，且容易降低 AI API 缓存命中率。
   > 同时基于开发者个人趣味，破限功能长期不作考虑和实现。
 
-- **Agent化程度有限** 只有后台 tracker 和角色卡编辑 agent 才算严格意义上的 AI agent。前台 writer 实质是持有零工具的聊天助手。
+- **Half Agent 的 Agent 化程度有限** 该模式中只有后台 tracker 和角色卡编辑 agent 才算严格意义上的 AI agent。前台 writer 实质是持有零工具的聊天助手。Full Agent 是独立实验路线，实际叙事质量需要另行验证。
 
   > 这是有意的，开发者个人观察后认为：当前各家模型后训练过于注重 agentic 和 coding，writer 若进入 agent 思维链路会“变得机械”，不利于角色扮演/创意写作。
 

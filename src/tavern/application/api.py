@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from tavern.application.service import RoleplayRuntime
+from tavern.application.modes import ModeRuntime
 from tavern.character.cards import export_card, normalize
 from tavern.conversation.context import compile_context
 from tavern.core.models import (
@@ -36,7 +36,7 @@ from tavern.storage.store import Conflict, Store, dump
 
 def create_app(data_dir=None):
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
-    service = RoleplayRuntime(store)
+    service = ModeRuntime(store)
     from tavern.character.card_editor import CardEditorService
     editor = CardEditorService(store)
 
@@ -69,6 +69,8 @@ def create_app(data_dir=None):
     app.state.editor = editor
     from tavern.character.card_editor_api import register_editor_routes
     register_editor_routes(app, editor)
+    from tavern.full_agent.api import register_full_agent_routes
+    register_full_agent_routes(app, store)
 
     @app.post("/api/shutdown")
     async def shutdown(payload: dict):
@@ -148,16 +150,16 @@ def create_app(data_dir=None):
                 provider.pop("has_api_key", None)
                 if not provider.get("api_key"):
                     provider["api_key"] = existing.get(provider["id"], {}).get("api_key", "")
-        for role in ("foreground", "background", "card_editor"):
+        for role in ("foreground", "background", "card_editor", "full_agent"):
             if role in payload and payload[role] is not None:
                 payload[role]["capability"] = (old[role] or {}).get("capability", "unknown")
                 payload[role]["capability_key"] = (old[role] or {}).get("capability_key", "")
         new = Settings.model_validate({**old, **payload})
-        for role in ("foreground", "background", "card_editor"):
+        for role in ("foreground", "background", "card_editor", "full_agent"):
             profile = getattr(new, role)
             if profile is None:
                 continue
-            old_profile = old[role] or old["background"]
+            old_profile = old[role] or old["foreground" if role == "full_agent" else "background"]
             provider = next(p for p in new.providers if p.id == profile.provider_id)
             old_provider = next((p for p in old["providers"] if p["id"] == old_profile["provider_id"]), {})
             if (profile.model, profile.provider_id, provider.base_url, provider.api_mode) != (
@@ -244,7 +246,8 @@ def create_app(data_dir=None):
                 raise ValueError("请先下载并预热 Embedding 模型，再准备向量索引")
             record["phase"] = "preparing"
             service.retrieval.cache.clear()
-            await service.retrieval.prepare(document, session["messages"], "", session["snapshot"],
+            engine = service.full.retrieval if session["agent_mode"] == "full_agent" else service.retrieval
+            await engine.prepare(document, session["messages"], "", session["snapshot"],
                                             config, session, "rebuild", index_only=True)
             jobs = [task for jid, task in service.local_models.tasks.items()
                     if service.local_models.jobs[jid]["kind"] == "index" and not task.done()]
@@ -258,7 +261,7 @@ def create_app(data_dir=None):
         return service.local_models.job("rebuild", rebuild)
 
     @app.post("/api/settings/probe")
-    async def probe(role: Literal["foreground", "background", "card_editor"] = "foreground"):
+    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent"] = "foreground"):
         from tavern.scripting.agent import make_provider
 
         saved_config = store.settings()
@@ -285,6 +288,8 @@ def create_app(data_dir=None):
             mode_key = "chat-completions" if config.api_mode == "chat_completions" else "responses"
             config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|{mode_key}"
             effective_role = "background" if role == "card_editor" and saved_config.card_editor is None else role
+            if role == "full_agent" and saved_config.full_agent is None:
+                effective_role = "foreground"
             getattr(saved_config, effective_role).capability = config.capability
             getattr(saved_config, effective_role).capability_key = config.capability_key
             saved_config.capability, saved_config.capability_key = config.capability, config.capability_key
@@ -522,6 +527,8 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/recipe")
     async def recipe(sid: str, payload: dict):
+        if store.session(sid)["agent_mode"] == "full_agent":
+            raise ValueError("Full Agent 使用独立工作窗口，不使用 Half Agent 上下文配方")
         validated = (store.settings().context_recipe.model_copy(deep=True) if payload.get("use_global")
                      else ContextRecipe.model_validate(payload["recipe"]))
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
@@ -532,6 +539,14 @@ def create_app(data_dir=None):
         s = store.session(sid)
         c = store.session_card(sid)
         document = (s["snapshot"].get("content") or {}).get("document", c["document"])
+        if s["agent_mode"] == "full_agent":
+            from tavern.full_agent.context import compile_window, load_trace
+            from tavern.full_agent.tools import tool_definitions
+            result = compile_window(document, s, s["messages"], s["snapshot"], text,
+                store.settings().for_role("full_agent"),
+                tool_definitions(TurnRequest(operation_id="preview", expected_revision=s["revision"]), s),
+                trace=load_trace(store, sid, s["messages"]))
+            return result, s
         result = compile_context(
             document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
             read_only=True,
@@ -563,10 +578,14 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/memory/records")
     async def edit_memory_record(sid: str, edit: RecordEdit):
+        if store.session(sid)["agent_mode"] == "full_agent":
+            raise ValueError("Full Agent 使用独立笔记，不使用 Half Agent 分类记忆")
         return store.edit_memory_record(sid, edit)
 
     @app.get("/api/sessions/{sid}/memory/rebuild-estimate")
     async def memory_rebuild_estimate(sid: str):
+        if store.session(sid)["agent_mode"] == "full_agent":
+            raise ValueError("Full Agent 由模型管理笔记，不使用后台记忆重建")
         from tavern.memories.memory_engine import estimate_batches
         from tavern.memories.memory_records import read_memory
         session = store.session(sid)

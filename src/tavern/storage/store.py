@@ -84,6 +84,14 @@ class Store:
                 db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1")
             if "cache_breakpoint_message" not in session_columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_message TEXT")
+            # Additive schema-1 extension: existing stories remain Half Agent.
+            if "agent_mode" not in {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'half_agent'")
+            db.execute("""CREATE TABLE IF NOT EXISTS full_agent_trace (
+                session TEXT NOT NULL, message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                seq INTEGER NOT NULL, window_id TEXT NOT NULL, payload TEXT NOT NULL,
+                PRIMARY KEY(message_id, seq))""")
+            db.execute("CREATE INDEX IF NOT EXISTS full_trace_session ON full_agent_trace(session)")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
 
@@ -268,6 +276,10 @@ class Store:
             raise ValueError("开场白不存在")
         sid, mid = uid(), uid()
         snapshot = {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}, "scopes": {}, "content": None}
+        if options.agent_mode == "full_agent":
+            from tavern.full_agent.state import new_state
+            snapshot.pop("memory_document")
+            snapshot["full_agent"] = new_state()
         from tavern.character.card_workflow import validate_document, workflow
         validate_document(card["document"])
         metadata = workflow(card["document"])
@@ -301,6 +313,9 @@ class Store:
                 "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
                 (mid, sid, None, "assistant", raw, raw, raw, dump(snapshot), time.time()),
             )
+            db.execute("UPDATE sessions SET agent_mode=?,lore_injection_mode=? WHERE id=?",
+                       (options.agent_mode, "conversation" if options.agent_mode == "full_agent"
+                        else self.settings().lore_injection_mode, sid))
         return self.session(sid)
 
     def fork_session(self, sid, head, expected_revision):
@@ -348,6 +363,8 @@ class Store:
             for index, message in enumerate(prefix):
                 cloned = copy.deepcopy(message)
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
+                from tavern.full_agent.state import remap_sources
+                remap_sources(cloned["snapshot"], ids)
                 for memory in cloned["snapshot"].get("memory_document", {}).get("records", []):
                     for source_ref in memory.get("sources", []) + memory.get("deleted_sources", []):
                         source_ref["message_id"] = ids.get(source_ref["message_id"], source_ref["message_id"])
@@ -380,6 +397,11 @@ class Store:
             )
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
+            db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
+            for original, cloned_id in ids.items():
+                db.execute("""INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload)
+                    SELECT ?,?,seq,window_id,payload FROM full_agent_trace WHERE message_id=?""",
+                           (new_sid, cloned_id, original))
         return self.session(new_sid)
 
     def session(self, sid):
@@ -596,6 +618,8 @@ class Store:
                 snapshot = json.loads(row["snapshot"])
                 old_history = lineage(row["id"], original_messages)
                 history = lineage(row["id"], messages)
+                from tavern.full_agent.state import mark_edited
+                mark_edited(snapshot, mid, history)
                 if snapshot.get("memory_document"):
                     from tavern.memories.memory_records import with_source_status
                     # Preserve the user's archive; this is a warning, not an
@@ -867,6 +891,9 @@ class Store:
                 )
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?",
                            (m.get("retrieval_query", ""), m["id"]))
+            for seq, item in enumerate(pending.get("full_agent_trace", []), 1):
+                db.execute("INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
+                           (turn["session"], last, seq, item["window_id"], dump(item["message"])))
             db.execute(
                 "INSERT INTO changes VALUES (?,?,?,?,?,?)",
                 (

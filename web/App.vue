@@ -6,6 +6,7 @@ import { api } from './lib/api';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
+import FullAgentNotes from './components/story/FullAgentNotes.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
@@ -35,6 +36,10 @@ const editingSessionTitleId = ref('');
 const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
 const sessionTitleInput = ref<HTMLInputElement>();
+const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
+function applyFullSession(updated: any) {
+  if (session.value?.id === updated.id) session.value = updated;
+}
 const historyView = useStoryHistory<any>(() => session.value);
 const visibleMessages = historyView.visible;
 const hiddenMessages = historyView.hidden;
@@ -335,6 +340,11 @@ const contextLabels: Record<string, string> = {
   persona: '玩家',
   examples: '示例',
   memory: '记忆',
+  checkpoint: '交接笔记',
+  agent_tools: '当前窗口工具记录',
+  context_status: '窗口预算提示',
+  context_warning: '原文编辑提醒',
+  tool_definitions: '工具定义',
   history: '历史',
   author_note: '作者注释',
   state: '状态',
@@ -1571,6 +1581,7 @@ useTimedError(error);
       <section v-else class="story">
         <div class="story-heading">
           <h1>{{ name }}</h1>
+          <span class="muted">{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
           <div class="story-tools">
             <button @click="panel = 'state'">状态与记忆</button
             ><button
@@ -1597,7 +1608,8 @@ useTimedError(error);
             :aria-current="storyView === 'work' ? 'page' : undefined"
             @click="storyView = 'work'"
           >
-            后台工作记录 <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span>
+            {{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}
+            <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span>
           </button>
         </nav>
         <WorkRecords
@@ -2133,44 +2145,53 @@ useTimedError(error);
               编辑对话世界书
             </button>
           </div>
-          <p class="inspector-note">
-            这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
-            保存。记忆随剧情进度保存，继承进度时会带入新对话。
-          </p>
-          <p v-if="sceneUpdating" class="scene-update-status" role="status">
-            {{ '正在根据当前对话重新生成记忆…' }}
-          </p>
-          <div class="scene-section-heading">
-            <h3>记忆</h3>
-            <button
+          <FullAgentNotes
+            v-if="isFullAgent"
+            :key="session.id"
+            :session="session"
+            :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+            @saved="applyFullSession"
+          />
+          <template v-else>
+            <p class="inspector-note">
+              这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
+              保存。记忆随剧情进度保存，继承进度时会带入新对话。
+            </p>
+            <p v-if="sceneUpdating" class="scene-update-status" role="status">
+              {{ '正在根据当前对话重新生成记忆…' }}
+            </p>
+            <div class="scene-section-heading">
+              <h3>记忆</h3>
+              <button
+                :disabled="
+                  busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+                "
+                :aria-busy="sceneUpdating === 'memory'"
+                @click="refreshScene('memory')"
+                aria-label="重新生成记忆"
+              >
+                <span v-if="sceneUpdating === 'memory'" class="scene-update-spinner" aria-hidden="true"></span
+                >{{ sceneUpdating === 'memory' ? '更新中…' : '↻ 重新生成' }}
+              </button>
+            </div>
+            <SceneNotes
+              :key="`${session.id}:memory`"
+              kind="memory"
+              :snapshot="session.snapshot"
+              :memory-view="session.memory_view"
+              :progress="memoryProgress"
+              @change="saveMemoryRecord"
+              @cancel="stop"
+              :messages="session.messages"
+              :persona="session.persona"
+              :character="archiveCharacter"
               :disabled="
                 busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
               "
-              :aria-busy="sceneUpdating === 'memory'"
-              @click="refreshScene('memory')"
-              aria-label="重新生成记忆"
-            >
-              <span v-if="sceneUpdating === 'memory'" class="scene-update-spinner" aria-hidden="true"></span
-              >{{ sceneUpdating === 'memory' ? '更新中…' : '↻ 重新生成' }}
-            </button>
-          </div>
-          <SceneNotes
-            :key="`${session.id}:memory`"
-            kind="memory"
-            :snapshot="session.snapshot"
-            :memory-view="session.memory_view"
-            :progress="memoryProgress"
-            @change="saveMemoryRecord"
-            @cancel="stop"
-            :messages="session.messages"
-            :persona="session.persona"
-            :character="archiveCharacter"
-            :disabled="
-              busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-            "
-            :saving="sceneSaving === 'memory'"
-            @locate="locateSource"
-          />
+              :saving="sceneSaving === 'memory'"
+              @locate="locateSource"
+            />
+          </template>
         </section>
         <section v-show="inspectorTab === 'options'" class="inspector-options" aria-label="会话设置">
           <div class="inspector-options-heading">
@@ -2200,19 +2221,24 @@ useTimedError(error);
               session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
             }}（随剧情进度继承）。
           </p>
-          <h3>上下文结构编排</h3>
-          <p class="inspector-note">仅影响当前对话，随剧情进度继承。</p>
-          <button
-            :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-            @click="panel = 'recipe'"
-          >
-            编辑上下文配方</button
-          ><button
-            :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-            @click="resetRecipe"
-          >
-            恢复当前全局编排
-          </button>
+          <p v-if="isFullAgent" class="inspector-note">
+            Full Agent 使用独立的工作窗口与交接笔记。模式在创建会话时确定。
+          </p>
+          <template v-else>
+            <h3>上下文结构编排</h3>
+            <p class="inspector-note">仅影响当前对话，随剧情进度继承。</p>
+            <button
+              :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
+              @click="panel = 'recipe'"
+            >
+              编辑上下文配方</button
+            ><button
+              :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
+              @click="resetRecipe"
+            >
+              恢复当前全局编排
+            </button>
+          </template>
         </section>
       </div>
     </aside>
@@ -2354,7 +2380,13 @@ useTimedError(error);
             <h3>当前状态</h3>
             <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
             <h3>记忆</h3>
+            <FullAgentNotes
+              v-if="isFullAgent"
+              :session="session"
+              :disabled="busy || activeTurn?.status === 'awaiting_review'"
+              @saved="applyFullSession" />
             <SceneNotes
+              v-else
               kind="memory"
               :snapshot="session.snapshot"
               :memory-view="session.memory_view"

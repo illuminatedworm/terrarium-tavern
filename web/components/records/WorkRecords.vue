@@ -20,6 +20,7 @@ const expanded = ref(false);
 let generation = 0,
   timer: ReturnType<typeof setTimeout> | undefined;
 const purposes: Record<string, string> = {
+  full_agent: 'Full Agent',
   memory: '记忆整理',
   memory_review: '疑难复核',
   variables: 'MVU 变量',

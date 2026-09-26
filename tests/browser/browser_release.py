@@ -76,7 +76,7 @@ async def main():
             dialog = page.get_by_role("dialog", name="设置")
             initial = (await dialog.bounding_box())["height"]
             for category in ["模型与偏好", "混合召回与本地模型", "网络与代理", "世界书注入",
-                             "历史窗口与后台维护", "系统提示词", "上下文结构编排", "存储与维护"]:
+                             "Half Agent · 历史与维护", "Full Agent", "系统提示词", "上下文结构编排", "存储与维护"]:
                 await dialog.locator('.settings-pages').get_by_role("button", name=category, exact=True).click()
                 await assert_viewport(page, label + category)
                 assert abs((await dialog.bounding_box())["height"] - initial) < 1

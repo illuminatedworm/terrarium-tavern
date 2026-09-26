@@ -11,6 +11,7 @@ from tavern.core.prompts import (
     DEFAULT_REGENERATE_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
 )
+from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModels, ModelProfile, Network, Provider, RetrievalSettings
 
 Policy = Literal["directed", "evolving", "preview"]
@@ -57,12 +58,16 @@ class Settings(BaseModel):
     foreground: ModelProfile = Field(default_factory=ModelProfile)
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor: ModelProfile | None = None
+    full_agent: ModelProfile | None = None
+    full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
+    full_agent_system_prompt: str = Field(default=FULL_AGENT_PROMPT, max_length=200000)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
 
     def for_role(self, role="foreground"):
-        profile = self.background if role == "card_editor" and self.card_editor is None else getattr(self, role)
+        profile = (self.background if role == "card_editor" and self.card_editor is None else
+                   self.foreground if role == "full_agent" and self.full_agent is None else getattr(self, role))
         if profile is None:
             return self.model_copy(deep=True)
         provider = next(p for p in self.providers if p.id == profile.provider_id)
@@ -135,7 +140,7 @@ class Settings(BaseModel):
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
-        for profile in (self.foreground, self.background, self.card_editor):
+        for profile in (self.foreground, self.background, self.card_editor, self.full_agent):
             if profile and profile.provider_id not in {p.id for p in self.providers}:
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
@@ -151,6 +156,7 @@ class Settings(BaseModel):
 
 class SessionCreate(BaseModel):
     card_id: str
+    agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
     greeting: int = 0
     persona: str = "旅人"
     policy: Policy | None = None

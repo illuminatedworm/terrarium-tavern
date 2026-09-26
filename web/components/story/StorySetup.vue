@@ -13,6 +13,7 @@ const personas = ref<any[]>([]),
 const greeting = ref(0),
   busy = ref(false),
   error = ref('');
+const agentMode = ref('half_agent');
 const data = computed(() => props.card.document.data || props.card.document);
 const greetings = computed(() => [data.value.first_mes || '', ...(data.value.alternate_greetings || [])]);
 const opening = computed(() =>
@@ -39,6 +40,7 @@ async function start() {
       greeting: greeting.value,
       persona: personaName.value,
       persona_id: personaId.value || null,
+      agent_mode: agentMode.value,
     });
     emit('started', session);
   } catch (e: any) {
@@ -65,6 +67,19 @@ useTimedError(error);
     <AppNotification :message="error" />
     <div class="story-setup-grid">
       <div class="story-setup-options">
+        <label
+          >运行模式<select v-model="agentMode" aria-label="运行模式">
+            <option value="half_agent">Half Agent · Writer 与 Tracker</option>
+            <option value="full_agent">Full Agent · 单 Agent 与工具</option>
+          </select></label
+        >
+        <p class="muted">
+          {{
+            agentMode === 'full_agent'
+              ? '由 Agent 自行检索、维护笔记和切换工作窗口。需要支持原生工具调用的模型。'
+              : 'Writer 负责正文，Tracker 负责后台整理，运行时管理上下文。'
+          }}
+        </p>
         <label
           >玩家角色<select v-model="personaId">
             <option value="">临时身份</option>

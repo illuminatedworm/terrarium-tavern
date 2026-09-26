@@ -8,6 +8,7 @@ import RetrievalSettings from './RetrievalSettings.vue';
 import PolicySelect from './PolicySelect.vue';
 import RecipeEditor from './RecipeEditor.vue';
 import StorageSettings from './StorageSettings.vue';
+import FullAgentSettings from './FullAgentSettings.vue';
 const props = defineProps<{
   settings: any;
   saving?: boolean;
@@ -69,6 +70,13 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
   <div class="settings-layout">
     <nav ref="pagesNav" class="settings-pages" aria-label="设置页面">
       <button
+        :class="{ active: page === 'full_agent' }"
+        :aria-current="page === 'full_agent' ? 'page' : undefined"
+        @click="page = 'full_agent'"
+      >
+        Full Agent
+      </button>
+      <button
         :class="{ active: page === 'model' }"
         :aria-current="page === 'model' ? 'page' : undefined"
         @click="page = 'model'"
@@ -108,7 +116,7 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
         :aria-current="page === 'maintenance' ? 'page' : undefined"
         @click="page = 'maintenance'"
       >
-        历史窗口与后台维护
+        Half Agent · 历史与维护
       </button>
       <button
         :class="{ active: page === 'prompt' }"
@@ -132,6 +140,7 @@ const inputBudget = computed(() => props.settings.context_tokens - props.setting
         <PolicySelect v-model="settings.policy" global />
       </section>
       <section v-else-if="page === 'retrieval'"><RetrievalSettings :settings="settings" /></section>
+      <FullAgentSettings v-else-if="page === 'full_agent'" :settings="settings" />
       <section v-else-if="page === 'storage'"><StorageSettings :settings="settings" /></section>
       <section v-else-if="page === 'network'">
         <h3>网络与代理</h3>

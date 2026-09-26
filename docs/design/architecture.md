@@ -1,5 +1,7 @@
 # 架构与一致性
 
+应用有 Half Agent 与 Full Agent 两种独立游玩模式。本文的 Writer / Tracker / Roleplay Runtime 对应 **Half Agent**。Full Agent 通过 `application/modes.py` 路由到独立引擎，只共享底层检索、存储与卡片 IO，不调用前后台编排；详见 [Full Agent 架构](full-agent.md)。
+
 Vue → FastAPI → Roleplay Runtime → Writer / Tracker / 隔离 Chromium → SQLite。
 
 ## 正式角色与职责
