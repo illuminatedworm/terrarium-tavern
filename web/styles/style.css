@@ -1277,9 +1277,6 @@ summary {
 .inspector-content {
   min-width: 0;
 }
-.right-sidebar.scene-active {
-  overflow: hidden;
-}
 .right-sidebar.scene-active .inspector-content,
 .right-sidebar.scene-active .scene-memory,
 .right-sidebar.scene-active .scene-notes,
