@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupContext, summarizeBudgetSources } from '../../web/lib/contextPreview';
+import { contextMessageContent, groupContext, summarizeBudgetSources } from '../../web/lib/contextPreview';
 
 describe('context preview budget summary', () => {
   it('combines sources with the same visible category before rounding percentages', () => {
@@ -105,5 +105,44 @@ describe('context preview categories', () => {
     expect(groups[rolling + 1].source).toBe('history');
     expect(groups.filter((group) => group.source === 'history')).toHaveLength(2);
     expect(new Set(groups.map((group) => group.id)).size).toBe(groups.length);
+  });
+});
+
+describe('native tool messages in context preview', () => {
+  it('interleaves calls and results with dialogue while preserving lore anchors', () => {
+    const items = [
+      { source: 'history', role: 'user', content: '继续' },
+      { source: 'agent_tools', role: 'assistant', tool_calls: [{ id: 'c1' }] },
+      { source: 'agent_tools', role: 'tool', tool_call_id: 'c1', content: '{}' },
+      { source: 'history', role: 'assistant', content: '正文' },
+      { source: 'lore:next', anchor_id: 'u2', lore_ids: ['next'] },
+      { source: 'history', role: 'user', content: '然后呢' },
+      { source: 'agent_tools', role: 'assistant', tool_calls: [{ id: 'c2' }] },
+      { source: 'agent_tools', role: 'tool', tool_call_id: 'c2', content: '{}' },
+      { source: 'history', role: 'assistant', content: '续文' },
+    ];
+    const groups = groupContext(items, (source) => source);
+    expect(groups.map((group) => group.source)).toEqual(['history', 'lore_conversation', 'history']);
+    expect(groups.flatMap((group) => group.items)).toEqual(items);
+    expect(groups[0].items.map((item) => item.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
+  });
+  it('renders calls when assistant content is empty and retains intermediate text', () => {
+    const call = { id: 'call1', function: { name: 'read_note', arguments: '{"ref":"约定/钟楼"}' } };
+    const rendered = contextMessageContent({ content: '', tool_calls: [call] });
+    expect(rendered).toContain('read_note');
+    expect(rendered).toContain('约定/钟楼');
+    expect(rendered).toContain('call1');
+    expect(contextMessageContent({ content: '核对约定', tool_calls: [call] })).toContain('核对约定');
+    expect(
+      contextMessageContent({ role: 'tool', tool_call_id: 'call1', content: '{"text":"明天"}' }),
+    ).toContain('工具返回 · call1');
+  });
+  it('preserves malformed arguments without exposing reasoning fields', () => {
+    const rendered = contextMessageContent({
+      tool_calls: [{ function: { name: 'read_note', arguments: '{broken' } }],
+      reasoning_content: 'private reasoning',
+    });
+    expect(rendered).toContain('{broken');
+    expect(rendered).not.toContain('private reasoning');
   });
 });

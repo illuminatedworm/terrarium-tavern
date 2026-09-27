@@ -7,6 +7,7 @@ import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue'
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
 import FullAgentNotes from './components/story/FullAgentNotes.vue';
+import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
@@ -27,7 +28,12 @@ import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
 import { observeTurn } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
-import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
+import {
+  contextKind,
+  contextMessageContent,
+  groupContext,
+  summarizeBudgetSources,
+} from './lib/contextPreview';
 import { HISTORY_BATCH, useStoryHistory } from './lib/storyHistory';
 
 const orphanDrafts = ref<any[]>([]);
@@ -346,7 +352,8 @@ const contextLabels: Record<string, string> = {
   memory: '记忆',
   checkpoint: '交接笔记',
   agent_tools: '当前窗口工具记录',
-  context_status: '窗口预算提示',
+  context_status: '窗口与记忆状态',
+  context_budget: '窗口预算提示',
   context_warning: '原文编辑提醒',
   tool_definitions: '工具定义',
   history: '历史',
@@ -411,6 +418,16 @@ function contextItemTitle(item: any) {
     return entry?.comment || entry?.name || `lore · ${source.slice(5)}`;
   }
   if (source === 'persona') return `玩家 · ${session.value?.persona || ''}`;
+  if (source === 'agent_tools') {
+    if (item.role === 'tool') {
+      const call = (preview.value?.trace || [])
+        .flatMap((message: any) => message.tool_calls || [])
+        .find((call: any) => call.id === item.tool_call_id);
+      return `工具返回 · ${call?.function?.name || item.tool_call_id || '工具'}`;
+    }
+    const names = (item.tool_calls || []).map((call: any) => call.function?.name || '工具').join('、');
+    return names ? `工具调用 · ${names}` : `${name.value} · 中间消息`;
+  }
   if (source === 'history') return `${item.role === 'user' ? session.value?.persona : name.value} · 历史消息`;
   return contextLabel(source);
 }
@@ -1964,6 +1981,14 @@ useTimedError(error);
       <div v-if="!layout.rightCollapsed" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
           <button
+            v-if="isFullAgent"
+            :class="{ active: inspectorTab === 'tools' }"
+            :aria-current="inspectorTab === 'tools' ? 'page' : undefined"
+            @click="inspectorTab = 'tools'"
+          >
+            工具
+          </button>
+          <button
             :class="{ active: inspectorTab === 'mvu' }"
             :aria-current="inspectorTab === 'mvu' ? 'page' : undefined"
             @click="inspectorTab = 'mvu'"
@@ -1985,6 +2010,15 @@ useTimedError(error);
             会话设置
           </button>
         </nav>
+        <FullAgentTools
+          v-if="isFullAgent && inspectorTab === 'tools'"
+          :key="session.id"
+          :session="session"
+          :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+          :update-variables="updateVariables"
+          :allow-content-edit="allowEdit"
+          @saved="applyFullSession"
+        />
         <section v-show="inspectorTab === 'mvu'" aria-label="MVU 变量">
           <h2>MVU 变量</h2>
           <StoryMessage
@@ -2363,7 +2397,11 @@ useTimedError(error);
                   >
                 </summary>
                 <div class="context-items">
-                  <details v-for="item in group.items" :key="item.position" class="context-entry">
+                  <details
+                    v-for="(item, index) in group.items"
+                    :key="item.position ?? index"
+                    class="context-entry"
+                  >
                     <summary>
                       <strong class="context-entry-title" :title="contextItemTitle(item)">{{
                         contextItemTitle(item)
@@ -2372,7 +2410,7 @@ useTimedError(error);
                       ><span class="context-entry-position">位置 {{ item.position }}</span
                       ><small>预计 {{ Number(item.estimated_tokens || 0).toLocaleString() }} tokens</small>
                     </summary>
-                    <pre>{{ item.content }}</pre>
+                    <pre>{{ contextMessageContent(item) }}</pre>
                   </details>
                 </div>
               </details>

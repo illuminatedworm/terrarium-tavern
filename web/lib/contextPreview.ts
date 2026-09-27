@@ -1,6 +1,25 @@
 export function contextKind(source: string): string {
   const value = source || 'other';
+  if (value === 'agent_tools') return 'history';
   return /^lore(?:_|:|$)/.test(value) ? 'lore' : value.replace(/_.*/, '') || 'other';
+}
+
+export function contextMessageContent(item: any): string {
+  const parts = [];
+  if (item.content)
+    parts.push(typeof item.content === 'string' ? item.content : JSON.stringify(item.content, null, 2));
+  for (const call of item.tool_calls || []) {
+    const fn = call.function || {};
+    let args = fn.arguments ?? '';
+    try {
+      args = JSON.stringify(typeof args === 'string' ? JSON.parse(args) : args, null, 2);
+    } catch {
+      // Preserve malformed arguments exactly so the preview can explain tool errors.
+    }
+    parts.push(`工具调用：${fn.name || call.name || '未知工具'}${call.id ? ` · ${call.id}` : ''}\n${args}`);
+  }
+  if (item.role === 'tool' && item.tool_call_id) parts.unshift(`工具返回 · ${item.tool_call_id}`);
+  return parts.join('\n\n') || '（无文本内容）';
 }
 
 export function summarizeBudgetSources(
@@ -44,7 +63,9 @@ export function groupContext(items: any[], labelFor: (source: string) => string)
             : item.insertion_depth != null
               ? 'lore_depth'
               : 'lore'
-        : source;
+        : source === 'agent_tools'
+          ? 'history'
+          : source;
     let group = groups.at(-1);
     // Group only adjacent blocks. Combining a category across the request would
     // move rolling lore above examples and collapse separated history segments.
