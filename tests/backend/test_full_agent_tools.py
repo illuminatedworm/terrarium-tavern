@@ -1,0 +1,94 @@
+import json
+import re
+
+from httpx import ASGITransport, AsyncClient
+
+from tavern.application.api import create_app
+from tavern.core.models import SessionCreate, TurnRequest
+from tavern.full_agent.agent import FullAgent
+from tavern.full_agent.tools import SPECS
+from tavern.storage.store import Store
+from tests.backend import test_full_agent
+from tests.backend.test_full_agent import Model, runtime, turn
+
+story = test_full_agent.story
+
+
+async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
+    store, session = story
+    app = create_app(store.root)
+    service = runtime(store)
+    url = f"/api/sessions/{session['id']}/full-agent/tools"
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            catalog = (await client.get(url)).json()["tools"]
+            assert {t["name"] for t in catalog} == set(SPECS)
+            for tool in catalog:
+                assert tool["enabled"]
+                assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
+                assert all(p.get("description") for p in tool["parameters"]["properties"].values())
+            patch = next(t for t in catalog if t["name"] == "patch_state")
+            assert not patch["available"]
+            authorized = (await client.get(url, params={"update_variables": "true"})).json()["tools"]
+            assert next(t for t in authorized if t["name"] == "patch_state")["available"]
+            response = await client.put(url, json={"expected_revision": 0, "disabled_tools": ["write_checkpoint"]})
+            assert response.status_code == 200
+            session = response.json()
+            assert Store(store.root).session(session["id"])["disabled_tools"] == ["write_checkpoint"]
+            assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": []})).status_code == 409
+            assert (await client.put(url, json={"expected_revision": 1, "disabled_tools": ["unknown"]})).status_code == 400
+            preview = (await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})).json()
+            assert "write_checkpoint" not in {t["function"]["name"] for t in preview["tools"]}
+            model = Model(("write_checkpoint", {"content": "禁止写入"}), "正文")
+            result, session = await turn(service, session, model)
+            assert result["status"] == "committed", result["error"]
+            assert not session["snapshot"]["full_agent"]["checkpoint"]["text"]
+            assert "write_checkpoint" not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
+            assert "error" in json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
+            fork = store.fork_session(session["id"], session["head"], session["revision"])
+            assert fork["disabled_tools"] == ["write_checkpoint"]
+            result, session = await turn(service, session, Model("重生成"), mode="regenerate")
+            assert result["status"] == "committed"
+            assert session["disabled_tools"] == ["write_checkpoint"]
+            response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": list(SPECS)})
+            session = response.json()
+            no_tools = Model("不使用工具的正文")
+            result, session = await turn(service, session, no_tools)
+            assert result["status"] == "committed", result["error"]
+            assert no_tools.requests[0]["extra_body"] == {}
+            response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
+            session = response.json()
+            assert session["disabled_tools"] == []
+            tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="pending", expected_revision=session["revision"]))
+            assert (await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})).status_code == 409
+            store.set_turn(tid, status="cancelled")
+            half = store.new_session(SessionCreate(card_id=session["card"]))
+            assert (await client.get(f"/api/sessions/{half['id']}/full-agent/tools")).status_code == 400
+    finally:
+        await service.close()
+        await app.state.service.close()
+
+
+async def test_disabled_rollover_fails_before_requesting_unavailable_tool(story, monkeypatch):
+    store, session = story
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (json.dumps(["new_context"]), session["id"]))
+    session = store.session(session["id"])
+    original = FullAgent.compile
+
+    def full_window(self):
+        result = original(self)
+        self.must_rollover = True
+        return result
+
+    monkeypatch.setattr(FullAgent, "compile", full_window)
+    service = runtime(store)
+    model = Model("应当不请求模型")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "error"
+        assert "new_context 已关闭" in result["error"]
+        assert model.requests == []
+        assert current["snapshot"] == session["snapshot"]
+    finally:
+        await service.close()

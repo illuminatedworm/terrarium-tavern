@@ -7,7 +7,7 @@ import httpx
 from tavern.core.tokens import count_text, counting_info, request_tokens
 
 
-async def make_provider(settings, capture=None, *, request_timeout=120):
+async def make_provider(settings, capture=None, *, request_timeout=120, enforce_context_budget=True):
     from kohakuterrarium.llm.openai import OpenAIProvider
     from openai import AsyncOpenAI
 
@@ -89,7 +89,7 @@ async def make_provider(settings, capture=None, *, request_timeout=120):
             if settings.api_mode == "responses":
                 input_tokens += sum(count_text(json.dumps(item, ensure_ascii=False), settings)
                                     for item in wire["messages"] if "role" not in item)
-            if (
+            if enforce_context_budget and (
                 input_tokens + settings.reply_tokens + 2048
                 > settings.context_tokens
             ):

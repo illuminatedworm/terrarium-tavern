@@ -331,7 +331,7 @@ def test_notes_and_runtime_metadata_are_not_implicitly_in_context(story):
         assert hidden not in wire
 
 
-async def test_real_index_auto_and_explicit_query_share_injection_lifecycle(tmp_path):
+async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp_path):
     store = Store(tmp_path)
     document = {"name": "向导", "first_mes": "钟楼的门开了。", "description": "你是向导。",
                 "character_book": {"entries": [
@@ -345,17 +345,30 @@ async def test_real_index_auto_and_explicit_query_share_injection_lifecycle(tmp_
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
     try:
-        model = Model(("search_lore", {"query": "旧港"}), ("search_lore", {"query": "钟楼"}), "向导指向旧港。")
+        model = Model(("search_lore", {"query": "旧港"}), ("search_lore", {"query": "钟楼"}),
+                      ("search_lore", {"query": "旧港"}),
+                      ("read_lore", {"ref": "L2", "length": 3}),
+                      ("read_lore", {"ref": "L2", "offset": 3}), "向导指向旧港。")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
-        assert sum(m.get("content") == "钟楼每晚九点关门。" for m in requests[0]) == 1
-        assert sum(m.get("content") == "旧港的船只明晨出发。" for m in requests[1]) == 1
-        assert sum(m.get("content") == "钟楼每晚九点关门。" for m in requests[2]) == 1
+        assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0]) == 1
+        assert not any("旧港的船只明晨出发。" in m.get("content", "")
+                       for messages in requests for m in messages if m["role"] == "system")
+        tool_results = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
+        assert tool_results[0]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+        assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
+        assert tool_results[3]["text"] == "<lorebook>\n旧港的\n</lorebook>"
+        assert tool_results[3]["next_offset"] == 3
+        assert tool_results[4]["text"] == "<lorebook>\n船只明晨出发。\n</lorebook>"
+        assert tool_results[4]["next_offset"] is None
+        assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
         records = current["snapshot"]["lore_injections"]
-        assert len(records) == 2 and {r["anchor_id"] for r in records} == {session["head"]}
+        assert len(records) == 1 and records[0]["title"] == "钟楼"
+        assert records[0]["anchor_id"] == session["head"]
         retrievals = [e["payload"] for e in store.events(result["id"]) if e["kind"] == "retrieval"]
-        assert [r["source"] for r in retrievals] == ["auto", "agent", "agent"]
+        assert [r["source"] for r in retrievals] == ["auto", "agent", "agent", "agent"]
+        assert all(not r["injected"] for r in retrievals[1:])
         assert retrievals[1]["query"] == "旧港"
     finally:
         await service.close()
@@ -432,6 +445,118 @@ async def test_empty_story_can_continue_without_half_agent_state(story):
         await service.close()
 
 
+@pytest.mark.parametrize("channels", [["keyword"], ["bm25"], ["embedding"], ["keyword", "bm25", "embedding"]])
+@pytest.mark.parametrize("rerank", [False, True])
+def test_lore_tool_description_matches_enabled_retrieval(story, channels, rerank):
+    from tavern.full_agent.tools import tool_definitions
+
+    store, session = story
+    settings = store.settings()
+    settings.retrieval.channels = channels
+    settings.local_models.reranker_enabled = rerank
+    definitions = tool_definitions(TurnRequest(operation_id="description", expected_revision=0),
+                                   session, settings.full_agent_config, settings=settings)
+    description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "search_lore")
+    for channel, marker in (("keyword", "regular expressions"), ("bm25", "BM25"), ("embedding", "semantic similarity")):
+        assert (marker in description) == (channel in channels)
+    assert ("Finally, the reranker" in description) == rerank
+    assert ("RRF" in description) == (len(channels) > 1)
+
+
+async def test_empty_note_and_history_search_results_are_minimal(story):
+    store, session = story
+    service = runtime(store)
+    model = Model(("search_notes", {"query": "不存在的笔记"}),
+                  ("search_history", {"query": "绝不匹配的历史文本"}), "继续正文")
+    try:
+        result, _ = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        results = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert results == [{"matches": []}, {"matches": []}]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("status", ["active", "archived"])
+async def test_note_update_requires_complete_current_window_and_revision_read(story, status):
+    from tavern.full_agent.agent import FullAgent
+    from tavern.full_agent.state import rollover
+
+    store, session = story
+    req = TurnRequest(text="继续", operation_id="note-read", expected_revision=0)
+    tid, _ = store.create_turn(session["id"], req)
+    owner = FullAgent(store, tid, store.session_card(session["id"])["document"], session,
+        session["messages"], copy.deepcopy(session["snapshot"]), req, None,
+        store.settings().for_role("full_agent"), {"id": "input", "role": "user", "raw": "继续"}, None)
+    old = {"key": "线索", "content": "保留旧线索和未决事项", "kind": "hypothesis",
+           "status": status, "revision": 1, "sources": []}
+    owner.state["notes"]["线索"] = copy.deepcopy(old)
+
+    async def call(name, **args):
+        return await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
+
+    async def denied():
+        with pytest.raises(ValueError, match="完整读取当前版本"):
+            await call("write_note", key="线索", content="覆盖", kind="hypothesis")
+
+    await call("search_notes", query="*")
+    await denied()
+    await call("read_note", ref="线索", offset=4)
+    await denied()  # A last page is not a full read.
+    await call("read_note", ref="线索", length=2)
+    await call("read_note", ref="线索", length=2)
+    await denied()  # Repeated pages cannot fill a gap.
+    assert owner.state["notes"]["线索"] == old
+    await call("read_note", ref="线索", offset=2, length=2)
+    await call("write_note", key="线索", content=old["content"] + "，新增猜想", kind="hypothesis")
+    assert owner.state["notes"]["线索"]["revision"] == 2
+    assert owner.state["notes"]["线索"]["status"] == "active"
+    await denied()  # Reading revision 1 does not authorize replacing revision 2.
+    await call("read_note", ref="线索")
+    rollover(owner.state, owner.history, "保留交接", 0)
+    await denied()  # The old tool result left the context window.
+    await call("read_note", ref="线索")
+    await call("write_note", key="线索", content=old["content"] + "，修正猜想", kind="hypothesis")
+
+
+async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(story):
+    store, session = story
+    service = runtime(store)
+    try:
+        result, base = await turn(service, session, Model(
+            ("write_note", {"key": "线索", "content": "旧线索", "kind": "hypothesis"}),
+            ("write_note", {"key": "待办", "content": "旧待办", "kind": "plan"}),
+            ("write_checkpoint", {"content": "旧交接"}), "前一回合"))
+        assert result["status"] == "committed", result["error"]
+        baseline = copy.deepcopy(base["snapshot"]["full_agent"])
+        current = base
+        versions = []
+        for index in range(3):
+            model = Model(
+                ("read_note", {"ref": "线索"}),
+                ("write_note", {"key": "线索", "content": f"旧线索，加候选{index}", "kind": "hypothesis"}),
+                ("archive_note", {"key": "待办"}),
+                ("write_checkpoint", {"content": f"旧交接，加候选{index}"}), f"正文候选{index}")
+            result, current = await turn(service, current, model, mode="send" if index == 0 else "regenerate")
+            assert result["status"] == "committed", result["error"]
+            versions.append(current)
+            state = current["snapshot"]["full_agent"]
+            assert state["notes"]["线索"]["revision"] == 2
+            assert state["notes"]["待办"]["revision"] == 2
+            assert state["checkpoint"]["revision"] == 2
+            assert current["messages"][-2]["snapshot"]["full_agent"] == baseline
+            read_result = json.loads(next(m["content"] for m in reversed(model.requests[1]["messages"])
+                                          if m["role"] == "tool"))
+            assert read_result["text"] == "旧线索"
+            assert any("旧交接" in m.get("content", "") for m in model.requests[0]["messages"])
+            assert f"候选{index - 1}" not in json.dumps(model.requests[0]["messages"], ensure_ascii=False)
+        for version in versions:
+            current = store.update_session(current["id"], current["revision"], head=version["head"])
+            assert current["snapshot"]["full_agent"] == version["snapshot"]["full_agent"]
+    finally:
+        await service.close()
+
+
 def test_tool_references_stay_stable_when_documents_are_reordered(story):
     from tavern.full_agent.agent import FullAgent
     store, session = story
@@ -453,3 +578,225 @@ def test_tool_references_stay_stable_when_documents_are_reordered(story):
     second = agent(changed)
     assert second.model_view.restore(handle) == "a" * 32
     assert second.lore_refs()["L1"] == "a" * 32
+
+
+async def test_prompt_tags_and_tool_contracts_reach_model(story):
+    from tavern.full_agent.config import FULL_AGENT_PROMPT
+    from tavern.full_agent.tools import SPECS
+
+    store, session = story
+    settings = store.settings()
+    settings.full_agent_config.checkpoint_tokens = 1536
+    settings.full_agent_config.note_tokens = 3072
+    store.save_settings(settings)
+    service = runtime(store)
+    model = Model(("write_checkpoint", {"content": "约定仍待兑现"}), "她点头。")
+    try:
+        result, _ = await turn(service, session, model, update_variables=False, allow_content_edit=False)
+        assert result["status"] == "committed", result["error"]
+        wire = model.requests[-1]
+        assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
+        assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
+        assert any(m.get("content", "").startswith("<user_character>\n玩家：")
+                   and m["content"].endswith("\n</user_character>") for m in wire["messages"])
+        assert any(m.get("content", "").startswith("<tavern_memory>")
+                   and "约定仍待兑现" in m["content"]
+                   and m["content"].endswith("</tavern_memory>") for m in wire["messages"])
+        assert any("当前玩家输入引用 H2" in m.get("content", "") for m in wire["messages"])
+        definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
+        assert set(definitions) == set(SPECS) - {"patch_state", "revise_content"}
+        assert "1536 tokens" in definitions["new_context"]["description"]
+        assert "3072 tokens" in definitions["write_note"]["description"]
+        assert "Call this tool alone" in definitions["new_context"]["description"]
+        assert "next_offset" in definitions["read_history"]["description"]
+        assert "rather than automatically injected" in definitions["search_notes"]["description"]
+    finally:
+        await service.close()
+
+
+def test_constant_and_retained_lore_have_same_tag_without_mutating_storage(story):
+    store, session = story
+    document = {"name": "向导", "character_book": {"entries": [
+        {"id": "constant", "content": "常驻背景", "constant": True, "enabled": True},
+    ]}}
+    snapshot = copy.deepcopy(session["snapshot"])
+    snapshot["lore_injections"] = [{"id": "retained", "content": "动态背景", "title": "背景",
+                                   "anchor_id": session["head"]}]
+    compiled = compile_window(document, session, session["messages"], snapshot, "继续", store.settings(), [])
+    lore = [m for m in compiled["trace"] if m["source"].startswith("lore:")]
+    assert {m["content"] for m in lore} == {
+        "<lorebook>\n常驻背景\n</lorebook>", "<lorebook>\n动态背景\n</lorebook>"}
+    assert snapshot["lore_injections"][0]["content"] == "动态背景"
+
+
+@pytest.mark.parametrize("window_number, notes, expected", [
+    (1, {}, "有效 0 条，已归档 0 条"),
+    (2, {"old": {"status": "archived", "content": "不可自动注入的归档内容"}}, "有效 0 条，已归档 1 条"),
+    (3, {"old": {"status": "archived"}, "new": {"status": "active"}}, "有效 1 条，已归档 1 条"),
+])
+def test_explicit_window_and_memory_inventory(story, window_number, notes, expected):
+    store, session = story
+    snapshot = copy.deepcopy(session["snapshot"])
+    snapshot["full_agent"]["window"]["number"] = window_number
+    snapshot["full_agent"]["notes"] = notes
+    result = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
+                            snapshot, "继续", store.settings(), [])
+    status = next(m["content"] for m in result["trace"] if m["source"] == "context_status")
+    assert expected in status
+    assert f"当前第 {window_number} 个，总计 {window_number} 个" in status
+    assert "无需搜索" not in status and "尚未换窗" not in status
+    assert "不可自动注入的归档内容" not in str(result["messages"])
+    assert [m["position"] for m in result["trace"]] == list(range(len(result["messages"])))
+
+
+def test_budget_signal_only_after_seventy_percent_near_memory(story):
+    store, session = story
+    settings = store.settings().for_role("full_agent")
+    settings.reply_tokens = 1024
+    settings.context_tokens = 20000
+    document = {"name": "向导"}
+    history = [{**session["messages"][0], "raw": "场景", "model": "场景"}]
+    def compile_current():
+        return compile_window(document, session, history, copy.deepcopy(session["snapshot"]), "继续", settings, [])
+    low = compile_current()
+    assert not low["rollover_required"]
+    assert not any(m["source"] == "context_budget" for m in low["trace"])
+    base = low["estimated_tokens"]
+    settings.context_tokens = int(base / .72)
+    settings.reply_tokens = 128
+    warning = compile_current()
+    assert not warning["rollover_required"]
+    sources = [m["source"] for m in warning["trace"]]
+    assert sources.index("context_budget") == sources.index("checkpoint") + 2
+    assert "当前仍可正常调用工具和回复" in warning["trace"][sources.index("context_budget")]["content"]
+    settings.reply_tokens = settings.context_tokens
+    near_full = compile_current()
+    assert near_full["estimated_tokens"] + settings.reply_tokens > settings.context_tokens
+    assert not near_full["rollover_required"]
+    assert near_full["available_tokens"] == settings.context_tokens
+    settings.context_tokens = base
+    full = compile_current()
+    assert full["rollover_required"]
+    assert any(m.get("content") == "场景" for m in full["messages"])  # No local truncation.
+    assert full["estimated_tokens"] > full["available_tokens"]
+
+
+async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
+    store, session = story
+    settings = store.settings()
+    settings.foreground.context_tokens = 16000
+    settings.foreground.reply_tokens = 1024
+    store.save_settings(settings)
+    large = "旧场景细节。" * 6000
+    with store.connection() as db:
+        db.execute("UPDATE messages SET raw=?,model=? WHERE id=?", (large, large, session["head"]))
+    session = store.session(session["id"])
+    service = runtime(store)
+    model = Model(
+        "这条正文必须被否决",
+        ("write_checkpoint", {"content": "这个操作也必须被否决"}),
+        ("new_context", {"content": "换窗参数错误", "keep_recent": 99}),
+        ("new_context", {"content": "新交接保留必要经历", "keep_recent": 0}),
+        "换窗后继续回应玩家。",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        assert current["messages"][-1]["raw"] == "换窗后继续回应玩家。"
+        assert current["snapshot"]["full_agent"]["checkpoint"]["text"] == "新交接保留必要经历"
+        assert current["snapshot"]["full_agent"]["window"]["number"] == 2
+        for request in model.requests[:4]:
+            assert request["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
+        assert model.requests[-1]["extra_body"]["tool_choice"] == "auto"
+        assert large in str(model.requests[0]["messages"])
+        assert large not in str(model.requests[-1]["messages"])
+        assert "我答应明天在钟楼见面" in str(model.requests[-1]["messages"])
+        assert "已否决且未执行" in str(model.requests[2]["messages"])
+        assert "这个操作也必须被否决" not in str([
+            m for m in model.requests[2]["messages"] if m["role"] == "system"])
+        assert not any(e["kind"] == "text" and e["payload"].get("text") == "这条正文必须被否决"
+                       for e in store.events(result["id"]))
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("enforce", [True, False])
+async def test_provider_budget_guard_can_be_disabled_for_rollover(story, monkeypatch, enforce):
+    import tavern.core.provider as provider_module
+
+    store, _ = story
+    settings = store.settings().for_role("full_agent")
+    settings.model, settings.api_key, settings.use_proxy = "test-model", "local", False
+    settings.base_url = "http://127.0.0.1:9999/v1"
+    settings.context_tokens, settings.reply_tokens = 8192, 1024
+    requests = []
+    def transport(request):
+        requests.append(json.loads(request.content))
+        return provider_module.httpx.Response(200, json={"id": "reply", "object": "chat.completion", "created": 1,
+            "model": "test-model", "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+            "finish_reason": "stop"}], "usage": {"prompt_tokens": 100, "completion_tokens": 1, "total_tokens": 101}})
+    original_client = provider_module.httpx.AsyncClient
+    class MockClient(original_client):
+        def __init__(self, **kwargs):
+            kwargs["transport"] = provider_module.httpx.MockTransport(transport)
+            super().__init__(**kwargs)
+    monkeypatch.setattr(provider_module.httpx, "AsyncClient", MockClient)
+    provider = await make_provider(settings, enforce_context_budget=enforce)
+    try:
+        messages = [{"role": "user", "content": "history " * 12000}]
+        if enforce:
+            with pytest.raises(Exception) as caught:
+                await provider.chat_complete(messages)
+            causes, error = [], caught.value
+            while error is not None:
+                causes.append(str(error))
+                error = error.__cause__
+            assert "超过 token 预算" in " ".join(causes)
+            assert not requests
+        else:
+            response = await provider.chat_complete(messages)
+            assert response.content == "ok"
+            assert requests[0]["messages"] == messages
+    finally:
+        await provider.close()
+
+
+async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
+    store, _ = story
+    settings = store.settings().for_role("full_agent")
+    settings.api_mode, settings.model, settings.api_key = "responses", "test-model", "local"
+    provider = await make_provider(settings, enforce_context_budget=False)
+    try:
+        payload = provider._request([{"role": "user", "content": "继续"}], extra_body={
+            "tool_choice": {"type": "function", "function": {"name": "new_context"}},
+            "parallel_tool_calls": False})
+        assert payload["tool_choice"] == {"type": "function", "name": "new_context"}
+        assert payload["parallel_tool_calls"] is False
+    finally:
+        await provider.close()
+
+
+async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story):
+    store, session = story
+    settings = store.settings()
+    settings.foreground.context_tokens = 16000
+    settings.foreground.reply_tokens = 12000
+    store.save_settings(settings)
+    service = runtime(store)
+    reply = "继续描写场景。" * 4000
+    first = Model(reply)
+    try:
+        result, current = await turn(service, session, first)
+        assert result["status"] == "committed", result["error"]
+        assert first.requests[0]["extra_body"]["tool_choice"] == "auto"
+        assert current["messages"][-1]["raw"] == reply
+        assert current["snapshot"]["full_agent"]["window"]["number"] == 1
+        follow = Model(("new_context", {"content": "上一轮场景发展已记录", "keep_recent": 0}), "继续新的对话。")
+        result, current = await turn(service, current, follow)
+        assert result["status"] == "committed", result["error"]
+        assert follow.requests[0]["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
+        assert follow.requests[1]["extra_body"]["tool_choice"] == "auto"
+        assert current["snapshot"]["full_agent"]["window"]["number"] == 2
+        assert current["messages"][-3]["raw"] == reply
+    finally:
+        await service.close()

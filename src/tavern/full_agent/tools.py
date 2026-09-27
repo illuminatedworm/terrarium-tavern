@@ -6,9 +6,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.character.cards import lore_entries, normalize
-from tavern.conversation.context import get_path
+from tavern.conversation.context import get_path, wrap_lorebook
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
+from tavern.full_agent.config import FullAgentConfig
 from tavern.full_agent.state import note_view, rollover, source_hash
 
 
@@ -17,79 +18,144 @@ class Arguments(BaseModel):
 
 
 class Query(Arguments):
-    query: str = Field(min_length=1, max_length=1000)
+    query: str = Field(min_length=1, max_length=1000, description="Search text or retrieval clues.")
 
 
 class Search(Query):
-    limit: int = Field(default=5, ge=1, le=10)
+    limit: int = Field(default=5, ge=1, le=10, description="Maximum number of matches.")
 
 
 class HistorySearch(Search):
-    scope: Literal["dialogue", "tools", "all"] = "dialogue"
+    scope: Literal["dialogue", "tools", "all"] = Field(default="dialogue", description="History records to search.")
 
 
 class Read(Arguments):
-    ref: str = Field(min_length=1, max_length=80)
-    offset: int = Field(default=0, ge=0)
-    length: int = Field(default=4000, ge=1, le=12000)
+    ref: str = Field(min_length=1, max_length=80, description="Reference, note key, or character field to read.")
+    offset: int = Field(default=0, ge=0, description="Zero-based character offset in the original text.")
+    length: int = Field(default=4000, ge=1, le=12000, description="Maximum number of original text characters to read.")
 
 
 class Checkpoint(Arguments):
-    content: str = Field(min_length=1, max_length=64000)
+    content: str = Field(min_length=1, max_length=64000, description="Complete updated checkpoint text.")
 
 
 class NewContext(Checkpoint):
-    keep_recent: int = Field(default=2, ge=0, le=12)
+    keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain, expanded to complete exchanges.")
 
 
 class Note(Arguments):
-    key: str = Field(min_length=1, max_length=80, pattern=r"^[\w\-/ .\u4e00-\u9fff]+$")
-    content: str = Field(min_length=1, max_length=64000)
-    kind: Literal["fact", "hypothesis", "plan"]
-    sources: list[str] = Field(default_factory=list, max_length=20)
+    key: str = Field(min_length=1, max_length=80, pattern=r"^[\w\-/ .\u4e00-\u9fff]+$", description="Meaningful, stable note key.")
+    content: str = Field(min_length=1, max_length=64000, description="Complete updated note text.")
+    kind: Literal["fact", "hypothesis", "plan"] = Field(description="Whether the note records evidence-backed facts, a hypothesis, or a plan.")
+    sources: list[str] = Field(default_factory=list, max_length=20, description="H references searched or read in this turn; required for facts.")
 
 
 class NoteKey(Arguments):
-    key: str = Field(min_length=1, max_length=80)
+    key: str = Field(min_length=1, max_length=80, description="Existing note key.")
 
 
 class Patch(Arguments):
-    operations: list[dict] = Field(min_length=1, max_length=100)
-    reason: str = Field(min_length=1, max_length=1000)
+    operations: list[dict] = Field(min_length=1, max_length=100, description="JSON Patch operations using JSON Pointer paths.")
+    reason: str = Field(min_length=1, max_length=1000, description="Story evidence and purpose of this change.")
 
 
 class StateRead(Arguments):
-    path: str = Field(default="", max_length=200)
-    offset: int = Field(default=0, ge=0)
-    length: int = Field(default=4000, ge=1, le=12000)
+    path: str = Field(default="", max_length=200, description="Dot-separated state path; empty reads the entire story state.")
+    offset: int = Field(default=0, ge=0, description="Zero-based character offset in the serialized value.")
+    length: int = Field(default=4000, ge=1, le=12000, description="Maximum number of characters to read.")
 
 
+CHECKPOINT_GUIDANCE = (
+    "Build cumulatively on the complete existing checkpoint in <tavern_memory>. "
+    "content replaces the checkpoint in full. Preserve valid scene details, relationships, player creative constraints, "
+    "important experiences, unresolved issues, narrative tone, and useful H/T references and note keys. "
+    "Label future directions as pending. The checkpoint is included in <tavern_memory> in each window. "
+    "If stale, verify edited source text before revising. Changes remain in the turn draft until the final narrative commits, "
+    "subject to approval in review mode. "
+)
+PAGE_GUIDANCE = (
+    "offset counts original text characters. A non-null next_offset means more text remains; continue reading there. "
+    "H/T/L references are internal navigation handles, separate from story prose."
+)
 SPECS = {
-    "search_lore": (Query, "自拟 query 调用与自动检索相同的世界书索引、准入和中途注入；主动检索优先。返回已注入条目的 L 引用。"),
-    "read_lore": (Read, "按 L 引用分页读取已启用的世界书资料，不重复注入。"),
-    "search_history": (HistorySearch, "搜索当前分支的原始正文或历史工具记录。返回 H/T 引用和片段；工具记录是过去资料。"),
-    "read_history": (Read, "按 H/T 引用分页读取原始历史，offset 是字符位置；next_offset 非空表示还有原文。"),
-    "write_checkpoint": (Checkpoint, "替换随窗口携带的交接笔记，写入本回合草稿；不会换窗。"),
-    "new_context": (NewContext, "用 content 保存完整 checkpoint 并主动换窗；保留当前用户输入和最近 keep_recent 条完整交流。必须单独调用。"),
-    "search_notes": (Search, "按内容/语义 key 搜索本分支的长期笔记，query=* 列出；笔记不自动注入。"),
-    "read_note": (Read, "ref 是笔记 key；分页读取笔记及来源、可信性质和原文编辑警告。"),
-    "write_note": (Note, "新增或替换长期笔记。fact 必须引用已读取的 H 原文；hypothesis/plan 明确为推测/计划。不自动分类整理。"),
-    "archive_note": (NoteKey, "归档过时或已完成笔记，保留存档和旧分支；不从原文自动恢复。"),
-    "read_state": (StateRead, "分页读取剧情状态值，path 可用点分隔选择子字段；隐藏运行时账本。"),
-    "patch_state": (Patch, "使用 JSON Patch 更新 stat_data，经 MVU 校验；本轮允许更新变量时可用。"),
-    "revise_content": (Patch, "JSON Patch 修改当前分支角色/世界书草稿。遵循授权和审核策略，不修改书架原卡。"),
-    "read_character": (Read, "ref 是角色顶层字段名，如 description、extensions；分页读取可逆角色视图。"),
-    "set_retrieval_query": (Query, "保存供下一回合自动检索使用的简短剧情线索；不进入正文或上下文。"),
+    "search_lore": (Query, "Search the lorebook using the same retrieval engine, indexes, and admission rules as runtime auto-retrieval. "
+        "Results depend on entry enablement, timeline, secondary-key conditions, probability and cooldown, "
+        "relevance thresholds, and entry-count/text-length budgets. "
+        "Write a concise query with full entity names, places, and the specific information needed, "
+        "using keywords or natural language in the lorebook's language. Previous-turn retrieval clues are not appended. "
+        "Returns L references, titles, and entry text wrapped in <lorebook> directly in the tool result. "
+        "Entries retained by auto-retrieval are listed in already_in_context; use read_lore with their L references to read them."),
+    "read_lore": (Read, "Read an enabled lorebook entry by its L reference. Each page is wrapped in <lorebook> in the tool result. " + PAGE_GUIDANCE),
+    "search_history": (HistorySearch, "Search original dialogue or past tool records in this branch, returning H/T references, previews, and offsets. "
+        "scope selects dialogue, tools, or all; query=* lists recent records. Use read_history to verify facts and note sources against original text. "
+        "Past tool plans and results alone do not establish that story events occurred."),
+    "read_history": (Read, "Read original history or archived tool results by H/T reference. The current player input also has an H reference. "
+        "For a truncated tool result, use its T reference to read the complete archive. " + PAGE_GUIDANCE),
+    "write_checkpoint": (Checkpoint, "Update the checkpoint while keeping the current window. " + CHECKPOINT_GUIDANCE),
+    "new_context": (NewContext, "Save a checkpoint and switch the working window. " + CHECKPOINT_GUIDANCE
+        + "Call this tool alone. The current player input is always retained; keep_recent counts recent dialogue messages, "
+        "with boundaries expanded to preserve complete exchanges. Old tool exchanges leave the active window and remain searchable. "
+        "Include needed results or references in the checkpoint. Switch windows when useful; budget warnings guide timing. "
+        "During forced rollover, only this tool is accepted. The runtime does not summarize or silently trim history. "
+        "Continue the current turn after switching; the model-call budget does not reset."),
+    "search_notes": (Search, "Search active long-term notes in this branch by text and meaningful key; query=* lists notes. "
+        "Notes are retrieved on demand rather than automatically injected. Use read_note for full text, kind, sources, and stale status."),
+    "read_note": (Read, "Read an active or archived note by key, including its kind, sources, and stale warning. "
+        "stale means source text changed or became unavailable; verify the H source before relying on it. " + PAGE_GUIDANCE),
+    "write_note": (Note, "Create or fully replace a long-term note under a meaningful key. Notes are retrieved on demand. "
+        "Before replacing an existing key, including an archived note, read its complete current version using read_note in this turn and window. "
+        "Follow all next_offset pages, then revise cumulatively while preserving valid information and important experiences. "
+        "kind=fact requires H sources actually searched or read this turn; verify that they support the content. "
+        "hypothesis records uncertainty; plan records intent. Attribute character claims and preserve their unverified status. "
+        "Writing the same key replaces its text and reactivates it if archived. Respect revoked information. "
+        "Changes remain in the turn draft until the final narrative commits, subject to approval in review mode."),
+    "archive_note": (NoteKey, "Archive an outdated or completed note, excluding it from normal searches while keeping it readable by key. "
+        "History and older branches are preserved. Changes commit with the successful turn, subject to approval in review mode."),
+    "read_state": (StateRead, "Read current story state, excluding internal runtime ledgers. Use an empty path for the whole state or a dot-separated field path. "
+        "Check relevant values and structure before updating. " + PAGE_GUIDANCE),
+    "patch_state": (Patch, "When variable updates are authorized, apply JSON Patch operations to story fields inside stat_data, validated by MVU. "
+        "Paths are JSON Pointers relative to the story-state root; reason gives story evidence. Read current values first and align changes with the final narrative. "
+        "Changes commit with the successful turn, subject to approval in review mode; use this tool rather than MVU blocks in story prose."),
+    "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, leaving the library card intact. "
+        "Use read_character to verify fields and structure first. Follow turn authorization and review policy; reason explains the change. "
+        "Changes commit with the successful turn, subject to approval in review mode."),
+    "read_character": (Read, "Read the reversible character view for inspection and editing. ref is a top-level field such as "
+        "description, personality, scenario, character_book, or extensions. " + PAGE_GUIDANCE),
+    "set_retrieval_query": (Query, "Save concise clues for next-turn automatic lorebook retrieval: current scene, relevant entities, and unresolved issues. "
+        "Use full entity names and distinguish anticipated events from facts. Clues commit with the successful turn and remain outside story prose and context."),
 }
 
 
-def tool_definitions(request, session):
+def tool_definitions(request, session, config=None, *, settings=None, catalog=False):
+    config = config or FullAgentConfig()
     names = set(SPECS)
-    if not request.update_variables:
+    if not catalog:
+        names.difference_update(session.get("disabled_tools", []))
+    if not catalog and not request.update_variables:
         names.discard("patch_state")
-    if session["policy_effective"] == "directed" and not request.allow_content_edit:
+    if not catalog and session["policy_effective"] == "directed" and not request.allow_content_edit:
         names.discard("revise_content")
-    return [{"type": "function", "function": {"name": name, "description": description,
+    limits = {
+        "write_checkpoint": f" content limit: {config.checkpoint_tokens} tokens.",
+        "new_context": f" content limit: {config.checkpoint_tokens} tokens.",
+        "write_note": f" content limit: {config.note_tokens} tokens.",
+        "set_retrieval_query": " Text beyond the retrieval-clue character budget is truncated; put important information first.",
+    }
+    if settings is not None:
+        mechanisms = {
+            "keyword": "Keyword matching applies each entry's configured keywords or regular expressions to the query text, respecting case, whole-word, and secondary-key conditions",
+            "bm25": "BM25 tokenizes the query and entry titles, keywords, and body text, then performs lexical retrieval using term frequency, term rarity, length normalization, and character bigrams",
+            "embedding": "Semantic vector search encodes the query and entry body fragments as embeddings and retrieves semantically related content by semantic similarity",
+        }
+        channels = list(dict.fromkeys(settings.retrieval.channels))
+        mechanism = " Currently enabled retrieval mechanisms: " + ". ".join(mechanisms[c] for c in channels) + "."
+        if len(channels) > 1:
+            mechanism += " Multiple recall channels are combined using weighted reciprocal rank fusion (RRF)."
+        if settings.local_models.reranker_enabled:
+            mechanism += " Finally, the reranker scores query-candidate relevance, reorders candidates, and filters them by the relevance threshold."
+        limits["search_lore"] = mechanism
+    return [{"type": "function", "function": {"name": name, "description": description + limits.get(name, "")
+             + f" Tool result limit: {config.tool_result_tokens} tokens; follow pagination or archive references as needed.",
              "parameters": model.model_json_schema()}} for name, (model, description) in SPECS.items() if name in names]
 
 
@@ -101,18 +167,31 @@ class AgentTools:
     def __init__(self, owner):
         self.owner = owner
         self.read_sources = {}
+        self.note_reads = {}
+
+    def note_read_key(self, note):
+        return (self.owner.state["window"]["id"], note["key"], note["revision"])
+
+    def require_note_read(self, note):
+        end = 0
+        for start, stop in sorted(self.note_reads.get(self.note_read_key(note), [])):
+            if start > end:
+                break
+            end = max(end, stop)
+        if end < len(note["content"]):
+            raise ValueError("更新已有笔记前必须用 read_note 完整读取当前版本（包括所有分页），再基于旧内容累积修订")
 
     def cap_text(self, content, maximum, label):
         if not content.strip() or count_text(content, self.owner.settings) > maximum:
             raise ValueError(f"{label}不能为空，且须在 {maximum} tokens 内；请自行精简")
 
-    def page(self, text, args, **metadata):
+    def page(self, text, args, *, wrap=str, **metadata):
         cap = self.owner.settings.full_agent_config.tool_result_tokens
         if args.offset > len(text):
             raise ValueError("offset 超出原文长度")
         end = min(len(text), args.offset + args.length)
         def result(at):
-            return {**metadata, "text": text[args.offset:at], "offset": args.offset,
+            return {**metadata, "text": wrap(text[args.offset:at]), "offset": args.offset,
                     "next_offset": at if at < len(text) else None, "total_chars": len(text)}
         low, high = args.offset, end
         while low < high:
@@ -162,7 +241,7 @@ class AgentTools:
             results.append(item)
             if row.get("source"):
                 self.read_sources[row["ref"]] = row["source"]
-        return {"matches": results, "notice": "使用 read 工具按 offset 读取完整原文。"}
+        return {"matches": results, **({"notice": "使用 read 工具按 offset 读取完整原文。"} if results else {})}
 
     async def execute(self, name, arguments):
         owner = self.owner
@@ -179,7 +258,8 @@ class AgentTools:
             entry = next((e for e in entries if e["id"] == entry_id and e["enabled"]), None)
             if not entry:
                 raise ValueError("世界书引用不存在或未启用")
-            return self.page(owner.expand(entry["content"]), args, ref=args.ref, title=entry.get("comment", ""))
+            return self.page(owner.expand(entry["content"]), args, wrap=wrap_lorebook,
+                             ref=args.ref, title=entry.get("comment", ""))
         if name == "search_history":
             rows = [r for r in self.archive() if args.scope == "all" or
                     (r["role"] == "tool_record") == (args.scope == "tools")]
@@ -213,9 +293,15 @@ class AgentTools:
             if note is None:
                 raise ValueError("笔记 key 不存在")
             meta = note_view(note, owner.source_history)
-            return self.page(meta.pop("content"), args, **meta)
+            result = self.page(meta.pop("content"), args, **meta)
+            self.note_reads.setdefault(self.note_read_key(note), []).append(
+                (result["offset"], result["offset"] + len(result["text"])))
+            return result
         if name == "write_note":
             self.cap_text(args.content, owner.settings.full_agent_config.note_tokens, "笔记")
+            old = state["notes"].get(args.key, {})
+            if old:
+                self.require_note_read(old)
             if args.kind == "fact" and not args.sources:
                 raise ValueError("fact 必须提供已读取的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
             sources = []
@@ -224,7 +310,6 @@ class AgentTools:
                 if source is None:
                     raise ValueError("sources 只能引用本回合已搜索或读取的 H 原文；先调用历史工具")
                 sources.append({"message_id": source["id"], "hash": source_hash(source)})
-            old = state["notes"].get(args.key, {})
             state["notes"][args.key] = {"key": args.key, "content": args.content, "kind": args.kind,
                                        "status": "active", "revision": old.get("revision", 0) + 1, "sources": sources}
             return {"key": args.key, "saved_to_draft": True}

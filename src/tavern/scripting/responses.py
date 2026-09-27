@@ -92,6 +92,9 @@ class ResponsesProvider(OpenAIProvider):
         for key in ("tool_choice", "parallel_tool_calls"):
             if key in extra:
                 request[key] = extra[key]
+        choice = request.get("tool_choice")
+        if isinstance(choice, dict) and choice.get("type") == "function" and "function" in choice:
+            request["tool_choice"] = {"type": "function", "name": choice["function"]["name"]}
         return request
 
     def _finish(self, response):

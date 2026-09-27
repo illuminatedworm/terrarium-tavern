@@ -54,9 +54,10 @@ def retain_lore(document, snapshot, visible, input_id, turn_number):
     return exiting
 
 
-def inject_lore(document, session, history, snapshot, query, settings, seed, input_id, retrieval, exiting):
+def inject_lore(document, session, history, snapshot, query, settings, seed, input_id, retrieval, exiting,
+                *, persist=True):
     card = normalize(document)
-    records = snapshot.setdefault("lore_injections", [])
+    records = snapshot.get("lore_injections", [])
     retained = {r["id"] for r in records}
     retrieval = {**retrieval, "ids": [eid for eid in retrieval["ids"] if eid not in exiting]}
     entries, diagnostics, _ = activate_lore(
@@ -81,7 +82,8 @@ def inject_lore(document, session, history, snapshot, query, settings, seed, inp
                   "source_ids": [m["id"] for m in history] + [input_id],
                   "evidence": copy.deepcopy(retrieval.get("evidence", {}).get(entry["id"], {})),
                   "prevent_recursion": bool(entry.get("preventRecursion"))}
-        records.append(record)
-        snapshot.setdefault("lore", {}).setdefault(entry["id"], {}).update(present=True)
+        if persist:
+            snapshot.setdefault("lore_injections", records).append(record)
+            snapshot.setdefault("lore", {}).setdefault(entry["id"], {}).update(present=True)
         added.append(record)
     return added, diagnostics

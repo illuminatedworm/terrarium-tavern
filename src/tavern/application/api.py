@@ -542,9 +542,11 @@ def create_app(data_dir=None):
         if s["agent_mode"] == "full_agent":
             from tavern.full_agent.context import compile_window, load_trace
             from tavern.full_agent.tools import tool_definitions
+            full_settings = store.settings().for_role("full_agent")
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
-                store.settings().for_role("full_agent"),
-                tool_definitions(TurnRequest(operation_id="preview", expected_revision=s["revision"]), s),
+                full_settings,
+                tool_definitions(TurnRequest(operation_id="preview", expected_revision=s["revision"]), s,
+                                 full_settings.full_agent_config, settings=full_settings),
                 trace=load_trace(store, sid, s["messages"]))
             return result, s
         result = compile_context(

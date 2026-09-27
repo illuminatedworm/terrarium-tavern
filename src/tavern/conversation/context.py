@@ -410,6 +410,8 @@ def compile_context(
         if key in overrides:
             sources[source] = overrides[key]
             source_lore_ids.pop(source, None)
+    if sources["persona"]:
+        sources["persona"] = "<user_character>\n" + sources["persona"] + "\n</user_character>"
     for key, field in (
         ("char_description", "description"),
         ("char_personality", "personality"),

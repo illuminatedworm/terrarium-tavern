@@ -80,6 +80,8 @@ class Store:
                     (SELECT name FROM cards WHERE cards.id=sessions.card),
                     json_extract(card_data,'$.name'), '对话')""")
             session_columns = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "disabled_tools" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN disabled_tools TEXT NOT NULL DEFAULT '[]'")
             if "cache_breakpoint_auto" not in session_columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1")
             if "cache_breakpoint_message" not in session_columns:
@@ -398,6 +400,7 @@ class Store:
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
+            db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             for original, cloned_id in ids.items():
                 db.execute("""INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload)
                     SELECT ?,?,seq,window_id,payload FROM full_agent_trace WHERE message_id=?""",
@@ -419,6 +422,7 @@ class Store:
             result = dict(row)
             result["recipe"] = json.loads(result["recipe"])
             result["persona_data"] = json.loads(result["persona_data"])
+            result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
         result["messages"] = self.history(sid, result["head"])

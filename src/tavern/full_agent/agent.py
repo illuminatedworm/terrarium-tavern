@@ -6,7 +6,7 @@ import jsonpatch
 import jsonpointer
 
 from tavern.character.cards import lore_entries, normalize
-from tavern.conversation.context import macros
+from tavern.conversation.context import macros, wrap_lorebook
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.core.tokens import count_text
@@ -27,7 +27,7 @@ class FullAgent:
         self.state = full_state(snapshot)
         self.trace = load_trace(store, session["id"], history)
         self.continuation, self.new_trace = [], []
-        self.definitions = tool_definitions(request, session)
+        self.definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings)
         self.tools = AgentTools(self)
         # Tool exchanges survive turns/windows. Their short document handles
         # must keep the same meaning after document reorder or a new provider.
@@ -39,6 +39,7 @@ class FullAgent:
         self.model_view.reserved.difference_update(refs)
         self.model_view.seed(initial_view)
         self.calls, self.rolled, self.retrieval_query = 0, False, ""
+        self.must_rollover = False
         self.exiting = set()
 
     def event(self, kind, payload):
@@ -69,15 +70,17 @@ class FullAgent:
         result = await self.lane.prepare(self.document, visible, query, self.snapshot, settings,
                                          self.session, self.tid, source=source)
         added, notes = inject_lore(self.document, self.session, visible, self.snapshot, query, settings,
-                                   self.tid, self.user_message["id"], result, self.exiting)
+                                   self.tid, self.user_message["id"], result, self.exiting, persist=source == "auto")
         self.event("retrieval", {**{k: v for k, v in result.items() if k != "entries"}, "source": source,
-                                 "injected": [r["id"] for r in added], "injection_diagnostics": notes})
+                                 "injected": [r["id"] for r in added] if source == "auto" else [],
+                                 "tool_results": [r["id"] for r in added] if source == "agent" else [],
+                                 "injection_diagnostics": notes})
         refs = {eid: ref for ref, eid in self.lore_refs().items()}
-        return {"injected": [{"ref": refs[r["id"]], "title": r["title"]} for r in added],
+        return {"matches": [{"ref": refs[r["id"]], "title": r["title"],
+                             "text": wrap_lorebook(r["content"])} for r in added],
                 "already_in_context": [{"ref": refs[r["id"]], "title": r["title"]}
-                                       for r in self.snapshot["lore_injections"] if r not in added
-                                       and not r.get("manually_removed")][:20],
-                "notice": "新条目已作为中途系统消息注入；已保留的条目不重复注入。"}
+                                       for r in self.snapshot.get("lore_injections", []) if r not in added
+                                       and not r.get("manually_removed")][:20]}
 
     def compile(self):
         self.retain()
@@ -86,10 +89,9 @@ class FullAgent:
         result = compile_window(self.document, self.session, self.history, self.snapshot, self.request.text,
             self.settings, self.definitions, trace=self.trace, continuation=self.continuation,
             input_id=self.user_message["id"], instruction=permissions + "\n" + self.request.regenerate_note,
-            calls=self.calls)
+            calls=self.calls, force_rollover=self.must_rollover)
+        self.must_rollover = result["rollover_required"]
         self.store.set_turn(self.tid, preview=encoded(result))
-        if result["estimated_tokens"] > result["available_tokens"]:
-            raise ValueError("Full Agent 工作窗口超过输入预算，未裁剪或发送。请在场景面板填写 checkpoint 并换新窗口，或调整模型预算。")
         return result
 
     def append(self, message, window_id):
@@ -98,7 +100,7 @@ class FullAgent:
 
     async def run(self, provider=None):
         provider = provider or await make_provider(self.settings,
-            lambda payload: self.event("provider_request", payload))
+            lambda payload: self.event("provider_request", payload), enforce_context_budget=False)
         # Pinned Terrarium transport has an emergency tool-drop fallback even
         # with retries=0. This mode must never silently invoke that fallback.
         async def no_overflow_recovery(current, state):
@@ -114,10 +116,15 @@ class FullAgent:
                 "lore_injections": self.snapshot.get("lore_injections", [])})
             for _ in range(self.settings.full_agent_config.max_steps):
                 compiled = self.compile()
+                if self.must_rollover and not any(t["function"]["name"] == "new_context" for t in self.definitions):
+                    raise ValueError("上下文已满，但 new_context 已关闭。请在工具页启用它，或在场景页手动保存并换新窗口。")
                 self.calls += 1
                 started = time.perf_counter()
-                response = await provider.chat_complete(compiled["messages"], extra_body={
-                    "tools": self.definitions, "tool_choice": "auto", "parallel_tool_calls": False})
+                tool_options = {
+                    "tools": self.definitions,
+                    "tool_choice": {"type": "function", "function": {"name": "new_context"}}
+                    if self.must_rollover else "auto", "parallel_tool_calls": False} if self.definitions else {}
+                response = await provider.chat_complete(compiled["messages"], extra_body=tool_options)
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
@@ -127,6 +134,11 @@ class FullAgent:
                 if getattr(response, "finish_reason", None) in ("length", "content_filter"):
                     raise ValueError("Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应")
                 if not calls:
+                    if self.must_rollover:
+                        self.event("full_agent_reply_rejected", {"message": "强制换窗期间的正文回复已否决"})
+                        self.continuation.append({"role": "system", "content":
+                            "刚才的正文回复已被运行时否决，未提交。必须单独调用 new_context 换窗后再继续。"})
+                        continue
                     text = response.content or ""
                     if not text.strip():
                         raise ValueError("Full Agent 没有返回故事正文，本回合未提交")
@@ -153,6 +165,8 @@ class FullAgent:
                     self.event("full_agent_tool_started", activity)
                     tool_started = time.perf_counter()
                     try:
+                        if self.must_rollover and (call.name != "new_context" or len(calls) != 1):
+                            raise ValueError("当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
                         if call.name == "new_context" and len(calls) != 1:
                             raise ValueError("new_context 必须单独调用；当前批次没有换窗")
                         result = await self.tools.execute(call.name, call.arguments)
@@ -172,6 +186,7 @@ class FullAgent:
                 if self.rolled:
                     self.continuation = []
                     self.rolled = False
+                    self.must_rollover = False
                     self.retain()
                     self.event("context_rollover", {"window": self.state["window"]["number"],
                                                    "message": "Agent 已保存 checkpoint 并换新窗口"})
