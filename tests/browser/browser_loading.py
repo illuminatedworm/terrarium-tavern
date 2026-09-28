@@ -90,6 +90,8 @@ async def main():
                     await page.unroute('**/api/sessions/'+a['id'], delayed)
                     # Creation stays in a dedicated screen until initialization and open both finish.
                     count = len(store.sessions())
+                    creation_requests = []
+                    page.on('request', lambda request: creation_requests.append((request.method, request.url)))
                     await page.get_by_role('button',name='＋ 开始新故事',exact=True).click()
                     await page.get_by_role('button',name='选择角色卡 载入测试角色',exact=True).click()
                     await page.route('**/api/sessions', delayed)
@@ -98,6 +100,9 @@ async def main():
                     await page.screenshot(path=str(output/'new-story-loading.png'))
                     await expect(loading).to_have_count(0,timeout=15000)
                     assert len(store.sessions()) == count + 1
+                    created_id = next(item['id'] for item in store.sessions() if item['id'] not in {a['id'], b['id']})
+                    assert not any(method == 'GET' and url.endswith('/api/sessions/' + created_id)
+                                   for method, url in creation_requests)
                     await expect(page.locator('.story-heading')).to_contain_text('载入测试角色')
                     assert not errors, errors
                     print('Save fade, persistent errors, existing/new story loading, retry and stale navigation passed.')

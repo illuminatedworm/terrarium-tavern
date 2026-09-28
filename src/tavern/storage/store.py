@@ -243,9 +243,55 @@ class Store:
 
     def card_manifest(self, card):
         path = self.card_manifest_path(card)
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        return copy.deepcopy(card.get("dependencies", {"resources": {}, "scripts": {}}))
+        manifest = (json.loads(path.read_text(encoding="utf-8")) if path.exists() else
+                    copy.deepcopy(card.get("dependencies", {"resources": {}, "scripts": {}})))
+        if card.get("session_id"):
+            return manifest
+        manifest["resources"] = {url: resource for url, resource in manifest["resources"].items()
+                                 if (self.root / "blobs" / resource["hash"]).is_file()}
+        manifest["scripts"] = {source: blob for source, blob in manifest["scripts"].items()
+                               if (self.root / "blobs" / blob).is_file()}
+        # A session may have resolved resources after the library card was imported.
+        # Reuse its pinned blobs when creating another conversation from that card.
+        with self.connection() as db:
+            siblings = [row[0] for row in db.execute(
+                "SELECT id FROM sessions WHERE card=? ORDER BY created DESC", (card["id"],))]
+        for sid in siblings:
+            sibling_path = self.card_manifest_path({"session_id": sid})
+            if not sibling_path.exists():
+                continue
+            try:
+                sibling = json.loads(sibling_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for url, resource in sibling.get("resources", {}).items():
+                if (self.root / "blobs" / resource.get("hash", "")).is_file():
+                    manifest["resources"].setdefault(url, resource)
+            for source_hash, blob_hash in sibling.get("scripts", {}).items():
+                if (self.root / "blobs" / blob_hash).is_file():
+                    manifest["scripts"].setdefault(source_hash, blob_hash)
+        return manifest
+
+    def cache_card_dependencies(self, card_id, manifest):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not db.execute("SELECT 1 FROM cards WHERE id=?", (card_id,)).fetchone():
+                return
+            path = self.card_manifest_path({"id": card_id})
+            current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"resources": {}, "scripts": {}}
+            for url, resource in manifest["resources"].items():
+                if (self.root / "blobs" / resource["hash"]).is_file():
+                    pinned = current["resources"].get(url)
+                    if not pinned or not (self.root / "blobs" / pinned["hash"]).is_file():
+                        current["resources"][url] = resource
+            for source, blob in manifest["scripts"].items():
+                if (self.root / "blobs" / blob).is_file():
+                    pinned = current["scripts"].get(source)
+                    if not pinned or not (self.root / "blobs" / pinned).is_file():
+                        current["scripts"][source] = blob
+            temporary = path.with_name(path.name + "." + uid() + ".tmp")
+            temporary.write_text(dump(current), encoding="utf-8")
+            temporary.replace(path)
 
     def prune_card_assets(self, card, manifest):
         from tavern.character.resources import prune_card_assets
@@ -313,6 +359,7 @@ class Store:
         persona_data = self.persona(options.persona_id) if options.persona_id else {}
         persona_name = persona_data.get("name", options.persona)
         recipe = self.settings().context_recipe.model_copy(deep=True)
+        dependencies = self.card_manifest(card)
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM cards WHERE id=?", (card["id"],)).fetchone():
@@ -330,7 +377,7 @@ class Store:
                     card["name"],
                     dump(persona_data),
                     self.settings().lore_injection_mode,
-                    dump({**card, "session_id": sid, "dependencies": self.card_manifest(card)}),
+                    dump({**card, "session_id": sid, "dependencies": dependencies}),
                     greeting_id,
                 ),
             )

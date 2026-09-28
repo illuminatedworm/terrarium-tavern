@@ -171,6 +171,8 @@ class Dependencies:
         self.manifest_path(card).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        if card.get("session_id"):
+            self.store.cache_card_dependencies(card["id"], manifest)
         return manifest
 
     def scripts(self, card):

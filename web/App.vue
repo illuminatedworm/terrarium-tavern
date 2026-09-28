@@ -531,7 +531,7 @@ async function refreshContextStats() {
     /* Explicit preview presents errors; a stats refresh must not break reading. */
   }
 }
-async function openSession(id: string, creating = false) {
+async function openSession(id: string, creating = false, createdSession?: any) {
   const token = viewScope.enter();
   storyLoad.value = {
     id,
@@ -562,7 +562,10 @@ async function openSession(id: string, creating = false) {
   quickEffort.value = localStorage.getItem(`tavern-effort-${id}`) || 'inherit';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   try {
-    const [opened, card] = await Promise.all([api(`/sessions/${id}`), api(`/sessions/${id}/card`)]);
+    const [opened, card] = await Promise.all([
+      createdSession || api(`/sessions/${id}`),
+      api(`/sessions/${id}/card`),
+    ]);
     if (!viewScope.owns(token)) return;
     const active = opened.turns.find((turn: any) =>
       ['running', 'queued', 'awaiting_review'].includes(turn.status),
@@ -864,7 +867,7 @@ function manageCards() {
 }
 async function cardStarted(s: any) {
   sidebarSection.value = 'sessions';
-  const opening = openSession(s.id, true);
+  const opening = openSession(s.id, true, s);
   const token = viewScope.current();
   if (storyLoad.value) storyLoad.value.name = s.title || s.name || '';
   try {
