@@ -286,8 +286,12 @@ class RetrievalEngine:
                 config_key = digest([settings.local_models.embedding.model_dump(), self.models.revision(settings),
                                      config.chunk_tokens, config.chunk_overlap])
                 with self.store.connection() as db:
-                    db.execute("INSERT OR REPLACE INTO retrieval_collections VALUES (?,?)",
-                               (session.get("id", ""), json.dumps([index_key] + [digest([config_key, e]) for e in entries])))
+                    # A queued index task may finish after its session was deleted.
+                    # Check ownership in the same write statement, not in a racy preflight.
+                    sid = session.get("id", "")
+                    db.execute("""INSERT OR REPLACE INTO retrieval_collections(session,keys)
+                        SELECT ?,? WHERE EXISTS (SELECT 1 FROM sessions WHERE id=?)""",
+                               (sid, json.dumps([index_key] + [digest([config_key, e]) for e in entries]), sid))
                 vectors, missing = [], []
                 collection_key = digest([config_key, entries])
                 if collection_key in self.dense_cache:

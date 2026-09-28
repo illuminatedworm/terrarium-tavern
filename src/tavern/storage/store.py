@@ -463,13 +463,17 @@ class Store:
         card = json.loads(row["card_data"]) if row and row["card_data"] else None
         manifest = self.card_manifest(card) if card else None
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM sessions WHERE id=?", (sid,)).fetchone():
                 raise KeyError("会话不存在")
             db.execute("DELETE FROM changes WHERE turn IN (SELECT id FROM turns WHERE session=?)", (sid,))
             db.execute("DELETE FROM events WHERE turn IN (SELECT id FROM turns WHERE session=?)", (sid,))
             db.execute("DELETE FROM turns WHERE session=?", (sid,))
+            db.execute("DELETE FROM full_agent_trace WHERE session=?", (sid,))
             db.execute("DELETE FROM messages WHERE session=?", (sid,))
             db.execute("DELETE FROM sessions WHERE id=?", (sid,))
+            from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
+            prune_orphan_retrieval(db)
         if card:
             self.prune_card_assets(card, manifest)
 
