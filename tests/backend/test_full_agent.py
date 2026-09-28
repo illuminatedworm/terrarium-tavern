@@ -352,6 +352,8 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
+        assert any("<card_description>\n你是向导。\n</card_description>" in m.get("content", "")
+                   for m in requests[0])
         assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0]) == 1
         assert not any("旧港的船只明晨出发。" in m.get("content", "")
                        for messages in requests for m in messages if m["role"] == "system")

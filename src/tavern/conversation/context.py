@@ -65,6 +65,16 @@ def wrap_lorebook(content):
     return f"<lorebook>\n{content}\n</lorebook>"
 
 
+def wrap_card_description(content):
+    return f"<card_description>\n{content}\n</card_description>" if content else ""
+
+
+def character_content(card):
+    return "\n\n".join((str(card.get("system_prompt", "")),
+                        wrap_card_description(str(card.get("description", ""))),
+                        str(card.get("personality", "")), str(card.get("scenario", ""))))
+
+
 def matches(key, text, entry):
     key = str(key)
     # Bare Latin ability codes require explicit word matching or a /regex/ pattern.
@@ -340,9 +350,7 @@ def compile_context(
 
     sources = {
         "rules": settings.system_prompt,
-        "character": "\n\n".join(
-            str(card.get(k, "")) for k in ("system_prompt", "description", "personality", "scenario")
-        ),
+        "character": character_content(card),
         "persona": "玩家名字：" + persona + "\n" + session.get("persona_data", {}).get("description", ""),
         "examples": card.get("mes_example", ""),
         "post": card.get("post_history_instructions", ""),
@@ -420,9 +428,7 @@ def compile_context(
         if key in overrides:
             card[field] = overrides[key]
     if any(k in overrides for k in ("char_description", "char_personality", "scenario")):
-        sources["character"] = "\n\n".join(
-            str(card.get(k, "")) for k in ("system_prompt", "description", "personality", "scenario")
-        )
+        sources["character"] = character_content(card)
     messages, pending_depth = [], []
 
     def add(role, content, source, priority=50, required=False, **extra):
@@ -544,7 +550,8 @@ def compile_context(
                     reordered.append(
                         {
                             "role": "system",
-                            "content": expand(card.get(individual[item], "")),
+                            "content": expand(wrap_card_description(card.get("description", ""))
+                                              if item == "char_description" else card.get(individual[item], "")),
                             "source": item,
                             "priority": 100,
                             "required": False,

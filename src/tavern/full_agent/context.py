@@ -3,7 +3,7 @@ import copy
 import json
 
 from tavern.character.cards import lore_entries, normalize
-from tavern.conversation.context import macros, wrap_lorebook
+from tavern.conversation.context import character_content, macros, wrap_lorebook
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.state import full_state
 
@@ -39,8 +39,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         role = {0: "system", 1: "user", 2: "assistant"}.get(role, role)
         add(role, wrap_lorebook(expand(entry["content"])), "lore:" + entry["id"],
             lore_ids=[entry["id"]], lore_region="constant")
-    add("system", expand("\n\n".join(str(card.get(k, "")) for k in
-                                      ("system_prompt", "description", "personality", "scenario"))), "character")
+    add("system", expand(character_content(card)), "character")
     add("system", "<user_character>\n玩家：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(card.get("mes_example", "")), "examples")

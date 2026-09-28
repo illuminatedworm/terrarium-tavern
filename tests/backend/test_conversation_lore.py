@@ -37,6 +37,16 @@ def compile(doc, history, snapshot, text="灯塔", **kwargs):
     return result
 
 
+def test_card_description_is_labeled_even_when_it_describes_a_world():
+    doc = {"name": "旁白", "description": "这座城每晚移动。", "personality": "语气平静"}
+    result = compile(doc, [], {"state": {}}, text="继续")
+    character = next(item["content"] for item in result["trace"] if item["source"] == "character")
+    assert "<card_description>\n这座城每晚移动。\n</card_description>" in character
+    assert "语气平静" in character
+    empty = compile({"name": "旁白"}, [], {"state": {}}, text="继续")
+    assert all("<card_description>" not in item["content"] for item in empty["trace"])
+
+
 @pytest.mark.parametrize("greeting", ["欢迎", ""])
 def test_first_turn_uses_greeting_or_user_anchor_and_system_role(greeting):
     history = [message("g", "assistant", greeting)]
