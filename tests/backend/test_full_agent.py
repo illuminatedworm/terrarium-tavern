@@ -16,6 +16,7 @@ from tavern.core.provider import make_provider
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.state import note_view
+from tavern.full_agent.tools import RESULT_FIELDS, AgentTools, result_field
 from tavern.storage.store import Store
 
 
@@ -41,6 +42,23 @@ class Model:
 
     async def close(self):
         self.closed = True
+
+
+def test_tool_result_field_options(story):
+    store, _ = story
+    owner = SimpleNamespace(settings=store.settings())
+    tools = AgentTools(owner)
+    rows = [{"ref": "H1", "role": "user", "text": "旧港的船只出发"}]
+    assert tools.search(rows, "旧港", 5, include_preview=False, include_offset=False)["matches"] == [
+        {"ref": "H1", "role": "user"}]
+    assert tools.search(rows, "旧港", 5)["matches"][0]["preview"] == "旧港的船只出发"
+    assert result_field({}, "search_lore", "include_ref") is False
+    assert result_field({}, "search_lore", "include_title") is False
+    assert result_field({}, "search_history", "include_preview") is True
+    assert result_field({}, "read_lore", "include_metadata") is True
+    assert result_field({"tool_result_options": {"search_lore": {"include_ref": True}}},
+                        "search_lore", "include_ref") is True
+    assert set(RESULT_FIELDS["search_lore"]) == {"include_ref", "include_title"}
 
 
 class Script:
@@ -359,9 +377,12 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
                        for messages in requests for m in messages if m["role"] == "system")
         tool_results = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
         assert tool_results[0]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+        assert set(tool_results[0]) == {"matches"}
+        assert set(tool_results[0]["matches"][0]) == {"text"}
         assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
         assert tool_results[3]["text"] == "<lorebook>\n旧港的\n</lorebook>"
         assert tool_results[3]["next_offset"] == 3
+        assert set(tool_results[3]) == {"text", "offset", "next_offset", "total_chars", "ref", "title"}
         assert tool_results[4]["text"] == "<lorebook>\n船只明晨出发。\n</lorebook>"
         assert tool_results[4]["next_offset"] is None
         assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1

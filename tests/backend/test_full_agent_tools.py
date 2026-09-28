@@ -27,6 +27,9 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 assert tool["enabled"]
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
+            lore = next(t for t in catalog if t["name"] == "search_lore")
+            assert lore["result_options"] == {"include_ref": False, "include_title": False}
+            assert set(lore["parameters"]["properties"]) == {"query"}
             patch = next(t for t in catalog if t["name"] == "patch_state")
             assert not patch["available"]
             authorized = (await client.get(url, params={"update_variables": "true"})).json()["tools"]
@@ -64,6 +67,52 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             store.set_turn(tid, status="cancelled")
             half = store.new_session(SessionCreate(card_id=session["card"]))
             assert (await client.get(f"/api/sessions/{half['id']}/full-agent/tools")).status_code == 400
+    finally:
+        await service.close()
+        await app.state.service.close()
+
+
+async def test_user_result_options_save_and_control_tool_output(tmp_path):
+    store = Store(tmp_path)
+    card = store.import_card(json.dumps({"name": "港口", "first_mes": "开场。",
+        "character_book": {"entries": [{"id": "port", "keys": ["旧港"], "comment": "旧港",
+                                       "content": "旧港有一艘船。", "enabled": True}]}}
+    ).encode(), "card.json")
+    settings = store.settings()
+    settings.retrieval.channels = ["keyword"]
+    settings.full_agent_config.auto_retrieval = False
+    store.save_settings(settings)
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    app = create_app(store.root)
+    service = runtime(store)
+    url = f"/api/sessions/{session['id']}/full-agent/tools"
+    options = {"search_lore": {"include_ref": True, "include_title": True},
+               "search_history": {"include_preview": False, "include_offset": False},
+               "read_lore": {"include_metadata": False}}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
+                                                "tool_result_options": {"search_lore": {"unknown": True}}})).status_code == 400
+            response = await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
+                                                    "tool_result_options": options})
+            assert response.status_code == 200
+            session = response.json()
+            assert session["tool_result_options"] == options
+            catalog = (await client.get(url)).json()["tools"]
+            assert next(t for t in catalog if t["name"] == "search_lore")["result_options"] == options["search_lore"]
+            fork = store.fork_session(session["id"], session["head"], session["revision"])
+            assert fork["tool_result_options"] == options
+            model = Model(("search_lore", {"query": "旧港"}),
+                          ("search_history", {"query": "开场"}),
+                          ("read_lore", {"ref": "L1"}), "继续。")
+            result, _ = await turn(service, session, model)
+            assert result["status"] == "committed", result["error"]
+            output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+            assert output[0]["matches"] == [{"ref": "L1", "title": "旧港",
+                                              "text": "<lorebook>\n旧港有一艘船。\n</lorebook>"}]
+            assert "preview" not in output[1]["matches"][0]
+            assert "offset" not in output[1]["matches"][0]
+            assert set(output[2]) == {"text", "offset", "next_offset", "total_chars"}
     finally:
         await service.close()
         await app.state.service.close()

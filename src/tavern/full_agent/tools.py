@@ -77,16 +77,32 @@ PAGE_GUIDANCE = (
     "offset counts original text characters. A non-null next_offset means more text remains; continue reading there. "
     "H/T/L references are internal navigation handles, separate from story prose."
 )
+RESULT_FIELDS = {
+    "search_lore": {"include_ref": False, "include_title": False},
+    "read_lore": {"include_metadata": True},
+    "search_history": {"include_preview": True, "include_offset": True},
+    "read_history": {"include_metadata": True},
+    "search_notes": {"include_preview": True, "include_offset": True},
+    "read_note": {"include_metadata": True},
+    "read_state": {"include_metadata": True},
+    "read_character": {"include_metadata": True},
+}
+
+
+def result_field(session, tool, field):
+    return session.get("tool_result_options", {}).get(tool, {}).get(field, RESULT_FIELDS[tool][field])
+
+
 SPECS = {
     "search_lore": (Query, "Search the lorebook using the same retrieval engine, indexes, and admission rules as runtime auto-retrieval. "
         "Results depend on entry enablement, timeline, secondary-key conditions, probability and cooldown, "
         "relevance thresholds, and entry-count/text-length budgets. "
         "Write a concise query with full entity names, places, and the specific information needed, "
         "using keywords or natural language in the lorebook's language. Previous-turn retrieval clues are not appended. "
-        "Returns L references, titles, and entry text wrapped in <lorebook> directly in the tool result. "
-        "Entries retained by auto-retrieval are listed in already_in_context; use read_lore with their L references to read them."),
+        "Returns entry text wrapped in <lorebook>. User-selected result fields may also include L references, "
+        "titles, and already_in_context references for entries retained by auto-retrieval."),
     "read_lore": (Read, "Read an enabled lorebook entry by its L reference. Each page is wrapped in <lorebook> in the tool result. " + PAGE_GUIDANCE),
-    "search_history": (HistorySearch, "Search original dialogue or past tool records in this branch, returning H/T references, previews, and offsets. "
+    "search_history": (HistorySearch, "Search original dialogue or past tool records in this branch, returning H/T references and optional previews and offsets. "
         "scope selects dialogue, tools, or all; query=* lists recent records. Use read_history to verify facts and note sources against original text. "
         "Past tool plans and results alone do not establish that story events occurred."),
     "read_history": (Read, "Read original history or archived tool results by H/T reference. The current player input also has an H reference. "
@@ -100,7 +116,7 @@ SPECS = {
         "Continue the current turn after switching; the model-call budget does not reset."),
     "search_notes": (Search, "Search active long-term notes in this branch by text and meaningful key; query=* lists notes. "
         "Notes are retrieved on demand rather than automatically injected. Use read_note for full text, kind, sources, and stale status."),
-    "read_note": (Read, "Read an active or archived note by key, including its kind, sources, and stale warning. "
+    "read_note": (Read, "Read an active or archived note by key, including its kind, sources, and stale warning by default. "
         "stale means source text changed or became unavailable; verify the H source before relying on it. " + PAGE_GUIDANCE),
     "write_note": (Note, "Create or fully replace a long-term note under a meaningful key. Notes are retrieved on demand. "
         "Before replacing an existing key, including an archived note, read its complete current version using read_note in this turn and window. "
@@ -222,7 +238,7 @@ class AgentTools:
             value["calls"] = [c["function"] for c in message["tool_calls"]]
         return {"ref": ref, "role": "tool_record", "text": encoded(value)}
 
-    def search(self, rows, query, limit):
+    def search(self, rows, query, limit, *, include_preview=True, include_offset=True):
         terms = set(re.findall(r"\w+", query.casefold()))
         def score(row):
             text = (row.get("key", "") + " " + row["text"]).casefold()
@@ -235,7 +251,10 @@ class AgentTools:
             text = row["text"]
             at = max(0, min((text.casefold().find(t) for t in terms if t in text.casefold()), default=0) - 80)
             item = {k: v for k, v in row.items() if k not in ("source", "text")}
-            item.update(preview=text[at:at+400], offset=at)
+            if include_preview:
+                item["preview"] = text[at:at+400]
+            if include_offset:
+                item["offset"] = at
             if count_text(encoded(results + [item]), self.owner.settings) > self.owner.settings.full_agent_config.tool_result_tokens - 128:
                 break
             results.append(item)
@@ -251,24 +270,31 @@ class AgentTools:
         args = SPECS[name][0].model_validate_json(arguments)
         state = owner.state
         if name == "search_lore":
-            return await owner.retrieve(args.query, source="agent")
+            return await owner.retrieve(args.query, source="agent",
+                                        include_ref=result_field(owner.session, name, "include_ref"),
+                                        include_title=result_field(owner.session, name, "include_title"))
         if name == "read_lore":
             entries = lore_entries(owner.document, "writer")
             entry_id = owner.lore_refs().get(args.ref)
             entry = next((e for e in entries if e["id"] == entry_id and e["enabled"]), None)
             if not entry:
                 raise ValueError("世界书引用不存在或未启用")
-            return self.page(owner.expand(entry["content"]), args, wrap=wrap_lorebook,
-                             ref=args.ref, title=entry.get("comment", ""))
+            metadata = ({"ref": args.ref, "title": entry.get("comment", "")}
+                        if result_field(owner.session, name, "include_metadata") else {})
+            return self.page(owner.expand(entry["content"]), args, wrap=wrap_lorebook, **metadata)
         if name == "search_history":
             rows = [r for r in self.archive() if args.scope == "all" or
                     (r["role"] == "tool_record") == (args.scope == "tools")]
-            return self.search(rows, args.query, args.limit)
+            return self.search(rows, args.query, args.limit,
+                               include_preview=result_field(owner.session, name, "include_preview"),
+                               include_offset=result_field(owner.session, name, "include_offset"))
         if name == "read_history":
             row = next((r for r in self.archive() if r["ref"] == args.ref), None)
             if row is None:
                 raise ValueError("当前分支没有此历史引用")
-            result = self.page(row["text"], args, ref=args.ref, role=row["role"])
+            metadata = ({"ref": args.ref, "role": row["role"]}
+                        if result_field(owner.session, name, "include_metadata") else {})
+            result = self.page(row["text"], args, **metadata)
             if row.get("source"):
                 self.read_sources[args.ref] = row["source"]
             return result
@@ -287,13 +313,16 @@ class AgentTools:
                     if n["status"] == "active"]
             for row in rows:
                 row.pop("content")
-            return self.search(rows, args.query, args.limit)
+            return self.search(rows, args.query, args.limit,
+                               include_preview=result_field(owner.session, name, "include_preview"),
+                               include_offset=result_field(owner.session, name, "include_offset"))
         if name == "read_note":
             note = state["notes"].get(args.ref)
             if note is None:
                 raise ValueError("笔记 key 不存在")
             meta = note_view(note, owner.source_history)
-            result = self.page(meta.pop("content"), args, **meta)
+            result = self.page(meta.pop("content"), args,
+                               **(meta if result_field(owner.session, name, "include_metadata") else {}))
             self.note_reads.setdefault(self.note_read_key(note), []).append(
                 (result["offset"], result["offset"] + len(result["text"])))
             return result
@@ -321,7 +350,8 @@ class AgentTools:
             return {"key": args.key, "archived": True}
         if name == "read_state":
             result = get_path(state_for_model(owner.snapshot["state"]), owner.model_view.restore(args.path))
-            return self.page(encoded(owner.model_view.expose(result)), args, path=args.path)
+            return self.page(encoded(owner.model_view.expose(result)), args,
+                             **({"path": args.path} if result_field(owner.session, name, "include_metadata") else {}))
         if name == "patch_state":
             result = await owner.script.call("process", "", owner.model_view.operations(args.operations), "")
             owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
@@ -331,7 +361,8 @@ class AgentTools:
             if args.ref not in data:
                 raise ValueError("角色字段不存在")
             value = data[args.ref]
-            return self.page(value if isinstance(value, str) else encoded(value), args, ref=args.ref)
+            return self.page(value if isinstance(value, str) else encoded(value), args,
+                             **({"ref": args.ref} if result_field(owner.session, name, "include_metadata") else {}))
         if name == "revise_content":
             from tavern.character.card_workflow import validate_document
             revised = owner.model_view.patch(owner.document, args.operations)

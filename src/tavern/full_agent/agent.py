@@ -61,7 +61,7 @@ class FullAgent:
                                   sum(m["role"] == "user" for m in self.history) + 1)
         return visible
 
-    async def retrieve(self, query, *, source):
+    async def retrieve(self, query, *, source, include_ref=False, include_title=False):
         visible = self.retain()
         settings = self.settings.model_copy(deep=True)
         if source == "agent":
@@ -76,11 +76,16 @@ class FullAgent:
                                  "tool_results": [r["id"] for r in added] if source == "agent" else [],
                                  "injection_diagnostics": notes})
         refs = {eid: ref for ref, eid in self.lore_refs().items()}
-        return {"matches": [{"ref": refs[r["id"]], "title": r["title"],
-                             "text": wrap_lorebook(r["content"])} for r in added],
-                "already_in_context": [{"ref": refs[r["id"]], "title": r["title"]}
-                                       for r in self.snapshot.get("lore_injections", []) if r not in added
-                                       and not r.get("manually_removed")][:20]}
+        matches = [{**({"ref": refs[r["id"]]} if include_ref else {}),
+                    **({"title": r["title"]} if include_title else {}),
+                    "text": wrap_lorebook(r["content"])} for r in added]
+        result = {"matches": matches}
+        if include_ref:
+            result["already_in_context"] = [
+                {"ref": refs[r["id"]], **({"title": r["title"]} if include_title else {})}
+                for r in self.snapshot.get("lore_injections", []) if r not in added
+                and not r.get("manually_removed")][:20]
+        return result
 
     def compile(self):
         self.retain()

@@ -13,6 +13,23 @@ const tools = ref<any[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const error = ref('');
+const resultLabels: Record<string, string> = {
+  include_ref: '返回编号',
+  include_title: '返回标题',
+  include_preview: '返回摘要',
+  include_offset: '返回摘要位置',
+  include_metadata: '返回附加信息',
+};
+const metadataLabels: Record<string, string> = {
+  read_lore: '返回编号和标题',
+  read_history: '返回编号和角色',
+  read_note: '返回类型、来源和过时状态',
+  read_state: '返回路径',
+  read_character: '返回字段名',
+};
+function resultLabel(name: string, key: string) {
+  return key === 'include_metadata' ? metadataLabels[name] || resultLabels[key] : resultLabels[key];
+}
 let requestId = 0;
 watch(
   () => [props.session.id, props.session.revision, props.updateVariables, props.allowContentEdit],
@@ -50,6 +67,7 @@ async function toggle(name: string, enabled: boolean) {
       {
         expected_revision: props.session.revision,
         disabled_tools: [...disabled],
+        tool_result_options: props.session.tool_result_options || {},
       },
       'PUT',
     );
@@ -57,6 +75,36 @@ async function toggle(name: string, enabled: boolean) {
   } catch (e: any) {
     if (props.session.id === sid) {
       if (tool) tool.enabled = !enabled;
+      error.value = e.message;
+    }
+  } finally {
+    saving.value = false;
+  }
+}
+async function toggleResultOption(name: string, key: string, enabled: boolean) {
+  const sid = props.session.id;
+  const tool = tools.value.find((item) => item.name === name);
+  if (tool) tool.result_options[key] = enabled;
+  const options = {
+    ...(props.session.tool_result_options || {}),
+    [name]: { ...(props.session.tool_result_options?.[name] || {}), [key]: enabled },
+  };
+  saving.value = true;
+  error.value = '';
+  try {
+    const updated = await api(
+      `/sessions/${sid}/full-agent/tools`,
+      {
+        expected_revision: props.session.revision,
+        disabled_tools: props.session.disabled_tools || [],
+        tool_result_options: options,
+      },
+      'PUT',
+    );
+    if (props.session.id === sid) emit('saved', updated);
+  } catch (e: any) {
+    if (props.session.id === sid) {
+      if (tool) tool.result_options[key] = !enabled;
       error.value = e.message;
     }
   } finally {
@@ -96,6 +144,20 @@ async function toggle(name: string, enabled: boolean) {
       <p v-if="tool.name === 'new_context' && !tool.enabled" class="inspector-note">
         上下文满时，需要在场景页手动换窗或重新启用此工具。
       </p>
+      <fieldset v-if="Object.keys(tool.result_options || {}).length" class="tool-result-options">
+        <legend>返回内容</legend>
+        <label v-for="(enabled, key) in tool.result_options" :key="key">
+          <input
+            type="checkbox"
+            :checked="enabled"
+            :aria-label="`${tool.name} ${resultLabel(tool.name, String(key))}`"
+            :disabled="disabled || loading || saving || !tool.enabled"
+            @change="toggleResultOption(tool.name, String(key), !enabled)"
+          />
+          {{ resultLabel(tool.name, String(key)) }}
+        </label>
+        <small v-if="tool.name === 'search_lore'">默认只返回正文；开启编号后可用 read_lore 继续读取。</small>
+      </fieldset>
       <details>
         <summary>描述与参数</summary>
         <p class="tool-description" lang="en">{{ tool.description }}</p>
@@ -127,6 +189,30 @@ async function toggle(name: string, enabled: boolean) {
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.tool-result-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.tool-result-options legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.tool-result-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.tool-result-options small {
+  flex-basis: 100%;
+  color: var(--text-muted);
 }
 pre {
   font-size: 12px;
