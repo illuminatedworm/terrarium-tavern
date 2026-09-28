@@ -18,14 +18,15 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     session = store.new_session(SessionCreate(card_id=card['id']))
     assert read_memory(session['snapshot']) == {'version': 1, 'records': []}
     reopened = Store(tmp_path)
-    assert reopened.settings().model_dump() == cfg.model_dump()
+    assert reopened.settings_document() == store.settings_document()
+    assert reopened.settings().memory_system_prompt == cfg.memory_system_prompt
     assert reopened.session(session['id']) == store.session(session['id'])
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '1'
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '2'
         assert dict((r[1], r[3]) for r in db.execute('PRAGMA table_info(sessions)'))['card_data'] == 1
 
 
-@pytest.mark.parametrize('version', [None, '0', '2', 'invalid'])
+@pytest.mark.parametrize('version', [None, '0', '999', 'invalid'])
 def test_unsupported_database_is_rejected_before_any_write(tmp_path, version):
     path = tmp_path / 'tavern.sqlite3'
     with sqlite3.connect(path) as db:

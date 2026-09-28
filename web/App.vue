@@ -64,7 +64,15 @@ const preview = ref<any>(null),
   trace = ref<any[]>([]),
   savingRecipe = ref(false);
 const previewMessagesBusy = ref(false);
-const savingSettings = ref(false);
+const settingsPanel = ref<InstanceType<typeof SettingsPanel>>();
+const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
+const activeModel = computed(() =>
+  isFullAgent.value ? activeSettings.value.model : activeSettings.value.foreground,
+);
+function closePanel() {
+  if (panel.value === 'settings') void settingsPanel.value?.requestClose();
+  else panel.value = '';
+}
 const startupModels = ref<any>(null);
 const contextStats = ref<any>(null);
 const contextEstimateError = ref('');
@@ -158,8 +166,8 @@ const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } |
 const cacheBreakpointBusy = ref(false);
 const writerResponseCache = computed(() => {
   if (isFullAgent.value) return false;
-  const profile = settings.value?.foreground;
-  const provider = settings.value?.providers?.find((item: any) => item.id === profile?.provider_id);
+  const profile = settings.value?.half_agent?.foreground;
+  const provider = settings.value?.shared?.providers?.find((item: any) => item.id === profile?.provider_id);
   return !!session.value && provider?.api_mode === 'responses' && profile?.prompt_cache_mode !== 'no_write';
 });
 const cacheBreakpointId = computed(() => session.value?.cache_breakpoint_effective_id || null);
@@ -1186,25 +1194,6 @@ function toggleCacheBreakpointFollow() {
   const automatic = !session.value?.cache_breakpoint_auto;
   void saveCacheBreakpoint(automatic, automatic ? null : cacheBreakpointId.value);
 }
-async function saveSettings() {
-  if (savingSettings.value) return;
-  savingSettings.value = true;
-  try {
-    await guarded(async () => {
-      settings.value = await api('/settings', settings.value, 'PUT');
-      panel.value = '';
-    });
-  } finally {
-    savingSettings.value = false;
-  }
-}
-async function probe() {
-  await guarded(async () => {
-    preview.value = await api('/settings/probe', {});
-    settings.value = await api('/settings');
-    panel.value = 'probe';
-  });
-}
 async function saveOptions() {
   await guarded(async () => {
     session.value = await viewApi(
@@ -1344,8 +1333,8 @@ onMounted(() => {
     if (sessions.value.some((s) => s.id === last)) await openSession(last!);
     const status = await api('/local-models');
     const enabled = [
-      ...(settings.value.retrieval?.channels?.includes('embedding') ? ['embedding'] : []),
-      ...(settings.value.local_models?.reranker_enabled ? ['reranker'] : []),
+      ...(activeSettings.value.retrieval?.channels?.includes('embedding') ? ['embedding'] : []),
+      ...(activeSettings.value.local_runtime?.reranker_enabled ? ['reranker'] : []),
     ].filter(
       (purpose) =>
         !status.models[purpose].ready &&
@@ -2112,7 +2101,7 @@ useTimedError(error);
             />
           </label>
           <p class="inspector-note">仅补充当前对话的系统提示，保存后持续生效；清空可取消。</p>
-          <PolicySelect v-model="session.policy" :inherited-policy="settings.policy" compact />
+          <PolicySelect v-model="session.policy" :inherited-policy="activeSettings.policy" compact />
           <p class="inspector-note">
             世界书注入：{{
               session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
@@ -2174,7 +2163,7 @@ useTimedError(error);
                 ? 'small'
                 : 'medium'
           "
-          @close="panel = ''"
+          @close="closePanel"
           ><AppNotification :message="error" />
           <StartupWarmup
             v-if="panel === 'warmup'"
@@ -2184,11 +2173,11 @@ useTimedError(error);
           />
           <SettingsPanel
             v-if="panel === 'settings'"
-            :settings="settings"
-            :saving="savingSettings"
+            ref="settingsPanel"
+            :initial-mode="session?.agent_mode"
             :effort-options="effortOptions"
-            @save="saveSettings"
-            @probe="probe"
+            @updated="settings = $event"
+            @close="panel = ''"
           />
           <template v-else-if="panel === 'delete-card'"
             ><h2>删除角色卡</h2>
@@ -2363,7 +2352,7 @@ useTimedError(error);
               </div>
               <div>
                 <small>模型上下文窗口（tokens）</small
-                ><strong>{{ Number(settings.context_tokens || 0).toLocaleString() }} tokens</strong>
+                ><strong>{{ Number(activeModel?.context_tokens || 0).toLocaleString() }} tokens</strong>
               </div>
               <div>
                 <small>内容块</small><strong>{{ preview?.trace?.length || 0 }}</strong>

@@ -1,462 +1,483 @@
 <script setup lang="ts">
-import FieldHelp from '../common/FieldHelp.vue';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { maintenanceLimit, settingsErrors } from '../../lib/settingsValidation';
-import ExpandableTextarea from '../common/ExpandableTextarea.vue';
-import ModelSettings from './ModelSettings.vue';
-import RetrievalSettings from './RetrievalSettings.vue';
-import PolicySelect from './PolicySelect.vue';
-import RecipeEditor from './RecipeEditor.vue';
+import { computed, nextTick, onMounted, provide, ref } from 'vue';
+import { api } from '../../lib/api';
+import { useSettingsEditor } from '../../composables/useSettingsEditor';
+import {
+  getPath,
+  type SettingsDocument,
+  type SettingsPage,
+  type SettingsScope,
+  type SettingsObject,
+} from '../../lib/settingsDocument';
+import {
+  policies,
+  policyField,
+  loreFields,
+  retrievalFields,
+  retrievalAdvanced,
+  fullFields,
+  historyFields,
+  memoryFields,
+  networkFields,
+} from '../../lib/settingsFields';
+import SettingsFields from './SettingsFields.vue';
+import ModelProfileEditor from './ModelProfileEditor.vue';
+import ProviderSettings from './ProviderSettings.vue';
+import LocalResourceSettings from './LocalResourceSettings.vue';
 import StorageSettings from './StorageSettings.vue';
-import FullAgentSettings from './FullAgentSettings.vue';
-const props = defineProps<{
-  settings: any;
-  saving?: boolean;
-  effortOptions: Array<{ value: string; label: string }>;
-}>();
-const emit = defineEmits<{ save: []; probe: [] }>();
-const page = ref('model');
-const pagesNav = ref<HTMLElement | null>(null);
-function revealCurrentPage() {
-  const nav = pagesNav.value;
-  if (!nav || nav.scrollWidth <= nav.clientWidth) return;
-  const active = nav.querySelector<HTMLElement>('[aria-current="page"]');
-  if (!active) return;
-  const navBounds = nav.getBoundingClientRect();
-  const activeBounds = active.getBoundingClientRect();
-  if (activeBounds.left < navBounds.left + 8) {
-    nav.scrollLeft -= navBounds.left + 8 - activeBounds.left;
-  } else if (activeBounds.right > navBounds.right - 8) {
-    nav.scrollLeft += activeBounds.right - navBounds.right + 8;
+import SavedText from './SavedText.vue';
+import SaveStatus from './SaveStatus.vue';
+import RecipeSettings from './RecipeSettings.vue';
+const props = defineProps<{ initialMode?: string; effortOptions: Array<{ value: string; label: string }> }>();
+const emit = defineEmits<{ updated: [settings: SettingsDocument]; close: [] }>();
+const editor = useSettingsEditor((settings) => emit('updated', settings));
+const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
+const pageId = ref('');
+const query = ref('');
+const promptPath = ref('system_prompt');
+const pendingAction = ref<null | (() => void)>(null);
+const discardAll = ref(false);
+const continueButton = ref<HTMLButtonElement>();
+let returnFocus: HTMLElement | null = null;
+const page = computed(() => draft.value?.pages.find((item) => item.id === pageId.value));
+const scope = computed<SettingsScope>(() => page.value?.scope || 'full_agent');
+provide('settings-scope', scope);
+provide(
+  'settings-field-errors',
+  computed(() =>
+    Object.fromEntries(
+      error.value
+        .replace(/^Error: /, '')
+        .split('；')
+        .map((part) => {
+          const [path, ...message] = part.split('：');
+          return [path, message.join('：')];
+        }),
+    ),
+  ),
+);
+const values = computed<SettingsObject>(() => draft.value?.[scope.value] || {});
+const groups = [
+  { scope: 'full_agent', label: 'full agent' },
+  { scope: 'half_agent', label: 'half agent' },
+  { scope: 'shared', label: '通用' },
+];
+const groupLabel = (s: string) => groups.find((g) => g.scope === s)?.label || s;
+const prompts = computed(() => draft.value?.prompt_definitions.filter((p) => p.scope === scope.value) || []);
+const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.value) || prompts.value[0]);
+const status = computed(() =>
+  !saved.value
+    ? '正在读取…'
+    : error.value
+      ? '保存失败'
+      : busy.value
+        ? '正在保存…'
+        : textDirty.value.length
+          ? '有文本未保存'
+          : pending.value
+            ? '待保存'
+            : '已保存',
+);
+function guard(action: () => void, all = false) {
+  if (textDirty.value.length || (all && error.value && pending.value)) {
+    returnFocus = document.activeElement as HTMLElement;
+    discardAll.value = all;
+    pendingAction.value = action;
+    void nextTick(() => continueButton.value?.focus());
+  } else action();
+}
+function continueEditing() {
+  pendingAction.value = null;
+  void nextTick(() => returnFocus?.focus());
+}
+function discardAndContinue() {
+  const action = pendingAction.value;
+  editor.discard(discardAll.value ? undefined : page.value);
+  pendingAction.value = null;
+  action?.();
+}
+function trap(event: KeyboardEvent) {
+  const buttons = (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button');
+  if (event.shiftKey && document.activeElement === buttons[0]) {
+    event.preventDefault();
+    buttons[1]?.focus();
+  }
+  if (!event.shiftKey && document.activeElement === buttons[1]) {
+    event.preventDefault();
+    buttons[0]?.focus();
   }
 }
-watch(page, async () => {
-  await nextTick();
-  revealCurrentPage();
+function navigate(id: string) {
+  guard(() => {
+    pageId.value = id;
+    query.value = '';
+    promptPath.value = 'system_prompt';
+    localStorage.setItem('tavern-settings-page', id);
+  });
+}
+async function requestClose() {
+  try {
+    await editor.flush();
+  } catch {
+    /* Guard offers the two agreed choices. */
+  }
+  guard(() => emit('close'), true);
+}
+defineExpose({ requestClose });
+function changed(event: Event) {
+  const element = event.target as HTMLInputElement;
+  if (element.tagName === 'SELECT' || element.type === 'checkbox') editor.schedule(true);
+}
+async function refreshAfterProbe() {
+  try {
+    const latest: SettingsDocument = await api('/settings');
+    editor.acceptRefresh(latest);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+async function saveRecipeText(path: string) {
+  try {
+    await editor.flush();
+    await editor.saveText('half_agent', path);
+  } catch {
+    /* Keep the error and text draft. */
+  }
+}
+const searchable = computed(() => {
+  if (!draft.value) return [];
+  const entries: Array<{ page: SettingsPage; label: string; path: string }> = [];
+  for (const p of draft.value.pages) {
+    entries.push({ page: p, label: p.label, path: '' });
+    const fields =
+      p.key === 'memory'
+        ? p.scope === 'full_agent'
+          ? fullFields
+          : [...historyFields, ...memoryFields]
+        : p.key === 'retrieval'
+          ? [...loreFields, ...retrievalFields, ...retrievalAdvanced]
+          : p.key === 'network'
+            ? networkFields
+            : [];
+    for (const f of fields) entries.push({ page: p, label: f.label, path: f.path });
+    if (p.key === 'model' || p.key === 'editor')
+      for (const [path, label] of [
+        ['model', '模型名称'],
+        ['context_tokens', '上下文窗口'],
+        ['reply_tokens', '输出上限'],
+        ['temperature', '温度'],
+        ['top_p', '核采样'],
+        ['reasoning_effort', '思考强度'],
+        ['prompt_cache_mode', '提示缓存'],
+        ['tokenizer', '计数分词器'],
+      ])
+        entries.push({ page: p, label, path });
+    if (p.key === 'prompts')
+      for (const f of draft.value.prompt_definitions.filter((f) => f.scope === p.scope))
+        entries.push({ page: p, label: f.label, path: f.path });
+  }
+  const term = query.value.trim().toLowerCase();
+  return term
+    ? entries
+        .filter((e) => `${groupLabel(e.page.scope)} ${e.label} ${e.path}`.toLowerCase().includes(term))
+        .slice(0, 16)
+    : [];
 });
-onMounted(() => window.addEventListener('resize', revealCurrentPage));
-onUnmounted(() => window.removeEventListener('resize', revealCurrentPage));
-function promptOwner(path: string) {
-  const parts = path.split('.');
-  return parts.length === 1 ? props.settings : props.settings[parts[0]];
+function selectSearch(result: { page: SettingsPage; label: string; path: string }) {
+  guard(() => {
+    pageId.value = result.page.id;
+    promptPath.value = result.path;
+    query.value = '';
+    void nextTick(() => {
+      const field = Array.from(document.querySelectorAll<HTMLElement>('[data-setting-path]')).find(
+        (e) => e.dataset.settingPath === result.path,
+      );
+      if (field) {
+        let parent = field.parentElement;
+        while (parent) {
+          if (parent.tagName === 'DETAILS') (parent as HTMLDetailsElement).open = true;
+          parent = parent.parentElement;
+        }
+        field.scrollIntoView({ block: 'nearest' });
+        field.querySelector<HTMLElement>('input,select,textarea')?.focus();
+      }
+    });
+  });
 }
-function promptKey(path: string) {
-  return path.split('.').at(-1)!;
-}
-watch(
-  () => props.settings.foreground,
-  (p) => {
-    if (p)
-      Object.assign(props.settings, {
-        model: p.model,
-        context_tokens: p.context_tokens,
-        reply_tokens: p.reply_tokens,
-        tokenizer: p.tokenizer,
-        reasoning_effort: p.reasoning_effort,
-      });
-  },
-  { deep: true },
-);
-const errors = computed(() => settingsErrors(props.settings));
-const periodLimit = computed(() => maintenanceLimit(props.settings));
-const removalLimit = computed(() => 100);
-const inputBudget = computed(() => props.settings.context_tokens - props.settings.reply_tokens - 2048);
+onMounted(async () => {
+  await editor.initialize();
+  const previous = localStorage.getItem('tavern-settings-page');
+  pageId.value = draft.value?.pages.some((p) => p.id === previous)
+    ? previous!
+    : `${props.initialMode === 'half_agent' ? 'half_agent' : 'full_agent'}.model`;
+});
 </script>
-
 <template>
-  <header class="settings-header">
-    <h2>设置</h2>
-  </header>
-  <div class="settings-layout">
-    <nav ref="pagesNav" class="settings-pages" aria-label="设置页面">
-      <button
-        :class="{ active: page === 'full_agent' }"
-        :aria-current="page === 'full_agent' ? 'page' : undefined"
-        @click="page = 'full_agent'"
-      >
-        Full Agent
-      </button>
-      <button
-        :class="{ active: page === 'model' }"
-        :aria-current="page === 'model' ? 'page' : undefined"
-        @click="page = 'model'"
-      >
-        模型与偏好
-      </button>
-      <button
-        @click="page = 'retrieval'"
-        :class="{ active: page === 'retrieval' }"
-        :aria-current="page === 'retrieval' ? 'page' : undefined"
-      >
-        混合召回与本地模型
-      </button>
-      <button
-        @click="page = 'storage'"
-        :class="{ active: page === 'storage' }"
-        :aria-current="page === 'storage' ? 'page' : undefined"
-      >
-        存储与维护
-      </button>
-      <button
-        @click="page = 'network'"
-        :class="{ active: page === 'network' }"
-        :aria-current="page === 'network' ? 'page' : undefined"
-      >
-        网络与代理
-      </button>
-      <button
-        :class="{ active: page === 'lore' }"
-        :aria-current="page === 'lore' ? 'page' : undefined"
-        @click="page = 'lore'"
-      >
-        世界书注入
-      </button>
-      <button
-        :class="{ active: page === 'maintenance' }"
-        :aria-current="page === 'maintenance' ? 'page' : undefined"
-        @click="page = 'maintenance'"
-      >
-        Half Agent · 历史与维护
-      </button>
-      <button
-        :class="{ active: page === 'prompt' }"
-        :aria-current="page === 'prompt' ? 'page' : undefined"
-        @click="page = 'prompt'"
-      >
-        系统提示词
-      </button>
-      <button
-        :class="{ active: page === 'context' }"
-        :aria-current="page === 'context' ? 'page' : undefined"
-        @click="page = 'context'"
-      >
-        上下文结构编排
-      </button>
-    </nav>
-    <div class="settings-detail">
-      <section v-if="page === 'model'" aria-labelledby="model-settings-title">
-        <h3 id="model-settings-title">模型与偏好</h3>
-        <ModelSettings :settings="settings" :effort-options="effortOptions" />
-        <PolicySelect v-model="settings.policy" global />
-      </section>
-      <section v-else-if="page === 'retrieval'"><RetrievalSettings :settings="settings" /></section>
-      <FullAgentSettings v-else-if="page === 'full_agent'" :settings="settings" />
-      <section v-else-if="page === 'storage'"><StorageSettings :settings="settings" /></section>
-      <section v-else-if="page === 'network'">
-        <h3>网络与代理</h3>
-        <label>代理地址<input v-model="settings.network.proxy" /></label
-        ><label
-          ><input type="checkbox" v-model="settings.network.api_proxy" />API
-          请求使用代理（各提供商可单独关闭）</label
-        ><label><input type="checkbox" v-model="settings.network.hf_proxy" />Hugging Face 下载使用代理</label
-        ><label
-          ><input type="checkbox" v-model="settings.network.resources_proxy" />角色外部资源使用代理</label
-        >
-      </section>
-      <section v-else-if="page === 'lore'" aria-labelledby="lore-settings-title">
-        <h3 id="lore-settings-title">世界书注入</h3>
-        <div class="form-row">
-          <label
-            >单次新增条目上限<input
-              type="number"
-              min="1"
-              max="1000"
-              v-model.number="settings.lore_max_entries" /></label
-          ><label
-            >单次新增字符预算（字符）<input
-              type="number"
-              min="1"
-              max="2000000"
-              v-model.number="settings.lore_max_chars"
-          /></label>
+  <div class="settings-shell" :inert="pendingAction !== null">
+    <header class="settings-header">
+      <h2>设置</h2>
+      <div class="settings-search">
+        <input v-model="query" type="search" placeholder="搜索设置…" aria-label="搜索设置" />
+        <div v-if="query" class="settings-search-results">
+          <button v-for="(result, i) in searchable" :key="i" @click="selectSearch(result)">
+            <span>{{ result.label }}</span
+            ><small>{{ groupLabel(result.page.scope) }} · {{ result.page.label }}</small>
+          </button>
+          <p v-if="!searchable.length">没有匹配的设置</p>
         </div>
-        <p class="muted">
-          每次最多新增指定数量的非常驻条目，正文合计不超过字符预算（默认 5 条、3000
-          字符）。按变量替换后的正文计算，中文、英文、空格和换行均按 Unicode 码点计为字符，不是
-          tokens。常驻条目和已经保留的滚动条目不占本次额度；超限条目整条跳过。所有内容仍受总模型上下文窗口约束，修改适用于已有对话的后续请求。
-        </p>
-        <div class="form-row">
-          <label><input type="checkbox" v-model="settings.lore_recursive" />世界书递归查询</label
-          ><label
-            >递归深度<input
-              type="number"
-              min="0"
-              max="16"
-              :disabled="!settings.lore_recursive"
-              v-model.number="settings.lore_recursion_depth"
-          /></label>
-        </div>
-        <p class="muted">
-          默认一层。仅本轮直接准入条目可触发递归，旧注入不继续扩展。递归候选仍须相对原始查询通过准入，已被拒绝的条目不会再次进入。关键词证据、BM25
-          相对分数和重排分数均不是相关概率；额度是上限，不以弱匹配补满。
-        </p>
-        <label
-          >新对话的注入方案
-          <FieldHelp tooltip="全局选择只影响之后新建的对话。已有对话保持原方案，继承进度时复制原对话方案。" />
-          <select v-model="settings.lore_injection_mode">
-            <option value="conversation">随对话滚动注入（默认）</option>
-            <option value="st_top">ST 式顶部可变注入</option>
-          </select>
-        </label>
-        <p>
-          随对话滚动：非常驻条目作为中途系统提示词，紧贴最新用户消息前注入。第一次发言若有开场白，则紧贴开场白前注入。此后内容和位置保持不变，与对应历史消息一起退出模型请求。
-        </p>
-        <p>
-          重复命中不会再次注入或移动。只有条目离开正文请求后，才开始冷却，退出的那次请求不会立即再次注入；没有“持续轮数”。常驻条目每次按角色卡与上下文配方的位置注入，不受冷却影响。
-        </p>
-        <p>
-          ST
-          式：每次根据当前上下文重新选择条目，按角色卡与配方的位置排列，顶部内容可以随本轮命中变化。仍从条目离开正文请求时开始冷却。
-        </p>
-        <p class="muted">
-          关键词扫描当前窗口中的检索线索与最新输入，扫描深度继续生效。滚动方案忽略非常驻条目的位置、深度和角色字段，统一使用
-          system；这些字段保留供常驻和 ST 方案使用。
-        </p>
-        <p class="muted">
-          冷却采用概率恢复：经过条目“恢复尺度”指定的轮数恢复至
-          50%，四倍轮数完全恢复；最新输入直接提及会提高机会。预览和 Tracker 记忆整理不会推进冷却。中途 system
-          原位发送，接口不支持时显示实际错误。
-        </p>
-      </section>
-      <section v-else-if="page === 'maintenance'" aria-labelledby="maintenance-settings-title">
-        <h3 id="maintenance-settings-title">历史窗口与后台维护</h3>
-        <p>
-          一轮是一次已提交的用户发言及其回复，通常对应两条消息。开场白算一条；中途世界书不计入消息 cap
-          或每批移除量，但仍占用 token 预算。重新生成、预览和手动整理不增加轮数。
-        </p>
-        <label
-          >窗口模式
-          <FieldHelp
-            tooltip="前两种模式都受消息 cap 和总上下文压力约束。历史预算模式额外检查历史 token 阈值。关闭后保留全部原文，周期维护仍执行；超过请求预算会明确报错。"
-          />
-          <select v-model="settings.chunk_mode">
-            <option value="messages">按消息批次</option>
-            <option value="tokens">按历史预算</option>
-            <option value="off">关闭（保留全部原文）</option>
-          </select>
-        </label>
-        <div class="form-row">
-          <label
-            >历史消息 cap
-            <FieldHelp
-              tooltip="仅计算用户和 AI 的历史消息及本次用户输入，开场白算一条，不计中途世界书条目。达到 cap 时，先整理待移除内容，再整批推进窗口。原始存档始终保留。" /><input
-              type="number"
-              min="8"
-              max="1000"
-              :disabled="settings.chunk_mode === 'off'"
-              v-model.number="settings.history_message_cap"
-          /></label>
-          <label
-            >每批移除量
-            <FieldHelp
-              tooltip="仅按用户和 AI 消息计数，不计中途世界书条目；达到批次目标后对齐完整交流边界。消息退出时，紧贴其前的全部世界书条目一同退出。保留最近两次完整交流及其条目和新输入。" /><input
-              type="number"
-              min="2"
-              :max="removalLimit"
-              step="1"
-              :disabled="settings.chunk_mode === 'off'"
-              v-model.number="settings.chunk_size"
-          /></label>
-        </div>
-        <div class="form-row">
-          <label
-            >记忆周期（轮）
-            <FieldHelp
-              tooltip="每 1–100 轮整理一次已提交的新剧情，按分类增量保存发展、事项及来源。不会修改设定或 MVU；空操作可表示无新增发展。编辑旧剧情仅提示，需手动重建。" /><input
-              type="number"
-              min="1"
-              :max="Math.max(1, periodLimit)"
-              v-model.number="settings.memory_interval_turns"
-          /></label>
-        </div>
-        <p class="muted">
-          窗口 cap 和每批移除量均只计算用户和 AI 消息（cap
-          包含本次输入），实际退出量对齐完整交流，退出消息前的全部世界书条目随之移除。记忆周期独立为 1–100
-          轮；退出前始终验证来源覆盖。关闭窗口保留全部原文。
-        </p>
-        <label
-          >日常上下文预算（tokens）<input
-            type="number"
-            min="2048"
-            max="2000000"
-            v-model.number="settings.daily_context_budget"
-        /></label>
-        <p class="muted">
-          默认 98,304 tokens，与模型可用输入容量取较小值。使用前台 Writer
-          选定的分词器计算，压力触发和目标也使用同一 token 口径。实际用量以服务商报告为准。
-        </p>
-        <div class="form-row">
-          <label
-            >历史预算（tokens）
-            <FieldHelp
-              tooltip="仅历史预算模式使用。不得超过模型上下文窗口减单次输出上限及 2048 tokens 安全余量。本地使用所选 BPE 分词器计数，服务商专用分词器不同可能产生差异。" /><input
-              type="number"
-              min="512"
-              :max="Math.max(512, inputBudget)"
-              :disabled="settings.chunk_mode !== 'tokens'"
-              v-model.number="settings.chunk_max_tokens"
-          /></label>
-          <label
-            >记忆整理输出上限（tokens）
-            <FieldHelp
-              tooltip="仅控制周期、裁剪前及手动记忆整理，范围 256–65536 tokens，新安装默认 4096；旧配置继承原后台上限。包含 JSON 操作与来源，不影响 MVU 和设定维护。增大可能增加费用及等待。" /><input
-              type="number"
-              min="256"
-              max="65536"
-              v-model.number="settings.memory_output_tokens"
-          /></label>
-        </div>
-        <div class="form-row">
-          <label
-            >整理输入上限（tokens）<FieldHelp
-              tooltip="默认32768，范围2048–2000000。包括已有记忆、完整交流、前文、参考设定及协议；还受后台模型容量减输出和2048安全余量约束。超限按完整交流分批，不截断原文。" /><input
-              type="number"
-              min="2048"
-              max="2000000"
-              v-model.number="settings.memory_input_tokens"
-          /></label>
-          <label
-            >辅助资料预算（tokens）<FieldHelp
-              tooltip="默认4096，范围0–32768，必须小于输入上限且包含在其中。优先当时注入的世界书，再用本地文本搜索补充；0关闭辅助资料。资料不足会保留不确定结论，不启动GPU模型。" /><input
-              type="number"
-              min="0"
-              max="32768"
-              v-model.number="settings.memory_evidence_tokens"
-          /></label>
-        </div>
-        <label
-          >活跃记忆容量（tokens）<FieldHelp
-            tooltip="默认4096，范围512–65536。超过容量时按来源时间从旧到新退出自动生成的经历；仍超限则保留其他分类并提示。增大也会增加之后Writer与Tracker的输入。" /><input
-            type="number"
-            min="512"
-            max="65536"
-            v-model.number="settings.memory_capacity_tokens"
-        /></label>
-        <div class="form-row">
-          <label
-            >当前进展条数上限<FieldHelp
-              tooltip="默认5条，范围1–100。只计算自动生成的当前进展，超出时按最新剧情来源从旧到新退出；手工条目不占额度。" /><input
-              type="number"
-              min="1"
-              max="100"
-              v-model.number="settings.memory_current_max_records"
-          /></label>
-          <label
-            >经历冷却轮数<FieldHelp
-              tooltip="默认20轮，范围0–10000；0关闭按轮数退出。自经历最新引用的已完成剧情轮次起算。达到轮数后自动退出，容量超限时也会先退出最旧经历。手工条目不参与。" /><input
-              type="number"
-              min="0"
-              max="10000"
-              v-model.number="settings.memory_episode_cooldown_rounds"
-          /></label>
-        </div>
-        <label class="check"
-          ><input type="checkbox" v-model="settings.memory_review_enabled" />允许一次疑难复核</label
-        >
-        <p class="muted">
-          常规整理一次请求。只有关键变化待核对且找到新材料时，才追加最多一次复核（输入最多8192、输出最多2048
-          tokens）。失败或无新证据时保留待确认，不自动重试。自动整理一轮最多两次分批请求加一次复核；裁剪仍未获覆盖时暂停发送。手动重建可处理更多批次，启动前显示估算并支持取消。
-        </p>
-        <p class="muted">
-          来源由程序预先编号：模型只选择原文片段 S/H、旧记忆 R 和设定 E 的短编号，不必复制长 ID、哈希或原话。
-          真实消息引用、逐字摘录及指纹由程序回填，新条目永久 ID
-          由程序生成。编号仅本次请求有效；引用不存在的编号、
-          只用旧背景证明新变化等情况仍会拒绝保存，并保留旧记忆。已有存档无需重建或额外请求即可继续使用。
-        </p>
-        <p class="muted">
-          Tracker 可按需搜索或读取旧剧情，作为分类记忆之外的补充。历史工具每次完整维护固定最多 3
-          次：搜索、读取、无结果及参数错误均计次，分批、复核和本轮授权维护共享额度；手动重建整次也只有 3
-          次。工具返回最多约 2048 tokens，超长原文会标明片段不完整。
-          本地查询本身不调用模型，但使用工具后需要模型续答，自动记忆整理因此最多增加 3
-          次请求，计入各次输入、输出与超时限制。不使用工具时不增加请求。后台模型需支持原生函数调用；Writer
-          保持零工具，MVU 不变。
-        </p>
-        <label
-          >每次维护超时（秒）
-          <FieldHelp
-            tooltip="每次模型整理请求的等待上限，范围 5–180 秒。较长原文可能分成多个请求，每个请求单独计时；失败不会自动重试。" /><input
-            type="number"
-            min="5"
-            max="180"
-            v-model.number="settings.memory_timeout"
-        /></label>
-        <div class="form-row">
-          <label
-            >压力触发阈值（%）
-            <FieldHelp
-              tooltip="开启窗口时，完整请求估算达到日常输入 token 预算的该比例，就提前整理并整批裁剪，即使还没达到消息 cap。范围 10%–99%。" /><input
-              type="number"
-              min="10"
-              max="99"
-              :disabled="settings.chunk_mode === 'off'"
-              :value="Number(settings.context_pressure_trigger) * 100"
-              @input="
-                settings.context_pressure_trigger = Number(($event.target as HTMLInputElement).value) / 100
-              "
-          /></label>
-          <label
-            >压力裁剪目标（%）
-            <FieldHelp
-              tooltip="压力触发后，尽量整批裁剪至此比例；必须低于触发阈值，范围 5%–98%。最近两次交流及本次输入仍受保护，无法满足预算时终止请求。" /><input
-              type="number"
-              min="5"
-              max="98"
-              :disabled="settings.chunk_mode === 'off'"
-              :value="Number(settings.context_pressure_target) * 100"
-              @input="
-                settings.context_pressure_target = Number(($event.target as HTMLInputElement).value) / 100
-              "
-          /></label>
-        </div>
-        <p class="muted">
-          周期整理失败会保留旧档案。必须裁剪时，记忆成功覆盖待移除消息后才推进窗口；失败则保留原窗口并停止本次发送。所有变更随正文一起提交，取消或拒绝审核不会推进窗口。
-        </p>
-      </section>
-      <section v-else-if="page === 'prompt'" aria-labelledby="system-prompt-title">
-        <h3 id="system-prompt-title">系统提示词</h3>
-        <p class="muted">管理应用内全部系统提示词。修改或恢复默认值后，点击“保存设置”生效。</p>
-        <div v-for="prompt in settings.prompt_definitions || []" :key="prompt.path" class="prompt-setting">
-          <label>
-            {{ prompt.label }}
-            <ExpandableTextarea
-              v-model="promptOwner(prompt.path)[promptKey(prompt.path)]"
-              :label="prompt.label"
-            />
-          </label>
-          <p class="muted">{{ prompt.description }}</p>
+      </div>
+      <SaveStatus :state="status" :revision="JSON.stringify(saved?.revisions || {})" />
+    </header>
+    <p v-if="!draft" class="settings-loading">
+      {{ error || '正在读取设置…' }}<button v-if="error" @click="editor.initialize">重试</button>
+    </p>
+    <div v-else class="settings-layout">
+      <nav class="settings-pages" aria-label="设置页面">
+        <div v-for="group in groups" :key="group.scope" class="settings-nav-group">
+          <h3>{{ group.label }}</h3>
           <button
-            type="button"
-            :aria-label="'恢复默认值：' + prompt.label"
-            @click="promptOwner(prompt.path)[promptKey(prompt.path)] = prompt.default"
+            v-for="item in draft.pages.filter((p) => p.scope === group.scope)"
+            :key="item.id"
+            :class="{ active: pageId === item.id }"
+            :aria-current="pageId === item.id ? 'page' : undefined"
+            :aria-label="group.label + ' ' + item.label"
+            @click="navigate(item.id)"
           >
-            恢复默认值
+            {{ item.label }}
           </button>
         </div>
-      </section>
-      <section v-show="page === 'context'" aria-label="全局上下文结构编排">
-        <h3>全局上下文结构编排</h3>
-        <p class="muted">
-          新对话默认复制此编排。每个对话可单独自定义；继承剧情进度时复制原对话的编排。修改全局编排不覆盖已有对话。
+      </nav>
+      <div class="settings-mobile-nav">
+        <div class="settings-mode-buttons">
+          <button
+            v-for="group in groups"
+            :key="group.scope"
+            :class="{ active: scope === group.scope }"
+            @click="navigate(group.scope + '.' + (group.scope === 'shared' ? 'providers' : 'model'))"
+          >
+            {{ group.label }}
+          </button>
+        </div>
+        <select
+          :value="pageId"
+          aria-label="设置页面"
+          @change="navigate(($event.target as HTMLSelectElement).value)"
+        >
+          <option
+            v-for="item in draft.pages.filter((p) => p.scope === scope)"
+            :key="item.id"
+            :value="item.id"
+          >
+            {{ item.label }}
+          </option>
+        </select>
+      </div>
+      <div class="settings-detail" @change="changed">
+        <div class="settings-detail-heading">
+          <h3>{{ groupLabel(scope) }} · {{ page?.label }}</h3>
+          <button v-if="page" :disabled="busy || !editor.pageChanged(page)" @click="editor.undo(page)">
+            撤回本页修改
+          </button>
+        </div>
+        <p class="settings-scope-note">
+          {{ scope === 'shared' ? '这些资源由两种模式共用。' : '参数独立保存，成功保存后用于下一轮。' }}
         </p>
-        <RecipeEditor
-          v-if="settings.context_recipe"
-          :recipe="settings.context_recipe"
-          :saving="saving || !!errors.length"
-          save-label="保存全局编排"
-          @save="
-            (recipe) => {
-              settings.context_recipe = recipe;
-              emit('save');
-            }
-          "
-        />
-      </section>
-      <AppNotification :message="errors.length ? '设置之间存在冲突：' + errors.join('；') : ''" />
-      <div v-if="page !== 'context'" class="modal-footer">
-        <button class="primary" :disabled="saving || !!errors.length" @click="emit('save')">
-          {{ saving ? '正在保存…' : '保存设置' }}
-        </button>
+        <section
+          v-if="page"
+          :key="page.id"
+          class="settings-page-content"
+          :aria-label="groupLabel(scope) + ' ' + page.label"
+        >
+          <template v-if="page.key === 'model'">
+            <div :class="['settings-profiles', { 'dual-profiles': scope === 'half_agent' }]">
+              <ModelProfileEditor
+                v-if="scope === 'full_agent'"
+                :profile="draft.full_agent.model"
+                :providers="draft.shared.providers"
+                role="full_agent"
+                label="模型连接"
+                :effort-options="effortOptions"
+                :flush="editor.flush"
+                @checked="refreshAfterProbe"
+                ><template #common-extra
+                  ><label data-setting-path="policy"
+                    >默认对话更新策略<select v-model="draft.full_agent.policy">
+                      <option v-for="option in policies" :key="option.value" :value="option.value">
+                        {{ option.label }}
+                      </option>
+                    </select></label
+                  ></template
+                ></ModelProfileEditor
+              >
+              <template v-else
+                ><ModelProfileEditor
+                  v-for="role in ['foreground', 'background'] as const"
+                  :key="role"
+                  :profile="draft.half_agent[role]"
+                  :providers="draft.shared.providers"
+                  :role="role"
+                  :label="role === 'foreground' ? '正文生成' : '后台整理'"
+                  :effort-options="effortOptions"
+                  :flush="editor.flush"
+                  @checked="refreshAfterProbe"
+              /></template>
+            </div>
+            <p v-if="scope === 'full_agent'" class="muted">
+              默认权限的修改，会从下一轮起影响同模式下继承默认值的对话。
+            </p>
+            <div v-else class="settings-policy"><SettingsFields :value="values" :fields="policyField" /></div>
+          </template>
+          <template v-else-if="page.key === 'retrieval'">
+            <h4>世界书注入</h4>
+            <SettingsFields :value="values" :fields="loreFields" />
+            <SettingsFields
+              v-if="scope === 'half_agent'"
+              :value="values"
+              :fields="[
+                {
+                  path: 'lore_injection_mode',
+                  label: '新对话的注入方案',
+                  options: [
+                    { value: 'conversation', label: '随对话滚动' },
+                    { value: 'st_top', label: '按角色卡位置注入' },
+                  ],
+                },
+              ]"
+            />
+            <p class="muted">
+              数量和字符额度是上限，不以弱匹配补满。常驻条目仍受总上下文窗口限制。{{
+                scope === 'full_agent' ? '此模式固定随对话注入。' : '注入方案仅影响新对话。'
+              }}
+            </p>
+            <h4>召回通道与权重</h4>
+            <div class="settings-channel-grid">
+              <label
+                v-for="[key, label] in [
+                  ['keyword', '关键词'],
+                  ['bm25', '关键词排序'],
+                  ['embedding', '向量检索'],
+                ]"
+                :key="key"
+                class="settings-channel"
+                ><span
+                  ><input v-model="values.retrieval.channels" type="checkbox" :value="key" />{{ label }}</span
+                ><input
+                  v-model.number="values.retrieval.weights[key]"
+                  :aria-label="label + '权重'"
+                  type="number"
+                  min="0.01"
+                  max="100"
+                  step="0.1"
+              /></label>
+            </div>
+            <SettingsFields :value="values" :fields="retrievalFields" />
+            <details class="settings-advanced">
+              <summary>更多检索参数</summary>
+              <SettingsFields :value="values" :fields="retrievalAdvanced" />
+              <p class="muted">
+                切片在神经通道按本地模型分词器计数，在关键词排序通道按词元计数；字符限额单独计算。
+              </p>
+            </details>
+          </template>
+          <template v-else-if="page.key === 'memory'">
+            <SettingsFields v-if="scope === 'full_agent'" :value="values" :fields="fullFields" />
+            <template v-else
+              ><h4>历史窗口</h4>
+              <SettingsFields :value="values" :fields="historyFields" />
+              <h4>记忆整理</h4>
+              <SettingsFields :value="values" :fields="memoryFields"
+            /></template>
+            <p class="muted">
+              {{
+                scope === 'full_agent'
+                  ? '模型通过工具查阅资料、保存笔记并主动换窗。'
+                  : '消息退出前必须验证记忆覆盖；失败时保留原窗口。关闭裁剪仍会执行周期整理。'
+              }}取消或拒绝审核不会提交本轮变更。
+            </p>
+          </template>
+          <template v-else-if="page.key === 'prompts' && prompt">
+            <div class="settings-prompt-layout">
+              <div class="settings-prompt-list">
+                <button
+                  v-for="item in prompts"
+                  :key="item.path"
+                  :class="{ active: prompt.path === item.path }"
+                  @click="guard(() => (promptPath = item.path))"
+                >
+                  {{ item.label }}
+                </button>
+              </div>
+              <div class="settings-prompt-editor">
+                <SavedText
+                  :key="prompt.path"
+                  :label="prompt.label"
+                  :model-value="editor.textValue(scope, prompt.path)"
+                  :saved-value="getPath(saved![scope], prompt.path)"
+                  :saving="textBusy === scope + '.' + prompt.path"
+                  :error="textErrors[scope + '.' + prompt.path]"
+                  :guard="guard"
+                  @update:model-value="editor.editText(scope, prompt.path, $event)"
+                  @save="editor.saveText(scope, prompt.path)"
+                />
+                <p class="muted">{{ prompt.description }}</p>
+                <button @click="editor.editText(scope, prompt.path, prompt.default)">恢复默认文本</button>
+              </div>
+            </div>
+          </template>
+          <RecipeSettings
+            v-else-if="page.key === 'recipe'"
+            :recipe="draft.half_agent.context_recipe"
+            :saved="saved!.half_agent.context_recipe"
+            :guard="guard"
+            :text-value="(path) => editor.textValue('half_agent', path)"
+            :edit-text="(path, value) => editor.editText('half_agent', path, value)"
+            :save-text="saveRecipeText"
+            :text-busy="textBusy"
+            :text-errors="textErrors"
+          />
+          <ProviderSettings v-else-if="page.key === 'providers'" v-model:providers="draft.shared.providers" />
+          <ModelProfileEditor
+            v-else-if="page.key === 'editor'"
+            :profile="draft.shared.card_editor"
+            :providers="draft.shared.providers"
+            role="card_editor"
+            label="角色卡编辑模型"
+            :effort-options="effortOptions"
+            :flush="editor.flush"
+            @checked="refreshAfterProbe"
+          />
+          <LocalResourceSettings
+            v-else-if="page.key === 'local'"
+            :settings="draft.shared"
+            :flush="editor.flush"
+          />
+          <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
+          <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
+        </section>
+        <div v-if="error" class="settings-error" role="alert">
+          <span>{{ error }}</span
+          ><button :disabled="busy" @click="editor.flush().catch(() => undefined)">重试保存</button>
+        </div>
       </div>
     </div>
   </div>
+  <Teleport to="body"
+    ><div v-if="pendingAction" class="settings-confirm-backdrop">
+      <section
+        class="settings-confirm"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="unsaved-title"
+        @keydown.esc.prevent.stop="continueEditing"
+        @keydown.tab="trap"
+      >
+        <h2 id="unsaved-title">有修改尚未保存</h2>
+        <p>离开会放弃尚未保存的修改。</p>
+        <div>
+          <button ref="continueButton" class="primary" @click="continueEditing">继续编辑</button
+          ><button @click="discardAndContinue">放弃修改</button>
+        </div>
+      </section>
+    </div></Teleport
+  >
 </template>

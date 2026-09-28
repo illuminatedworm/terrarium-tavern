@@ -249,7 +249,9 @@ class RetrievalEngine:
         started = time.perf_counter()
         turn_number = turn_number or sum(m["role"] == "user" for m in session.get("messages", history)) + 1
         key = digest([document, [(m["id"], m.get("retrieval_query", "")) for m in history], user_input,
-                      snapshot, settings.retrieval.model_dump(), settings.local_models.model_dump(), session.get("persona"), seed, turn_number])
+                      snapshot, settings.retrieval.model_dump(), settings.local_models.model_dump(),
+                      session.get("id"), session.get("agent_mode"), session.get("lore_injection_mode"),
+                      session.get("persona"), seed, turn_number])
         if not index_only and key in self.cache:
             return self.cache[key]
         async def embedding_query():

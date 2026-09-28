@@ -9,6 +9,7 @@ from tavern.core.prompts import (
     LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
     PROMPT_DEFINITIONS,
 )
+from tavern.full_agent.config import FULL_AGENT_PROMPT
 from tavern.memories.memory import render_memory
 from tavern.search.retrieval_text import query_instruction
 from tests.support.memory_fixtures import memory_snapshot
@@ -33,11 +34,13 @@ def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text
     from tavern.storage.store import Store
 
     store = Store(tmp_path)
+    settings = Settings(retrieval={"protocol_prompt": LEGACY_DEFAULT_RETRIEVAL_PROTOCOL})
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (settings.model_dump_json(),))
+    store = Store(tmp_path)
+    assert store.settings().retrieval.protocol_prompt == DEFAULT_RETRIEVAL_PROTOCOL
     settings = store.settings()
-    settings.retrieval.protocol_prompt = LEGACY_DEFAULT_RETRIEVAL_PROTOCOL
-    store.save_settings(settings)
-    assert Store(tmp_path).settings().retrieval.protocol_prompt == DEFAULT_RETRIEVAL_PROTOCOL
-
     settings.retrieval.protocol_prompt = "自定义检索协议"
     store.save_settings(settings)
     assert Store(tmp_path).settings().retrieval.protocol_prompt == "自定义检索协议"
@@ -48,22 +51,27 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             response = (await client.get("/api/settings")).json()
-            assert len(response["prompt_definitions"]) == 11
-            for item in response["prompt_definitions"]:
-                parts = item["path"].split(".")
-                owner = response if len(parts) == 1 else response[parts[0]]
-                owner[parts[-1]] = "CUSTOM " + item["path"]
-            saved = await client.put("/api/settings", json=response)
-            assert saved.status_code == 200, saved.text
-            response = (await client.get("/api/settings")).json()
-            for item in response["prompt_definitions"]:
-                assert read_path(response, item["path"]) == "CUSTOM " + item["path"]
-                parts = item["path"].split(".")
-                owner = response if len(parts) == 1 else response[parts[0]]
-                owner[parts[-1]] = item["default"]
-            restored = (await client.put("/api/settings", json=response)).json()
-            for item in PROMPT_DEFINITIONS:
-                assert read_path(restored, item["path"]) == item["default"]
+            assert {item["scope"] for item in response["prompt_definitions"]} == {"full_agent", "half_agent"}
+            system_prompts = {item["scope"]: item for item in response["prompt_definitions"]
+                              if item["path"] == "system_prompt"}
+            assert system_prompts["full_agent"]["default"] == FULL_AGENT_PROMPT
+            assert system_prompts["half_agent"]["default"] == DEFAULT_SYSTEM_PROMPT
+            assert "维护记忆和剧情状态" in system_prompts["full_agent"]["description"]
+            assert "前台 Writer" in system_prompts["half_agent"]["description"]
+            for scope in ("full_agent", "half_agent"):
+                prompts = [item for item in response["prompt_definitions"] if item["scope"] == scope]
+                changes = {item["path"]: "CUSTOM " + scope + item["path"] for item in prompts}
+                saved = await client.patch(f"/api/settings/{scope}", json={"expected_revision": response["revisions"][scope], "changes": changes})
+                assert saved.status_code == 200, saved.text
+                response = (await client.get("/api/settings")).json()
+                for item in prompts:
+                    assert read_path(response[scope], item["path"]) == changes[item["path"]]
+                restored = await client.patch(f"/api/settings/{scope}", json={"expected_revision": response["revisions"][scope],
+                    "changes": {item["path"]: item["default"] for item in prompts}})
+                assert restored.status_code == 200, restored.text
+                response = restored.json()
+                for item in prompts:
+                    assert read_path(response[scope], item["path"]) == item["default"]
     finally:
         await app.state.service.close()
 
@@ -131,8 +139,8 @@ async def test_probe_uses_saved_prompt_overrides(tmp_path, monkeypatch):
     monkeypatch.setattr(tavern.scripting.agent, "make_provider", make_provider)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
-            saved = await client.put("/api/settings", json={"probe_system_prompt": "PROBE CUSTOM",
-                "probe_marker_prompt": "MARKER CUSTOM TAVERN_MID_42"})
+            saved = await client.patch("/api/settings/half_agent", json={"expected_revision": 0, "changes": {
+                "probe_system_prompt": "PROBE CUSTOM", "probe_marker_prompt": "MARKER CUSTOM TAVERN_MID_42"}})
             assert saved.status_code == 200
             response = await client.post("/api/settings/probe")
             assert response.status_code == 200, response.text

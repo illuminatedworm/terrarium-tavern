@@ -152,9 +152,9 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         assert (await c.get("/api/health")).status_code == 200
-        assert (await c.put("/api/settings", json={"providers":[{"id":"default","api_key":"secret"}]})).status_code == 200
+        assert (await c.patch("/api/settings/shared", json={"expected_revision":0,"changes":{"providers":[{"id":"default","api_key":"secret"}]}})).status_code == 200
         response = await c.get("/api/settings")
-        assert response.json()["has_api_key"]
+        assert response.json()["shared"]["providers"][0]["has_api_key"]
         assert "secret" not in response.text
         assert (await c.get("/api/settings", headers={"origin": "null"})).status_code == 403
         assert (await c.get("/api/settings", headers={"host": "evil.example"})).status_code == 403

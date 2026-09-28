@@ -31,7 +31,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     add("system", settings.full_agent_system_prompt, "rules")
     if session.get("turn_preference"):
-        add("system", session["turn_preference"], "session_preference")
+        add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")
     constants = [e for e in lore_entries(document, "writer") if e["enabled"] and e.get("constant")
                  and "[initvar]" not in e.get("comment", "").lower()]
     for entry in constants:

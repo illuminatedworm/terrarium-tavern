@@ -70,20 +70,26 @@ async def test_provider_secrets_and_role_routing(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
             config = (await client.get('/api/settings')).json()
-            config['providers'] = [{'id': 'a', 'name':'A', 'api_key':'secret-a'}, {'id':'b','api_key':'secret-b'}]
-            config['foreground'].update(provider_id='a', model='story')
-            config['background'].update(provider_id='b', model='memory')
-            response = await client.put('/api/settings', json=config)
+            providers = config['shared']['providers'] + [{'id':'a','api_key':'secret-a'}, {'id':'b','api_key':'secret-b'}]
+            response = await client.patch('/api/settings/shared', json={'expected_revision':0, 'changes':{'providers':providers}})
+            assert response.status_code == 200, response.text
+            response = await client.patch('/api/settings/half_agent', json={'expected_revision':0, 'changes':{
+                'foreground.provider_id':'a', 'foreground.model':'story',
+                'background.provider_id':'b', 'background.model':'memory'}})
             assert response.status_code == 200, response.text
             assert 'secret-' not in response.text
             saved = app.state.store.settings()
             assert saved.for_role('foreground').api_key == 'secret-a'
             assert saved.for_role('background').api_key == 'secret-b'
             config = response.json()
-            await client.put('/api/settings', json=config)
+            response = await client.patch('/api/settings/shared', json={'expected_revision':config['revisions']['shared'],
+                'changes':{'providers':config['shared']['providers']}})
+            assert response.status_code == 200
             assert app.state.store.settings().for_role('background').api_key == 'secret-b'
-            config['providers'] = config['providers'][:1]
-            assert (await client.put('/api/settings', json=config)).status_code == 400
+            response = await client.patch('/api/settings/shared', json={'expected_revision':response.json()['revisions']['shared'],
+                'changes':{'providers':config['shared']['providers'][:1]}})
+            assert response.status_code == 400
+
     finally:
         await app.state.service.close()
 

@@ -10,8 +10,8 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card
-from tavern.core.models import Settings, TurnRequest
-from tavern.core.prompts import DEFAULT_RETRIEVAL_PROTOCOL, LEGACY_DEFAULT_RETRIEVAL_PROTOCOL
+from tavern.core.models import TurnRequest
+from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 
 
 def uid():
@@ -30,13 +30,23 @@ class Store:
     def __init__(self, root: Path):
         self.root = root
         self.path = root / "tavern.sqlite3"
+        migrated = None
         # Validate the file before creating directories, tables or journal files.
         if self.path.exists():
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] != "1":
-                    raise ValueError("数据库版本不受支持；需要 schema 1")
+                if version is None or version[0] not in {"1", "2"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1 或 2")
+                raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+                validated_settings = migrate_settings(raw)
+                if version[0] == "1":
+                    migrated = validated_settings
+                    backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
+                    with closing(sqlite3.connect(backup_path)) as backup_db:
+                        db.backup(backup_db)
+                elif raw.get("version") != 2:
+                    raise ValueError("设置版本与数据库版本不一致")
         (root / "blobs").mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript("""
@@ -72,8 +82,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS personas(id TEXT PRIMARY KEY, version INTEGER NOT NULL,
                     name TEXT NOT NULL, description TEXT NOT NULL);
             """)
-            db.execute("INSERT OR IGNORE INTO meta VALUES ('settings',?)", (Settings().model_dump_json(),))
-            db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','1')")
+            db.execute("INSERT OR IGNORE INTO meta VALUES ('settings',?)", (SettingsDocument().model_dump_json(),))
+            if migrated is not None:
+                db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
+            db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version','2')")
             if "title" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''")
                 db.execute("""UPDATE sessions SET title=COALESCE(
@@ -257,18 +269,24 @@ class Store:
                 raise KeyError("角色卡不存在或已删除")
         return self.card(card)
 
-    def settings(self):
+    def settings_document(self):
         with self.connection() as db:
-            settings = Settings.model_validate_json(
+            return SettingsDocument.model_validate_json(
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
-        if settings.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
-            settings.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
-        return settings
+
+    def settings(self, mode="half_agent"):
+        return self.settings_document().runtime(mode)
 
     def save_settings(self, settings):
+        document = settings if isinstance(settings, SettingsDocument) else from_runtime(settings)
         with self.connection() as db:
-            db.execute("UPDATE meta SET value=? WHERE key='settings'", (settings.model_dump_json(),))
+            db.execute("BEGIN IMMEDIATE")
+            current = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+            for scope in document.revisions:
+                if getattr(current, scope) != getattr(document, scope):
+                    document.revisions[scope] = current.revisions[scope] + 1
+            db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
 
     def new_session(self, options):
         card = self.card(options.card_id)
@@ -432,6 +450,7 @@ class Store:
             else {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}, "scopes": {}, "content": None}
         )
         settings = self.settings()
+        settings = self.settings(result["agent_mode"])
         result["policy_effective"] = result["policy"] or settings.policy
         result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
         from tavern.conversation.cache_breakpoint import effective_message_id

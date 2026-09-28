@@ -2,7 +2,7 @@
 import { useTimedError } from '../../composables/useTimedError';
 import { onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../../lib/api';
-defineProps<{ settings: any }>();
+const props = defineProps<{ settings: any; flush: () => Promise<unknown> }>();
 const sessions = ref<any[]>([]),
   selectedSession = ref(''),
   indexes = ref<any>({ cached_entries: 0 });
@@ -49,6 +49,7 @@ async function action(purpose: string, operation: string) {
   error.value = '';
   feedback.value = operation === 'download' ? '正在提交下载任务…' : '正在提交预热任务…';
   try {
+    await props.flush();
     remember(await api(`/local-models/${purpose}/${operation}`, {}));
     feedback.value = '任务已提交，正在后台执行，可展开下方任务查看进度。';
   } catch (e) {
@@ -64,6 +65,7 @@ async function rebuild() {
   error.value = '';
   feedback.value = '正在提交世界书索引任务…';
   try {
+    await props.flush();
     remember(await api(`/sessions/${selectedSession.value}/retrieval/rebuild`, {}));
     feedback.value = '世界书索引正在后台准备，完成条目数会自动更新。';
   } catch (e) {
@@ -94,95 +96,16 @@ onUnmounted(() => {
   disposed = true;
   clearTimeout(timer);
 });
-const parameters = [
-  ['bm25_min_coverage', 'BM25 最低检索词覆盖率'],
-  ['bm25_min_score', 'BM25 最低相对得分'],
-  ['embedding_min_similarity', '向量最低相似度'],
-  ['rerank_min_score', '重排最低相关性'],
-  ['candidate_count', '每通道候选数'],
-  ['fusion_count', '融合候选数'],
-  ['rrf_k', 'RRF 平滑系数'],
-  ['bm25_k1', 'BM25 k1'],
-  ['bm25_b', 'BM25 b'],
-  ['gram_weight', '字符二元组权重'],
-  ['query_lookback', '线索回看数量'],
-  ['query_chars', '线索长度上限（字符）'],
-  ['input_chars', '用户输入检索上限（字符）'],
-  ['chunk_tokens', '切片长度（神经 tokens / BM25 词元）'],
-  ['chunk_overlap', '切片重叠（神经 tokens / BM25 词元）'],
-  ['embedding_timeout', '向量查询超时（秒）'],
-  ['rerank_timeout', '重排超时（秒）'],
-];
 useTimedError(error);
 </script>
 <template>
-  <p class="muted">
-    检索线索和输入上限以字符（Unicode 码点）计数；切片长度/重叠在神经通道以该本地模型 tokenizer 的 tokens
-    计数，BM25 则以分词词元计数。它们不等同于正文模型的 token 预算。
-  </p>
-  <h3>召回方案</h3>
-  <p class="muted">默认关键词＋BM25，无需神经模型。中英日分词由后端执行；混合方案按加权 RRF 合并。</p>
-  <div
-    v-for="[key, label] in [
-      ['keyword', '关键词'],
-      ['bm25', 'BM25'],
-      ['embedding', 'Embedding 向量'],
-    ]"
-    :key="key"
-    class="retrieval-channel"
-  >
-    <label class="retrieval-channel-choice">
-      <input type="checkbox" v-model="settings.retrieval.channels" :value="key" />{{ label }}
-    </label>
-    <label class="retrieval-channel-weight">
-      融合权重
-      <input
-        :aria-label="`${label}融合权重`"
-        type="number"
-        min="0.01"
-        max="100"
-        step="0.1"
-        v-model.number="settings.retrieval.weights[key]"
-      />
-    </label>
-  </div>
-  <details>
-    <summary>高级召回参数</summary>
-    <label v-for="[key, label] in parameters" :key="key"
-      >{{ label }}<input type="number" step="any" v-model.number="settings.retrieval[key]"
-    /></label>
-  </details>
-  <label
-    ><input type="checkbox" v-model="settings.local_models.reranker_enabled" />融合后使用本地 Reranker</label
-  >
-  <label
-    >每条重排片段数<input
-      type="number"
-      min="1"
-      max="8"
-      step="1"
-      v-model.number="settings.local_models.rerank_fragments"
-  /></label>
-  <p class="muted">
-    每个世界书条目最多选取多少个相关片段交给 Reranker 分别评分，取最高分作为条目得分；默认 3 片，范围
-    1–8。这不是最终注入的条目数，也不一定是正文开头的几片。增加片数可以扩大覆盖范围，但会增加推理开销。
-  </p>
-  <p class="muted">
-    按模型的 token（分词单位）切片，不按行或 Markdown 段落切片。当前每片最多
-    {{ settings.retrieval.chunk_tokens }} token，相邻片段重叠
-    {{ settings.retrieval.chunk_overlap }} token；可在“高级召回参数”调整。 当前每条最多选
-    {{ settings.local_models.rerank_fragments }} 片，合计约
-    {{ settings.retrieval.chunk_tokens * settings.local_models.rerank_fragments }} token
-    上限，含重叠内容及可能附带的标题、关键词；不足时按实际长度处理。 默认 512 token × 3 片 = 1536 token。Token
-    不等于字符，不同语言、符号和分词器的换算不同，不能保证固定字数。
-  </p>
   <h3>本地检索模型</h3>
   <p class="muted">
-    先保存配置，再下载和预热。默认两个 0.6B 模型适合 12 GB 显卡；4B
+    配置自动保存，下载和预热会等待保存完成。默认两个 0.6B 模型适合 12 GB 显卡；4B
     需要更多空闲显存。推理不可用时记录降级，不转 CPU。
   </p>
   <section v-for="purpose in ['embedding', 'reranker']" :key="purpose">
-    <h4>{{ purpose === 'embedding' ? 'Embedding' : 'Reranker' }}</h4>
+    <h4>{{ purpose === 'embedding' ? '向量模型' : '重排模型' }}</h4>
     <label
       >模型<select v-model="settings.local_models[purpose].model">
         <option

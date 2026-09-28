@@ -134,7 +134,7 @@ async def main():
                 await page.set_viewport_size({"width": 1440, "height": 900})
                 await page.get_by_role("button", name="⚙ 设置", exact=True).click()
                 modal = page.get_by_role("dialog", name="设置")
-                await modal.get_by_role("button", name="Full Agent", exact=True).click()
+                await modal.get_by_role("button", name="full agent 工具与记忆", exact=True).click()
                 await expect(modal.get_by_label("每回合模型调用上限", exact=True)).to_have_value("24")
                 await page.screenshot(path=str(output / "settings.png"))
                 await modal.get_by_role('button', name='关闭', exact=True).click()

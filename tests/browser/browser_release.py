@@ -75,22 +75,30 @@ async def main():
             await page.get_by_role("button", name="⚙ 设置", exact=True).click()
             dialog = page.get_by_role("dialog", name="设置")
             initial = (await dialog.bounding_box())["height"]
-            for category in ["模型与偏好", "混合召回与本地模型", "网络与代理", "世界书注入",
-                             "Half Agent · 历史与维护", "Full Agent", "系统提示词", "上下文结构编排", "存储与维护"]:
-                await dialog.locator('.settings-pages').get_by_role("button", name=category, exact=True).click()
-                await assert_viewport(page, label + category)
+            configuration = (await (await page.request.get(BASE + '/api/settings')).json())
+            async def navigate(item):
+                group = {'full_agent':'full agent','half_agent':'half agent','shared':'通用'}[item['scope']]
+                if width // zoom <= 760:
+                    await dialog.locator('.settings-mode-buttons').get_by_role('button',name=group,exact=True).click()
+                    await dialog.get_by_role('combobox',name='设置页面',exact=True).select_option(item['id'])
+                else:
+                    await dialog.locator('.settings-pages').get_by_role('button',name=group+' '+item['label'],exact=True).click()
+            for item in configuration['pages']:
+                await navigate(item)
+                await assert_viewport(page, label + item['id'])
                 assert abs((await dialog.bounding_box())["height"] - initial) < 1
-                checked.append(label + ":" + category)
+                checked.append(label + ":" + item['id'])
             await page.locator(".storage-report").wait_for()
             await page.screenshot(path=str(OUTPUT / f"settings-{label}.png"))
-            await dialog.locator('.settings-pages').get_by_role("button", name="系统提示词", exact=True).click()
-            await dialog.get_by_role("button", name="放大编辑：应用系统提示词", exact=True).click()
-            editor = page.get_by_role("dialog", name="编辑：应用系统提示词", exact=True)
+            await navigate(next(item for item in configuration['pages'] if item['id']=='half_agent.prompts'))
+            await dialog.get_by_role("button", name="放大编辑：系统提示词", exact=True).click()
+            editor = page.get_by_role("dialog", name="编辑：系统提示词", exact=True)
             editor_height = (await editor.bounding_box())["height"]
             await editor.get_by_role("textbox").fill("很长的提示词。\n" * 100)
             assert abs((await editor.bounding_box())["height"] - editor_height) < 1
             await assert_viewport(page, label + ":expanded-editor")
-            await editor.get_by_role("button", name="取消", exact=True).click()
+            await editor.get_by_role("button", name="关闭放大编辑", exact=True).click()
+            await page.get_by_role('alertdialog').get_by_role('button',name='放弃修改').click()
             await dialog.get_by_role("button", name="关闭", exact=True).click()
             await page.get_by_role("tab", name="角色卡", exact=True).click()
             await page.locator('.card-side-item').first.click()

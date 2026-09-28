@@ -1,5 +1,6 @@
 """Application-owned prompt defaults and settings catalog."""
 
+from tavern.full_agent.config import FULL_AGENT_PROMPT
 
 DEFAULT_SYSTEM_PROMPT = """你是 roleplay 引擎，与玩家共同创作互动故事，负责演绎其他角色、呈现场景，让人物与情境推动剧情。
 追求有表现力的叙述，文风与节奏随情境而定。
@@ -40,8 +41,18 @@ DEFAULT_PROBE_PROMPT = """Follow the latest scene marker provided in a system me
 
 DEFAULT_PROBE_MARKER_PROMPT = """The current scene marker is TAVERN_MID_42. Reply with exactly TAVERN_MID_42."""
 
+FULL_AGENT_SYSTEM_PROMPT_DEFINITION = {
+    "path": "system_prompt", "label": "应用系统提示词",
+    "description": "前台主代理：负责 RP 与文学创作，并自主查阅资料、维护记忆和剧情状态。",
+    "default": FULL_AGENT_PROMPT,
+}
+HALF_AGENT_SYSTEM_PROMPT_DEFINITION = {
+    "path": "system_prompt", "label": "应用系统提示词",
+    "description": "前台 Writer：负责 RP 与文学创作。",
+    "default": DEFAULT_SYSTEM_PROMPT,
+}
+
 PROMPT_DEFINITIONS = [
-    {"path": 'system_prompt', "label": '应用系统提示词', "description": '前台 Writer：负责 RP 与文学创作。', "default": DEFAULT_SYSTEM_PROMPT},
     {"path": 'memory_system_prompt', "label": '记忆系统提示词', "description": '后台 Tracker：用于周期整理、裁剪前整理和手动重建。此处定制内容整理原则；程序在同一系统消息后附加唯一输出契约。使用 operations/questions 增量格式，sources 仅选 S/H 原文片段短编号，旧记忆用 R 编号，设定用 E 编号；程序回填真实ID、摘录和指纹。不要要求模型复制长ID或原话，不要要求完整快照或 text/memories。自定义文本按原样保存；手工记忆修改受保护。', "default": DEFAULT_MEMORY_PROMPT},
     {"path": 'retrieval.query_prompt', "label": '检索线索提示词', "description": '定义 Writer 供 Roleplay Runtime 使用的检索线索。', "default": DEFAULT_QUERY_PROMPT},
     {"path": 'retrieval.protocol_prompt', "label": '检索输出协议', "description": '标签由程序固定解析；自定义时保留完整标签及输出顺序。', "default": DEFAULT_RETRIEVAL_PROTOCOL},

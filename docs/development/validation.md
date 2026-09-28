@@ -35,3 +35,5 @@ Full Agent 专项：`tests/backend/test_full_agent.py` 覆盖原生工具 HTTP �
 发行打包前必须成功构建；ZIP、清单与校验值输出到 `releases/`。可用 `tools/verify_release.py` 检验归档并执行干净安装，该命令会安装依赖，境外资源使用指定代理。
 
 截图、日志、评估结果只写入 `.cache/` 等被忽略的目录，不提交具体报告、私人回放或运行记录。测试通过仅证明对应程序路径，不代表任意社区卡和真实模型的语义质量。
+
+设置拆分专项：`tests/backend/test_settings_document.py` 覆盖实际生效值迁移、密钥保护、模式隔离、快照和页级撤回；`npm test` 包含保存响应合并回归；`.venv/Scripts/python.exe -m tests.browser.browser_settings` 覆盖自动保存、绿色勾保存、未保存离开提示、搜索、撤回及桌面／移动／缩放布局。测试数据和截图写入忽略目录 `.cache/settings-redesign`。

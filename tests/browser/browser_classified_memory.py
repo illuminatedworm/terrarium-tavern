@@ -125,11 +125,12 @@ async def main():
                 await page.get_by_role('button', name='展开左侧栏', exact=True).click()
                 await page.get_by_role('button', name='⚙ 设置', exact=True).click()
                 dialog = page.get_by_role('dialog', name='设置', exact=True)
-                await dialog.get_by_role('button', name='历史窗口与后台维护', exact=True).click()
-                output = dialog.get_by_role('spinbutton', name='记忆整理输出上限', exact=False)
+                await dialog.get_by_role('button', name='half agent 历史与记忆', exact=True).click()
+                output = dialog.get_by_role('spinbutton', name='整理输出上限', exact=False)
                 await expect(output).to_have_value('4096')
                 await output.fill('3072')
-                await dialog.get_by_role('button', name='保存设置', exact=True).click()
+                await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
+                await dialog.get_by_role('button', name='关闭', exact=True).click()
                 await expect(dialog).not_to_be_visible()
                 assert store.settings().memory_output_tokens == 3072
                 assert store.settings().background.reply_tokens == cfg.background.reply_tokens

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from tavern.application.api import create_app
 from tavern.core.models import Settings
+from tavern.core.settings import migrate_settings
 from tavern.scripting.agent import make_provider
 from tavern.search.retrieval_config import ModelProfile, Provider
 
@@ -36,10 +37,12 @@ def test_nullable_sampling_and_per_connection_mode():
     ("foreground", 0.3, "default"),
     ("background", None, "no_write"),
     ("card_editor", 0.6, "instructions"),
+    ("full_agent", 0.1, "default"),
 ])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 async def test_all_roles_send_their_own_model_parameters(role, temperature, mode, api_mode):
     profiles = {
+        "full_agent": ModelProfile(model="full", temperature=0.1, top_p=0.2, prompt_cache_key="full"),
         "foreground": ModelProfile(model="writer", temperature=0.3, top_p=0.7,
                                    prompt_cache_key="writer", prompt_cache_mode="default"),
         "background": ModelProfile(model="tracker", temperature=None, top_p=0.4,
@@ -51,13 +54,13 @@ async def test_all_roles_send_their_own_model_parameters(role, temperature, mode
                                            use_proxy=False)], **profiles)
     assert settings.for_role("card_editor").model == "editor"
     assert Settings(background=profiles["background"]).for_role("card_editor").model == "tracker"
-    config = settings.for_role(role)
+    config = migrate_settings(settings.model_dump()).runtime().for_role(role)
     provider = await make_provider(config)
     try:
         assert provider.config.model == config.model
         assert provider.config.temperature == temperature
         assert provider.user_prompt_cache_key == {"foreground": "writer", "background": "tracker",
-                                                  "card_editor": "editor"}[role]
+                                                  "card_editor": "editor", "full_agent": "full"}[role]
         assert provider.prompt_cache_mode == mode
         if api_mode == "chat_completions":
             assert provider.extra_body["top_p"] == config.top_p
@@ -286,18 +289,20 @@ async def test_api_saves_null_sampling_and_connection_mode(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         settings = (await client.get("/api/settings")).json()
-        settings["providers"][0]["api_mode"] = "responses"
-        for field in ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"):
-            settings["foreground"][field] = None
-        settings["background"]["prompt_cache_mode"] = "no_write"
-        settings["background"]["prompt_cache_key"] = "tracker"
-        settings["background"]["prompt_cache_retention"] = "24h"
-        result = await client.put("/api/settings", json=settings)
+        settings["shared"]["providers"][0]["api_mode"] = "responses"
+        result = await client.patch("/api/settings/shared", json={"expected_revision": 0,
+            "changes": {"providers": settings["shared"]["providers"]}})
+        assert result.status_code == 200, result.text
+        changes = {f"foreground.{field}": None for field in
+                   ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")}
+        changes.update({"background.prompt_cache_mode": "no_write", "background.prompt_cache_key": "tracker",
+                        "background.prompt_cache_retention": "24h"})
+        result = await client.patch("/api/settings/half_agent", json={"expected_revision": result.json()["revisions"]["half_agent"], "changes": changes})
         assert result.status_code == 200, result.text
         saved = result.json()
-        assert saved["providers"][0]["api_mode"] == "responses"
-        assert all(saved["foreground"][field] is None for field in
+        assert saved["shared"]["providers"][0]["api_mode"] == "responses"
+        assert all(saved["half_agent"]["foreground"][field] is None for field in
                    ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"))
-        assert saved["background"]["prompt_cache_mode"] == "no_write"
-        assert saved["background"]["prompt_cache_key"] == "tracker"
-        assert saved["background"]["prompt_cache_retention"] == "24h"
+        assert saved["half_agent"]["background"]["prompt_cache_mode"] == "no_write"
+        assert saved["half_agent"]["background"]["prompt_cache_key"] == "tracker"
+        assert saved["half_agent"]["background"]["prompt_cache_retention"] == "24h"

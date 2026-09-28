@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { clone, difference, rebaseSettings, type SettingsDocument } from '../../web/lib/settingsDocument';
+
+const fixture = () =>
+  ({
+    version: 2,
+    full_agent: { model: { model: 'full', reply_tokens: 2048 }, system_prompt: 'full prompt' },
+    half_agent: { foreground: { model: 'writer' }, background: { model: 'tracker' } },
+    shared: { providers: [{ id: 'p', name: 'Provider', has_api_key: true }] },
+    revisions: { full_agent: 0, half_agent: 0, shared: 0 },
+    pages: [],
+    prompt_definitions: [],
+  }) as unknown as SettingsDocument;
+
+describe('settings acknowledgements', () => {
+  it('keeps edits made while a save is in flight and edits in other scopes', () => {
+    const saved = fixture();
+    const draft = clone(saved);
+    draft.full_agent.model.reply_tokens = 4096;
+    draft.half_agent.background.model = 'new tracker';
+    const response = clone(saved);
+    response.full_agent.model.reply_tokens = 3000;
+    response.revisions.full_agent = 1;
+    const rebased = rebaseSettings(saved, draft, response, 'full_agent', { 'model.reply_tokens': 3000 });
+    expect(rebased.full_agent.model.reply_tokens).toBe(4096);
+    expect(rebased.half_agent.background.model).toBe('new tracker');
+    expect(rebased.revisions.full_agent).toBe(1);
+  });
+  it('does not repeatedly send an acknowledged secret omitted from the response', () => {
+    const saved = fixture();
+    const draft = clone(saved);
+    draft.shared.providers[0].api_key = 'test-secret';
+    const rebased = rebaseSettings(saved, draft, clone(saved), 'shared', {
+      providers: draft.shared.providers,
+    });
+    expect(rebased.shared.providers[0].api_key).toBeUndefined();
+    expect(difference(saved.shared, rebased.shared)).toEqual({});
+  });
+  it('keeps a newer secret typed before the older request completes', () => {
+    const saved = fixture();
+    const draft = clone(saved);
+    const sent = clone(saved.shared.providers);
+    sent[0].api_key = 'first';
+    draft.shared.providers[0].api_key = 'second';
+    const rebased = rebaseSettings(saved, draft, clone(saved), 'shared', { providers: sent });
+    expect(rebased.shared.providers[0].api_key).toBe('second');
+  });
+  it('uses leaf paths while preserving null and atomic ordered arrays', () => {
+    expect(
+      difference(
+        { model: { temperature: 0.8 }, blocks: ['a', 'b'] },
+        { model: { temperature: null }, blocks: ['b', 'a'] },
+      ),
+    ).toEqual({ 'model.temperature': null, blocks: ['b', 'a'] });
+  });
+  it('accepts server updates to an untouched mode without copying the edited mode into it', () => {
+    const saved = fixture();
+    const draft = clone(saved);
+    draft.full_agent.model.model = 'new full';
+    const response = clone(draft);
+    response.half_agent.foreground.model = 'other-window writer';
+    const rebased = rebaseSettings(saved, draft, response, 'full_agent', { 'model.model': 'new full' });
+    expect(rebased.full_agent.model.model).toBe('new full');
+    expect(rebased.half_agent.foreground.model).toBe('other-window writer');
+  });
+});

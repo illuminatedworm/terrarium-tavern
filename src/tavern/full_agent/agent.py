@@ -88,7 +88,9 @@ class FullAgent:
                        f"允许修改设定：{self.request.allow_content_edit or self.session['policy_effective'] != 'directed'}。")
         result = compile_window(self.document, self.session, self.history, self.snapshot, self.request.text,
             self.settings, self.definitions, trace=self.trace, continuation=self.continuation,
-            input_id=self.user_message["id"], instruction=permissions + "\n" + self.request.regenerate_note,
+            input_id=self.user_message["id"], instruction=permissions + (
+                "\n" + self.settings.regenerate_prompt + "\n" + self.request.regenerate_note
+                if self.request.regenerate_note else ""),
             calls=self.calls, force_rollover=self.must_rollover)
         self.must_rollover = result["rollover_required"]
         self.store.set_turn(self.tid, preview=encoded(result))

@@ -1,0 +1,205 @@
+"""Persisted settings; runtime projections are disposable, never the source of truth."""
+from copy import deepcopy
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tavern.core.models import ContextRecipe, Settings
+from tavern.core.prompts import (
+    DEFAULT_LOCAL_INSTRUCTION,
+    DEFAULT_MAINTENANCE_PROMPT,
+    DEFAULT_MEMORY_PROMPT,
+    DEFAULT_PREFERENCE_PROMPT,
+    DEFAULT_PROBE_MARKER_PROMPT,
+    DEFAULT_PROBE_PROMPT,
+    DEFAULT_REGENERATE_PROMPT,
+    DEFAULT_RERANKER_PROMPT,
+    DEFAULT_RETRIEVAL_PROTOCOL,
+    DEFAULT_SYSTEM_PROMPT,
+    LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
+)
+from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
+from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
+
+
+class StrictSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetrievalRuntime(StrictSettings):
+    instruction_prompt: str = Field(default=DEFAULT_LOCAL_INSTRUCTION, max_length=200000)
+    reranker_prompt: str = Field(default=DEFAULT_RERANKER_PROMPT, max_length=200000)
+    reranker_enabled: bool = False
+    rerank_fragments: int = Field(default=3, ge=1, le=8)
+
+
+class AgentSettings(StrictSettings):
+    retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+    local_runtime: RetrievalRuntime = Field(default_factory=RetrievalRuntime)
+    lore_recursive: bool = Field(default=True, strict=True)
+    lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
+    lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
+    lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
+    policy: Literal["directed", "evolving", "preview"] = "directed"
+    preference_prompt: str = Field(default=DEFAULT_PREFERENCE_PROMPT, max_length=200000)
+    regenerate_prompt: str = Field(default=DEFAULT_REGENERATE_PROMPT, max_length=200000)
+    probe_system_prompt: str = Field(default=DEFAULT_PROBE_PROMPT, max_length=200000)
+    probe_marker_prompt: str = Field(default=DEFAULT_PROBE_MARKER_PROMPT, max_length=200000)
+
+
+class FullSettings(AgentSettings):
+    model: ModelProfile = Field(default_factory=ModelProfile)
+    tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
+    system_prompt: str = Field(default=FULL_AGENT_PROMPT, max_length=200000)
+
+
+class HalfSettings(AgentSettings):
+    foreground: ModelProfile = Field(default_factory=ModelProfile)
+    background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    system_prompt: str = Field(default=DEFAULT_SYSTEM_PROMPT, max_length=200000)
+    memory_system_prompt: str = Field(default=DEFAULT_MEMORY_PROMPT, max_length=200000)
+    maintenance_system_prompt: str = Field(default=DEFAULT_MAINTENANCE_PROMPT, max_length=200000)
+    lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
+    context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
+    chunk_mode: Literal["messages", "tokens", "off"] = "messages"
+    chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
+    history_message_cap: int = Field(default=40, ge=8, le=1000, strict=True)
+    memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
+    context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
+    context_pressure_target: float = Field(default=0.70, ge=0.05, le=0.98)
+    daily_context_budget: int = Field(default=98304, ge=2048, le=2000000, strict=True)
+    chunk_max_tokens: int = Field(default=6000, ge=512, le=2000000, strict=True)
+    memory_timeout: int = Field(default=120, ge=5, le=180, strict=True)
+    memory_input_tokens: int = Field(default=32768, ge=2048, le=2000000, strict=True)
+    memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
+    memory_output_tokens: int = Field(default=4096, ge=256, le=65536, strict=True)
+    memory_capacity_tokens: int = Field(default=4096, ge=512, le=65536, strict=True)
+    memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
+    memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
+    memory_review_enabled: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def linked(self):
+        blocks = self.context_recipe.blocks
+        if any(not block.id.strip() or not block.source.strip() for block in blocks):
+            raise ValueError("上下文块标识和来源不能为空")
+        if len({block.id for block in blocks}) != len(blocks):
+            raise ValueError("上下文块标识不能重复")
+        if self.memory_evidence_tokens >= self.memory_input_tokens:
+            raise ValueError("记忆辅助资料预算必须小于整理输入上限")
+        if self.memory_output_tokens + 2048 >= self.background.context_tokens:
+            raise ValueError("记忆输出上限必须为后台模型输入留出安全余量")
+        if self.context_pressure_target >= self.context_pressure_trigger:
+            raise ValueError("压力裁剪目标必须小于压力触发阈值")
+        if self.chunk_mode == "tokens" and self.chunk_max_tokens > self.foreground.context_tokens - self.foreground.reply_tokens - 2048:
+            raise ValueError("历史预算不能超过正文模型的可用输入容量")
+        return self
+
+
+class LocalResources(StrictSettings):
+    embedding: LocalModel = Field(default_factory=lambda: LocalModel(model="Qwen/Qwen3-Embedding-0.6B"))
+    reranker: LocalModel = Field(default_factory=lambda: LocalModel(model="Qwen/Qwen3-Reranker-0.6B"))
+
+    @model_validator(mode="after")
+    def supported(self):
+        from tavern.search.retrieval_config import LocalModels
+        LocalModels.model_validate(self.model_dump())
+        return self
+
+
+class SharedSettings(StrictSettings):
+    providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
+    card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    local_models: LocalResources = Field(default_factory=LocalResources)
+    network: Network = Field(default_factory=Network)
+    log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)
+    log_max_mib: int = Field(default=512, ge=1, le=16384, strict=True)
+    retrieval_cache_max_mib: int = Field(default=256, ge=1, le=16384, strict=True)
+
+
+class SettingsDocument(StrictSettings):
+    version: Literal[2] = 2
+    full_agent: FullSettings = Field(default_factory=FullSettings)
+    half_agent: HalfSettings = Field(default_factory=HalfSettings)
+    shared: SharedSettings = Field(default_factory=SharedSettings)
+    revisions: dict[str, int] = Field(default_factory=lambda: {k: 0 for k in ("full_agent", "half_agent", "shared")})
+
+    @model_validator(mode="after")
+    def references(self):
+        ids = [p.id for p in self.shared.providers]
+        if not ids or len(ids) != len(set(ids)):
+            raise ValueError("提供商不能为空或重复")
+        for profile in (self.full_agent.model, self.half_agent.foreground, self.half_agent.background, self.shared.card_editor):
+            if profile.provider_id not in ids:
+                raise ValueError("提供商仍被模型配置引用，请先切换对应模型的提供商")
+        return self
+
+    def runtime(self, mode="half_agent") -> Settings:
+        """Each projection is a deep operation snapshot, including its role changes."""
+        agent = getattr(self, mode)
+        data = agent.model_dump(exclude={"model", "tools", "local_runtime"})
+        data["runtime_mode"] = mode
+        data.update(self.shared.model_dump())
+        data["local_models"].update(agent.local_runtime.model_dump())
+        data.update(full_agent=self.full_agent.model.model_dump(),
+                    full_agent_config=self.full_agent.tools.model_dump(),
+                    full_agent_system_prompt=self.full_agent.system_prompt)
+        if mode == "full_agent":
+            # Script adapters use role-shaped access too; they must never reach Half Agent.
+            data.update(foreground=agent.model.model_dump(), background=agent.model.model_dump(),
+                        lore_injection_mode="conversation")
+        profile = agent.model if mode == "full_agent" else agent.foreground
+        data.update(profile.model_dump(exclude={"provider_id"}))
+        # Runtime-only Half Agent fields are irrelevant to a Full Agent request.
+        if mode == "full_agent":
+            data.update(memory_output_tokens=256, chunk_mode="off")
+        value = Settings.model_validate(data)
+        value._settings_source = self.model_copy(deep=True)
+        value._settings_mode = mode
+        if mode == "half_agent":
+            value._full_runtime = self.runtime("full_agent")
+        return value.for_role("full_agent" if mode == "full_agent" else "foreground")
+
+
+def migrate_settings(raw: dict) -> SettingsDocument:
+    if "version" in raw:
+        return SettingsDocument.model_validate(raw)
+    old = Settings.model_validate(raw)
+    if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
+        old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
+    values = old.model_dump()
+    half = {key: deepcopy(values[key]) for key in HalfSettings.model_fields if key in values}
+    common = {key: deepcopy(values[key]) for key in AgentSettings.model_fields if key in values}
+    local = {key: deepcopy(values["local_models"][key]) for key in RetrievalRuntime.model_fields}
+    half["local_runtime"] = deepcopy(local)
+    full = {**common, "local_runtime": deepcopy(local), "model": (old.full_agent or old.foreground).model_dump(),
+            "tools": old.full_agent_config.model_dump(), "system_prompt": old.full_agent_system_prompt}
+    shared = {key: deepcopy(values[key]) for key in SharedSettings.model_fields if key in values}
+    shared["card_editor"] = (old.card_editor or old.background).model_dump()
+    shared["local_models"] = {key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields}
+    return SettingsDocument(full_agent=full, half_agent=half, shared=shared)
+
+
+def from_runtime(value: Settings) -> SettingsDocument:
+    """Internal maintenance/test callers may edit a projection, never write flat storage."""
+    if value._settings_source is None:
+        return migrate_settings(value.model_dump())
+    doc = value._settings_source.model_copy(deep=True)
+    data = value.model_dump()
+    mode = value._settings_mode
+    agent = getattr(doc, mode).model_dump()
+    for key in agent:
+        if key in data and key not in {"model", "tools", "local_runtime"}:
+            agent[key] = deepcopy(data[key])
+    agent["local_runtime"] = {key: deepcopy(data["local_models"][key]) for key in RetrievalRuntime.model_fields}
+    if mode == "full_agent":
+        agent.update(model=data["full_agent"], tools=data["full_agent_config"], system_prompt=data["full_agent_system_prompt"])
+    else:
+        doc.full_agent.model = value.full_agent.model_copy(deep=True)
+        doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
+        doc.full_agent.system_prompt = value.full_agent_system_prompt
+    setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
+    shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields}
+    shared["local_models"] = {key: deepcopy(data["local_models"][key]) for key in LocalResources.model_fields}
+    doc.shared = SharedSettings.model_validate(shared)
+    return SettingsDocument.model_validate(doc.model_dump())

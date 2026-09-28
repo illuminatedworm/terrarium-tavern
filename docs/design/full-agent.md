@@ -14,9 +14,9 @@ Full Agent 是独立的单模型工具循环：它生成故事，也决定何时
 | 世界书 | 自动检索、中途注入 | 相同自动检索与注入，另有模型自拟 query 工具 |
 | 变量 | 独立后台模型提出 MVU 操作 | 同一 Agent 调用 `patch_state` |
 | 设定维护 | 授权 Tracker | 同一 Agent 调用 `revise_content` |
-| 模型配置 | foreground / background | 可独立配置 full_agent；未配置时仅沿用 foreground 的连接和预算 |
+| 模型配置 | half_agent 内独立的 foreground / background | full_agent 内独立模型，不继承另一模式 |
 
-Full Agent 有独立系统提示词和调用预算。沿用模型配置不意味着调用 Writer。Card Editor 仍属于书架编辑功能，不参与游玩回合。
+Full Agent 的模型、预算、提示词、检索与世界书参数独立保存。提供商连接、模型文件和网络资源共用，详见[设置与模式隔离](../guides/settings.md)。Card Editor 使用通用设置中的独立模型，不参与游玩回合。
 
 顶级系统提示词只描述叙事、角色自主性、玩家角色边界、连续性与信息判断原则。具体调用条件、来源引用、分页、记忆替换、换窗和提交规则放在各工具描述中，并随请求注入当前配置的 token 上限；预览与实际调用使用相同的描述生成器。
 

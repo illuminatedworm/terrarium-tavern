@@ -5,7 +5,6 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -27,7 +26,6 @@ from tavern.core.models import (
     SessionFork,
     SessionOptions,
     SessionTitle,
-    Settings,
     TurnRequest,
 )
 from tavern.search.retrieval_config import Provider
@@ -125,62 +123,8 @@ def create_app(data_dir=None):
         service.retrieval.dense_cache.clear()
         return await storage()
 
-    @app.get("/api/settings")
-    async def settings():
-        result = store.settings().for_role("foreground").model_dump()
-        from tavern.core.prompts import PROMPT_DEFINITIONS
-        result["prompt_definitions"] = PROMPT_DEFINITIONS
-        result["has_api_key"] = bool(store.settings().for_role("foreground").api_key)
-        for provider in result["providers"]:
-            provider["has_api_key"] = bool(provider.pop("api_key"))
-        return result
-
-    @app.put("/api/settings")
-    async def save_settings(payload: dict):
-        old = store.settings().model_dump()
-        # Capability can only be changed by the actual probe route.
-        payload.pop("capability", None)
-        payload.pop("capability_key", None)
-        payload.pop("has_api_key", None)
-        if payload.get("api_key") == "":
-            payload.pop("api_key")
-        if "providers" in payload:
-            existing = {p["id"]: p for p in old["providers"]}
-            for provider in payload["providers"]:
-                provider.pop("has_api_key", None)
-                if not provider.get("api_key"):
-                    provider["api_key"] = existing.get(provider["id"], {}).get("api_key", "")
-        for role in ("foreground", "background", "card_editor", "full_agent"):
-            if role in payload and payload[role] is not None:
-                payload[role]["capability"] = (old[role] or {}).get("capability", "unknown")
-                payload[role]["capability_key"] = (old[role] or {}).get("capability_key", "")
-        new = Settings.model_validate({**old, **payload})
-        for role in ("foreground", "background", "card_editor", "full_agent"):
-            profile = getattr(new, role)
-            if profile is None:
-                continue
-            old_profile = old[role] or old["foreground" if role == "full_agent" else "background"]
-            provider = next(p for p in new.providers if p.id == profile.provider_id)
-            old_provider = next((p for p in old["providers"] if p["id"] == old_profile["provider_id"]), {})
-            if (profile.model, profile.provider_id, provider.base_url, provider.api_mode) != (
-                    old_profile["model"], old_profile["provider_id"], old_provider.get("base_url"),
-                    old_provider.get("api_mode", "chat_completions")):
-                profile.capability, profile.capability_key = "unknown", ""
-
-        resolved = new.for_role("foreground")
-        for field in ("base_url", "api_key", "api_mode", "model", "tokenizer", "context_tokens", "reply_tokens",
-                      "temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty",
-                      "prompt_cache_key", "prompt_cache_mode", "prompt_cache_retention",
-                      "reasoning_effort", "reasoning_format", "proxy", "use_proxy"):
-            setattr(new, field, getattr(resolved, field))
-        if urlparse(new.base_url).scheme not in ("http", "https"):
-            raise ValueError("模型地址必须为 HTTP(S)")
-        if (old["base_url"], old["model"], old.get("api_mode", "chat_completions")) != (
-                new.base_url, new.model, new.api_mode):
-            new.capability, new.capability_key = "unknown", ""
-        new = Settings.model_validate(new.model_dump())
-        store.save_settings(new)
-        return await settings()
+    from tavern.application.settings_api import register_settings_routes
+    register_settings_routes(app, store)
 
     @app.post("/api/settings/models")
     async def provider_models(provider: Provider):
@@ -241,7 +185,7 @@ def create_app(data_dir=None):
         session = store.session(sid)
         document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
         async def rebuild(record):
-            config = store.settings()
+            config = store.settings(session["agent_mode"])
             if "embedding" in config.retrieval.channels and not service.local_models.status(config)["models"]["embedding"]["ready"]:
                 raise ValueError("请先下载并预热 Embedding 模型，再准备向量索引")
             record["phase"] = "preparing"
@@ -287,13 +231,8 @@ def create_app(data_dir=None):
             )
             mode_key = "chat-completions" if config.api_mode == "chat_completions" else "responses"
             config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|{mode_key}"
-            effective_role = "background" if role == "card_editor" and saved_config.card_editor is None else role
-            if role == "full_agent" and saved_config.full_agent is None:
-                effective_role = "foreground"
-            getattr(saved_config, effective_role).capability = config.capability
-            getattr(saved_config, effective_role).capability_key = config.capability_key
-            saved_config.capability, saved_config.capability_key = config.capability, config.capability_key
-            store.save_settings(saved_config)
+            from tavern.application.settings_api import save_probe
+            save_probe(store, role, config, saved_config)
             return {
                 "capability": config.capability,
                 "request": captured,

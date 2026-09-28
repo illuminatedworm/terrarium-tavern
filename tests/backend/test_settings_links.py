@@ -44,18 +44,18 @@ async def test_api_validates_merged_settings_and_does_not_silently_adjust(tmp_pa
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         before = (await client.get("/api/settings")).json()
         for change in ({"chunk_size": 101}, {"history_message_cap": 7}, {"memory_interval_turns": 101}):
-            result = await client.put("/api/settings", json=change)
+            result = await client.patch("/api/settings/half_agent", json={"expected_revision": 0, "changes": change})
             assert result.status_code == 400
             assert (await client.get("/api/settings")).json() == before
-        result = await client.put("/api/settings", json={"history_message_cap": 8, "chunk_size": 2,
-                                                       "memory_interval_turns": 1})
+        result = await client.patch("/api/settings/half_agent", json={"expected_revision": 0,
+            "changes": {"history_message_cap": 8, "chunk_size": 2, "memory_interval_turns": 1}})
         assert result.status_code == 200
-        assert result.json()["history_message_cap"] == 8
-        result = await client.put("/api/settings", json={"memory_current_max_records": 8,
-                                                         "memory_episode_cooldown_rounds": 30})
+        assert result.json()["half_agent"]["history_message_cap"] == 8
+        result = await client.patch("/api/settings/half_agent", json={"expected_revision": 1,
+            "changes": {"memory_current_max_records": 8, "memory_episode_cooldown_rounds": 30}})
         assert result.status_code == 200
-        assert result.json()["memory_current_max_records"] == 8
-        assert (await client.get("/api/settings")).json()["memory_episode_cooldown_rounds"] == 30
+        assert result.json()["half_agent"]["memory_current_max_records"] == 8
+        assert (await client.get("/api/settings")).json()["half_agent"]["memory_episode_cooldown_rounds"] == 30
 
 
 def test_lore_allowances_defaults_and_validation():

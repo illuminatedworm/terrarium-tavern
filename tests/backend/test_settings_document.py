@@ -1,0 +1,159 @@
+"""Configuration isolation is asserted at persistence, runtime and API boundaries."""
+import json
+import sqlite3
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from tavern.application.api import create_app
+from tavern.core.models import SessionCreate, Settings
+from tavern.core.settings import SettingsDocument, migrate_settings
+from tavern.storage.store import Store
+
+
+def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
+    store = Store(tmp_path)
+    legacy = Settings()
+    legacy.providers[0].api_key = "migration-secret"
+    legacy.foreground.model = "writer-before"
+    legacy.background.model = "background-before"
+    legacy.full_agent = None
+    legacy.retrieval.chunk_tokens = 768
+    legacy.local_models.instruction_prompt = "custom-local"
+    legacy.system_prompt = "custom-half"
+    legacy.full_agent_system_prompt = "custom-full"
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (legacy.model_dump_json(),))
+    store = Store(tmp_path)
+    doc = store.settings_document()
+    assert doc.full_agent.model.model == doc.half_agent.foreground.model == "writer-before"
+    assert doc.shared.card_editor.model == "background-before"
+    assert doc.full_agent.local_runtime.instruction_prompt == doc.half_agent.local_runtime.instruction_prompt == "custom-local"
+    assert doc.shared.providers[0].api_key == "migration-secret"
+    assert doc.full_agent.system_prompt == "custom-full"
+    assert doc.half_agent.system_prompt == "custom-half"
+    backups = list(tmp_path.glob("settings-before-v2-*.sqlite3"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "1"
+    doc.full_agent.retrieval.chunk_tokens = 1024
+    store.save_settings(doc)
+    reopened = Store(tmp_path).settings_document()
+    assert reopened.full_agent.retrieval.chunk_tokens == 1024
+    assert reopened.half_agent.retrieval.chunk_tokens == 768
+    assert len(list(tmp_path.glob("settings-before-v2-*.sqlite3"))) == 1
+
+
+def test_explicit_full_model_and_operation_snapshot_are_independent():
+    old = Settings()
+    old.full_agent = old.foreground.model_copy(update={"model": "full-before"})
+    doc = migrate_settings(old.model_dump())
+    assert doc.full_agent.model.model == "full-before"
+    doc.full_agent.model.context_tokens = 6000
+    doc.full_agent.model.reply_tokens = 1024
+    doc.full_agent.lore_max_entries = 2
+    doc.full_agent.local_runtime.reranker_prompt = "full-ranking"
+    full = doc.runtime().for_role("full_agent")
+    half = doc.runtime()
+    doc.full_agent.model.model = "changed-later"
+    assert full.model == "full-before"
+    assert full.context_tokens == 6000
+    assert full.for_role("background").model == "full-before"
+    assert full.lore_max_entries == 2 and half.lore_max_entries == 5
+    assert full.local_models.reranker_prompt == "full-ranking"
+    assert half.local_models.reranker_prompt != "full-ranking"
+    full.retrieval.channels.append("embedding")
+    assert "embedding" not in doc.full_agent.retrieval.channels
+
+
+async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
+    app = create_app(tmp_path)
+    doc = app.state.store.settings_document()
+    doc.shared.providers[0].api_key = "old-secret"
+    app.state.store.save_settings(doc)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        opened = (await client.post("/api/settings/edit-sessions", json={})).json()
+        token, original = opened["id"], opened["settings"]
+        assert "old-secret" not in json.dumps(opened)
+        async def patch(scope, changes, revision=None):
+            current = (await client.get("/api/settings")).json()
+            return await client.patch(f"/api/settings/{scope}", json={"changes": changes, "edit_session": token,
+                "expected_revision": current["revisions"][scope] if revision is None else revision})
+        response = await patch("full_agent", {"model.model": "new-full", "lore_max_entries": 9, "system_prompt": "new-full-prompt"})
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["half_agent"] == original["half_agent"]
+        assert app.state.store.settings("full_agent").system_prompt == "new-full-prompt"
+        assert app.state.store.settings("full_agent").full_agent_system_prompt == "new-full-prompt"
+        invalid = await patch("full_agent", {"model.context_tokens": 2048})
+        assert invalid.status_code == 400
+        assert (await client.get("/api/settings")).json() == saved
+        stale = await patch("full_agent", {"model.model": "stale"}, revision=0)
+        assert stale.status_code == 409
+        undo = await client.post(f"/api/settings/edit-sessions/{token}/undo", json={"page":"full_agent.model", "expected_revision":saved["revisions"]["full_agent"]})
+        assert undo.status_code == 200, undo.text
+        assert undo.json()["full_agent"]["model"] == original["full_agent"]["model"]
+        assert undo.json()["full_agent"]["system_prompt"] == "new-full-prompt"
+        providers = deepcopy(original["shared"]["providers"])
+        providers[0].update(name="changed-name", api_key="")
+        assert (await patch("shared", {"providers":providers})).status_code == 200
+        assert app.state.store.settings_document().shared.providers[0].api_key == "old-secret"
+        providers[0]["api_key"] = "new-secret"
+        result = await patch("shared", {"providers":providers})
+        assert result.status_code == 200
+        assert "new-secret" not in result.text
+        undo = await client.post(f"/api/settings/edit-sessions/{token}/undo", json={"page":"shared.providers", "expected_revision":result.json()["revisions"]["shared"]})
+        assert undo.status_code == 200, undo.text
+        assert app.state.store.settings_document().shared.providers[0].api_key == "old-secret"
+        assert "old-secret" not in undo.text
+        await client.delete(f"/api/settings/edit-sessions/{token}")
+        assert (await patch("full_agent", {"model.model":"expired"})).status_code == 409
+        assert (await client.put("/api/settings", json={})).status_code == 405
+
+
+async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_forged(tmp_path):
+    app = create_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        a = (await client.post("/api/settings/edit-sessions", json={})).json()
+        b = (await client.post("/api/settings/edit-sessions", json={})).json()
+        result = await client.patch("/api/settings/full_agent", json={"expected_revision":0,"edit_session":b["id"],"changes":{"model.model":"other-window"}})
+        assert result.status_code == 200
+        undo = await client.post(f"/api/settings/edit-sessions/{a['id']}/undo", json={"page":"full_agent.model","expected_revision":1})
+        assert undo.status_code == 409
+        fake = await client.patch("/api/settings/full_agent", json={"expected_revision":1,"changes":{"model.capability":"accepted"}})
+        assert fake.status_code == 400
+        assert app.state.store.settings("full_agent").model == "other-window"
+
+
+def test_modes_inherit_their_own_policy_and_card_editor_stays_independent(tmp_path):
+    store = Store(tmp_path)
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    half = store.new_session(SessionCreate(card_id=card["id"], agent_mode="half_agent"))
+    doc = store.settings_document()
+    doc.full_agent.policy = "evolving"
+    doc.half_agent.background.model = "changed-background"
+    store.save_settings(doc)
+    assert store.session(full["id"])["policy_effective"] == "evolving"
+    assert store.session(half["id"])["policy_effective"] == "directed"
+    assert store.settings().for_role("card_editor").model != "changed-background"
+
+
+def test_unsupported_version_is_rejected_without_touching_database(tmp_path):
+    store = Store(tmp_path)
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
+    before = store.path.read_bytes()
+    with pytest.raises(ValueError):
+        Store(tmp_path)
+    assert store.path.read_bytes() == before
+
+
+def test_full_agent_small_valid_budget_does_not_validate_half_memory_budget():
+    doc = SettingsDocument()
+    doc.full_agent.model.context_tokens = 2200
+    doc.full_agent.model.reply_tokens = 128
+    assert doc.runtime("full_agent").context_tokens == 2200

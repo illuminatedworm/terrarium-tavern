@@ -303,15 +303,15 @@ async def test_editor_model_configuration_and_secret_redaction(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
             payload = {'providers': [{'id': 'default', 'api_key': 'private-key'}],
-                       'background': {'provider_id': 'default', 'model': 'tracker'},
                        'card_editor': {'provider_id': 'default', 'model': 'editor', 'reply_tokens': 4096}}
-            result = await client.put('/api/settings', json=payload)
+            result = await client.patch('/api/settings/shared', json={'expected_revision':0, 'changes':payload})
             assert result.status_code == 200, result.text
             assert 'private-key' not in result.text
             assert app.state.store.settings().for_role('card_editor').model == 'editor'
-            result = await client.put('/api/settings', json={'card_editor': None})
-            assert result.status_code == 200
-            assert app.state.store.settings().for_role('card_editor').model == 'tracker'
+            result = await client.patch('/api/settings/shared', json={'expected_revision':1, 'changes':{'card_editor':None}})
+            assert result.status_code == 400
+            assert app.state.store.settings().for_role('card_editor').model == 'editor'
+
     finally:
         await app.state.service.close()
         await app.state.editor.close()

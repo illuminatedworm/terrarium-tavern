@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from tavern.core.prompts import (
     DEFAULT_MAINTENANCE_PROMPT,
@@ -53,6 +53,11 @@ class ContextRecipe(BaseModel):
 
 
 class Settings(BaseModel):
+    """Operation-local runtime configuration (persist SettingsDocument instead)."""
+    _full_runtime: Any = PrivateAttr(default=None)
+    _settings_source: Any = PrivateAttr(default=None)
+    _settings_mode: str = PrivateAttr(default="half_agent")
+    runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
     foreground: ModelProfile = Field(default_factory=ModelProfile)
@@ -66,12 +71,14 @@ class Settings(BaseModel):
     network: Network = Field(default_factory=Network)
 
     def for_role(self, role="foreground"):
+        if role == "full_agent" and self._full_runtime is not None:
+            return self._full_runtime.model_copy(deep=True)
         profile = (self.background if role == "card_editor" and self.card_editor is None else
                    self.foreground if role == "full_agent" and self.full_agent is None else getattr(self, role))
         if profile is None:
             return self.model_copy(deep=True)
         provider = next(p for p in self.providers if p.id == profile.provider_id)
-        return self.model_copy(update={**profile.model_dump(exclude={"provider_id"}),
+        return self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
             "base_url": provider.base_url, "api_key": provider.api_key,
             "api_mode": provider.api_mode,
             "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
@@ -134,9 +141,9 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_linked_settings(self):
-        if self.memory_evidence_tokens >= self.memory_input_tokens:
+        if self.runtime_mode == "half_agent" and self.memory_evidence_tokens >= self.memory_input_tokens:
             raise ValueError("记忆辅助资料预算必须小于整理输入上限")
-        if self.memory_output_tokens + 2048 >= self.background.context_tokens:
+        if self.runtime_mode == "half_agent" and self.memory_output_tokens + 2048 >= self.background.context_tokens:
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")

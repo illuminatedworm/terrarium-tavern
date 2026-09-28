@@ -1,0 +1,78 @@
+<script setup lang="ts">
+import { inject, type ComputedRef } from 'vue';
+import { getPath, setPath, type SettingsObject } from '../../lib/settingsDocument';
+export type SettingField = {
+  path: string;
+  label: string;
+  min?: number;
+  max?: number;
+  step?: number | string;
+  type?: 'text' | 'number' | 'checkbox';
+  optional?: boolean;
+  help?: string;
+  options?: Array<{ value: string | number; label: string }>;
+};
+const props = defineProps<{ value: SettingsObject; fields: SettingField[]; errorPrefix?: string }>();
+const errors = inject<ComputedRef<Record<string, string>>>('settings-field-errors');
+const scope = inject<ComputedRef<string>>('settings-scope');
+const fieldError = (field: SettingField) =>
+  errors?.value[(props.errorPrefix || scope?.value + '.') + field.path];
+function update(field: SettingField, event: Event) {
+  const input = event.target as HTMLInputElement;
+  setPath(
+    props.value,
+    field.path,
+    field.type === 'checkbox'
+      ? input.checked
+      : field.options || field.type === 'text'
+        ? input.value
+        : input.value === ''
+          ? field.optional
+            ? null
+            : ''
+          : Number(input.value),
+  );
+}
+</script>
+<template>
+  <div class="settings-field-grid">
+    <label
+      v-for="field in fields"
+      :key="field.path"
+      :data-setting-path="field.path"
+      :class="{ 'settings-check': field.type === 'checkbox' }"
+    >
+      <span>{{ field.label }}</span>
+      <select
+        v-if="field.options"
+        :value="getPath(value, field.path)"
+        :aria-invalid="!!fieldError(field)"
+        @change="update(field, $event)"
+      >
+        <option v-for="option in field.options" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
+      <input
+        v-else-if="field.type === 'checkbox'"
+        type="checkbox"
+        :checked="getPath(value, field.path)"
+        @change="update(field, $event)"
+      />
+      <input
+        v-else
+        :type="field.type || 'number'"
+        :value="getPath(value, field.path) ?? ''"
+        :min="field.min"
+        :max="field.max"
+        :step="field.step || 1"
+        :aria-invalid="!!fieldError(field)"
+        :placeholder="field.optional ? '留空使用接口默认值' : ''"
+        @input="update(field, $event)"
+      />
+      <small v-if="field.help">{{ field.help }}</small>
+      <small v-if="fieldError(field)" class="settings-field-error">{{ fieldError(field) }}</small>
+    </label>
+    <slot />
+  </div>
+</template>

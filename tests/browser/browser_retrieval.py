@@ -39,22 +39,35 @@ async def main():
                 await page.goto(f'http://127.0.0.1:{port}')
                 await page.get_by_role('button',name='⚙ 设置',exact=True).click()
                 dialog=page.get_by_role('dialog',name='设置',exact=True)
-                await expect(dialog.get_by_role('heading',name='API 提供商',exact=True)).to_be_visible()
+                await dialog.get_by_role('button',name='通用 提供商',exact=True).click()
                 await dialog.get_by_role('button',name='添加提供商',exact=True).click()
                 await dialog.get_by_label('名称',exact=True).last.fill('备用 API')
                 await dialog.get_by_label('接口地址',exact=True).last.fill('http://127.0.0.1:9999/v1')
-                await dialog.get_by_role('button',name='混合召回与本地模型',exact=True).click()
-                await expect(dialog.get_by_role('heading',name='召回方案',exact=True)).to_be_visible()
+                await dialog.get_by_role('button',name='通用 本地模型',exact=True).click()
+                await expect(dialog.get_by_role('heading',name='本地检索模型',exact=True)).to_be_visible()
                 await expect(dialog.get_by_text('尚未下载',exact=True)).to_have_count(2)
+                for index, (purpose, model_type) in enumerate([('向量模型', 'Embedding'), ('重排模型', 'Reranker')]):
+                    model = dialog.get_by_role('combobox',name='模型',exact=True).nth(index)
+                    prefix = f'Qwen/Qwen3-{model_type}-'
+                    await expect(model).to_have_value(prefix + '0.6B')
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await model.select_option(prefix + '4B')
+                    await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
+                    response = await page.request.get(f'http://127.0.0.1:{port}/api/settings')
+                    assert (await response.json())['shared']['local_models']['embedding' if model_type == 'Embedding' else 'reranker']['model'] == prefix + '4B'
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await model.select_option(prefix + '0.6B')
+                    await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
                 output=Path('.cache/retrieval-ui')
                 output.mkdir(parents=True,exist_ok=True)
                 await page.screenshot(path=str(output/'settings.png'),full_page=True)
-                await dialog.get_by_role('button',name='网络与代理',exact=True).click()
-                await expect(dialog.get_by_label('Hugging Face 下载使用代理')).to_be_checked()
-                await dialog.get_by_role('button',name='系统提示词',exact=True).click()
+                await dialog.get_by_role('button',name='通用 网络与代理',exact=True).click()
+                await expect(dialog.get_by_label('本地模型下载使用代理')).to_be_checked()
+                await dialog.get_by_role('button',name='half agent 提示词',exact=True).click()
                 await expect(dialog.get_by_label('摘要系统提示词',exact=True)).to_have_count(0)
-                await expect(dialog.get_by_label('检索线索提示词',exact=True)).to_be_visible()
-                await dialog.get_by_role('button',name='保存设置',exact=True).click()
+                await dialog.get_by_role('button',name='检索线索提示词',exact=True).click()
+                await expect(dialog.get_by_role('textbox',name='检索线索提示词',exact=True)).to_be_visible()
+                await dialog.get_by_role('button',name='关闭',exact=True).click()
                 await expect(dialog).to_be_hidden()
                 # Generate through the same app route, then reload and inspect committed reading UI.
                 response=await page.request.post(f'http://127.0.0.1:{port}/api/sessions/{session["id"]}/turns',data={

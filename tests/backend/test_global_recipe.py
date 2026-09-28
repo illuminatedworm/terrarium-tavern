@@ -66,6 +66,7 @@ def test_existing_settings_and_dialogue_recipe_survive_new_global_default(tmp_pa
     saved = store.settings().model_dump()
     saved.pop("context_recipe")
     with store.connection() as db:
+        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(saved),))
     reopened = Store(tmp_path)
     assert reopened.settings().context_recipe == ContextRecipe()
@@ -78,7 +79,7 @@ async def test_global_settings_and_dialogue_reset_api(tmp_path):
     character = card(store)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         global_recipe = recipe("通过设置保存")
-        response = await client.put("/api/settings", json={"context_recipe": global_recipe.model_dump()})
+        response = await client.patch("/api/settings/half_agent", json={"expected_revision": 0, "changes": {"context_recipe": global_recipe.model_dump()}})
         assert response.status_code == 200
         source = store.new_session(SessionCreate(card_id=character["id"]))
         assert source["recipe"] == global_recipe.model_dump()
@@ -86,10 +87,10 @@ async def test_global_settings_and_dialogue_reset_api(tmp_path):
         url = f"/api/sessions/{source['id']}/recipe"
         response = await client.put(url, json={"recipe": custom.model_dump(), "expected_revision": 0})
         assert response.json()["recipe"] == custom.model_dump()
-        assert (await client.get('/api/settings')).json()["context_recipe"] == global_recipe.model_dump()
+        assert (await client.get('/api/settings')).json()["half_agent"]["context_recipe"] == global_recipe.model_dump()
         assert (await client.put(url, json={"use_global": True, "expected_revision": 0})).status_code == 409
         response = await client.put(url, json={"use_global": True, "expected_revision": 1})
         assert response.status_code == 200 and response.json()["recipe"] == global_recipe.model_dump()
         invalid = global_recipe.model_dump()
         invalid["blocks"][0]["role"] = "invalid"
-        assert (await client.put('/api/settings', json={"context_recipe": invalid})).status_code == 400
+        assert (await client.patch('/api/settings/half_agent', json={"expected_revision": 1, "changes": {"context_recipe": invalid}})).status_code == 400

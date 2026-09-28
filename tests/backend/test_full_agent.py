@@ -779,8 +779,8 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
 async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story):
     store, session = story
     settings = store.settings()
-    settings.foreground.context_tokens = 16000
-    settings.foreground.reply_tokens = 12000
+    settings.full_agent.context_tokens = 16000
+    settings.full_agent.reply_tokens = 12000
     store.save_settings(settings)
     service = runtime(store)
     reply = "继续描写场景。" * 4000

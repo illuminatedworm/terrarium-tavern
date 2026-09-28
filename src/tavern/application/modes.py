@@ -71,7 +71,7 @@ class ModeRuntime:
         async def prepare(record):
             s = self.store.session(sid)
             document = (s["snapshot"].get("content") or {}).get("document", self.store.session_card(sid)["document"])
-            await self.full.retrieval.prepare(document, [], "", s["snapshot"], self.store.settings(), s,
+            await self.full.retrieval.prepare(document, [], "", s["snapshot"], self.store.settings("full_agent"), s,
                                              "prepare", index_only=True)
         try:
             return self.local_models.job("prepare:" + sid, prepare)
