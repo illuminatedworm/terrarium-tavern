@@ -75,6 +75,18 @@ def test_later_turn_and_repeated_trigger_keep_frozen_original_injection():
     assert out["next_lore"] == {"e": {"present": True}}
 
 
+def test_current_turn_lore_immediately_precedes_input():
+    hist = [message("g", "assistant", "欢迎"), message("u1", "user", "继续"),
+            message("a1", "assistant", "好")]
+    doc = document()
+    doc["character_book"]["entries"].append({"id": "second", "keys": ["灯塔"], "content": "补充设定"})
+    out = compile(doc, hist, {"state": {"place": "北岸"}})
+    sources = [item["source"] for item in out["trace"]]
+    last_history = max(i for i, source in enumerate(sources) if source == "history")
+    assert sources[last_history + 1:last_history + 4] == ["lore:e", "lore:second", "input"]
+    assert sources[-1] == "state"
+
+
 def test_exit_starts_cooldown_and_old_hidden_keywords_cannot_retrigger():
     hist = [message("g", "assistant", "灯塔"), message("u1", "user", "继续"), message("a1", "assistant", "好")]
     first = compile(document(), hist[:1], {"state": {"place": "北岸"}})

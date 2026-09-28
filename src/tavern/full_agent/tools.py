@@ -117,7 +117,7 @@ SPECS = {
         "History and older branches are preserved. Changes commit with the successful turn, subject to approval in review mode."),
     "read_state": (StateRead, "Read current story state, excluding internal runtime ledgers. Use an empty path for the whole state or a dot-separated field path. "
         "Check relevant values and structure before updating."),
-    "patch_state": (Patch, "Call exactly once for this turn only when a system message immediately before the current user input requires an MVU update. "
+    "patch_state": (Patch, "Call exactly once for this turn only when a system message for the current turn requires an MVU update. "
         "Apply JSON Patch operations to story fields inside stat_data, validated by MVU. "
         "Paths are JSON Pointers relative to the story-state root; reason gives story evidence. Read current values first and align changes with the final narrative. "
         "Changes commit with the successful turn, subject to approval in review mode; use this tool rather than MVU blocks in story prose."),

@@ -24,7 +24,7 @@ Full Agent 的模型、预算、提示词、检索与世界书参数独立保存
 
 参考 [OpenAI 官方 experimental context management 说明](https://learn.chatgpt.com/docs/models?surface=app#experimental-context-management)：模型维护跨窗口笔记，并搜索同一任务的早期消息与工具结果。公开说明未提供可直接移植的完整服务协议。以下工具、存储与事务规则是本项目实现，不调用 ChatGPT 私有 notes/history 端点，也不使用服务端 compaction。
 
-窗口包含基础规则、角色与玩家、常驻世界书、当前 checkpoint、窗口内正文与工具交换、按锚点保留的世界书，以及当前输入、授权和预算提醒。Half Agent 的上下文配方、历史 cap、周期记忆设置不影响该窗口。
+窗口依次放置基础规则、可选对话偏好、常驻世界书、角色与玩家及对话示例、窗口内正文及对应的世界书与工具交换、本次输入锚定的世界书、当前输入、授权与后置要求，以及末尾的 checkpoint、窗口状态和预算提醒。稳定的前缀与工具定义有助于提高 prefix cache 命中率。Half Agent 的上下文配方、历史 cap、周期记忆设置不影响该窗口。
 
 玩家角色资料使用 `<user_character>` 包裹；常驻与动态世界书均使用 `<lorebook>` 包裹；checkpoint 使用 `<tavern_memory>` 包裹。标签在编译请求时添加，不改写原始资料。长期笔记仍由工具按需读取，不因增加记忆标签而自动注入。预算提醒同时提供当前玩家输入的 H 引用，供本回合核对和记录来源。
 

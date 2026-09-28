@@ -676,6 +676,29 @@ def compile_context(
     while at < len(messages) and messages[at]["source"] in ("rules", "session_preference", "retrieval_protocol"):
         at += 1
     messages[at:at] = constant_messages
+    # Finalize the wire order after lore, depth entries, and compatibility overrides.
+    # Current-turn lore stays immediately before the latest player input; dynamic
+    # context comes after all other request messages, even for saved older recipes.
+    dynamic_sources = {block.id: block.source for block in recipe.blocks
+                       if block.source in ("author_note", "memory", "state")}
+    dynamic_sources["memory"] = "memory"  # Protected fallback memory has this source.
+    dynamic_order = {"author_note": 0, "memory": 1, "state": 2}
+    dynamic = [m for m in messages if m["source"] in dynamic_sources]
+    messages = [m for m in messages if m["source"] not in dynamic_sources]
+    current_input = [m for m in messages if m["source"] in input_sources
+                     and m.get("message_id") == input_message_id]
+    if current_input:
+        current_lore = [m for m in messages if m.get("anchor_id") == input_message_id]
+        lore_ids = {id(m) for m in current_lore}
+        first_input_at = next(i for i, m in enumerate(messages)
+                              if m is current_input[0] or id(m) in lore_ids)
+        current_ids = lore_ids | {id(m) for m in current_input}
+        messages = [m for m in messages if id(m) not in current_ids]
+        last_history = next((i for i in range(len(messages) - 1, -1, -1)
+                             if messages[i]["source"] == "history"), None)
+        at = last_history + 1 if last_history is not None else min(first_input_at, len(messages))
+        messages[at:at] = current_lore + current_input
+    messages.extend(sorted(dynamic, key=lambda m: dynamic_order[dynamic_sources[m["source"]]]))
     total = REPLY_PRIMING + sum(message_tokens(m, settings) for m in messages)
     if enforce_budget and total > available:
         diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})

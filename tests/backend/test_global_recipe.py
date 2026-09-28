@@ -73,6 +73,28 @@ def test_existing_settings_and_dialogue_recipe_survive_new_global_default(tmp_pa
     assert reopened.session(source["id"])["recipe"] == custom.model_dump()
 
 
+def test_old_saved_recipe_is_normalized_and_compiled_with_input_before_dynamic_context(tmp_path):
+    store = Store(tmp_path)
+    character = card(store)
+    source = store.new_session(SessionCreate(card_id=character["id"]))
+    old = source["recipe"]
+    by_source = {block["source"]: block for block in old["blocks"]}
+    old["blocks"] = [by_source[name] for name in (
+        "rules", "lore_before", "character", "persona", "lore_after", "examples",
+        "memory", "history", "author_note", "state", "input", "post")]
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET recipe=? WHERE id=?", (json.dumps(old), source["id"]))
+    current = store.session(source["id"])
+    sources = [block["source"] for block in current["recipe"]["blocks"]]
+    assert sources[-6:] == ["history", "input", "post", "author_note", "memory", "state"]
+    compiled = compile_context(character["document"], current, current["messages"], current["snapshot"],
+                               "继续", store.settings(), "old-recipe")
+    trace_sources = [item["source"] for item in compiled["trace"]]
+    last_history = max(i for i, source in enumerate(trace_sources) if source == "history")
+    assert trace_sources[last_history + 1] == "input"
+    assert trace_sources[-1] == "state"
+
+
 async def test_global_settings_and_dialogue_reset_api(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store

@@ -53,11 +53,6 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(card.get("mes_example", "")), "examples")
     checkpoint = state["checkpoint"]
-    add("system", "<tavern_memory>\nAgent checkpoint（模型维护的交接笔记）：\n"
-        + (checkpoint["text"] or "尚无 checkpoint。") + "\n</tavern_memory>", "checkpoint")
-    if checkpoint.get("stale"):
-        refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]
-        add("system", "原始剧情已编辑，checkpoint 可能过时。请读取并核对：" + ", ".join(refs), "context_warning")
 
     by_owner = {}
     for item in trace:
@@ -76,12 +71,17 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in by_owner.get(message["id"], []))
         add(message["role"], expand(message.get("model", message["raw"])), "history", message_id=message["id"])
     anchored(input_id)
+    add("user", user_input, "input", message_id=input_id)
     if require_state_patch:
         add("system", "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。", "turn_variable_instruction")
-    add("user", user_input, "input", message_id=input_id)
     items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in continuation)
     add("system", expand(card.get("post_history_instructions", "")), "post")
     add("system", instruction, "turn_instruction")
+    if checkpoint.get("stale"):
+        refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]
+        add("system", "原始剧情已编辑，checkpoint 可能过时。请读取并核对：" + ", ".join(refs), "context_warning")
+    add("system", "<tavern_memory>\nAgent checkpoint（模型维护的交接笔记）：\n"
+        + (checkpoint["text"] or "尚无 checkpoint。") + "\n</tavern_memory>", "checkpoint")
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
                       "reasoning_content", "reasoning_details", "reasoning"}

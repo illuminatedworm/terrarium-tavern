@@ -208,8 +208,9 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         assert {tool["function"]["name"] for tool in required.requests[0]["extra_body"]["tools"]} == names
         messages = required.requests[0]["messages"]
         input_index = max(i for i, m in enumerate(messages) if m["role"] == "user" and "我答应明天" in m["content"])
-        assert messages[input_index - 1]["role"] == "system"
-        assert messages[input_index - 1]["content"].startswith("本轮须调用 patch_state")
+        assert messages[input_index - 1]["role"] == "assistant"
+        assert messages[input_index + 1]["role"] == "system"
+        assert messages[input_index + 1]["content"].startswith("本轮须调用 patch_state")
         assert any(e["kind"] == "full_agent_reply_rejected" for e in store.events(result["id"]))
         assert current["messages"][-1]["raw"] == "最终正文"
 
@@ -463,7 +464,8 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             assert requested.status_code == 200
             trace = requested.json()["trace"]
             input_index = next(i for i, item in enumerate(trace) if item["source"] == "input")
-            assert trace[input_index - 1]["source"] == "turn_variable_instruction"
+            assert trace[input_index + 1]["source"] == "turn_variable_instruction"
+            assert [item["source"] for item in trace][-2:] == ["checkpoint", "context_status"]
             assert {tool["function"]["name"] for tool in requested.json()["tools"]} == {
                 tool["function"]["name"] for tool in preview.json()["tools"]}
             exported = await client.post(f"/api/sessions/{session['id']}/messages-preview", json={"text": "继续"})
@@ -848,6 +850,23 @@ def test_constant_and_retained_lore_have_same_tag_without_mutating_storage(story
     assert {m["content"] for m in lore} == {
         "<lorebook>\n常驻背景\n</lorebook>", "<lorebook>\n动态背景\n</lorebook>"}
     assert snapshot["lore_injections"][0]["content"] == "动态背景"
+
+
+def test_full_window_places_current_input_before_dynamic_context(story):
+    store, session = story
+    snapshot = copy.deepcopy(session["snapshot"])
+    snapshot["lore_injections"] = [{"id": "current", "content": "本轮背景", "title": "背景",
+                                    "anchor_id": "current-input"},
+                                   {"id": "second", "content": "补充背景", "title": "背景二",
+                                    "anchor_id": "current-input"}]
+    compiled = compile_window({"name": "向导", "post_history_instructions": "作者补充"}, session,
+                              session["messages"], snapshot, "继续", store.settings(), [],
+                              input_id="current-input", require_state_patch=True,
+                              instruction="本轮重写要求")
+    sources = [item["source"] for item in compiled["trace"]]
+    last_history = max(i for i, source in enumerate(sources) if source == "history")
+    assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
+                                          "post", "turn_instruction", "checkpoint", "context_status"]
 
 
 @pytest.mark.parametrize("window_number, notes, expected", [

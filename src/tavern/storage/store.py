@@ -10,7 +10,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card
-from tavern.core.models import TurnRequest
+from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 
 
@@ -492,7 +492,7 @@ class Store:
                 )
             ]
             result = dict(row)
-            result["recipe"] = json.loads(result["recipe"])
+            result["recipe"] = ContextRecipe.model_validate_json(result["recipe"]).model_dump()
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])
