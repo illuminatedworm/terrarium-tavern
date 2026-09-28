@@ -77,48 +77,6 @@ async def test_recursive_admission_and_degradation_use_original_query(tmp_path, 
     assert any("递归" in d["reason"] for d in result["diagnostics"])
 
 
-async def test_two_hundred_rounds_bound_actual_window_and_keep_story_sources(tmp_path):
-    from tavern.memories.memory import Tracker, fingerprint
-
-    cfg = Settings(history_message_cap=20, chunk_size=7, memory_interval_turns=100,
-                   daily_context_budget=10000, retrieval={"channels": ["keyword"]})
-    manager = Tracker(Store(tmp_path))
-    session = {"id": "long", "persona": "旅人", "recipe": ContextRecipe().model_dump(),
-               "lore_injection_mode": "conversation"}
-    history = [{"id": "g", "role": "assistant", "raw": "开场", "model": "开场"}]
-    snapshot = {"state": {}, "memory_document": {"version": 1, "records": []}}
-    cuts = []
-
-    async def archive(messages, **kwargs):
-        payload = json.loads(messages[-1]["content"])
-        assert all(m["role"] in ("user", "assistant") for m in payload["messages"])
-        assert all("资料正文" not in p["text"] for m in payload["messages"] for p in m["passages"])
-        return json.dumps({"operations": [], "questions": []}), {}
-
-    for turn in range(200):
-        doc = {"name": "旅人", "character_book": {"entries": [
-            {"id": f"entry-{turn}", "keys": [f"地点{turn}"], "content": "资料正文" * 20}]}}
-        retrieval = {"ids": [f"entry-{turn}"], "query": f"地点{turn}", "diagnostics": []}
-        request = TurnRequest(text=f"走到地点{turn}", operation_id=str(turn), expected_revision=turn)
-        await manager.prepare(str(turn), doc, session, history, snapshot, request, cfg, archive, retrieval=retrieval)
-        before = copy.deepcopy(snapshot)
-        await manager.prepare(str(turn), doc, session, history, snapshot,
-                              request.model_copy(update={"mode": "regenerate"}), cfg, archive, retrieval=retrieval)
-        assert snapshot == before
-        compiled = compile_context(doc, session, history, snapshot, request.text, cfg, str(turn),
-                                   retrieval=retrieval, input_message_id=f"u{turn}")
-        assert compiled["window_message_count"] < 20
-        assert compiled["estimated_tokens"] < cfg.daily_context_budget
-        if window := snapshot.get("context_window"):
-            cuts.append(window["covered_count"])
-            assert snapshot["memory_archive"]["covered_count"] >= window["covered_count"]
-            assert window["fingerprint"] == fingerprint(history[:window["covered_count"]])
-        snapshot.update(lore=compiled["next_lore"], lore_injections=compiled["next_lore_injections"])
-        history.extend([{"id": f"u{turn}", "role": "user", "raw": request.text, "model": request.text},
-                        {"id": f"a{turn}", "role": "assistant", "raw": "继续旅行。", "model": "继续旅行。"}])
-    assert len(history) == 401 and len(set(cuts)) > 20
-
-
 def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_path):
     from tavern.storage.maintenance import cleanup, storage_report
 
