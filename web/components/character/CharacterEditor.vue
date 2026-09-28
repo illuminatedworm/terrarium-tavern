@@ -58,10 +58,55 @@ const loreGroups = computed(() => [
     items: filteredLore.value.filter((x) => !x.entry.constant),
   },
 ]);
-const scripts = computed<any[]>(() => {
-  const h = data.value.extensions?.tavern_helper;
-  return h?.scripts || data.value.extensions?.TavernHelper_scripts || [];
+const regexScripts = computed<any[]>(() =>
+  Array.isArray(data.value.extensions?.regex_scripts) ? data.value.extensions.regex_scripts : [],
+);
+const scripts = computed(() => {
+  const extensions = data.value.extensions || {};
+  const rawHelper = extensions.tavern_helper;
+  const helper = Array.isArray(rawHelper)
+    ? Object.fromEntries(rawHelper.filter((part: any) => Array.isArray(part) && part.length === 2))
+    : rawHelper || {};
+  const rows: { script: any; path: string; key: string; inactive: boolean }[] = [];
+  function collect(items: any, path: string, key: string, inactive: boolean) {
+    if (!Array.isArray(items)) return;
+    items.forEach((raw: any, index: number) => {
+      const script = Array.isArray(raw) && raw.length === 2 ? raw[1] : raw;
+      if (!script || typeof script !== 'object') return;
+      const location = `${path} / ${script.name || script.id || index + 1}`;
+      const locationKey = `${key}-${index}`;
+      if (Array.isArray(script.scripts)) collect(script.scripts, location, locationKey, inactive);
+      else rows.push({ script, path: location, key: locationKey, inactive });
+    });
+  }
+  collect(helper.scripts, 'Tavern Helper', 'helper', false);
+  collect(
+    extensions.TavernHelper_scripts,
+    '旧版 TavernHelper_scripts',
+    'legacy',
+    helper.scripts !== undefined,
+  );
+  return rows;
 });
+function validateScriptJson(text: string) {
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? '' : '脚本参数须为 JSON 对象。';
+  } catch {
+    return '脚本参数 JSON 格式无效。';
+  }
+}
+function replaceScript(target: any, text: string) {
+  const problem = validateScriptJson(text);
+  if (problem) {
+    error.value = problem;
+    return;
+  }
+  const updated = JSON.parse(text);
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, updated);
+  error.value = '';
+}
 const draftKey = () => `tavern-card-draft-${props.session?.id || workspace.value?.id || card.value.id}`;
 try {
   const saved = sessionStorage.getItem(draftKey());
@@ -793,27 +838,120 @@ useTimedError(error);
               </div>
             </Teleport></template
           >
-          <template v-else-if="tab === 'scripts'"
-            ><label class="check"
-              ><input
+          <template v-else-if="tab === 'scripts'">
+            <label class="check">
+              <input
                 type="checkbox"
                 :checked="card.permission"
                 :disabled="card._draftOnly"
                 @change="permission(($event.target as HTMLInputElement).checked)"
-              />允许此卡在隔离环境中执行脚本</label
-            ><button :disabled="busy || !card.permission || card._draftOnly" @click="dependencies">
+              />允许此卡在隔离环境中执行脚本
+            </label>
+            <button :disabled="busy || !card.permission || card._draftOnly" @click="dependencies">
               检查并缓存外部依赖
             </button>
-            <pre>{{ JSON.stringify(card.report, null, 2) }}</pre>
-            <details v-for="(script, i) in scripts" :key="i">
-              <summary>{{ script.name || '脚本 ' + (i + 1) }}</summary>
-              <label class="check"><input type="checkbox" v-model="script.enabled" />启用</label
-              ><ExpandableTextarea
-                v-model="script.content"
-                :label="script.name || '脚本 ' + (i + 1)"
-                code
-              /></details
-          ></template>
+            <section class="card-script-group">
+              <h3>
+                正则脚本 <small>{{ regexScripts.length }}</small>
+              </h3>
+              <p class="muted">
+                按匹配表达式处理显示文本或模型输入；状态面板的 HTML、CSS 和 JS 也可能在替换内容中。
+              </p>
+              <p v-if="!regexScripts.length" class="muted">这张卡没有正则脚本。</p>
+              <details v-for="(script, i) in regexScripts" :key="`regex-${i}`" class="card-script-entry">
+                <summary>
+                  {{ script.scriptName || script.name || '正则脚本 ' + (i + 1)
+                  }}<small v-if="script.disabled">未启用</small>
+                </summary>
+                <label>名称<input v-model="script.scriptName" /></label>
+                <label class="check"
+                  ><input
+                    type="checkbox"
+                    :checked="!script.disabled"
+                    @change="script.disabled = !($event.target as HTMLInputElement).checked"
+                  />启用</label
+                >
+                <label
+                  >匹配表达式<ExpandableTextarea
+                    v-model="script.findRegex"
+                    :label="`匹配表达式：${script.scriptName || i + 1}`"
+                    code
+                /></label>
+                <label
+                  >替换内容<ExpandableTextarea
+                    v-model="script.replaceString"
+                    :label="`替换内容：${script.scriptName || i + 1}`"
+                    code
+                /></label>
+                <div class="card-script-options">
+                  <label class="check"><input type="checkbox" v-model="script.markdownOnly" />显示阶段</label>
+                  <label class="check"
+                    ><input type="checkbox" v-model="script.promptOnly" />模型输入阶段</label
+                  >
+                  <span
+                    >应用位置：{{
+                      Array.isArray(script.placement) ? script.placement.join(', ') : '默认'
+                    }}</span
+                  >
+                </div>
+                <p class="muted">阶段选项只勾一项时限制为该阶段；都不勾或都勾时两个阶段均可执行。</p>
+                <details class="card-script-raw">
+                  <summary>全部参数（JSON）</summary>
+                  <ExpandableTextarea
+                    :model-value="JSON.stringify(script, null, 2)"
+                    :label="`正则脚本全部参数：${script.scriptName || i + 1}`"
+                    code
+                    :validate="validateScriptJson"
+                    @change="replaceScript(script, $event)"
+                  />
+                </details>
+              </details>
+            </section>
+            <section class="card-script-group">
+              <h3>
+                角色脚本 <small>{{ scripts.length }}</small>
+              </h3>
+              <p class="muted">
+                包含 Tavern Helper 的分组脚本与旧版脚本字段；旧版字段若被新版覆盖，仍可在此查看和编辑。
+              </p>
+              <p v-if="!scripts.length" class="muted">这张卡没有角色脚本。</p>
+              <details v-for="(item, i) in scripts" :key="item.key" class="card-script-entry">
+                <summary>
+                  {{ item.script.name || '脚本 ' + (i + 1) }}<small v-if="item.inactive">旧字段未执行</small
+                  ><small v-else-if="item.script.enabled === false">未启用</small>
+                </summary>
+                <p class="muted">{{ item.path }}</p>
+                <label>名称<input v-model="item.script.name" /></label>
+                <label class="check"
+                  ><input
+                    type="checkbox"
+                    :checked="item.script.enabled !== false"
+                    @change="item.script.enabled = ($event.target as HTMLInputElement).checked"
+                  />启用</label
+                >
+                <label
+                  >脚本内容<ExpandableTextarea
+                    v-model="item.script.content"
+                    :label="item.script.name || '脚本 ' + (i + 1)"
+                    code
+                /></label>
+                <details class="card-script-raw">
+                  <summary>全部参数（JSON）</summary>
+                  <ExpandableTextarea
+                    :model-value="JSON.stringify(item.script, null, 2)"
+                    :label="`角色脚本全部参数：${item.script.name || i + 1}`"
+                    code
+                    :validate="validateScriptJson"
+                    @change="replaceScript(item.script, $event)"
+                  />
+                </details>
+              </details>
+            </section>
+            <details class="card-script-diagnostics">
+              <summary>兼容性检查</summary>
+              <pre>{{ JSON.stringify(card.report, null, 2) }}</pre>
+            </details>
+          </template>
           <template v-else
             ><p class="muted">用于编辑复杂扩展与未在表单中展示的字段。</p>
             <ExpandableTextarea v-model="raw" label="原始 JSON" code :validate="validateJson"

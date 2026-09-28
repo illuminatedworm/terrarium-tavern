@@ -1362,6 +1362,64 @@ summary {
 .editor-fields textarea {
   font-size: 15px;
 }
+.card-script-group {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-control);
+}
+.card-script-group h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+.card-script-group h3 small,
+.card-script-entry > summary small {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.card-script-group > p {
+  margin: 0 0 12px;
+  font-size: 12px;
+}
+.card-script-entry {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.card-script-entry > summary {
+  cursor: pointer;
+  font-size: 14px;
+}
+.card-script-entry > summary small {
+  float: right;
+}
+.card-script-entry > label {
+  display: block;
+  margin-top: 12px;
+}
+.card-script-entry > label.check {
+  display: flex;
+}
+.card-script-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.card-script-options label {
+  margin: 0;
+}
+.card-script-raw,
+.card-script-diagnostics {
+  margin-top: 14px;
+}
+.card-script-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
 .editor-start {
   border: 1px solid var(--border-control);
   border-radius: 10px;
