@@ -181,6 +181,7 @@ class TurnRequest(BaseModel):
     reasoning_effort: ReasoningEffort | None = None
     regenerate_note: str = ""
     scene_refresh: Literal["memory"] | None = None
+    resume_turn_id: str | None = None
 
 
 class SceneRefreshRequest(BaseModel):

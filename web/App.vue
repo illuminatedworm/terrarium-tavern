@@ -103,6 +103,8 @@ watch(
   () => activeTurn.value?.id,
   () => {
     retryNote.value = activeTurn.value?.request?.regenerate_note || '';
+    if (session.value?.agent_mode === 'full_agent' && retryableTurn.value)
+      updateVariables.value = !!activeTurn.value?.request?.update_variables;
   },
 );
 const viewScope = createSessionController();
@@ -761,12 +763,16 @@ async function regenerateReply() {
 }
 async function retryTurn() {
   if (!retryableTurn.value || busy.value || editingMessageId.value) return;
+  const resumeFullAgent =
+    session.value?.agent_mode === 'full_agent' &&
+    updateVariables.value === !!retryableTurn.value.request.update_variables;
   const request = {
     ...retryableTurn.value.request,
     update_variables: updateVariables.value,
     regenerate_note: retryNote.value.trim(),
     operation_id: crypto.randomUUID(),
     expected_revision: session.value.revision,
+    ...(resumeFullAgent ? { resume_turn_id: retryableTurn.value.id } : { resume_turn_id: null }),
   };
   const token = viewScope.current();
   busy.value = true;

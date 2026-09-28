@@ -185,6 +185,109 @@ async def test_failure_and_cancellation_never_commit_draft_memory(story):
         await service.close()
 
 
+async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen(story):
+    store, session = story
+    service = runtime(store)
+    try:
+        failed, unchanged = await turn(service, session, Model(
+            ("read_history", {"ref": "H2"}),
+            ("write_note", {"key": "钟楼", "content": "明天赴约", "kind": "fact", "sources": ["H2"]}),
+            RuntimeError("model disconnected")))
+        assert failed["status"] == "error"
+        assert unchanged["revision"] == 0
+        progress = store.full_agent_progress(failed["id"])
+        assert [item["message"]["role"] for item in progress["new_trace"]] == [
+            "assistant", "tool", "assistant", "tool"]
+        assert progress["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
+    finally:
+        await service.close()
+
+    reopened = Store(store.root)
+    service = runtime(reopened)
+    try:
+        model = Model("她在钟楼下答应了。")
+        service.full.provider_factory = lambda: model
+        resumed = service.submit(session["id"], TurnRequest(
+            text=failed["request"]["text"], operation_id="resume-1", expected_revision=0,
+            resume_turn_id=failed["id"]))
+        await service.tasks[resumed["id"]]
+        assert reopened.turn(resumed["id"])["status"] == "committed"
+        assert len(model.requests) == 1
+        sent = model.requests[0]["messages"]
+        exchanges = [m for m in sent if m["role"] == "tool" or m.get("tool_calls")]
+        assert [m["role"] for m in exchanges] == ["assistant", "tool", "assistant", "tool"]
+        assert exchanges[0]["tool_calls"][0] == progress["new_trace"][0]["message"]["tool_calls"][0]
+        assert exchanges[1]["content"] == progress["new_trace"][1]["message"]["content"]
+        assert exchanges[3]["content"] == progress["new_trace"][3]["message"]["content"]
+        current = reopened.session(session["id"])
+        assert current["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
+        assert len(load_trace(reopened, session["id"], current["messages"])) == 4
+        from tavern.full_agent.activity import turn_items
+        assert [item["name"] for item in turn_items(reopened, session["id"], resumed["id"])
+                if item["kind"] == "tool"] == ["read_history", "write_note"]
+    finally:
+        await service.close()
+
+
+async def test_failed_request_after_rollover_resumes_new_window_without_replaying_tool(story):
+    store, session = story
+    service = runtime(store)
+    try:
+        failed, _ = await turn(service, session, Model(
+            ("new_context", {"content": "钟楼约定已经发生", "keep_recent": 0}),
+            RuntimeError("model disconnected")))
+        assert failed["status"] == "error"
+        model = Model("第二天，她如约而至。")
+        service.full.provider_factory = lambda: model
+        resumed = service.submit(session["id"], TurnRequest(
+            text=failed["request"]["text"], operation_id="resume-rollover", expected_revision=0,
+            resume_turn_id=failed["id"]))
+        await service.tasks[resumed["id"]]
+        assert store.turn(resumed["id"])["status"] == "committed"
+        sent = model.requests[0]["messages"]
+        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in sent)
+        assert any("钟楼约定已经发生" in m.get("content", "") for m in sent)
+        current = store.session(session["id"])
+        assert current["snapshot"]["full_agent"]["window"]["number"] == 2
+        assert len(load_trace(store, session["id"], current["messages"])) == 2
+    finally:
+        await service.close()
+
+
+async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards_them(story):
+    store, session = story
+    service = runtime(store)
+    try:
+        failed, _ = await turn(service, session, Model(
+            ("read_history", {"ref": "H2"}), RuntimeError("first failure")))
+        service.full.provider_factory = lambda: Model(
+            ("write_note", {"key": "钟楼", "content": "明天赴约", "kind": "fact", "sources": ["H2"]}),
+            RuntimeError("second failure"))
+        retried = service.submit(session["id"], TurnRequest(
+            text=failed["request"]["text"], operation_id="resume-twice-1", expected_revision=0,
+            resume_turn_id=failed["id"]))
+        await service.tasks[retried["id"]]
+        assert store.turn(retried["id"])["status"] == "error"
+        retried_progress = store.full_agent_progress(retried["id"])
+        assert len(retried_progress["new_trace"]) == 4
+        assert retried_progress["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
+        assert len(store.full_agent_progress(failed["id"])["new_trace"]) == 2
+
+        store.edit_pending_input(retried["id"], "改成另一个行动。", 0)
+        assert store.full_agent_progress(retried["id"]) is None
+        model = Model("她看向新的方向。")
+        service.full.provider_factory = lambda: model
+        fresh = service.submit(session["id"], TurnRequest(
+            text="改成另一个行动。", operation_id="resume-edited", expected_revision=0,
+            resume_turn_id=retried["id"]))
+        await service.tasks[fresh["id"]]
+        assert store.turn(fresh["id"])["status"] == "committed"
+        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model.requests[0]["messages"])
+        assert store.session(session["id"])["snapshot"]["full_agent"]["notes"] == {}
+    finally:
+        await service.close()
+
+
 async def test_fork_regeneration_source_edits_and_delete(story):
     store, session = story
     service = runtime(store)
@@ -420,6 +523,37 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         assert "能量" in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert "initialized_openings" not in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert len(current["messages"]) == 3
+    finally:
+        await service.close()
+
+
+async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
+    store = Store(tmp_path)
+    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    with store.connection() as db:
+        db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
+    settings = store.settings()
+    settings.full_agent_config.auto_retrieval = False
+    store.save_settings(settings)
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent", policy="preview"))
+    service = ModeRuntime(store)
+    try:
+        session = await service.initialize_session(session["id"])
+        failed, unchanged = await turn(service, session, Model(
+            ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}],
+                             "reason": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
+        assert failed["status"] == "error"
+        assert unchanged["snapshot"]["state"]["stat_data"]["能量"] != 4
+        model = Model("洛伊带你来到观测窗。")
+        service.full.provider_factory = lambda: model
+        resumed = service.submit(session["id"], TurnRequest(
+            text=failed["request"]["text"], operation_id="resume-mvu", expected_revision=0,
+            update_variables=True, resume_turn_id=failed["id"]))
+        await service.tasks[resumed["id"]]
+        assert store.turn(resumed["id"])["status"] == "awaiting_review"
+        assert any(m["role"] == "tool" and "MVU" in m["content"] for m in model.requests[0]["messages"])
+        service.review(resumed["id"], True)
+        assert store.session(session["id"])["snapshot"]["state"]["stat_data"]["能量"] == 4
     finally:
         await service.close()
 

@@ -109,9 +109,11 @@ class FullAgentRuntime:
             from tavern.full_agent.state import new_state
             before = copy.deepcopy(reused["snapshot"] if reused else history[-1]["snapshot"] if history else
                 {"state": {}, "scopes": {}, "lore": {}, "content": None, "full_agent": new_state()})
-            snapshot = copy.deepcopy(before)
+            progress = self.store.full_agent_progress(tid)
+            snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
             card = self.store.session_card(session["id"])
-            document = copy.deepcopy((snapshot.get("content") or {}).get("document", card["document"]))
+            document = copy.deepcopy(progress["document"] if progress else
+                (snapshot.get("content") or {}).get("document", card["document"]))
             self.store.set_turn(tid, status="running")
             self.store.event(tid, "started", {"purpose": "full_agent"})
             if card["permission"]:
@@ -126,20 +128,24 @@ class FullAgentRuntime:
             script = await self.runtime.open(document, history, snapshot, bool(card["permission"]), host,
                 self.dependencies.scripts({**card, "document": document}),
                 lambda html: self.dependencies.markup(card, html), persona=session["persona"])
-            mirror = await script.call("snapshot")
+            mirror = copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
             snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
             rules, input_raw = regex_scripts(document), request.text
-            request.text = await script.call("transform", input_raw, rules, 1, "model", 0)
-            input_id, output_id = reused["id"] if reused else uid(), uid()
-            user = reused or {"id": input_id, "parent": history[-1]["id"] if history else None, "role": "user", "raw": input_raw,
+            request.text = (progress["user"]["model"] if progress else
+                await script.call("transform", input_raw, rules, 1, "model", 0))
+            input_id, output_id = (progress["user"]["id"] if progress else
+                reused["id"] if reused else uid()), (mirror["messages"][-1]["id"] if progress else uid())
+            user = copy.deepcopy(progress["user"]) if progress else reused or {
+                "id": input_id, "parent": history[-1]["id"] if history else None, "role": "user", "raw": input_raw,
                 "model": request.text, "display": await script.call("transform", input_raw, rules, 1, "display", 0),
                 "snapshot": copy.deepcopy(snapshot)}
-            for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
-                mirror["messages"].append({"message_id": len(mirror["messages"]), "id": mid, "role": role,
-                                           "message": text, "variables": copy.deepcopy(snapshot["state"])})
+            if not progress:
+                for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
+                    mirror["messages"].append({"message_id": len(mirror["messages"]), "id": mid, "role": role,
+                                               "message": text, "variables": copy.deepcopy(snapshot["state"])})
             await script.call("update", mirror)
             agent = FullAgent(self.store, tid, document, session, history, snapshot, request, script,
-                              settings, user, self.retrieval)
+                              settings, user, self.retrieval, progress)
             self.agents[tid] = agent
             text = await agent.run(self.provider_factory() if self.provider_factory else None)
             mirror = await script.call("snapshot")

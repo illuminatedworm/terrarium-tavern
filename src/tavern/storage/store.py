@@ -108,6 +108,9 @@ class Store:
                 seq INTEGER NOT NULL, window_id TEXT NOT NULL, payload TEXT NOT NULL,
                 PRIMARY KEY(message_id, seq))""")
             db.execute("CREATE INDEX IF NOT EXISTS full_trace_session ON full_agent_trace(session)")
+            db.execute("""CREATE TABLE IF NOT EXISTS full_agent_progress (
+                turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+                payload TEXT NOT NULL)""")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
 
@@ -750,7 +753,7 @@ class Store:
                 if TurnRequest.model_validate_json(existing["request"]).model_dump() != request.model_dump():
                     raise Conflict("相同 operation_id 不能用于不同请求")
                 return existing["id"], False
-            session = db.execute("SELECT revision FROM sessions WHERE id=?", (sid,)).fetchone()
+            session = db.execute("SELECT revision,agent_mode FROM sessions WHERE id=?", (sid,)).fetchone()
             if not session:
                 raise KeyError("会话不存在")
             if session[0] != request.expected_revision:
@@ -760,12 +763,71 @@ class Store:
                 (sid,),
             ).fetchone():
                 raise Conflict("当前会话已有运行中的回合")
+            if request.resume_turn_id:
+                if session["agent_mode"] != "full_agent":
+                    raise Conflict("只有 Full Agent 回合可续接工具调用")
+                source = db.execute("SELECT session,status,request FROM turns WHERE id=?",
+                                    (request.resume_turn_id,)).fetchone()
+                latest = db.execute("SELECT id FROM turns WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 1",
+                                    (sid,)).fetchone()
+                if (source is None or source["session"] != sid or source["status"] not in
+                        ("error", "cancelled", "interrupted") or latest["id"] != request.resume_turn_id):
+                    raise Conflict("只能续接当前会话最新的失败或中断回合")
+                previous = TurnRequest.model_validate_json(source["request"])
+                matching = ("text", "expected_revision", "mode", "message_id",
+                            "allow_content_edit", "update_variables", "generate", "scene_refresh")
+                if any(getattr(previous, field) != getattr(request, field) for field in matching):
+                    raise Conflict("续接请求的输入或授权已改变，请重新开始本轮")
             tid = uid()
             db.execute(
                 "INSERT INTO turns(id,session,operation,request,status,created) VALUES (?,?,?,?,?,?)",
                 (tid, sid, request.operation_id, request.model_dump_json(), "queued", time.time()),
             )
+            if request.resume_turn_id:
+                row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?",
+                                 (request.resume_turn_id,)).fetchone()
+                if row:
+                    db.execute("INSERT INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, row["payload"]))
+                    trace = json.loads(row["payload"])["new_trace"]
+                    for index, item in enumerate(trace):
+                        message = item["message"]
+                        if message["role"] != "assistant":
+                            continue
+                        assistant_seq = index + 1
+                        if message.get("content"):
+                            db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                                (tid, "full_agent_assistant", dump({"activity_id": f"text-{assistant_seq}",
+                                 "order": assistant_seq * 10, "content": message["content"]}), time.time()))
+                        results = {}
+                        for following in trace[index + 1:]:
+                            part = following["message"]
+                            if part["role"] == "assistant":
+                                break
+                            if part["role"] == "tool":
+                                results[part["tool_call_id"]] = part["content"]
+                        for call_index, call in enumerate(message.get("tool_calls", [])):
+                            activity = {"activity_id": f"call-{assistant_seq}-{call_index}",
+                                "order": assistant_seq * 10 + call_index + 1,
+                                "name": call["function"]["name"],
+                                "arguments": call["function"]["arguments"]}
+                            result = results.get(call["id"])
+                            if result is None:
+                                continue
+                            db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                                (tid, "full_agent_tool_started", dump(activity), time.time()))
+                            db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                                (tid, "full_agent_tool", dump({**activity, "result": json.loads(result)}), time.time()))
         return tid, True
+
+    def full_agent_progress(self, tid):
+        with self.connection() as db:
+            row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def save_full_agent_progress(self, tid, progress):
+        with self.connection() as db:
+            db.execute("INSERT OR REPLACE INTO full_agent_progress(turn,payload) VALUES (?,?)",
+                       (tid, dump(progress)))
 
     def turn(self, tid):
         with self.connection() as db:
@@ -795,6 +857,7 @@ class Store:
                 raise Conflict("只能编辑当前会话最新的失败或取消发言")
             request["text"] = text
             db.execute("UPDATE turns SET request=?,draft='',pending=NULL WHERE id=?", (dump(request), tid))
+            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
         return self.turn(tid)
 
     def set_turn(self, tid, **fields):
@@ -938,6 +1001,7 @@ class Store:
                 ),
             )
             db.execute("UPDATE turns SET status='committed',pending=NULL WHERE id=?", (tid,))
+            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
             # The terminal event and authoritative state share one transaction.
             # An observer must never see committed state without its final event.
             db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",

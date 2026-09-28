@@ -17,7 +17,7 @@ from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 
 class FullAgent:
     def __init__(self, store, tid, document, session, history, snapshot, request, script, settings,
-                 user_message, retrieval):
+                 user_message, retrieval, progress=None):
         self.store, self.tid, self.document = store, tid, document
         self.session = {**session, "messages": history}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
@@ -40,6 +40,26 @@ class FullAgent:
         self.calls, self.rolled, self.retrieval_query = 0, False, ""
         self.must_rollover = False
         self.exiting = set()
+        self.resumed = progress is not None
+        if progress:
+            self.continuation = copy.deepcopy(progress["continuation"])
+            self.new_trace = copy.deepcopy(progress["new_trace"])
+            self.retrieval_query = progress["retrieval_query"]
+            self.must_rollover = progress["must_rollover"]
+            self.exiting = set(progress["exiting"])
+            self.tools.read_sources = copy.deepcopy(progress["read_sources"])
+            self.tools.note_reads = {tuple(key): True for key in progress["note_reads"]}
+
+    async def save_progress(self):
+        script_mirror = await self.script.call("snapshot")
+        self.store.save_full_agent_progress(self.tid, {
+            "user": self.user_message, "snapshot": self.snapshot, "document": self.document,
+            "script_mirror": script_mirror,
+            "continuation": self.continuation, "new_trace": self.new_trace,
+            "retrieval_query": self.retrieval_query, "must_rollover": self.must_rollover,
+            "exiting": sorted(self.exiting), "read_sources": self.tools.read_sources,
+            "note_reads": [list(key) for key in self.tools.note_reads],
+        })
 
     def event(self, kind, payload):
         self.store.event(self.tid, kind, {"purpose": "full_agent", **payload})
@@ -111,7 +131,7 @@ class FullAgent:
         if hasattr(provider, "echo_reasoning"):
             provider.echo_reasoning = True
         try:
-            if self.settings.full_agent_config.auto_retrieval:
+            if self.settings.full_agent_config.auto_retrieval and not self.resumed:
                 await self.retrieve(self.request.text, source="auto")
             self.store.event(self.tid, "input_ready", {"message": self.user_message,
                 "lore_injections": self.snapshot.get("lore_injections", [])})
@@ -186,6 +206,7 @@ class FullAgent:
                     self.retain()
                     self.event("context_rollover", {"window": self.state["window"]["number"],
                                                    "message": "Agent 已保存 checkpoint 并换新窗口"})
+                await self.save_progress()
             raise ValueError("Full Agent 达到本回合模型调用上限，草稿未提交；换窗不会重置调用额度")
         finally:
             await provider.close()
