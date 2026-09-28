@@ -21,6 +21,7 @@ import PolicySelect from './components/settings/PolicySelect.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import CharacterEditor from './components/character/CharacterEditor.vue';
 import StoryWizard from './components/story/StoryWizard.vue';
+import StoryLoading from './components/story/StoryLoading.vue';
 import PersonaEditor from './components/settings/PersonaEditor.vue';
 import StateTree from './components/story/StateTree.vue';
 import WorkRecords from './components/records/WorkRecords.vue';
@@ -106,6 +107,20 @@ watch(
 );
 const viewScope = createSessionController();
 const viewApi = viewScope.request;
+const storyLoad = ref<{ id: string; creating: boolean; name: string; error: string } | null>(null);
+function abandonStoryLoad() {
+  if (!storyLoad.value) return;
+  viewScope.enter();
+  storyLoad.value = null;
+  session.value = null;
+  sessionCard.value = null;
+  activeTurn.value = null;
+  busy.value = false;
+}
+function retryStoryLoad() {
+  const pending = storyLoad.value;
+  if (pending) void openSession(pending.id, pending.creating);
+}
 const memoryWarning = ref('');
 watch(
   () => [session.value?.id, session.value?.snapshot?.memory_warning],
@@ -514,10 +529,19 @@ async function refreshContextStats() {
     /* Explicit preview presents errors; a stats refresh must not break reading. */
   }
 }
-async function openSession(id: string) {
+async function openSession(id: string, creating = false) {
   const token = viewScope.enter();
+  storyLoad.value = {
+    id,
+    creating,
+    name: sessions.value.find((item) => item.id === id)?.title || '',
+    error: '',
+  };
   busy.value = true;
+  error.value = '';
   session.value = null;
+  sessionCard.value = null;
+  activeTurn.value = null;
   contextStats.value = null;
   contextEstimateError.value = '';
   clearTimeout(contextRefreshTimer);
@@ -534,37 +558,48 @@ async function openSession(id: string) {
   draft.value = '';
   editingMessageId.value = '';
   quickEffort.value = localStorage.getItem(`tavern-effort-${id}`) || 'inherit';
-  const [opened, card] = await Promise.all([api(`/sessions/${id}`), api(`/sessions/${id}/card`)]).catch(
-    (e) => {
-      if (viewScope.owns(token)) busy.value = false;
-      throw e;
-    },
-  );
-  if (!viewScope.owns(token)) return;
-  session.value = opened;
-  sessionCard.value = card;
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
-  const active = opened.turns.find((t: any) => ['running', 'queued', 'awaiting_review'].includes(t.status));
-  activeTurn.value = active || null;
-  busy.value = !!active && active.status !== 'awaiting_review';
-  const last = active || opened.turns[0];
-  if (
-    last &&
-    ['running', 'queued', 'awaiting_review', 'error', 'cancelled', 'interrupted'].includes(last.status)
-  ) {
-    const turn = await api(`/turns/${last.id}`);
+  try {
+    const [opened, card] = await Promise.all([api(`/sessions/${id}`), api(`/sessions/${id}/card`)]);
     if (!viewScope.owns(token)) return;
-    if (active || turn.request.expected_revision === opened.revision) {
-      activeTurn.value = turn;
-      draft.value = turn.draft;
-      if (turn.status === 'error') error.value = turnError(turn.error);
-      if (busy.value) observe(turn.id);
+    const active = opened.turns.find((turn: any) =>
+      ['running', 'queued', 'awaiting_review'].includes(turn.status),
+    );
+    const last = active || opened.turns[0];
+    let restored = active || null;
+    let restoredDraft = '';
+    if (
+      last &&
+      ['running', 'queued', 'awaiting_review', 'error', 'cancelled', 'interrupted'].includes(last.status)
+    ) {
+      const turn = await api(`/turns/${last.id}`);
+      if (!viewScope.owns(token)) return;
+      if (active || turn.request.expected_revision === opened.revision) {
+        restored = turn;
+        restoredDraft = turn.draft;
+        if (turn.status === 'error') error.value = turnError(turn.error);
+      }
     }
+    session.value = opened;
+    sessionCard.value = card;
+    activeTurn.value = restored;
+    draft.value = restoredDraft;
+    busy.value = !!active && active.status !== 'awaiting_review';
+    if (window.innerWidth < 760) layout.value.leftCollapsed = true;
+    localStorage.setItem('tavern-session', id);
+    // Publish the complete reading state before dismissing the loading screen.
+    storyLoad.value = null;
+    if (busy.value && restored) observe(restored.id);
+    await scroll(true);
+    if (viewScope.owns(token)) void refreshContextStats();
+  } catch (e: any) {
+    if (!viewScope.owns(token)) return;
+    session.value = null;
+    sessionCard.value = null;
+    activeTurn.value = null;
+    busy.value = false;
+    if (storyLoad.value) storyLoad.value.error = e.message || String(e);
   }
-  localStorage.setItem('tavern-session', id);
-  if (viewScope.owns(token)) await scroll(true);
-  // Token estimates are auxiliary; reading must not wait for context compilation.
-  if (viewScope.owns(token)) void refreshContextStats();
 }
 
 function askDeleteSession(item: any, event: MouseEvent) {
@@ -618,8 +653,9 @@ async function deleteCard() {
 }
 async function deleteSession(item: any) {
   closeDeleteBubble(false);
-  const isCurrent = session.value?.id === item.id;
+  const isCurrent = session.value?.id === item.id || storyLoad.value?.id === item.id;
   if (isCurrent) {
+    abandonStoryLoad();
     viewScope.enter();
     events?.close();
   }
@@ -793,6 +829,9 @@ function sessionLoreSaved(value: any) {
   activeTurn.value = value.turns.find((turn: any) => turn.status === 'awaiting_review') || null;
   pageMode.value = '';
 }
+watch(pageMode, (value) => {
+  if (value) abandonStoryLoad();
+});
 function showCard(card: any) {
   // Explicit navigation starts a fresh view, even after Save As retained an
   // earlier editor instance. The draft itself is restored by workspace ID.
@@ -810,6 +849,7 @@ function startNewStory() {
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
 }
 function manageCards() {
+  abandonStoryLoad();
   viewScope.enter();
   events?.close();
   sidebarSection.value = 'cards';
@@ -818,8 +858,16 @@ function manageCards() {
 }
 async function cardStarted(s: any) {
   sidebarSection.value = 'sessions';
-  await load();
-  await openSession(s.id);
+  const opening = openSession(s.id, true);
+  const token = viewScope.current();
+  if (storyLoad.value) storyLoad.value.name = s.title || s.name || '';
+  try {
+    const list = await api('/sessions');
+    if (viewScope.owns(token)) sessions.value = list;
+  } catch (e: any) {
+    if (viewScope.owns(token)) error.value = e.message;
+  }
+  await opening;
 }
 function setEffort(value: string) {
   quickEffort.value = value;
@@ -1561,6 +1609,14 @@ useTimedError(error);
         @started="cardStarted"
         @back="pageMode = ''"
       /><PersonaEditor v-else-if="pageMode === 'personas'" @back="pageMode = ''" />
+      <StoryLoading
+        v-else-if="storyLoad"
+        :creating="storyLoad.creating"
+        :name="storyLoad.name"
+        :error="storyLoad.error"
+        @retry="retryStoryLoad"
+        @back="abandonStoryLoad"
+      />
       <section v-else-if="!session" class="library">
         <div class="eyebrow">A PLACE FOR YOUR STORIES</div>
         <h1>推开门，<br />进入另一个世界。</h1>

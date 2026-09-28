@@ -3,6 +3,7 @@ import { useTimedError } from '../../composables/useTimedError';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../lib/api';
 import StoryProse from './StoryProse.vue';
+import StoryLoading from './StoryLoading.vue';
 import { openingProse } from '../../lib/storyText';
 
 const props = defineProps<{ card: any }>();
@@ -32,6 +33,7 @@ function moveGreeting(event: KeyboardEvent, index: number) {
     [next]?.focus();
 }
 async function start() {
+  if (busy.value) return;
   error.value = '';
   busy.value = true;
   try {
@@ -45,7 +47,6 @@ async function start() {
     emit('started', session);
   } catch (e: any) {
     error.value = e.message;
-  } finally {
     busy.value = false;
   }
 }
@@ -56,7 +57,8 @@ useTimedError(error);
 </script>
 
 <template>
-  <section class="editor-page story-setup">
+  <StoryLoading v-if="busy" creating :name="data.name" />
+  <section v-else class="editor-page story-setup">
     <button class="quiet" @click="emit('back')">← 重新选择角色卡</button>
     <div class="story-steps">
       <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 玩家与开场</span>
