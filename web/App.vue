@@ -1917,12 +1917,16 @@ useTimedError(error);
               </button>
             </div>
             <div class="compose-box">
-              <textarea
+              <ExpandableTextarea
                 v-model="input"
+                label="用户输入"
                 placeholder="说些什么，或描述你的行动…"
-                @keydown.enter.exact.prevent="send()"
+                compact
+                expand-on-focus
+                :rows="2"
+                submit-on-enter
+                @submit="send()"
                 :disabled="busy"
-                rows="2"
               />
               <div class="compose-bottom">
                 <div class="compose-actions">

@@ -6,9 +6,14 @@ const props = defineProps<{
   label: string;
   placeholder?: string;
   code?: boolean;
+  compact?: boolean;
+  disabled?: boolean;
+  rows?: number;
+  submitOnEnter?: boolean;
+  expandOnFocus?: boolean;
   validate?: (value: string) => string;
 }>();
-const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string] }>();
+const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string]; submit: [] }>();
 const expanded = ref(false),
   draft = ref(''),
   error = ref('');
@@ -28,7 +33,8 @@ async function openEditor() {
 async function closeEditor() {
   expanded.value = false;
   await nextTick();
-  trigger.value?.focus();
+  if (props.expandOnFocus) inline.value?.focus();
+  else trigger.value?.focus();
 }
 function apply() {
   error.value = props.validate?.(draft.value) || '';
@@ -55,15 +61,21 @@ useTimedError(error);
 </script>
 
 <template>
-  <div class="expandable-textarea" :class="{ 'is-code': code }">
+  <div
+    class="expandable-textarea"
+    :class="{ 'is-code': code, 'is-compact': compact, 'expand-on-focus': expandOnFocus }"
+  >
     <textarea
       ref="inline"
       :value="modelValue || ''"
       :aria-label="label"
       :placeholder="placeholder"
+      :disabled="disabled"
+      :rows="rows"
       :spellcheck="code ? false : undefined"
       @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
       @change="emit('change', ($event.target as HTMLTextAreaElement).value)"
+      @keydown.enter.exact="submitOnEnter && ($event.preventDefault(), emit('submit'))"
     />
     <button
       ref="trigger"
@@ -71,6 +83,7 @@ useTimedError(error);
       class="expand-editor"
       :aria-label="`放大编辑：${label}`"
       title="放大编辑"
+      :disabled="disabled"
       @click.prevent="openEditor"
     >
       <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -140,6 +153,16 @@ useTimedError(error);
     12px/1.7 Consolas,
     monospace;
 }
+.expandable-textarea.is-compact {
+  margin-top: 0;
+}
+.expandable-textarea.is-compact > textarea {
+  height: auto;
+  min-height: 70px;
+  max-height: 180px;
+  padding-right: 42px;
+  resize: vertical;
+}
 .expand-editor {
   position: absolute;
   bottom: 7px;
@@ -157,6 +180,14 @@ useTimedError(error);
 .expand-editor:hover {
   background: var(--surface-hover);
   color: var(--accent-hover);
+}
+.expand-on-focus > .expand-editor {
+  visibility: hidden;
+  pointer-events: none;
+}
+.expand-on-focus:focus-within > .expand-editor {
+  visibility: visible;
+  pointer-events: auto;
 }
 .expanded-editor-backdrop {
   position: fixed;
