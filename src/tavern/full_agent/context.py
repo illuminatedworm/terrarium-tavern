@@ -24,7 +24,8 @@ def load_trace(store, sid, history):
 
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
-                   trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False):
+                   trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False,
+                   require_state_patch=False):
     state = full_state(snapshot)
     window = state["window"]
     card = normalize(document)
@@ -75,6 +76,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in by_owner.get(message["id"], []))
         add(message["role"], expand(message.get("model", message["raw"])), "history", message_id=message["id"])
     anchored(input_id)
+    if require_state_patch:
+        add("system", "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。", "turn_variable_instruction")
     add("user", user_input, "input", message_id=input_id)
     items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in continuation)
     add("system", expand(card.get("post_history_instructions", "")), "post")

@@ -61,7 +61,7 @@ def create_app(data_dir=None):
             await editor.close()
             await service.close()
 
-    app = FastAPI(title="Terrarium Tavern", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Terrarium Tavern", version="0.2.0", lifespan=lifespan)
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
@@ -106,7 +106,7 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.1.0"}
+        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.2.0"}
 
     @app.get("/api/storage")
     async def storage():
@@ -472,7 +472,7 @@ def create_app(data_dir=None):
                      else ContextRecipe.model_validate(payload["recipe"]))
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
-    def compile_preview(sid: str, text: str):
+    def compile_preview(sid: str, text: str, update_variables: bool = False):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
         s = store.session(sid)
@@ -482,11 +482,13 @@ def create_app(data_dir=None):
             from tavern.full_agent.context import compile_window, load_trace
             from tavern.full_agent.tools import tool_definitions
             full_settings = store.settings().for_role("full_agent")
+            preview_request = TurnRequest(operation_id="preview", expected_revision=s["revision"],
+                                          update_variables=update_variables)
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
                 full_settings,
-                tool_definitions(TurnRequest(operation_id="preview", expected_revision=s["revision"]), s,
+                tool_definitions(preview_request, s,
                                  full_settings.full_agent_config, settings=full_settings),
-                trace=load_trace(store, sid, s["messages"]))
+                trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables)
             return result, s
         result = compile_context(
             document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
@@ -496,14 +498,14 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
-        result, s = compile_preview(sid, payload.get("text", ""))
+        result, s = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True)
         result["usage"] = store.latest_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
         return result
 
     @app.post("/api/sessions/{sid}/messages-preview")
     def messages_preview(sid: str, payload: dict):
-        result, _ = compile_preview(sid, payload.get("text", ""))
+        result, _ = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True)
         return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)

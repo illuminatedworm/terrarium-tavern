@@ -117,7 +117,8 @@ SPECS = {
         "History and older branches are preserved. Changes commit with the successful turn, subject to approval in review mode."),
     "read_state": (StateRead, "Read current story state, excluding internal runtime ledgers. Use an empty path for the whole state or a dot-separated field path. "
         "Check relevant values and structure before updating."),
-    "patch_state": (Patch, "When variable updates are authorized, apply JSON Patch operations to story fields inside stat_data, validated by MVU. "
+    "patch_state": (Patch, "Call exactly once for this turn only when a system message immediately before the current user input requires an MVU update. "
+        "Apply JSON Patch operations to story fields inside stat_data, validated by MVU. "
         "Paths are JSON Pointers relative to the story-state root; reason gives story evidence. Read current values first and align changes with the final narrative. "
         "Changes commit with the successful turn, subject to approval in review mode; use this tool rather than MVU blocks in story prose."),
     "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, leaving the library card intact. "
@@ -135,8 +136,6 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     names = set(SPECS)
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
-    if not catalog and not request.update_variables:
-        names.discard("patch_state")
     if not catalog and session["policy_effective"] == "directed" and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
@@ -214,6 +213,11 @@ class AgentTools:
         allowed = {t["function"]["name"] for t in owner.definitions}
         if name not in allowed:
             raise ValueError("当前模式或授权不允许此工具")
+        if name == "patch_state":
+            if not owner.request.update_variables:
+                raise ValueError("本轮未要求更新 MVU 变量，不允许调用 patch_state")
+            if owner.patch_state_done:
+                raise ValueError("本轮已完成一次 patch_state，不允许重复更新")
         args = SPECS[name][0].model_validate_json(arguments)
         state = owner.state
         if name == "search_lore":
@@ -297,6 +301,7 @@ class AgentTools:
         if name == "patch_state":
             result = await owner.script.call("process", "", owner.model_view.operations(args.operations), "")
             owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
+            owner.patch_state_done = True
             return {"saved_to_draft": True, "notice": "变量已通过 MVU 校验。"}
         if name == "read_character":
             data = owner.model_view.expose(normalize(owner.document))

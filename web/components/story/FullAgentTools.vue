@@ -135,7 +135,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
         {{ !tool.enabled ? '已关闭' : tool.available ? '本轮可用' : '已启用 · 本轮尚未授权' }}
       </p>
       <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available" class="inspector-note">
-        开启本轮“更新变量”后可用。
+        工具定义保持稳定；勾选本轮“更新变量”后才允许执行，且本轮须成功调用一次。
       </p>
       <p v-if="tool.name === 'revise_content' && tool.enabled && !tool.available" class="inspector-note">
         本轮允许修改设定后可用。

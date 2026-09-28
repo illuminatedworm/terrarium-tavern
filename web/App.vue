@@ -160,6 +160,9 @@ watch(
   },
 );
 const updateVariables = ref(false);
+watch(updateVariables, () => {
+  if (!busy.value) void refreshContextStats();
+});
 const allowEdit = ref(false),
   importInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>();
@@ -518,7 +521,7 @@ async function refreshContextStats() {
     token = viewScope.current();
   try {
     const [stats, records] = await Promise.allSettled([
-      api(`/sessions/${sid}/preview`, { text: input.value }),
+      api(`/sessions/${sid}/preview`, { text: input.value, update_variables: updateVariables.value }),
       api(`/sessions/${sid}/work-records?limit=1`),
     ]);
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
@@ -1152,7 +1155,10 @@ async function exportNextMessages() {
   try {
     await guarded(async () => {
       const sid = session.value.id;
-      const messages = await viewApi(`/sessions/${sid}/messages-preview`, { text: input.value });
+      const messages = await viewApi(`/sessions/${sid}/messages-preview`, {
+        text: input.value,
+        update_variables: updateVariables.value,
+      });
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),
       );

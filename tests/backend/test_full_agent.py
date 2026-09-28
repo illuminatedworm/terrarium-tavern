@@ -185,6 +185,45 @@ async def test_failure_and_cancellation_never_commit_draft_memory(story):
         await service.close()
 
 
+async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call(story):
+    store, session = story
+    service = runtime(store)
+    operations = [{"op": "add", "path": "/energy", "value": 2}]
+    try:
+        model = Model(("patch_state", {"operations": operations, "reason": "未获授权"}), "正文")
+        result, current = await turn(service, session, model, update_variables=False)
+        assert result["status"] == "committed", result["error"]
+        assert current["snapshot"]["state"] == session["snapshot"]["state"]
+        names = {tool["function"]["name"] for tool in model.requests[0]["extra_body"]["tools"]}
+        assert "patch_state" in names
+        result_text = next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool")
+        assert "本轮未要求更新" in result_text
+        assert not any(m["content"].startswith("本轮须调用 patch_state")
+                       for m in model.requests[0]["messages"] if isinstance(m.get("content"), str))
+
+        required = Model("过早的正文", ("patch_state", {"operations": operations, "reason": "能量变化"}), "最终正文")
+        result, current = await turn(service, current, required, update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        assert len(required.requests) == 3
+        assert {tool["function"]["name"] for tool in required.requests[0]["extra_body"]["tools"]} == names
+        messages = required.requests[0]["messages"]
+        input_index = max(i for i, m in enumerate(messages) if m["role"] == "user" and "我答应明天" in m["content"])
+        assert messages[input_index - 1]["role"] == "system"
+        assert messages[input_index - 1]["content"].startswith("本轮须调用 patch_state")
+        assert any(e["kind"] == "full_agent_reply_rejected" for e in store.events(result["id"]))
+        assert current["messages"][-1]["raw"] == "最终正文"
+
+        repeated = Model(("patch_state", {"operations": operations, "reason": "首次更新"}),
+                         ("patch_state", {"operations": operations, "reason": "重复更新"}), "重复后的正文")
+        result, _ = await turn(service, current, repeated, update_variables=True)
+        assert result["status"] == "committed", result["error"]
+        returns = [json.loads(m["content"]) for m in repeated.requests[-1]["messages"] if m["role"] == "tool"][-2:]
+        assert returns[0]["saved_to_draft"] is True
+        assert "不允许重复更新" in returns[1]["error"]
+    finally:
+        await service.close()
+
+
 async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen(story):
     store, session = story
     service = runtime(store)
@@ -419,6 +458,14 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             preview = await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})
             assert preview.status_code == 200
             assert preview.json()["agent_mode"] == "full_agent"
+            requested = await client.post(f"/api/sessions/{session['id']}/preview",
+                                          json={"text": "继续", "update_variables": True})
+            assert requested.status_code == 200
+            trace = requested.json()["trace"]
+            input_index = next(i for i, item in enumerate(trace) if item["source"] == "input")
+            assert trace[input_index - 1]["source"] == "turn_variable_instruction"
+            assert {tool["function"]["name"] for tool in requested.json()["tools"]} == {
+                tool["function"]["name"] for tool in preview.json()["tools"]}
             exported = await client.post(f"/api/sessions/{session['id']}/messages-preview", json={"text": "继续"})
             assert exported.status_code == 200
             assert exported.json() == preview.json()["messages"]
@@ -544,6 +591,13 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
                              "reason": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
         assert failed["status"] == "error"
         assert unchanged["snapshot"]["state"]["stat_data"]["能量"] != 4
+        # Progress written before the one-call marker was introduced remains resumable.
+        with store.connection() as db:
+            progress = json.loads(db.execute("SELECT payload FROM full_agent_progress WHERE turn=?",
+                                             (failed["id"],)).fetchone()[0])
+            progress.pop("patch_state_done")
+            db.execute("UPDATE full_agent_progress SET payload=? WHERE turn=?",
+                       (json.dumps(progress, ensure_ascii=False), failed["id"]))
         model = Model("洛伊带你来到观测窗。")
         service.full.provider_factory = lambda: model
         resumed = service.submit(session["id"], TurnRequest(
@@ -769,7 +823,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
                    and m["content"].endswith("</tavern_memory>") for m in wire["messages"])
         assert any("当前玩家输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
-        assert set(definitions) == set(SPECS) - {"patch_state", "revise_content"}
+        assert set(definitions) == set(SPECS) - {"revise_content"}
+        assert "Call exactly once" in definitions["patch_state"]["description"]
+        assert not any(m.get("content", "").startswith("本轮须调用 patch_state") for m in wire["messages"])
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call this tool alone" in definitions["new_context"]["description"]

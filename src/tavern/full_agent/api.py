@@ -45,6 +45,8 @@ def register_full_agent_routes(app, store):
                               update_variables=update_variables, allow_content_edit=allow_content_edit)
         available = {t["function"]["name"] for t in tool_definitions(
             request, session, settings.full_agent_config, settings=settings)}
+        if not update_variables:
+            available.discard("patch_state")
         definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings, catalog=True)
         return {"tools": [{**t["function"], "enabled": t["function"]["name"] not in session["disabled_tools"],
                            "available": t["function"]["name"] in available,

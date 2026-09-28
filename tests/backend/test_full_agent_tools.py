@@ -1,6 +1,7 @@
 import json
 import re
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
@@ -12,6 +13,20 @@ from tests.backend import test_full_agent
 from tests.backend.test_full_agent import Model, runtime, turn
 
 story = test_full_agent.story
+
+
+async def test_required_mvu_update_rejects_disabled_patch_tool(story):
+    store, session = story
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (json.dumps(["patch_state"]), session["id"]))
+    service = runtime(store)
+    try:
+        with pytest.raises(ValueError, match="启用 patch_state"):
+            service.submit(session["id"], TurnRequest(
+                text="继续", operation_id="mvu-disabled", expected_revision=0, update_variables=True))
+        assert store.session(session["id"])["turns"] == []
+    finally:
+        await service.close()
 
 
 async def test_tool_catalog_switches_persist_and_enforce_permissions(story):

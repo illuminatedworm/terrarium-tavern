@@ -1,5 +1,6 @@
 """One model, one bounded native tool loop, model-controlled window rollover."""
 import copy
+import json
 import time
 
 import jsonpatch
@@ -40,6 +41,7 @@ class FullAgent:
         self.calls, self.rolled, self.retrieval_query = 0, False, ""
         self.must_rollover = False
         self.exiting = set()
+        self.patch_state_done = False
         self.resumed = progress is not None
         if progress:
             self.continuation = copy.deepcopy(progress["continuation"])
@@ -49,6 +51,16 @@ class FullAgent:
             self.exiting = set(progress["exiting"])
             self.tools.read_sources = copy.deepcopy(progress["read_sources"])
             self.tools.note_reads = {tuple(key): True for key in progress["note_reads"]}
+            if "patch_state_done" in progress:
+                self.patch_state_done = progress["patch_state_done"]
+            else:
+                patch_ids = {call["id"] for item in self.new_trace if item["message"]["role"] == "assistant"
+                             for call in item["message"].get("tool_calls", [])
+                             if call["function"]["name"] == "patch_state"}
+                self.patch_state_done = any(
+                    item["message"].get("tool_call_id") in patch_ids
+                    and json.loads(item["message"].get("content", "{}")).get("saved_to_draft")
+                    for item in self.new_trace if item["message"]["role"] == "tool")
 
     async def save_progress(self):
         script_mirror = await self.script.call("snapshot")
@@ -57,6 +69,7 @@ class FullAgent:
             "script_mirror": script_mirror,
             "continuation": self.continuation, "new_trace": self.new_trace,
             "retrieval_query": self.retrieval_query, "must_rollover": self.must_rollover,
+            "patch_state_done": self.patch_state_done,
             "exiting": sorted(self.exiting), "read_sources": self.tools.read_sources,
             "note_reads": [list(key) for key in self.tools.note_reads],
         })
@@ -107,14 +120,14 @@ class FullAgent:
 
     def compile(self):
         self.retain()
-        permissions = (f"本轮允许更新变量：{self.request.update_variables}；"
-                       f"允许修改设定：{self.request.allow_content_edit or self.session['policy_effective'] != 'directed'}。")
+        permissions = f"允许修改设定：{self.request.allow_content_edit or self.session['policy_effective'] != 'directed'}。"
         result = compile_window(self.document, self.session, self.history, self.snapshot, self.request.text,
             self.settings, self.definitions, trace=self.trace, continuation=self.continuation,
             input_id=self.user_message["id"], instruction=permissions + (
                 "\n" + self.settings.regenerate_prompt + "\n" + self.request.regenerate_note
                 if self.request.regenerate_note else ""),
-            calls=self.calls, force_rollover=self.must_rollover)
+            calls=self.calls, force_rollover=self.must_rollover,
+            require_state_patch=self.request.update_variables)
         self.must_rollover = result["rollover_required"]
         if result["estimated_tokens"] > self.settings.context_tokens:
             self.event("context_warning", {"message": "Full Agent 请求估算超出模型上下文，仍保留完整文本"})
@@ -159,6 +172,11 @@ class FullAgent:
                         self.event("full_agent_reply_rejected", {"message": "强制换窗期间的正文回复已否决"})
                         self.continuation.append({"role": "system", "content":
                             "刚才的正文回复已被运行时否决，未提交。必须单独调用 new_context 换窗后再继续。"})
+                        continue
+                    if self.request.update_variables and not self.patch_state_done:
+                        self.event("full_agent_reply_rejected", {"message": "本轮尚未调用 patch_state，正文回复已否决"})
+                        self.continuation.append({"role": "system", "content":
+                            "刚才的正文回复未提交。本轮必须先成功调用一次 patch_state 更新 MVU 变量。"})
                         continue
                     text = response.content or ""
                     if not text.strip():
