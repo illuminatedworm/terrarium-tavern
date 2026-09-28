@@ -156,7 +156,7 @@ def test_actual_injections_record_all_supported_positions(position):
     assert all(set(m) == {"role", "content"} for m in result["messages"])
 
 
-@pytest.mark.parametrize("omission", ["disabled", "condition", "block_budget", "total_budget",
+@pytest.mark.parametrize("omission", ["disabled", "condition",
                                      "outlet", "unnamed_outlet", "override", "author_override",
                                      "ordered", "depth_disabled", "empty"])
 def test_omitted_candidates_are_not_used(omission):
@@ -188,6 +188,19 @@ def test_omitted_candidates_are_not_used(omission):
     result = compile_lore([e], recipe=recipe, **kwargs)
     assert result["lore"] and result["next_lore"] == {}
     assert any(n["reason"] == "候选未注入，未计入使用记录" for n in result["diagnostics"])
+
+
+@pytest.mark.parametrize("reason", ["block_budget", "total_budget"])
+def test_budget_warning_keeps_selected_lore_complete(reason):
+    e, recipe, kwargs = entry(sticky=3), ContextRecipe().model_dump(), {}
+    if reason == "block_budget":
+        recipe["blocks"][1]["budget"] = 1
+    else:
+        e["content"] = "界" * 10000
+        kwargs["settings"] = Settings(context_tokens=4096, reply_tokens=128)
+    result = compile_lore([e], recipe=recipe, **kwargs)
+    assert result["next_lore"]["e"]["present"]
+    assert e["content"] in "\n".join(m["content"] for m in result["messages"])
 
 
 def test_merged_and_duplicate_blocks_record_each_entry_once():

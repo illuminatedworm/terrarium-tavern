@@ -43,7 +43,8 @@ async def analyze_variables(store, tid, settings, history, state, user_text, nar
     input_tokens = request_tokens(messages, cfg) if hasattr(cfg, "context_tokens") else None
     store.event(tid, "variable_rules", {"purpose": "variables", "entries": rules, "estimated_input_tokens": input_tokens})
     if input_tokens is not None and input_tokens + cfg.reply_tokens + 2048 > cfg.context_tokens:
-        raise ValueError("MVU 规则与近期消息超过后台模型上下文预算；未截断变量规则")
+        store.event(tid, "context_warning", {"purpose": "variables",
+                                             "message": "MVU 请求估算超出模型上下文，仍完整发送"})
     store.event(tid, "variable_update_started", {"purpose": "variables"})
     provider = provider_factory() if provider_factory else await make_provider(
         cfg,

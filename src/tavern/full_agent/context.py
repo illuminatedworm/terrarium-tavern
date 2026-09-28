@@ -12,7 +12,15 @@ def load_trace(store, sid, history):
     allowed = {m["id"] for m in history}
     with store.connection() as db:
         rows = db.execute("SELECT * FROM full_agent_trace WHERE session=? ORDER BY message_id,seq", (sid,)).fetchall()
-    return [{**dict(row), "message": json.loads(row["payload"])} for row in rows if row["message_id"] in allowed]
+    result = []
+    for row in rows:
+        if row["message_id"] not in allowed:
+            continue
+        message = json.loads(row["payload"])
+        if "_archive_content" in message:
+            message["content"] = message.pop("_archive_content")
+        result.append({**dict(row), "message": message})
+    return result
 
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,

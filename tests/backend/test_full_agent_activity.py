@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.full_agent.activity import from_trace
+from tavern.full_agent.context import load_trace
 from tests.backend.test_full_agent import Model, runtime, turn
 
 
@@ -36,6 +37,8 @@ async def test_dialogue_uses_durable_trace_and_pages_results_without_reasoning(t
             db.execute("UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=2",
                        (json.dumps(payload), message_id))
             db.execute("DELETE FROM events WHERE turn=?", (result["id"],))
+        recovered = load_trace(store, session["id"], current["messages"])
+        assert recovered[1]["message"]["content"] == large_result
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             prefix = f"/api/sessions/{session['id']}/full-agent"
             response = await client.post(prefix + "/activity", json={"message_ids": [message_id]})

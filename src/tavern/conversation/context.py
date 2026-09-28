@@ -91,7 +91,7 @@ def matches(key, text, entry):
             end = key.rfind("/")
             pattern = key[1:end]
             flags = re.I if "i" in key[end + 1 :] else 0
-        return bool(re.search(pattern, text[:100000], flags))
+        return bool(re.search(pattern, text, flags))
     if not entry.get("caseSensitive", entry.get("case_sensitive", False)):
         key, text = key.lower(), text.lower()
     if entry.get("matchWholeWords", False) or re.fullmatch(r"[a-zA-Z0-9]{1,2}", key):
@@ -127,7 +127,7 @@ def lore_recovery(
 def activate_lore(
     document, history, user_input, prior, seed, requested=(), *,
     session_id="", turn_number=None, retained=(), recursive_sources=(),
-    max_entries=None, max_chars=None, expand_content=str, recursive=True, recursion_depth=3, timeline="", retrieval=None, query=None,
+    max_entries=None, expand_content=str, recursive=True, recursion_depth=3, timeline="", retrieval=None, query=None,
 ):
     entries = lore_entries(document, "writer")
     retrieval_ids = {eid: i for i, eid in enumerate(retrieval["ids"])} if retrieval is not None else {}
@@ -140,7 +140,7 @@ def activate_lore(
     turn_number = turn_number or sum(x["role"] == "user" for x in history) + 1
     parent_id = history[-1]["id"] if history else "empty-history"
     recursive_text = "\n".join(recursive_sources)
-    lore_chars, lore_count = 0, 0
+    lore_count = 0
     budget_priority = None
 
     def order(entry):
@@ -241,13 +241,11 @@ def activate_lore(
                 continue
             content = expand_content(e.get("content", ""))
             cost = len(content) if content.strip() and not e.get("constant") else 0
-            if cost and ((max_entries is not None and lore_count >= max_entries)
-                         or (max_chars is not None and lore_chars + cost > max_chars)):
+            if cost and max_entries is not None and lore_count >= max_entries:
                 if direct and rank[1] == -1:
                     budget_priority = rank[:2] if budget_priority is None else min(budget_priority, rank[:2])
-                notes.append({"id": eid, "reason": "本次世界书新增条目数量或字符上限，未注入"})
+                notes.append({"id": eid, "reason": "本次世界书新增条目数量上限，未注入"})
                 continue
-            lore_chars += cost
             lore_count += bool(cost)
             selected[eid] = {**e, "reason": reason, "roll": roll, **recovery,
                              "matched_keys": matched_keys, "recursion_depth": iteration,
@@ -321,9 +319,9 @@ def compile_context(
                 old.update(present=False, removed_at=turn_number)
                 exiting_ids.add(eid)
     from tavern.search.retrieval import fuse, lexical_recall
-    from tavern.search.retrieval_text import bounded, query_instruction
+    from tavern.search.retrieval_text import query_instruction
     if retrieval is None:
-        retrieval = lexical_recall(document, visible_history, bounded(user_input, settings.retrieval.input_chars),
+        retrieval = lexical_recall(document, visible_history, user_input,
                                    snapshot, settings, session, seed, cached_only=read_only, turn_number=turn_number)
         retrieval.pop("channel_ms", None)  # Keep pure context compilation deterministic.
         retrieval["ids"] = fuse(retrieval["rankings"], retrieval["entries"], settings.retrieval)
@@ -331,12 +329,12 @@ def compile_context(
             retrieval["diagnostics"].append({"reason": "只读编译未运行本地模型；本预览不包含完整神经召回"})
     clue_history = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in visible_history]
     entries, diagnostics, next_lore = activate_lore(
-        document, clue_history, bounded(user_input, settings.retrieval.input_chars), prior, seed,
+        document, clue_history, user_input, prior, seed,
         set(requested) & set(retrieval["ids"]),
         retrieval=retrieval, query=retrieval["query"],
         session_id=session.get("id", ""), turn_number=turn_number,
         retained=retained_ids | exiting_ids if conversation_lore else (),
-        max_entries=settings.lore_max_entries, max_chars=settings.lore_max_chars,
+        max_entries=settings.lore_max_entries,
         recursive=False,
         timeline=get_path(state, "世界.当前时间线", ""),
         expand_content=lambda text: macros(text, card, persona, state),
@@ -460,9 +458,8 @@ def compile_context(
                 )
         else:
             content = sources.get(block.source, block.content)
-            if block.budget and count_text(expand(content), settings) > block.budget and not block.required:
-                diagnostics.append({"id": block.id, "reason": "内容块 token 预算不足，整块省略"})
-                continue
+            if block.budget and count_text(expand(content), settings) > block.budget:
+                diagnostics.append({"id": block.id, "reason": "内容块超过提示阈值，仍完整注入"})
             if block.depth is not None:
                 pending_depth.append(
                     (block.depth, block.role, content, block.id, block.priority, block.required,
@@ -680,21 +677,8 @@ def compile_context(
         at += 1
     messages[at:at] = constant_messages
     total = REPLY_PRIMING + sum(message_tokens(m, settings) for m in messages)
-    # Old history and low-priority optional blocks are removed before essentials.
-    removed = set()
-    for i in sorted(range(len(messages)), key=lambda i: (messages[i]["priority"], i)):
-        if not enforce_budget or total <= available:
-            break
-        m = messages[i]
-        if not m["required"]:
-            total -= message_tokens(m, settings)
-            removed.add(i)
-            diagnostics.append({"id": m["source"], "reason": "可用输入空间不足，裁剪可选内容"})
     if enforce_budget and total > available:
-        largest = sorted(messages, key=lambda m: message_tokens(m, settings), reverse=True)[:3]
-        detail = "、".join(f"{m['source']}={message_tokens(m, settings)} tokens" for m in largest)
-        raise ValueError(f"必要上下文超出 token 预算（估算 {total} tokens，可用 {available} tokens；主要占用：{detail}），请缩短设定/状态或扩大窗口")
-    messages = [m for i, m in enumerate(messages) if i not in removed]
+        diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})
     lore_by_id = {entry["id"]: entry for entry in entries}
     injected_ids = set()
     for message in messages:

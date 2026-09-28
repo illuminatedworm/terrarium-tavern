@@ -8,7 +8,6 @@ from kohakuterrarium.llm.base import NativeToolCall
 from openai import AsyncOpenAI
 
 from tavern.core.models import Settings
-from tavern.core.tokens import count_text
 from tavern.memories.history_recall import (
     HISTORY_TOOL,
     HistoryBudget,
@@ -79,20 +78,14 @@ def test_invalid_empty_and_duplicate_queries_count_and_branch_argument_is_reject
     assert budget.calls == 3
 
 
-def test_returned_text_has_token_ceiling_and_excludes_unseen_text():
+def test_returned_history_includes_full_long_text():
     messages = history()[:3]
     messages[-1]["model"] = "原文很长" * 5000 + "隐藏尾句"
     recall = HistoryRecall(messages, Settings(), HistoryBudget())
     result = recall.execute({"turn": 2, "radius": 0})
-    assert count_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")), Settings()) <= 2048
-    assert result["rounds"][-1]["truncated"]
-    assert "隐藏尾句" not in "".join(p["text"] for p in result["rounds"][-1]["passages"])
-    assert "隐藏尾句" not in recall.sources["m2"]["exposed_excerpts"][0]
-    operation = {"op": "add", "id": "unseen", "record": {"category": "episode", "content": "编造的引用",
-        "sources": [{"message_id": "m2", "excerpt": "隐藏尾句"}]}}
-    with pytest.raises(ValueError, match="返回片段"):
-        apply_operations({"version": 1, "records": []}, {"operations": [operation]},
-            {m["id"]: m for m in messages}, recall.sources, [], fresh_ids={"m2"}, settings=Settings())
+    assert "truncated" not in result["rounds"][-1]
+    assert "隐藏尾句" in "".join(p["text"] for p in result["rounds"][-1]["passages"])
+    assert recall.sources["m2"]["exposed_excerpts"][0].endswith("隐藏尾句")
 
 
 async def test_three_tools_then_final_response_and_no_future_batch_visibility():
@@ -172,13 +165,26 @@ async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
                          fresh_ids={"m10"}, settings=cfg)
 
 
-async def test_no_headroom_disables_optional_tool_without_losing_batch():
+async def test_history_tool_remains_available_without_reserved_result_budget():
     provider = Provider([('{"operations":[],"questions":[]}', [])])
     cfg = Settings(memory_input_tokens=4096, memory_evidence_tokens=0)
     budget = HistoryBudget()
     result = await complete_with_recall(provider, request(), history=history(), settings=cfg, budget=budget, phase="memory")
     assert result and budget.calls == 0
-    assert provider.calls[0][1]["extra_body"]["tool_choice"] == "none"
+    assert provider.calls[0][1]["extra_body"]["tool_choice"] == "auto"
+
+
+async def test_long_history_tool_result_reaches_tracker_complete():
+    old = history()
+    old[2]["model"] = "旧事" * 5000 + "结尾证据"
+    provider = Provider([
+        ("", [call(1, {"turn": 2, "radius": 0})]),
+        ('{"operations":[],"questions":[]}', []),
+    ])
+    result = await complete_with_recall(provider, request(old[3:5]), history=old,
+                                        settings=Settings(), budget=HistoryBudget(), phase="memory")
+    assert result
+    assert "结尾证据" in provider.calls[1][0][-1]["content"]
 
 
 async def test_native_tool_definition_reaches_http_and_reasoning_roundtrip():

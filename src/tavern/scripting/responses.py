@@ -49,6 +49,10 @@ class ResponsesProvider(OpenAIProvider):
     user_prompt_cache_key = None
     session_breakpoint = False
 
+    async def _recover_from_overflow(self, current, state):
+        # Preserve tool results and source text when the service rejects context size.
+        return None
+
     def with_model(self, name):
         clone = super().with_model(name)
         if clone is self:

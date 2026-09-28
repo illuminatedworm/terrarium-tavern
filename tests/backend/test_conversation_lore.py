@@ -183,10 +183,12 @@ def test_each_st_top_lore_entry_has_its_own_wrapper():
         assert content.count(f"<lorebook>\n灯塔设定{i}\n</lorebook>") == 1
 
 
-def test_constant_over_model_budget_errors_instead_of_silent_omission():
-    with pytest.raises(ValueError, match="必要上下文超出 token 预算"):
-        compile_context(document(constant=True, content="常驻规则" * 3000), session(), [], {}, "继续",
-                        Settings(context_tokens=4096, reply_tokens=128), "budget")
+def test_constant_over_model_budget_remains_complete_with_warning():
+    content = "常驻规则" * 3000
+    out = compile_context(document(constant=True, content=content), session(), [], {}, "继续",
+                          Settings(context_tokens=4096, reply_tokens=128), "budget")
+    assert any(content in m["content"] for m in out["messages"])
+    assert any("仍完整发送" in d["reason"] for d in out["diagnostics"])
 
 
 def test_st_top_replaces_entries_and_starts_cooldown_at_absence():
@@ -306,14 +308,14 @@ def test_lore_limits_apply_before_recursive_activation():
     assert any("上限" in d["reason"] for d in out["diagnostics"])
 
 
-def test_new_rolling_lore_is_dropped_when_total_budget_is_full():
+def test_new_rolling_lore_remains_complete_when_total_budget_is_full():
     doc = document(content="界" * 2000)
     out = compile_context(doc, session(), [], {"state": {}}, "灯塔",
                           Settings(context_tokens=4608, reply_tokens=1024,
                                    system_prompt="规则" * 100), "seed")
-    assert out["estimated_tokens"] <= 1536
-    assert out["next_lore_injections"] == []
-    assert not out["next_lore"].get("e", {}).get("present")
+    assert out["estimated_tokens"] > 1536
+    assert out["next_lore_injections"][0]["content"] == "界" * 2000
+    assert out["next_lore"]["e"]["present"]
 
 
 def test_frozen_lore_does_not_consume_new_injection_limits():
@@ -345,7 +347,7 @@ def test_default_limit_is_five_new_entries_excluding_constants(mode):
 
 
 @pytest.mark.parametrize("mode", ["conversation", "st_top"])
-def test_character_allowance_counts_expanded_unicode_not_bytes(mode):
+def test_character_entries_remain_complete_regardless_of_size(mode):
     entries = [
         {"id": "constant", "constant": True, "content": "常驻" * 2000, "order": 0},
         {"id": "a", "keys": ["灯塔"], "comment": "灯塔", "content": "中" * 1500, "order": 1},
@@ -355,7 +357,8 @@ def test_character_allowance_counts_expanded_unicode_not_bytes(mode):
     out = compile_context({"name": "角色", "character_book": {"entries": entries}},
                           session(mode), [], {"state": {}}, "灯塔", Settings(), "seed")
     injected = {eid for m in out["trace"] for eid in m.get("lore_ids", [])}
-    assert injected == {"constant", "a", "b"}
+    assert injected == {"constant", "a", "b", "c"}
+    assert any("文" * 1498 + "玩家" in m["content"] for m in out["trace"])
 
 
 @pytest.mark.parametrize("examples", ["示例台词", ""])
@@ -377,7 +380,7 @@ def test_first_rolling_lore_precedes_first_history_with_or_without_examples(exam
         assert not any(m["source"] == "examples" for m in trace)
 
 
-def test_named_subject_wins_budget_over_generic_keywords_and_lexical_ids():
+def test_named_subject_selection_does_not_drop_later_entries_for_size():
     doc = {"name": "角色", "character_book": {"entries": [
         {"id": "121", "keys": ["力量", "米妮娜"], "content": "【米妮娜】\n力量很强"},
         {"id": "130", "keys": ["弱点", "纳纳纳"], "content": "【纳纳纳】\n观察弱点"},
@@ -387,10 +390,11 @@ def test_named_subject_wins_budget_over_generic_keywords_and_lexical_ids():
     ]}}
     out = compile_context(doc, session(), [], {"state": {}}, "力量，弱点，露琪亚或一护",
                           Settings(lore_max_chars=50), "seed")
-    assert [e["id"] for e in out["lore"]] == ["55"]
+    assert [e["id"] for e in out["lore"]] == ["55", "98", "fill"]
     assert out["lore"][0]["match_source"] == "input"
     assert out["lore"][0]["matched_keys"] == ["露琪亚"]
-    assert any("较低相关" in n["reason"] for n in out["diagnostics"])
+    assert all(e["content"] in "\n".join(m["content"] for m in out["messages"])
+               for e in out["lore"])
 
 
 @pytest.mark.parametrize("enabled,depth,expected", [

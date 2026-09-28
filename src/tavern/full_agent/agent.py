@@ -9,7 +9,6 @@ from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
-from tavern.core.tokens import count_text
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.state import full_state
@@ -66,7 +65,6 @@ class FullAgent:
         settings = self.settings.model_copy(deep=True)
         if source == "agent":
             settings.retrieval.query_lookback = 0
-            settings.retrieval.input_chars = max(settings.retrieval.input_chars, len(query))
         result = await self.lane.prepare(self.document, visible, query, self.snapshot, settings,
                                          self.session, self.tid, source=source)
         added, notes = inject_lore(self.document, self.session, visible, self.snapshot, query, settings,
@@ -98,6 +96,8 @@ class FullAgent:
                 if self.request.regenerate_note else ""),
             calls=self.calls, force_rollover=self.must_rollover)
         self.must_rollover = result["rollover_required"]
+        if result["estimated_tokens"] > self.settings.context_tokens:
+            self.event("context_warning", {"message": "Full Agent 请求估算超出模型上下文，仍保留完整文本"})
         self.store.set_turn(self.tid, preview=encoded(result))
         return result
 
@@ -107,13 +107,7 @@ class FullAgent:
 
     async def run(self, provider=None):
         provider = provider or await make_provider(self.settings,
-            lambda payload: self.event("provider_request", payload), enforce_context_budget=False)
-        # Pinned Terrarium transport has an emergency tool-drop fallback even
-        # with retries=0. This mode must never silently invoke that fallback.
-        async def no_overflow_recovery(current, state):
-            return None
-        if hasattr(provider, "_recover_from_overflow"):
-            provider._recover_from_overflow = no_overflow_recovery
+            lambda payload: self.event("provider_request", payload))
         if hasattr(provider, "echo_reasoning"):
             provider.echo_reasoning = True
         try:
@@ -178,14 +172,9 @@ class FullAgent:
                             raise ValueError("new_context 必须单独调用；当前批次没有换窗")
                         result = await self.tools.execute(call.name, call.arguments)
                     except (ValueError, KeyError, TypeError, jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as error:
-                        result = {"error": self.model_view.text(str(error))[:2000]}
+                        result = {"error": self.model_view.text(str(error))}
                     raw_result = encoded(result)
                     message = {"role": "tool", "tool_call_id": call.id, "content": raw_result}
-                    if count_text(raw_result, self.settings) > self.settings.full_agent_config.tool_result_tokens:
-                        ref = f"T{len(self.history)+2}.{len(self.new_trace)+1}"
-                        message["content"] = encoded({"truncated": True, "ref": ref,
-                            "notice": "结果已归档，请用 read_history 分页读取。"})
-                        message["_archive_content"] = raw_result
                     self.append(message, window_id)
                     self.event("full_agent_tool", {**activity, "result": result,
                                                   "duration_s": time.perf_counter() - tool_started,

@@ -30,5 +30,4 @@ class FullAgentConfig(BaseModel):
     auto_retrieval: bool = True
     pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
     checkpoint_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
-    tool_result_tokens: int = Field(default=2048, ge=256, le=8192, strict=True)
     note_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)

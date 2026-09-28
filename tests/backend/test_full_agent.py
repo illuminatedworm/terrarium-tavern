@@ -49,7 +49,7 @@ def test_tool_result_field_options(story):
     owner = SimpleNamespace(settings=store.settings())
     tools = AgentTools(owner)
     rows = [{"ref": "H1", "role": "user", "text": "旧港的船只出发"}]
-    assert tools.search(rows, "旧港", 5, include_preview=False, include_offset=False)["matches"] == [
+    assert tools.search(rows, "旧港", 5, include_preview=False)["matches"] == [
         {"ref": "H1", "role": "user"}]
     assert tools.search(rows, "旧港", 5)["matches"][0]["preview"] == "旧港的船只出发"
     assert result_field({}, "search_lore", "include_ref") is False
@@ -130,7 +130,7 @@ async def test_tools_checkpoint_rollover_recovery_and_no_tracker(story):
         ("read_history", {"ref": "H2"}),
         ("write_note", {"key": "约定/钟楼", "content": "玩家约定明天见面", "kind": "fact", "sources": ["H2"]}),
         ("new_context", {"content": "正在约定明天钟楼见面，保持温和叙事。", "keep_recent": 0}),
-        ("search_history", {"query": "工作过程", "scope": "tools"}),
+        ("search_history", {"query": "我答应明天"}),
         "她点头应下，钟声从远处传来。",
     )
     try:
@@ -146,14 +146,14 @@ async def test_tools_checkpoint_rollover_recovery_and_no_tracker(story):
         assert not any(m["role"] == "tool" for m in after_rollover)
         assert any("正在约定明天钟楼" in m.get("content", "") for m in after_rollover)
         assert any(m["role"] == "user" and "我答应明天" in m["content"] for m in after_rollover)
-        assert any(m["role"] == "tool" and "工作过程" in m["content"] for m in model.requests[-1]["messages"])
+        assert any(m["role"] == "tool" and "H2" in m["content"] for m in model.requests[-1]["messages"])
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM full_agent_trace").fetchone()[0] == 8
         follow = Model("第二天如约而至。")
         result2, _ = await turn(service, current, follow)
         assert result2["status"] == "committed", result2["error"]
         names = [c["function"]["name"] for m in follow.requests[0]["messages"] for c in m.get("tool_calls", [])]
-        assert "write_note" not in names  # old-window tools are searchable, not replayed
+        assert "write_note" not in names  # old-window tools are retained in the trace, not replayed
         assert "search_history" in names  # current-window native tool exchange survives a turn
         assert model.closed and follow.closed
     finally:
@@ -365,8 +365,7 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
     try:
         model = Model(("search_lore", {"query": "旧港"}), ("search_lore", {"query": "钟楼"}),
                       ("search_lore", {"query": "旧港"}),
-                      ("read_lore", {"ref": "L2", "length": 3}),
-                      ("read_lore", {"ref": "L2", "offset": 3}), "向导指向旧港。")
+                      ("read_lore", {"ref": "L2"}), "向导指向旧港。")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
@@ -380,11 +379,8 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
         assert set(tool_results[0]) == {"matches"}
         assert set(tool_results[0]["matches"][0]) == {"text"}
         assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
-        assert tool_results[3]["text"] == "<lorebook>\n旧港的\n</lorebook>"
-        assert tool_results[3]["next_offset"] == 3
-        assert set(tool_results[3]) == {"text", "offset", "next_offset", "total_chars", "ref", "title"}
-        assert tool_results[4]["text"] == "<lorebook>\n船只明晨出发。\n</lorebook>"
-        assert tool_results[4]["next_offset"] is None
+        assert tool_results[3]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+        assert set(tool_results[3]) == {"text", "ref", "title"}
         assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
         records = current["snapshot"]["lore_injections"]
         assert len(records) == 1 and records[0]["title"] == "钟楼"
@@ -428,29 +424,44 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         await service.close()
 
 
-async def test_long_history_is_pageable_and_fact_sources_must_be_read(story):
+async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
+    store = Store(tmp_path)
+    content = "loreword " * 2500 + "ENDMARK"
+    document = {"name": "向导", "first_mes": "开场。", "character_book": {"entries": [
+        {"id": "long", "content": content, "comment": "长条目", "enabled": True}]}}
+    card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
+    settings = store.settings()
+    settings.full_agent_config.auto_retrieval = False
+    store.save_settings(settings)
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    service = runtime(store)
+    model = Model(("read_lore", {"ref": "L1"}), "继续。")
+    try:
+        result, _ = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        tool_result = next(json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool")
+        assert tool_result["text"] == f"<lorebook>\n{content}\n</lorebook>"
+    finally:
+        await service.close()
+
+
+async def test_long_history_is_returned_complete_and_fact_sources_must_be_read(story):
     from tavern.full_agent.agent import FullAgent
-    from tavern.full_agent.tools import Read
     store, session = story
     settings = store.settings().for_role("full_agent")
-    settings.full_agent_config.tool_result_tokens = 256
     user = {"id": "pending-input", "role": "user", "raw": "当前输入"}
     req = TurnRequest(text="当前输入", operation_id="paging", expected_revision=0)
     tid, _ = store.create_turn(session["id"], req)
     owner = FullAgent(store, tid, store.session_card(session["id"])["document"], session, session["messages"],
         copy.deepcopy(session["snapshot"]), req, None, settings, user, None)
     text = "精确原文不可丢失。" * 300
-    parts, offset = [], 0
-    while True:
-        page = owner.tools.page(text, Read(ref="H1", offset=offset), ref="H1")
-        assert page["text"]
-        parts.append(page["text"])
-        if page["next_offset"] is None:
-            break
-        offset = page["next_offset"]
-    assert "".join(parts) == text
+    owner.source_history[0]["raw"] = text
+    assert await owner.tools.execute("read_history", '{"ref":"H1"}') == {
+        "ref": "H1", "role": owner.source_history[0]["role"], "text": text}
+    with pytest.raises(ValueError, match="没有此历史引用"):
+        await owner.tools.execute("read_history", '{"ref":"T1.1"}')
     with pytest.raises(ValueError, match="已搜索或读取"):
-        await owner.tools.execute("write_note", json.dumps({"key": "事实", "content": "未读", "kind": "fact", "sources": ["H1"]}))
+        await owner.tools.execute("write_note", json.dumps({"key": "事实", "content": "未读", "kind": "fact", "sources": ["H2"]}))
     assert owner.state["notes"] == {}
 
 
@@ -524,13 +535,10 @@ async def test_note_update_requires_complete_current_window_and_revision_read(st
 
     await call("search_notes", query="*")
     await denied()
-    await call("read_note", ref="线索", offset=4)
-    await denied()  # A last page is not a full read.
-    await call("read_note", ref="线索", length=2)
-    await call("read_note", ref="线索", length=2)
-    await denied()  # Repeated pages cannot fill a gap.
-    assert owner.state["notes"]["线索"] == old
-    await call("read_note", ref="线索", offset=2, length=2)
+    with pytest.raises(ValueError):
+        await call("read_note", ref="线索", offset=4)
+    await denied()
+    assert (await call("read_note", ref="线索"))["text"] == old["content"]
     await call("write_note", key="线索", content=old["content"] + "，新增猜想", kind="hypothesis")
     assert owner.state["notes"]["线索"]["revision"] == 2
     assert owner.state["notes"]["线索"]["status"] == "active"
@@ -631,7 +639,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call this tool alone" in definitions["new_context"]["description"]
-        assert "next_offset" in definitions["read_history"]["description"]
+        assert "offset" not in definitions["read_history"]["parameters"]["properties"]
         assert "rather than automatically injected" in definitions["search_notes"]["description"]
     finally:
         await service.close()
@@ -743,8 +751,7 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
         await service.close()
 
 
-@pytest.mark.parametrize("enforce", [True, False])
-async def test_provider_budget_guard_can_be_disabled_for_rollover(story, monkeypatch, enforce):
+async def test_provider_sends_complete_request_over_estimated_budget(story, monkeypatch):
     import tavern.core.provider as provider_module
 
     store, _ = story
@@ -764,22 +771,15 @@ async def test_provider_budget_guard_can_be_disabled_for_rollover(story, monkeyp
             kwargs["transport"] = provider_module.httpx.MockTransport(transport)
             super().__init__(**kwargs)
     monkeypatch.setattr(provider_module.httpx, "AsyncClient", MockClient)
-    provider = await make_provider(settings, enforce_context_budget=enforce)
+    captured = []
+    provider = await make_provider(settings, captured.append)
     try:
+        assert await provider._recover_from_overflow([], None) is None
         messages = [{"role": "user", "content": "history " * 12000}]
-        if enforce:
-            with pytest.raises(Exception) as caught:
-                await provider.chat_complete(messages)
-            causes, error = [], caught.value
-            while error is not None:
-                causes.append(str(error))
-                error = error.__cause__
-            assert "超过 token 预算" in " ".join(causes)
-            assert not requests
-        else:
-            response = await provider.chat_complete(messages)
-            assert response.content == "ok"
-            assert requests[0]["messages"] == messages
+        response = await provider.chat_complete(messages)
+        assert response.content == "ok"
+        assert requests[0]["messages"] == messages
+        assert captured[0]["context_warning"]
     finally:
         await provider.close()
 
@@ -788,8 +788,9 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
     store, _ = story
     settings = store.settings().for_role("full_agent")
     settings.api_mode, settings.model, settings.api_key = "responses", "test-model", "local"
-    provider = await make_provider(settings, enforce_context_budget=False)
+    provider = await make_provider(settings)
     try:
+        assert await provider._recover_from_overflow([], None) is None
         payload = provider._request([{"role": "user", "content": "继续"}], extra_body={
             "tool_choice": {"type": "function", "function": {"name": "new_context"}},
             "parallel_tool_calls": False})

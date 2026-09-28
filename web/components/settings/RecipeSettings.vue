@@ -38,7 +38,7 @@ const fields: SettingField[] = [
   },
   { path: 'priority', label: '优先级' },
   { path: 'depth', label: '注入深度', optional: true, min: 0 },
-  { path: 'budget', label: '单块预算（tokens）', optional: true, min: 1 },
+  { path: 'budget', label: '超长提示阈值（tokens）', optional: true, min: 1 },
   { path: 'condition', label: '生效条件', type: 'text' },
   { path: 'enabled', label: '启用内容块', type: 'checkbox' },
   { path: 'required', label: '必需内容', type: 'checkbox' },

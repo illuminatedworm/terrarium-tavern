@@ -6,6 +6,7 @@ LABELS = {
     "full_agent_response": "模型响应", "full_agent_assistant": "Agent 中间回复",
     "full_agent_tool_started": "工具调用开始",
     "full_agent_tool": "Full Agent 工具调用", "context_rollover": "工作窗口切换",
+    "context_warning": "上下文超长提示",
     "memory_history_recall": "Tracker 历史补查", "memory_history_limit": "历史补查达到3次上限",
     "memory_history_budget": "历史补查预算不足",
     "memory_batch": "记忆整理批次与来源", "memory_batch_completed": "记忆批次返回",

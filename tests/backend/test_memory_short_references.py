@@ -7,7 +7,6 @@ import pytest
 from kohakuterrarium.llm.base import NativeToolCall
 
 from tavern.core.models import Settings
-from tavern.core.tokens import count_text
 from tavern.memories.history_recall import HistoryBudget, HistoryRecall, complete_with_recall
 from tavern.memories.memory_engine import CallBudget, consolidate
 from tavern.memories.memory_protocol import References, split_passages
@@ -191,14 +190,13 @@ def test_passages_are_lossless_and_never_join_disjoint_tool_results():
     assert [s["excerpt"] for s in refs.sources.values()] == ["第一处", "另一处"]
 
 
-def test_tool_registers_only_returned_passages_within_real_token_limit():
+def test_tool_registers_every_returned_passage_of_long_history():
     messages = history(["戒指" * 6000 + "禁止访问的尾部"])
     refs, settings = References(), Settings()
     recall = HistoryRecall(messages, settings, HistoryBudget(), references=refs)
     result = recall.execute({"turn": 1, "radius": 0})
     wire = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
-    assert count_text(wire, settings) <= 2048
-    assert messages[0]["id"] not in wire and "禁止访问的尾部" not in wire
+    assert messages[0]["id"] not in wire and "禁止访问的尾部" in wire
     exposed = {p["ref"]: p["text"] for item in result["rounds"] for p in item["passages"]}
     assert {k: v["excerpt"] for k, v in refs.sources.items()} == exposed
     assert all(k.startswith("H") for k in exposed)

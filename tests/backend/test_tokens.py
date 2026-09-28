@@ -41,14 +41,14 @@ def test_compile_budget_uses_tokens_and_breakdown_matches_final_wire():
     assert all(row["unit"] == "tokens" for row in context["trace"])
 
 
-def test_recipe_token_budget_counts_expanded_macros():
+def test_recipe_token_warning_counts_expanded_macros_without_omission():
     recipe = ContextRecipe().model_dump()
     recipe["blocks"].append({"id": "bounded", "source": "custom", "content": "{{user}}", "budget": 20})
     session = {"id": "s", "persona": "界" * 100, "recipe": recipe}
     context = compile_context({}, session, [], {}, "继续", Settings(), "t",
                               retrieval={"ids": [], "query": "", "diagnostics": []})
-    assert not any(item["source"] == "bounded" for item in context["trace"])
-    assert any(item["id"] == "bounded" and "token 预算" in item["reason"] for item in context["diagnostics"])
+    assert any(item["source"] == "bounded" and item["content"] == "界" * 100 for item in context["trace"])
+    assert any(item["id"] == "bounded" and "仍完整注入" in item["reason"] for item in context["diagnostics"])
 
 
 def test_tool_definition_and_native_continuation_costs_are_included():

@@ -27,8 +27,8 @@ class StrictSettings(BaseModel):
 
 
 class RetrievalRuntime(StrictSettings):
-    instruction_prompt: str = Field(default=DEFAULT_LOCAL_INSTRUCTION, max_length=200000)
-    reranker_prompt: str = Field(default=DEFAULT_RERANKER_PROMPT, max_length=200000)
+    instruction_prompt: str = DEFAULT_LOCAL_INSTRUCTION
+    reranker_prompt: str = DEFAULT_RERANKER_PROMPT
     reranker_enabled: bool = False
     rerank_fragments: int = Field(default=3, ge=1, le=8)
 
@@ -39,26 +39,27 @@ class AgentSettings(StrictSettings):
     lore_recursive: bool = Field(default=True, strict=True)
     lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
+    # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     policy: Literal["directed", "evolving", "preview"] = "directed"
-    preference_prompt: str = Field(default=DEFAULT_PREFERENCE_PROMPT, max_length=200000)
-    regenerate_prompt: str = Field(default=DEFAULT_REGENERATE_PROMPT, max_length=200000)
-    probe_system_prompt: str = Field(default=DEFAULT_PROBE_PROMPT, max_length=200000)
-    probe_marker_prompt: str = Field(default=DEFAULT_PROBE_MARKER_PROMPT, max_length=200000)
+    preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
+    regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
+    probe_system_prompt: str = DEFAULT_PROBE_PROMPT
+    probe_marker_prompt: str = DEFAULT_PROBE_MARKER_PROMPT
 
 
 class FullSettings(AgentSettings):
     model: ModelProfile = Field(default_factory=ModelProfile)
     tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
-    system_prompt: str = Field(default=FULL_AGENT_PROMPT, max_length=200000)
+    system_prompt: str = FULL_AGENT_PROMPT
 
 
 class HalfSettings(AgentSettings):
     foreground: ModelProfile = Field(default_factory=ModelProfile)
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
-    system_prompt: str = Field(default=DEFAULT_SYSTEM_PROMPT, max_length=200000)
-    memory_system_prompt: str = Field(default=DEFAULT_MEMORY_PROMPT, max_length=200000)
-    maintenance_system_prompt: str = Field(default=DEFAULT_MAINTENANCE_PROMPT, max_length=200000)
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
+    maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
     lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
     chunk_mode: Literal["messages", "tokens", "off"] = "messages"
@@ -85,8 +86,6 @@ class HalfSettings(AgentSettings):
             raise ValueError("上下文块标识和来源不能为空")
         if len({block.id for block in blocks}) != len(blocks):
             raise ValueError("上下文块标识不能重复")
-        if self.memory_evidence_tokens >= self.memory_input_tokens:
-            raise ValueError("记忆辅助资料预算必须小于整理输入上限")
         if self.memory_output_tokens + 2048 >= self.background.context_tokens:
             raise ValueError("记忆输出上限必须为后台模型输入留出安全余量")
         if self.context_pressure_target >= self.context_pressure_trigger:

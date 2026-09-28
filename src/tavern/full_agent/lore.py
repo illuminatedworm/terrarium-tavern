@@ -65,7 +65,7 @@ def inject_lore(document, session, history, snapshot, query, settings, seed, inp
         retrieval=retrieval, query=retrieval["query"], session_id=session["id"],
         turn_number=sum(m["role"] == "user" for m in session["messages"]) + 1,
         retained=retained | exiting, recursive=False,
-        max_entries=settings.lore_max_entries, max_chars=settings.lore_max_chars,
+        max_entries=settings.lore_max_entries,
         expand_content=lambda text: macros(text, card, session["persona"], snapshot["state"]),
     )
     first_turn = not any(m["role"] == "user" for m in session["messages"])

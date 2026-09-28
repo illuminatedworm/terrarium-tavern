@@ -62,6 +62,9 @@ class TurnAgent:
                     "content": self.settings.maintenance_system_prompt,
                 }
             ]
+        if self.compiled["estimated_tokens"] > self.settings.context_tokens - self.settings.reply_tokens - 2048:
+            self.store.event(self.tid, "context_warning", {"purpose": "writer",
+                                                       "message": "正文请求估算超出模型上下文，仍完整发送"})
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
 

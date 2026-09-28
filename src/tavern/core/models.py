@@ -65,7 +65,7 @@ class Settings(BaseModel):
     card_editor: ModelProfile | None = None
     full_agent: ModelProfile | None = None
     full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
-    full_agent_system_prompt: str = Field(default=FULL_AGENT_PROMPT, max_length=200000)
+    full_agent_system_prompt: str = FULL_AGENT_PROMPT
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
@@ -87,16 +87,17 @@ class Settings(BaseModel):
     model: str = ""
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     api_key: str = Field(default="", exclude=True)
-    system_prompt: str = Field(default=DEFAULT_SYSTEM_PROMPT, max_length=200000)
-    memory_system_prompt: str = Field(default=DEFAULT_MEMORY_PROMPT, max_length=200000)
-    maintenance_system_prompt: str = Field(default=DEFAULT_MAINTENANCE_PROMPT, max_length=200000)
-    preference_prompt: str = Field(default=DEFAULT_PREFERENCE_PROMPT, max_length=200000)
-    regenerate_prompt: str = Field(default=DEFAULT_REGENERATE_PROMPT, max_length=200000)
-    probe_system_prompt: str = Field(default=DEFAULT_PROBE_PROMPT, max_length=200000)
-    probe_marker_prompt: str = Field(default=DEFAULT_PROBE_MARKER_PROMPT, max_length=200000)
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
+    maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
+    preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
+    regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
+    probe_system_prompt: str = DEFAULT_PROBE_PROMPT
+    probe_marker_prompt: str = DEFAULT_PROBE_MARKER_PROMPT
     lore_recursive: bool = Field(default=True, strict=True)
     lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
+    # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     proxy: str = ""
     use_proxy: bool = True
@@ -141,8 +142,6 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def validate_linked_settings(self):
-        if self.runtime_mode == "half_agent" and self.memory_evidence_tokens >= self.memory_input_tokens:
-            raise ValueError("记忆辅助资料预算必须小于整理输入上限")
         if self.runtime_mode == "half_agent" and self.memory_output_tokens + 2048 >= self.background.context_tokens:
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
@@ -171,7 +170,7 @@ class SessionCreate(BaseModel):
 
 
 class TurnRequest(BaseModel):
-    text: str = Field(default="", max_length=200000)
+    text: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int
     mode: Literal["send", "regenerate"] = "send"
@@ -180,7 +179,7 @@ class TurnRequest(BaseModel):
     update_variables: bool = False
     generate: dict[str, Any] | None = None
     reasoning_effort: ReasoningEffort | None = None
-    regenerate_note: str = Field(default="", max_length=500)
+    regenerate_note: str = ""
     scene_refresh: Literal["memory"] | None = None
 
 
@@ -215,7 +214,7 @@ class SessionCacheBreakpoint(BaseModel):
 
 
 class MessageEdit(BaseModel):
-    text: str = Field(min_length=1, max_length=200000)
+    text: str = Field(min_length=1)
     expected_revision: int
 
 
@@ -231,7 +230,7 @@ class CardEditorCreate(BaseModel):
 
 
 class CardEditorRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=30000)
+    text: str = Field(min_length=1)
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=0)
     adapt: bool = False
@@ -251,10 +250,10 @@ class SessionOptions(BaseModel):
     policy: Policy | None = None
     persona: str = "旅人"
     persona_data: dict[str, Any] = Field(default_factory=dict)
-    turn_preference: str = Field(default="", max_length=30000)
+    turn_preference: str = ""
 
 
 class PersonaEdit(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    description: str = Field(default="", max_length=30000)
+    description: str = ""
     expected_version: int = 0

@@ -236,20 +236,17 @@ def plan_batch(history, expanded, start, memory, document, settings, persona=Non
         messages = _messages(memory, history, expanded, start, end, [], settings, document, persona)
         cost = request_tokens(messages, settings, [HISTORY_TOOL])
         if cost > limit:
-            break
-        if best and cost > limit - min(settings.memory_evidence_tokens, limit // 4):
+            if best is None:
+                best = end  # One complete exchange remains eligible even when oversized.
             break
         best = end
     if best is None:
-        raise ValueError("记忆输入预算无法容纳已有记忆与一次完整交流；请调整预算或手动合并记忆")
+        raise ValueError("没有可整理的完整交流")
     end = best
     pool = evidence_pool(history, document, start, end)
     query = "\n".join(m.get("model", m["raw"]) for m in expanded[start:end])
     evidence = select_evidence(pool, query, settings)
     messages = _messages(memory, history, expanded, start, end, evidence, settings, document, persona)
-    while evidence and request_tokens(messages, settings, [HISTORY_TOOL]) > limit:
-        evidence.pop()
-        messages = _messages(memory, history, expanded, start, end, evidence, settings, document, persona)
     return end, messages, pool, evidence
 
 
@@ -278,6 +275,8 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
                                "estimated_input_tokens": request_tokens(messages, settings, [HISTORY_TOOL]),
                                "evidence": evidence, "candidates": len(pool),
                                "primary_calls": budget.primary})
+        if request_tokens(messages, settings, [HISTORY_TOOL]) > settings.memory_input_tokens:
+            event("context_warning", {"purpose": "memory", "message": "记忆请求估算超出输入预算，仍完整发送"})
         begun = time.perf_counter()
         response = await generate(messages, phase="memory", output_tokens=settings.memory_output_tokens)
         if count_text(response, settings) > settings.memory_output_tokens:
@@ -340,25 +339,25 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
                     review = MemoryRequest([
                         {"role": "system", "content": messages[0]["content"] + "\n\n" + REVIEW_PROTOCOL},
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], refs)
-                    limit = min(8192, settings.context_tokens - min(2048, settings.memory_output_tokens) - 2048)
-                    reason = "复核输入超过预算，保留待确认内容"
-                    if request_tokens(review, settings, [HISTORY_TOOL]) <= limit:
-                        budget.reserve("memory_review")
-                        event("memory_review_started", {"purpose": "memory_review", "questions": questions,
-                                                         "evidence": extra})
-                        try:
-                            review_text = await generate(review, phase="memory_review",
-                                                         output_tokens=min(2048, settings.memory_output_tokens))
-                            _merge_history_sources(supplied, getattr(review_text, "history_sources", {}))
-                            response = refs.resolve(parse_json(review_text))
-                            if response.get("questions"):
-                                raise ValueError("疑难复核不能再次请求核验")
-                            memory = apply_operations(memory, response, originals, supplied, evidence + extra,
-                                fresh_ids=fresh, settings=settings, review_ids={r["id"] for r in targets},
-                                defer_retention=True)
-                            reason = "疑难复核完成；未解决的条目仍保持待确认"
-                        except Exception as error:
-                            reason = "疑难复核失败，保留待确认内容：" + str(error)
+                    if request_tokens(review, settings, [HISTORY_TOOL]) > settings.memory_input_tokens:
+                        event("context_warning", {"purpose": "memory_review",
+                                                  "message": "记忆复核估算超出输入预算，仍完整发送"})
+                    budget.reserve("memory_review")
+                    event("memory_review_started", {"purpose": "memory_review", "questions": questions,
+                                                     "evidence": extra})
+                    try:
+                        review_text = await generate(review, phase="memory_review",
+                                                     output_tokens=min(2048, settings.memory_output_tokens))
+                        _merge_history_sources(supplied, getattr(review_text, "history_sources", {}))
+                        response = refs.resolve(parse_json(review_text))
+                        if response.get("questions"):
+                            raise ValueError("疑难复核不能再次请求核验")
+                        memory = apply_operations(memory, response, originals, supplied, evidence + extra,
+                            fresh_ids=fresh, settings=settings, review_ids={r["id"] for r in targets},
+                            defer_retention=True)
+                        reason = "疑难复核完成；未解决的条目仍保持待确认"
+                    except Exception as error:
+                        reason = "疑难复核失败，保留待确认内容：" + str(error)
             event("memory_review_result", {"purpose": "memory_review", "message": reason})
         memory = retain_memory(memory, history[:end], settings, event=event)
         start = end

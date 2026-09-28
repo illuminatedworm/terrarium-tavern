@@ -17,7 +17,6 @@ from tavern.core.tokens import count_text, request_tokens
 from tavern.memories.memory_records import digest, usage_fields
 
 HISTORY_CALL_LIMIT = 3
-HISTORY_RESULT_TOKENS = 2048
 HISTORY_TOOL = {
     "type": "function",
     "function": {
@@ -143,41 +142,14 @@ class HistoryRecall:
         return value
 
     def _admit(self, result, group, item, source, text_key):
-        """Pack exactly the short-reference wire result, then register it.
-
-        Candidate/truncated-away text must not become citable. Tool snippets use
-        H rather than S so they cannot collide with batch passages; registration
-        occurs only after the actual JSON (including refs) fits the token budget.
-        """
+        """Return the complete selected text and register exactly what was shown."""
         text = item.pop(text_key)
         item.pop("message_id", None)
+        item["passages"] = self.references.passages(source["id"], text, prefix="H")
         result[group].append(item)
         result["found"] = True
-        cap = min(HISTORY_RESULT_TOKENS, max(128, self.settings.memory_input_tokens // 4))
-
-        def fits(length):
-            item["passages"] = self.references.passages(source["id"], text[:length], prefix="H", commit=False)
-            return count_text(_json(result), self.settings) <= cap
-
-        length = len(text)
-        if not fits(length):
-            item["truncated"] = True
-            low, high = 0, length
-            while low < high:
-                mid = (low + high + 1) // 2
-                if fits(mid):
-                    low = mid
-                else:
-                    high = mid - 1
-            length = low
-            if length < 20:
-                result[group].pop()
-                result["found"] = bool(result["matches"] or result["rounds"])
-                return False
-        item["passages"] = self.references.passages(source["id"], text[:length], prefix="H")
         exposed = self.sources.setdefault(source["id"], {**copy.deepcopy(source), "exposed_excerpts": []})
-        exposed["exposed_excerpts"].append(text[:length])
-        return length == len(text)
+        exposed["exposed_excerpts"].append(text)
 
     def _search(self, query, terms, limit, result):
         matches = []
@@ -194,12 +166,8 @@ class HistoryRecall:
                 offsets = [text.casefold().find(t) for t in query.casefold().split()]
                 offset = max(0, min((i for i in offsets if i >= 0), default=0) - 60)
                 item = {"turn": number, "message_id": m["id"], "role": m["role"],
-                        "excerpt": text[offset:offset + 240], "truncated": len(text) > 240, "offset": offset}
-                # The search snippet is already deliberately partial; packing
-                # only stops early if the global result budget has been reached.
-                fits = self._admit(result, "matches", item, m, "excerpt")
-                if not fits:
-                    return
+                        "excerpt": text[offset:offset + 240], "truncated": len(text) > 240}
+                self._admit(result, "matches", item, m, "excerpt")
 
     def _read(self, turn, radius, result):
         for number in range(max(1, turn - radius), min(len(self.rounds), turn + radius) + 1):
@@ -208,8 +176,7 @@ class HistoryRecall:
                 if key in self.reads:
                     continue
                 item = {"turn": number, "message_id": m["id"], "role": m["role"], "text": m.get("model", m["raw"])}
-                if not self._admit(result, "rounds", item, m, "text"):
-                    return
+                self._admit(result, "rounds", item, m, "text")
                 self.reads.add(key)
 
 
@@ -243,14 +210,8 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
             for m in thread if any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
         used_tokens = request_tokens(thread, settings, [HISTORY_TOOL]) + reasoning_tokens
         if used_tokens > limit:
-            raise ValueError("历史补查后的记忆请求超过输入预算；原记忆及覆盖水位保留")
-        # Optional recall must not make an otherwise valid ordinary batch fail:
-        # reserve a returned passage plus the assistant's tool request before
-        # offering tools. Existing records/originals are never truncated for it.
-        room_for_tool = limit - used_tokens >= HISTORY_RESULT_TOKENS + settings.reply_tokens + 128
-        enabled = budget.remaining > 0 and room_for_tool
-        if budget.remaining and not room_for_tool:
-            event("memory_history_budget", {"purpose": phase, "message": "输入预算没有补查余量，本次直接整理；疑问保持待确认。"})
+            event("context_warning", {"purpose": phase, "message": "记忆请求估算超出输入预算，仍完整发送"})
+        enabled = budget.remaining > 0
         extra = {"tools": [HISTORY_TOOL], "tool_choice": "auto" if enabled else "none", "parallel_tool_calls": False}
         started = time.perf_counter()
         # response = await asyncio.wait_for(

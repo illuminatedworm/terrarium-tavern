@@ -7,7 +7,7 @@ import httpx
 from tavern.core.tokens import count_text, counting_info, request_tokens
 
 
-async def make_provider(settings, capture=None, *, request_timeout=120, enforce_context_budget=True):
+async def make_provider(settings, capture=None, *, request_timeout=120):
     from kohakuterrarium.llm.openai import OpenAIProvider
     from openai import AsyncOpenAI
 
@@ -22,6 +22,10 @@ async def make_provider(settings, capture=None, *, request_timeout=120, enforce_
     class ChatProvider(OpenAIProvider):
         user_prompt_cache_key = None
         prompt_cache_mode = "default"
+
+        async def _recover_from_overflow(self, current, state):
+            # Never replace a complete request with a shortened retry.
+            return None
 
         def _prompt_cache_request_kwargs(self):
             # Terrarium assigns its session ID later; an explicit user key wins.
@@ -89,11 +93,10 @@ async def make_provider(settings, capture=None, *, request_timeout=120, enforce_
             if settings.api_mode == "responses":
                 input_tokens += sum(count_text(json.dumps(item, ensure_ascii=False), settings)
                                     for item in wire["messages"] if "role" not in item)
-            if enforce_context_budget and (
+            over_context_budget = (
                 input_tokens + settings.reply_tokens + 2048
                 > settings.context_tokens
-            ):
-                raise ValueError(f"最终模型请求（含工具与结果）估算 {input_tokens} tokens，超过 token 预算，未发送")
+            )
             if capture:
                 capture(
                     {
@@ -103,6 +106,7 @@ async def make_provider(settings, capture=None, *, request_timeout=120, enforce_
                                   for x in payload.get("tools", [])],
                         "reasoning": payload.get("reasoning", payload.get("reasoning_effort", "default")),
                         "estimated_input_tokens": input_tokens,
+                        "context_warning": "估算超出模型上下文，完整发送" if over_context_budget else None,
                         "token_counting": counting_info(settings),
                     }
                 )

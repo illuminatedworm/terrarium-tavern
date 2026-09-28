@@ -87,7 +87,7 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
     service = runtime(store)
     url = f"/api/sessions/{session['id']}/full-agent/tools"
     options = {"search_lore": {"include_ref": True, "include_title": True},
-               "search_history": {"include_preview": False, "include_offset": False},
+               "search_history": {"include_preview": False},
                "read_lore": {"include_metadata": False}}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -112,7 +112,7 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
                                               "text": "<lorebook>\n旧港有一艘船。\n</lorebook>"}]
             assert "preview" not in output[1]["matches"][0]
             assert "offset" not in output[1]["matches"][0]
-            assert set(output[2]) == {"text", "offset", "next_offset", "total_chars"}
+            assert set(output[2]) == {"text"}
     finally:
         await service.close()
         await app.state.service.close()

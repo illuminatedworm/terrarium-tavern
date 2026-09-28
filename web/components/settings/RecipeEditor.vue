@@ -122,7 +122,7 @@ function save() {
       (block.depth !== null && (!Number.isInteger(block.depth) || block.depth < 0)) ||
       (block.budget !== null && (!Number.isInteger(block.budget) || block.budget < 1))
     ) {
-      error.value = '优先级需为整数；深度需为非负整数；单块预算需为正整数，或留空。';
+      error.value = '优先级需为整数；深度需为非负整数；超长提示阈值需为正整数，或留空。';
       return;
     }
   }
@@ -272,26 +272,19 @@ useTimedError(error);
             placeholder="留空：按配方顺序"
             @input="selected.block.depth = nullable($event)"
           /><small>留空按左侧顺序；0 放在末尾；1 放在最后一条剧情消息前，数值越大越往前。</small></label
-        ><label
-          >裁剪优先级<input
-            v-model.number="selected.block.priority"
-            type="number"
-            aria-label="裁剪优先级"
-          /><small>数值越大，预算不足时越晚裁剪。保留块超预算会报错。</small></label
         >
       </div>
       <label
-        >单块预算（tokens）<input
+        >超长提示阈值（tokens）<input
           type="number"
           min="1"
           :value="selected.block.budget ?? ''"
-          aria-label="单块预算（tokens）"
+          aria-label="超长提示阈值（tokens）"
           :disabled="history"
-          placeholder="留空：不单独限制"
+          placeholder="留空：不提示"
           @input="selected.block.budget = nullable($event)"
         /><small
-          >使用前台 Writer 选定的分词器计算内容
-          tokens（不含消息封装），不是字符数。非保留块超过此预算会整块省略，不会截断正文。</small
+          >使用前台 Writer 选定的分词器估算内容 tokens（不含消息封装）。超过阈值只提示，仍完整发送。</small
         ></label
       >
       <label

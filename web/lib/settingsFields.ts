@@ -21,7 +21,6 @@ export const policyField: SettingField[] = [
 ];
 export const loreFields: SettingField[] = [
   number('lore_max_entries', '单次新增条目上限', 1, 1000),
-  number('lore_max_chars', '单次新增字符预算（字符）', 1, 2000000),
   { path: 'lore_recursive', label: '世界书递归查询', type: 'checkbox' },
   number('lore_recursion_depth', '递归深度', 0, 16),
 ];
@@ -41,8 +40,7 @@ export const retrievalAdvanced: SettingField[] = [
   number('retrieval.bm25_b', 'BM25 b', 0, 1, 0.05),
   number('retrieval.gram_weight', '字符二元组权重', 0, 1, 0.05),
   number('retrieval.query_lookback', '线索回看数量', 0, 20),
-  number('retrieval.query_chars', '线索长度上限（字符）', 32, 4096),
-  number('retrieval.input_chars', '用户输入检索上限（字符）', 64, 20000),
+  number('retrieval.query_chars', '线索超长提示阈值（字符）', 32, 4096),
   number('retrieval.chunk_tokens', '切片长度（分词单位）', 64, 4096),
   number('retrieval.chunk_overlap', '切片重叠（分词单位）', 0, 1024),
   number('retrieval.embedding_timeout', '向量查询超时（秒）', 0.1, 120, 0.1),
@@ -53,7 +51,6 @@ export const fullFields: SettingField[] = [
   number('tools.max_steps', '每回合模型调用上限', 2, 100),
   number('tools.pressure_ratio', '窗口压力提醒阈值', 0.25, 0.9, 0.05),
   number('tools.checkpoint_tokens', '交接笔记上限（tokens）', 128, 16384),
-  number('tools.tool_result_tokens', '单次工具结果上限（tokens）', 256, 8192),
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
 ];
 export const historyFields: SettingField[] = [
@@ -77,7 +74,7 @@ export const historyFields: SettingField[] = [
 export const memoryFields: SettingField[] = [
   number('memory_input_tokens', '整理输入上限（tokens）', 2048, 2000000),
   number('memory_output_tokens', '整理输出上限（tokens）', 256, 65536),
-  number('memory_evidence_tokens', '辅助资料预算（tokens）', 0, 32768),
+  number('memory_evidence_tokens', '辅助资料（0 关闭，其余不限制长度）', 0, 32768),
   number('memory_capacity_tokens', '活跃记忆容量（tokens）', 512, 65536),
   number('memory_current_max_records', '当前进展条数上限', 1, 100),
   number('memory_episode_cooldown_rounds', '经历冷却轮数', 0, 10000),

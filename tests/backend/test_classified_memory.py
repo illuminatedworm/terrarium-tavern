@@ -6,7 +6,13 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, Settings, TurnRequest
 from tavern.memories.memory import render_memory
-from tavern.memories.memory_engine import CallBudget, apply_operations, consolidate, estimate_batches
+from tavern.memories.memory_engine import (
+    CallBudget,
+    apply_operations,
+    consolidate,
+    estimate_batches,
+    plan_batch,
+)
 from tavern.memories.memory_evidence import evidence_pool, select_evidence
 from tavern.memories.memory_records import (
     Record,
@@ -258,6 +264,18 @@ def test_evidence_deduplicates_same_text_and_preserves_full_version():
     assert len(selected) == 1
     assert selected[0]["historical"] and selected[0]["id"].startswith("e")
     assert len(selected[0]["reference"]) == 64
+
+
+def test_long_evidence_and_single_oversized_exchange_remain_complete():
+    content = "旧设定" * 3000 + "尾部证据"
+    selected = select_evidence([{"id": "long", "kind": "frozen_lore", "text": content}],
+                               "尾部证据", Settings())
+    assert selected[0]["text"] == content
+    messages = history(["旧剧情" * 3000 + "尾部剧情", "她回应了。"])
+    end, request, _, _ = plan_batch(messages, messages, 0, {"version": 1, "records": []},
+                                    {}, Settings(memory_input_tokens=2048, memory_evidence_tokens=0))
+    assert end == 2
+    assert "尾部剧情" in request[1]["content"]
 
 
 async def test_duplicate_material_does_not_spend_review(monkeypatch):

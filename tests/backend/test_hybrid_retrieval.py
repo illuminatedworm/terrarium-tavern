@@ -25,7 +25,7 @@ def test_streaming_protocol_preserves_mvu_without_exposing_clue(width, hidden):
 def test_missing_duplicate_long_and_truncated_protocol():
     assert split_retrieval('正文')[0] == '正文'
     clean, query, diagnostics = split_retrieval('正文<tavern_retrieval>abcdef</tavern_retrieval><tavern_retrieval>x</tavern_retrieval>', 3)
-    assert (clean, query) == ('正文', 'abc')
+    assert (clean, query) == ('正文', 'abcdef')
     assert len(diagnostics) == 2
     assert split_retrieval('正文<tavern_retrieval>私有数据')[0] == '正文'
 
@@ -34,6 +34,11 @@ def test_query_does_not_scan_whole_history_and_uses_current_input():
     history = [{'id': 'old', 'model': '禁止旧剧情'}, {'id': 'a', 'retrieval_query': '港口 守卫'}]
     assert query_text(history, '新人物小舟', RetrievalSettings()) == '港口 守卫\n新人物小舟'
     assert query_text(history[:1], '新人物小舟', RetrievalSettings()) == '新人物小舟'
+
+
+def test_long_retrieval_input_keeps_its_tail():
+    text = '开头' * 2000 + '尾部人物'
+    assert query_text([], text, RetrievalSettings(input_chars=64)) == text
 
 
 def test_tokenizers_cover_three_languages():

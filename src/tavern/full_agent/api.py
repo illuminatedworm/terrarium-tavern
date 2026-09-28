@@ -59,6 +59,8 @@ def register_full_agent_routes(app, store):
             raise ValueError("未知的 Full Agent 工具")
         session = require_full(store, sid)
         options = session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
+        options = {name: {key: value for key, value in fields.items() if key != "include_offset"}
+                   for name, fields in options.items()}
         if any(name not in RESULT_FIELDS or set(fields) - set(RESULT_FIELDS[name])
                for name, fields in options.items()):
             raise ValueError("未知的工具返回选项")

@@ -1901,7 +1901,6 @@ useTimedError(error);
               <input
                 v-model="regenerationNote"
                 aria-label="重新生成补充要求"
-                maxlength="500"
                 :placeholder="
                   retryableTurn
                     ? '补充本次要求，例如：严格遵守变量输出格式'

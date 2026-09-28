@@ -31,9 +31,9 @@ class RetrievalParser:
                 before, self.buffer = self.buffer[:index], self.buffer[index + len(marker):]
                 if self.hidden:
                     self.current += before
-                    self.parts.append(self.current.strip()[:self.limit])
+                    self.parts.append(self.current.strip())
                     if len(self.current.strip()) > self.limit:
-                        self.diagnostics.append("检索线索超长，已截取")
+                        self.diagnostics.append("检索线索较长，已完整保留")
                     self.current = ""
                 else:
                     output += before
@@ -61,8 +61,6 @@ class RetrievalParser:
                         break
             if self.hidden:
                 self.current += ready
-                if len(self.current) > self.limit + 2048:
-                    self.current = self.current[:self.limit + 1]
             else:
                 output += ready
             break
@@ -86,19 +84,14 @@ def split_retrieval(text, limit=512):
     return clean, parser.query, parser.diagnostics
 
 
-def bounded(text, size):
-    return text if len(text) <= size else text[:size // 2] + "\n" + text[-(size - size // 2 - 1):]
-
-
 def query_text(history, user_input, config):
     clues = [m.get("retrieval_query", "") for m in history if m.get("retrieval_query")]
     clues = clues[-config.query_lookback:] if config.query_lookback else []
-    current = bounded(user_input, config.input_chars)
+    current = user_input
     fallback = ""
     if not clues and current.strip().lower() in ("", "继续", "继续剧情", "continue", "続けて") and history:
         from tavern.search.retrieval import tokenize
-        fallback = " ".join(dict.fromkeys(tokenize(bounded(history[-1].get("model", history[-1].get("raw", "")),
-                                                         config.input_chars))))[:config.query_chars]
+        fallback = " ".join(dict.fromkeys(tokenize(history[-1].get("model", history[-1].get("raw", "")))))
     return "\n".join(filter(None, [*clues, fallback, current])).strip()
 
 

@@ -17,7 +17,6 @@ const resultLabels: Record<string, string> = {
   include_ref: '返回编号',
   include_title: '返回标题',
   include_preview: '返回摘要',
-  include_offset: '返回摘要位置',
   include_metadata: '返回附加信息',
 };
 const metadataLabels: Record<string, string> = {
