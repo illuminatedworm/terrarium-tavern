@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import { liveActivity, mergeActivity, type AgentActivity } from '../../lib/agentActivity';
 import AgentActivityItem from './AgentActivityItem.vue';
+import StoryHistory from './StoryHistory.vue';
 
 const props = defineProps<{
   sessionId: string;
@@ -10,8 +11,16 @@ const props = defineProps<{
   turn?: any;
   events: any[];
   pending?: boolean;
+  scroller?: HTMLElement;
+  editingId?: string;
+  following?: boolean;
+  retainInteractive?: boolean;
 }>();
-const emit = defineEmits<{ contentChange: [] }>();
+const emit = defineEmits<{ contentChange: []; reading: [id: string] }>();
+const history = ref<InstanceType<typeof StoryHistory>>();
+const visibleMessages = ref<any[]>([]);
+const loadingMessages = new Set<string>();
+defineExpose({ jumpTo: (id: string) => history.value?.jumpTo(id) });
 const records = ref<Record<string, AgentActivity[]>>({});
 const pendingRecords = ref<AgentActivity[]>([]);
 const error = ref('');
@@ -34,10 +43,14 @@ const pendingLabel = computed(
 );
 
 async function loadMessages() {
-  const version = ++generation;
-  const missing = props.messages
-    .filter((m) => m.role === 'assistant' && !Object.hasOwn(records.value, m.id))
+  const version = generation;
+  const missing = visibleMessages.value
+    .filter(
+      (m) => m.role === 'assistant' && !Object.hasOwn(records.value, m.id) && !loadingMessages.has(m.id),
+    )
     .map((m) => m.id);
+  if (!missing.length) return;
+  missing.forEach((id) => loadingMessages.add(id));
   error.value = '';
   try {
     for (let offset = 0; offset < missing.length; offset += 100) {
@@ -50,7 +63,13 @@ async function loadMessages() {
     if (version === generation) emit('contentChange');
   } catch (e: any) {
     if (version === generation) error.value = `工具记录加载失败：${e.message}`;
+  } finally {
+    missing.forEach((id) => loadingMessages.delete(id));
   }
+}
+function showMessages(messages: any[]) {
+  visibleMessages.value = messages;
+  void loadMessages();
 }
 async function loadPending() {
   const version = ++pendingGeneration;
@@ -69,11 +88,6 @@ function retry() {
   void loadMessages();
   void loadPending();
 }
-watch(
-  () => props.messages.map((m) => m.id).join(','),
-  () => void loadMessages(),
-  { immediate: true },
-);
 watch(
   () => [props.turn?.id, props.turn?.status, props.pending],
   () => void loadPending(),
@@ -95,23 +109,34 @@ onBeforeUnmount(() => {
     <p v-if="error" class="agent-dialogue-notice" role="alert">
       {{ error }} <button @click="retry">重试</button>
     </p>
-    <template v-for="message in messages" :key="message.id">
-      <slot name="before-message" :message="message" />
-      <div
-        v-if="records[message.id]?.length"
-        class="agent-message-activity"
-        :data-for-message="message.id"
-        aria-label="本条回复的工具与过程"
-      >
-        <AgentActivityItem
-          v-for="item in records[message.id]"
-          :key="item.id"
-          :item="item"
-          :endpoint="`${prefix}/messages/${message.id}/activity`"
-        />
-      </div>
-      <slot name="message" :message="message" />
-    </template>
+    <StoryHistory
+      ref="history"
+      :messages="messages"
+      :scroller="scroller"
+      :editing-id="editingId"
+      :following="following"
+      :retain-interactive="retainInteractive"
+      @visible="showMessages"
+      @reading="emit('reading', $event)"
+    >
+      <template #default="{ message }">
+        <slot name="before-message" :message="message" />
+        <div
+          v-if="records[message.id]?.length"
+          class="agent-message-activity"
+          :data-for-message="message.id"
+          aria-label="本条回复的工具与过程"
+        >
+          <AgentActivityItem
+            v-for="item in records[message.id]"
+            :key="item.id"
+            :item="item"
+            :endpoint="`${prefix}/messages/${message.id}/activity`"
+          />
+        </div>
+        <slot name="message" :message="message" />
+      </template>
+    </StoryHistory>
     <slot name="pending" />
     <div
       v-if="pending && activeItems.length"

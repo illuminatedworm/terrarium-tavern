@@ -234,6 +234,8 @@ class SessionCacheBreakpoint(BaseModel):
     expected_revision: int
     automatic: bool
     message_id: str | None = None
+    follow_interval: int | None = Field(default=None, ge=1, strict=True)
+    reply_offset: int | None = Field(default=None, ge=1, strict=True)
 
 
 class MessageEdit(BaseModel):

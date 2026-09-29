@@ -1,43 +1,58 @@
-import { effectScope, ref } from 'vue';
 import { expect, it } from 'vitest';
-import { useStoryHistory } from '../../web/lib/storyHistory';
+import {
+  DIRECT_MESSAGE_LIMIT,
+  DIRECT_TEXT_LIMIT,
+  HistoryHeights,
+  historyRounds,
+  historySummary,
+  needsVirtualHistory,
+} from '../../web/lib/storyHistory';
 
-const messages = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i) }));
+const messages = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({ id: String(index), role: 'user', raw: '正文' }));
 
-it('starts with 60 messages, expands in batches, and preserves the full history', () => {
-  const scope = effectScope();
-  scope.run(() => {
-    const session = ref({ id: 'long', messages: messages(10000) });
-    const view = useStoryHistory(() => session.value);
-    expect(view.visible.value).toHaveLength(60);
-    expect(view.hidden.value).toBe(9940);
-    view.showEarlier();
-    expect(view.visible.value).toHaveLength(120);
-    view.collapse();
-    expect(view.visible.value).toHaveLength(60);
-    expect(session.value.messages).toHaveLength(10000);
-    session.value = { id: 'short', messages: messages(3) };
-    expect(view.visible.value).toHaveLength(3);
-    expect(view.hidden.value).toBe(0);
-  });
-  scope.stop();
+it('uses direct rendering at both limits and virtualizes only beyond either limit', () => {
+  expect(needsVirtualHistory(messages(DIRECT_MESSAGE_LIMIT))).toBe(false);
+  expect(needsVirtualHistory(messages(DIRECT_MESSAGE_LIMIT + 1))).toBe(true);
+  expect(needsVirtualHistory([{ id: 'one', role: 'assistant', raw: '字'.repeat(DIRECT_TEXT_LIMIT) }])).toBe(
+    false,
+  );
+  expect(
+    needsVirtualHistory([{ id: 'one', role: 'assistant', raw: '字'.repeat(DIRECT_TEXT_LIMIT + 1) }]),
+  ).toBe(true);
 });
 
-it('reveals a source without hiding other messages or resetting on a turn refresh', () => {
-  const scope = effectScope();
-  scope.run(() => {
-    const session = ref({ id: 'story', messages: messages(300) });
-    const view = useStoryHistory(() => session.value);
-    view.reveal('10');
-    expect(view.visible.value[0].id).toBe('10');
-    view.reveal('missing');
-    view.reveal('250');
-    expect(view.hidden.value).toBe(10);
-    session.value = { id: 'story', messages: messages(302) };
-    expect(view.visible.value[0].id).toBe('10');
-    expect(view.visible.value.at(-1)?.id).toBe('301');
-    view.collapse();
-    expect(view.visible.value).toHaveLength(60);
+it('groups completed exchanges and leaves greeting and pending input navigable', () => {
+  const history = [
+    { id: 'greeting', role: 'assistant', raw: '开场' },
+    { id: 'user', role: 'user', raw: '输入' },
+    { id: 'reply', role: 'assistant', parent: 'user', raw: '回答' },
+    { id: 'pending', role: 'user', raw: '新输入' },
+  ];
+  const rounds = historyRounds(history);
+  expect(rounds.map((round) => round.messageIds)).toEqual([['greeting'], ['user', 'reply'], ['pending']]);
+  expect(rounds[1].reply?.raw).toBe('回答');
+  expect(
+    historySummary({ id: 'html', role: 'assistant', raw: '<script>secret()</script><b>正文</b>\n内容' }),
+  ).toBe('正文 内容');
+});
+
+it('locates 10000 variable height messages after repeated measurements', () => {
+  const values = Array.from({ length: 10000 }, (_, index) => 80 + (index % 300));
+  const heights = new HistoryHeights();
+  heights.reset(values);
+  for (const index of [0, 17, 298, 4000, 9999]) {
+    values[index] += 271;
+    heights.set(index, values[index]);
+  }
+  let sum = 0;
+  values.forEach((height, index) => {
+    expect(heights.offset(index)).toBe(sum);
+    expect(heights.indexAt(sum + height / 2)).toBe(index);
+    sum += height;
   });
-  scope.stop();
+  expect(heights.offset(values.length)).toBe(sum);
+  expect(heights.indexAt(sum + 100)).toBe(9999);
+  heights.reset([]);
+  expect(heights.offset(0)).toBe(0);
 });

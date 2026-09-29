@@ -393,7 +393,8 @@ def create_app(data_dir=None):
     @app.put("/api/sessions/{sid}/cache-breakpoint")
     async def session_cache_breakpoint(sid: str, payload: SessionCacheBreakpoint):
         return store.set_cache_breakpoint(sid, payload.expected_revision,
-                                          payload.automatic, payload.message_id)
+                                          payload.automatic, payload.message_id,
+                                          payload.follow_interval, payload.reply_offset)
 
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):

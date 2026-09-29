@@ -107,6 +107,10 @@ class Store:
                 db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1")
             if "cache_breakpoint_message" not in session_columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_message TEXT")
+            if "cache_breakpoint_follow" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN cache_breakpoint_follow TEXT NOT NULL DEFAULT '{}'")
+                for session_row in db.execute("SELECT id,head FROM sessions").fetchall():
+                    self._update_cache_follow(db, session_row["id"], session_row["head"], reset=True)
             # Additive schema-1 extension: existing stories remain Half Agent.
             if "agent_mode" not in {r["name"] for r in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'half_agent'")
@@ -467,7 +471,7 @@ class Store:
                 (new_sid, source["card"], ids[head], source["persona"],
                  source["policy"], source["recipe"], time.time(), title, source["persona_data"], source["turn_preference"],
                  dump(card_data) if card_data else None, source["lore_injection_mode"],
-                 source["cache_breakpoint_auto"], ids.get(source["cache_breakpoint_message"])),
+                 source["cache_breakpoint_auto"], ids.get(source["cache_breakpoint_message"], source["cache_breakpoint_message"])),
             )
             db.executemany(
                 "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -480,6 +484,9 @@ class Store:
             db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             db.execute("UPDATE sessions SET tool_result_options=? WHERE id=?",
                        (source["tool_result_options"], new_sid))
+            from tavern.conversation.cache_breakpoint import reset_follow
+            follow = reset_follow(copies, json.loads(source["cache_breakpoint_follow"]))
+            db.execute("UPDATE sessions SET cache_breakpoint_follow=? WHERE id=?", (dump(follow), new_sid))
             for original, cloned_id in ids.items():
                 db.execute("""INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload)
                     SELECT ?,?,seq,window_id,payload FROM full_agent_trace WHERE message_id=?""",
@@ -515,9 +522,16 @@ class Store:
         settings = self.settings(result["agent_mode"])
         result["policy_effective"] = result["policy"] or settings.policy
         result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
-        from tavern.conversation.cache_breakpoint import effective_message_id
+        from tavern.conversation.cache_breakpoint import (
+            advance_follow,
+            breakpoint_reason,
+            effective_message_id,
+        )
+        result["cache_breakpoint_follow"] = advance_follow(
+            result["messages"], json.loads(result["cache_breakpoint_follow"]))
         result["cache_breakpoint_effective_id"] = effective_message_id(
             result, settings.for_role("full_agent" if result["agent_mode"] == "full_agent" else "foreground"))
+        result["cache_breakpoint_reason"] = breakpoint_reason(result, result["cache_breakpoint_effective_id"])
         from tavern.memories.memory_records import read_memory, with_source_status
         result["memory_view"] = with_source_status(read_memory(result["snapshot"]), result["messages"])
         return result
@@ -737,7 +751,7 @@ class Store:
 
     def update_session(self, sid, expected, **fields):
         if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "title",
-                                                  "cache_breakpoint_auto", "cache_breakpoint_message"}):
+                                                  "cache_breakpoint_auto", "cache_breakpoint_message", "cache_breakpoint_follow"}):
             raise ValueError("无效会话字段")
         if "title" in fields:
             title = fields["title"].strip()
@@ -760,15 +774,44 @@ class Store:
             )
             if r.rowcount != 1:
                 raise Conflict("会话已改变，请刷新后重试")
+            if fields.get("head"):
+                self._update_cache_follow(db, sid, fields["head"])
         return self.session(sid)
 
-    def set_cache_breakpoint(self, sid, expected, automatic, message_id):
+    def set_cache_breakpoint(self, sid, expected, automatic, message_id, follow_interval=None, reply_offset=None):
+        from tavern.conversation.cache_breakpoint import reply_ids, reset_follow
         session = self.session(sid)
         if not automatic and message_id is not None:
-            if not any(m["id"] == message_id and m["role"] == "assistant" for m in session["messages"]):
-                raise ValueError("请选择当前分支上的 AI 回复")
+            if message_id not in reply_ids(session["messages"]):
+                raise ValueError("请选择当前分支上已完成的 AI 正文回复")
+        follow = dict(session["cache_breakpoint_follow"])
+        for key, value in (("interval", follow_interval), ("offset", reply_offset)):
+            if value is not None:
+                if type(value) is not int or value < 1:
+                    raise ValueError("跟进间隔和回复位置须为正整数")
+                follow[key] = value
+        if automatic:
+            follow = reset_follow(session["messages"], follow)
         return self.update_session(sid, expected, cache_breakpoint_auto=int(automatic),
-                                   cache_breakpoint_message=None if automatic else message_id)
+                                   cache_breakpoint_message=None if automatic else message_id,
+                                   cache_breakpoint_follow=dump(follow))
+
+    def _update_cache_follow(self, db, sid, head, *, advance=False, reset=False):
+        from tavern.conversation.cache_breakpoint import advance_follow, reply_ids, reset_follow
+        row = db.execute("SELECT cache_breakpoint_follow,cache_breakpoint_auto FROM sessions WHERE id=?", (sid,)).fetchone()
+        follow = json.loads(row["cache_breakpoint_follow"])
+        messages = {message["id"]: dict(message) for message in db.execute(
+            "SELECT id,parent,role FROM messages WHERE session=?", (sid,))}
+        history, seen = [], set()
+        while head and head in messages and head not in seen:
+            seen.add(head)
+            history.append(messages[head])
+            head = messages[head]["parent"]
+        history.reverse()
+        follow = (reset_follow(history, follow) if reset else
+                  advance_follow(history, follow, advance and bool(row["cache_breakpoint_auto"])
+                                 and bool(history) and history[-1]["id"] in reply_ids(history)))
+        db.execute("UPDATE sessions SET cache_breakpoint_follow=? WHERE id=?", (dump(follow), sid))
 
 
     def edit_memory_record(self, sid, edit):
@@ -1008,6 +1051,9 @@ class Store:
             if turn["status"] not in ("running", "awaiting_review"):
                 raise Conflict("回合已取消或结束")
             req = json.loads(turn["request"])
+            current = db.execute("SELECT head,cache_breakpoint_follow FROM sessions WHERE id=?", (turn["session"],)).fetchone()
+            if "anchor" not in json.loads(current["cache_breakpoint_follow"]):
+                self._update_cache_follow(db, turn["session"], current["head"])
             scene = pending.get("scene")
             if scene and not req.get("scene_refresh"):
                 raise ValueError("当前回合不允许更新场景档案")
@@ -1041,6 +1087,8 @@ class Store:
                 )
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?",
                            (m.get("retrieval_query", ""), m["id"]))
+            self._update_cache_follow(db, turn["session"], last,
+                                      advance=not scene and req.get("mode", "send") != "regenerate")
             for seq, item in enumerate(pending.get("full_agent_trace", []), 1):
                 db.execute("INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
                            (turn["session"], last, seq, item["window_id"], dump(item["message"])))

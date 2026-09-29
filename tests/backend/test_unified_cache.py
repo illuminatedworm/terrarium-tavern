@@ -311,6 +311,40 @@ def test_branch_local_manual_and_regenerate_boundaries(mode):
         assert context["cache"]["message_id"] is None
 
 
+@pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
+@pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
+async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
+    cfg = config(api)
+    context, session, history, snapshot = compiled(mode, cfg)
+    session["cache_breakpoint_follow"] = {"interval": 3, "offset": 2, "anchor": "a0", "progress": 1}
+    captured, bodies, creations = [], [], []
+    def route(request):
+        body = json.loads(request.content)
+        if request.url.path.endswith("cachedContents"):
+            creations.append(body)
+            assert body["contents"][-1]["parts"][0]["text"] == "Answer 0"
+            return httpx.Response(200, json={"name": "cachedContents/held"})
+        bodies.append(body)
+        return httpx.Response(200, json=reply(api))
+    async with provider(cfg, route, captured.append) as transport:
+        for tail in ("first tail", "changed tail"):
+            context["messages"][-2]["content"] = tail
+            prepare_context(context, session, history, snapshot, cfg)
+            assert context["cache"]["message_id"] == "a0"
+            await transport.chat_complete(model_messages(context))
+    assert captured[0]["cache"]["prefix_sha256"] == captured[1]["cache"]["prefix_sha256"]
+    if api == "gemini":
+        assert len(creations) == 1
+        assert all(body["cachedContent"] == "cachedContents/held" for body in bodies)
+        assert all(body["contents"][0]["parts"][0]["text"] == "Question 1" for body in bodies)
+    else:
+        field = "cache_control" if api == "anthropic" else "prompt_cache_breakpoint"
+        for body in bodies:
+            marked = [part for message in body.get("input", body.get("messages", []))
+                      if isinstance(message.get("content"), list) for part in message["content"] if field in part]
+            assert len(marked) == 1 and marked[0]["text"] == "Answer 0"
+
+
 async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_system():
     cfg = config()
     cfg.model = "gemini-3.8-flash"

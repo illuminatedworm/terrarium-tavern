@@ -11,6 +11,8 @@ import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
+import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
+import ConversationRail from './components/story/ConversationRail.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
@@ -35,7 +37,6 @@ import {
   groupContext,
   summarizeBudgetSources,
 } from './lib/contextPreview';
-import { HISTORY_BATCH, useStoryHistory } from './lib/storyHistory';
 
 const orphanDrafts = ref<any[]>([]);
 const cards = ref<any[]>([]),
@@ -50,9 +51,17 @@ const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 function applyFullSession(updated: any) {
   if (session.value?.id === updated.id) session.value = updated;
 }
-const historyView = useStoryHistory<any>(() => session.value);
-const visibleMessages = historyView.visible;
-const hiddenMessages = historyView.hidden;
+const dialogue = ref<{ jumpTo: (id: string) => Promise<void> | undefined }>();
+const readingMessageId = ref('');
+const eligibleCacheReplies = computed(() => {
+  const messages = session.value?.messages || [];
+  const roles = new Map(messages.map((message: any) => [message.id, message.role]));
+  return new Set(
+    messages
+      .filter((message: any) => message.role === 'assistant' && roles.get(message.parent) === 'user')
+      .map((message: any) => message.id),
+  );
+});
 const input = ref(''),
   error = ref(''),
   busy = ref(false),
@@ -233,6 +242,9 @@ const sidebarSection = ref(localStorage.getItem('tavern-sidebar-section') === 'c
 const deleteBubble = ref<any>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
+watch(writerResponseCache, (enabled) => {
+  if (!enabled && inspectorTab.value === 'cache') inspectorTab.value = 'options';
+});
 const deletingCard = ref<any>(null),
   deletingCardBusy = ref(false);
 const forkMessage = ref<any>(null),
@@ -756,19 +768,20 @@ function pauseFollow(event: WheelEvent) {
   if (event.deltaY < 0 && chat.value && chat.value.scrollHeight > chat.value.clientHeight)
     followLatest.value = false;
 }
-async function showEarlierMessages() {
-  const token = viewScope.current();
+async function navigateMessage(id: string) {
+  storyView.value = 'dialogue';
   followLatest.value = false;
-  historyView.showEarlier();
   await nextTick();
-  if (!viewScope.owns(token)) return;
-  chat.value?.scrollTo({ top: 0, behavior: 'instant' });
-  followLatest.value = false;
+  await dialogue.value?.jumpTo(id);
 }
-async function collapseHistory() {
-  if (editingMessageId.value) return;
-  historyView.collapse();
-  await scroll(true);
+async function locateCacheBreakpoint() {
+  if (cacheBreakpointId.value) await navigateMessage(cacheBreakpointId.value);
+  else {
+    storyView.value = 'dialogue';
+    followLatest.value = false;
+    await nextTick();
+    chat.value?.scrollTo({ top: 0, behavior: 'instant' });
+  }
 }
 async function scroll(force = false) {
   if (force) followLatest.value = true;
@@ -1028,8 +1041,7 @@ async function locateSource(id: string, excerpt: string) {
   storyView.value = 'dialogue';
   followLatest.value = false;
   sourceHighlight.value = { id, excerpt, fallback: false };
-  historyView.reveal(id);
-  await nextTick();
+  await navigateMessage(id);
   const target = Array.from(chat.value?.querySelectorAll<HTMLElement>('[data-message-id]') || []).find(
     (node) => node.dataset.messageId === id,
   );
@@ -1241,7 +1253,12 @@ async function createFork() {
     creatingFork.value = false;
   }
 }
-async function saveCacheBreakpoint(automatic: boolean, messageId: string | null = null) {
+async function saveCacheBreakpoint(
+  automatic: boolean,
+  messageId: string | null = null,
+  interval?: number,
+  offset?: number,
+) {
   if (
     !session.value ||
     busy.value ||
@@ -1257,7 +1274,13 @@ async function saveCacheBreakpoint(automatic: boolean, messageId: string | null 
       const sid = session.value.id;
       const updated = await viewApi(
         `/sessions/${sid}/cache-breakpoint`,
-        { automatic, message_id: automatic ? null : messageId, expected_revision: session.value.revision },
+        {
+          automatic,
+          message_id: automatic ? null : messageId,
+          expected_revision: session.value.revision,
+          follow_interval: interval,
+          reply_offset: offset,
+        },
         'PUT',
       );
       for (const field of [
@@ -1265,10 +1288,13 @@ async function saveCacheBreakpoint(automatic: boolean, messageId: string | null 
         'cache_breakpoint_auto',
         'cache_breakpoint_message',
         'cache_breakpoint_effective_id',
+        'cache_breakpoint_follow',
+        'cache_breakpoint_reason',
       ])
         session.value[field] = updated[field];
       const listed = sessions.value.find((item) => item.id === sid);
       if (listed) listed.revision = updated.revision;
+      await refreshContextStats();
     });
   } finally {
     cacheBreakpointBusy.value = false;
@@ -1726,198 +1752,179 @@ useTimedError(error);
           :turn-id="activeTurn?.id"
           :events="trace"
         />
-        <div
-          v-show="storyView === 'dialogue'"
-          ref="chat"
-          class="messages"
-          @scroll="trackScroll"
-          @wheel.passive="pauseFollow"
-        >
-          <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
-          <p v-if="writerResponseCache" class="muted" role="status">
-            {{
-              cacheRequestState?.status === 'fallback'
-                ? '已降级云端：' + cacheRequestState.reason
-                : cacheRequestState?.status === 'sent'
-                  ? `上次请求断点：${sentCacheLabel}（已发送，不代表已命中）`
-                  : session.cache_breakpoint_auto
-                    ? '计划断点：两轮已完成对话之前；不足三轮时使用固定前缀'
-                    : '计划断点：手动固定位置'
-            }}
-          </p>
-          <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
-            <button
-              class="cache-breakpoint-dot"
-              :class="{ manual: !session.cache_breakpoint_auto }"
-              :disabled="
-                busy || cacheBreakpointBusy || activeTurn?.status === 'awaiting_review' || switchingVersion
-              "
-              :title="
-                session.cache_breakpoint_auto
-                  ? '缓存断点自动跟进中；点击固定当前位置'
-                  : '缓存断点已手动固定；点击恢复自动跟进'
-              "
-              :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
-              @click="toggleCacheBreakpointFollow"
-            />
-            <span
-              >计划断点：常驻世界书／角色设定／固定前缀 ·
-              {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
-            >
-          </div>
-          <nav
-            v-if="session.messages.length > HISTORY_BATCH"
-            class="history-controls"
-            aria-label="历史消息显示"
-          >
-            <span>显示 {{ visibleMessages.length }} / {{ session.messages.length }} 条消息</span>
-            <button v-if="hiddenMessages" @click="showEarlierMessages">
-              显示更早消息（{{ Math.min(HISTORY_BATCH, hiddenMessages) }} 条）
-            </button>
-            <button
-              v-if="
-                writerResponseCache &&
-                cacheBreakpointId &&
-                !visibleMessages.some((item: any) => item.id === cacheBreakpointId)
-              "
-              @click="historyView.reveal(cacheBreakpointId)"
-            >
-              显示缓存断点
-            </button>
-            <button
-              v-if="visibleMessages.length > HISTORY_BATCH"
-              :disabled="!!editingMessageId"
-              @click="collapseHistory"
-            >
-              收起到最近 {{ HISTORY_BATCH }} 条
-            </button>
-          </nav>
-          <component
-            :is="isFullAgent ? FullAgentDialogue : HalfAgentDialogue"
-            :key="session.id"
-            :messages="visibleMessages"
-            v-bind="
-              isFullAgent
-                ? { sessionId: session.id, turn: activeTurn, events: trace, pending: !!pendingVisible }
-                : {}
-            "
-            @content-change="scroll()"
-          >
-            <template #before-message="{ message }">
-              <LoreInjectionRecords
-                v-if="loreRecords.has(message.id)"
-                :records="loreRecords.get(message.id)!"
-                :removable="!pendingVisible"
+        <div v-show="storyView === 'dialogue'" class="dialogue-viewport">
+          <div ref="chat" class="messages" @scroll="trackScroll" @wheel.passive="pauseFollow">
+            <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
+            <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
+              <button
+                class="cache-breakpoint-dot"
+                :class="{ manual: !session.cache_breakpoint_auto }"
                 :disabled="
-                  busy || removingLore || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+                  busy ||
+                  cacheBreakpointBusy ||
+                  !!editingMessageId ||
+                  activeTurn?.status === 'awaiting_review' ||
+                  switchingVersion
                 "
-                @remove="removeLore"
+                :title="
+                  session.cache_breakpoint_auto
+                    ? '缓存断点自动跟进中；点击固定当前位置'
+                    : '缓存断点已手动固定；点击恢复自动跟进'
+                "
+                :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
+                @click="toggleCacheBreakpointFollow"
               />
-            </template>
-            <template #message="{ message }">
-              <DialogueMessage
-                :message="message"
-                :session="session"
-                :name="name"
-                :source-highlight="sourceHighlight"
-                :writer-response-cache="writerResponseCache"
-                :cache-breakpoint-id="cacheBreakpointId"
-                :cache-breakpoint-busy="cacheBreakpointBusy"
-                @toggle-cache-breakpoint="toggleCacheBreakpointFollow"
-                @set-cache-breakpoint="saveCacheBreakpoint(false, $event)"
-                :regenerating-id="regeneratingId"
-                :busy="busy"
-                :switching-version="switchingVersion"
-                :editing-message-id="editingMessageId"
-                v-model:editing-message-text="editingMessageText"
-                :reviewing="activeTurn?.status === 'awaiting_review'"
-                :hide-panel="!!mvuPanel"
-                :enabled="!!currentCard?.permission"
-                @cancel-edit="cancelMessageEdit"
-                @save-edit="saveMessageEdit"
-                @edit="beginMessageEdit"
-                @fork="askFork"
-                @switch-version="switchReplyVersion"
-                @action="frameAction"
-              />
-            </template>
-            <template #pending>
-              <template v-if="pendingVisible">
-                <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
-                <article
-                  v-if="
-                    visiblePendingInput && !session.messages.some((m: any) => m.id === visiblePendingInput.id)
+              <span
+                >计划断点：常驻世界书／角色设定／固定前缀 ·
+                {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
+              >
+            </div>
+            <component
+              :is="isFullAgent ? FullAgentDialogue : HalfAgentDialogue"
+              ref="dialogue"
+              :key="session.id"
+              :messages="session.messages"
+              :scroller="chat"
+              :following="followLatest"
+              :editing-id="editingMessageId"
+              :retain-interactive="!!currentCard?.permission"
+              @reading="readingMessageId = $event"
+              v-bind="
+                isFullAgent
+                  ? { sessionId: session.id, turn: activeTurn, events: trace, pending: !!pendingVisible }
+                  : {}
+              "
+              @content-change="scroll()"
+            >
+              <template #before-message="{ message }">
+                <LoreInjectionRecords
+                  v-if="loreRecords.has(message.id)"
+                  :records="loreRecords.get(message.id)!"
+                  :removable="!pendingVisible"
+                  :disabled="
+                    busy || removingLore || !!editingMessageId || activeTurn?.status === 'awaiting_review'
                   "
-                  class="message user"
-                >
-                  <div class="avatar">你</div>
+                  @remove="removeLore"
+                />
+              </template>
+              <template #message="{ message }">
+                <DialogueMessage
+                  :message="message"
+                  :session="session"
+                  :name="name"
+                  :source-highlight="sourceHighlight"
+                  :writer-response-cache="writerResponseCache"
+                  :cache-eligible="eligibleCacheReplies.has(message.id)"
+                  :cache-breakpoint-id="cacheBreakpointId"
+                  :cache-breakpoint-busy="cacheBreakpointBusy"
+                  @toggle-cache-breakpoint="toggleCacheBreakpointFollow"
+                  @set-cache-breakpoint="saveCacheBreakpoint(false, $event)"
+                  :regenerating-id="regeneratingId"
+                  :busy="busy"
+                  :switching-version="switchingVersion"
+                  :editing-message-id="editingMessageId"
+                  v-model:editing-message-text="editingMessageText"
+                  :reviewing="activeTurn?.status === 'awaiting_review'"
+                  :hide-panel="!!mvuPanel"
+                  :enabled="!!currentCard?.permission"
+                  @cancel-edit="cancelMessageEdit"
+                  @save-edit="saveMessageEdit"
+                  @edit="beginMessageEdit"
+                  @fork="askFork"
+                  @switch-version="switchReplyVersion"
+                  @action="frameAction"
+                />
+              </template>
+              <template #pending>
+                <template v-if="pendingVisible">
+                  <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
+                  <article
+                    v-if="
+                      visiblePendingInput &&
+                      !session.messages.some((m: any) => m.id === visiblePendingInput.id)
+                    "
+                    class="message user"
+                  >
+                    <div class="avatar">你</div>
+                    <div class="message-body">
+                      <div class="message-meta">
+                        <strong>{{ session.persona }}</strong>
+                      </div>
+                      <div v-if="editingMessageId === '__pending__'" class="inline-message-editor">
+                        <textarea
+                          v-model="editingMessageText"
+                          aria-label="编辑最新用户消息"
+                          @keydown.ctrl.enter.prevent="savePendingEdit"
+                          @keydown.escape.prevent="cancelMessageEdit"
+                        />
+                        <div class="actions">
+                          <button @click="cancelMessageEdit">取消</button
+                          ><button :disabled="!editingMessageText.trim()" @click="savePendingEdit">
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                      <template v-else>
+                        <StoryProse
+                          :text="visiblePendingInput.display || visiblePendingInput.raw"
+                          :breaks="true"
+                        />
+                        <div v-if="retryableTurn" class="message-actions">
+                          <button :disabled="busy || !!editingMessageId" @click="beginPendingEdit">
+                            编辑
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+                  </article>
+                </template>
+              </template>
+              <template #draft>
+                <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
+                  <div class="avatar">{{ name.slice(0, 1) }}</div>
                   <div class="message-body">
                     <div class="message-meta">
-                      <strong>{{ session.persona }}</strong>
+                      <strong>{{ name }}</strong
+                      ><span class="badge">{{
+                        updatingVariables ? '正在更新变量' : busy ? '正在书写' : '未提交草稿'
+                      }}</span>
                     </div>
-                    <div v-if="editingMessageId === '__pending__'" class="inline-message-editor">
-                      <textarea
-                        v-model="editingMessageText"
-                        aria-label="编辑最新用户消息"
-                        @keydown.ctrl.enter.prevent="savePendingEdit"
-                        @keydown.escape.prevent="cancelMessageEdit"
-                      />
-                      <div class="actions">
-                        <button @click="cancelMessageEdit">取消</button
-                        ><button :disabled="!editingMessageText.trim()" @click="savePendingEdit">保存</button>
-                      </div>
+                    <div class="draft">
+                      <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
                     </div>
-                    <template v-else>
-                      <StoryProse
-                        :text="visiblePendingInput.display || visiblePendingInput.raw"
-                        :breaks="true"
-                      />
-                      <div v-if="retryableTurn" class="message-actions">
-                        <button :disabled="busy || !!editingMessageId" @click="beginPendingEdit">编辑</button>
-                      </div>
-                    </template>
                   </div>
                 </article>
               </template>
-            </template>
-            <template #draft>
-              <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
-                <div class="avatar">{{ name.slice(0, 1) }}</div>
-                <div class="message-body">
-                  <div class="message-meta">
-                    <strong>{{ name }}</strong
-                    ><span class="badge">{{
-                      updatingVariables ? '正在更新变量' : busy ? '正在书写' : '未提交草稿'
-                    }}</span>
-                  </div>
-                  <div class="draft">
-                    <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
-                  </div>
+              <template #waiting>
+                <div v-if="busy && !draft" class="thinking">
+                  ✦
+                  {{
+                    isFullAgent
+                      ? 'Agent 正在处理当前回合…'
+                      : activeTurn?.request?.scene_refresh
+                        ? '正在重新整理记忆…'
+                        : '正在读取设定，酝酿下一个瞬间…'
+                  }}
                 </div>
-              </article>
-            </template>
-            <template #waiting>
-              <div v-if="busy && !draft" class="thinking">
-                ✦
-                {{
-                  isFullAgent
-                    ? 'Agent 正在处理当前回合…'
-                    : activeTurn?.request?.scene_refresh
-                      ? '正在重新整理记忆…'
-                      : '正在读取设定，酝酿下一个瞬间…'
-                }}
-              </div>
-            </template>
-          </component>
-          <div v-if="activeTurn?.status === 'awaiting_review'" class="review">
-            <strong>本轮状态或设定有修改，等待你的决定</strong>
-            <details>
-              <summary>查看修改</summary>
-              <pre>{{ JSON.stringify(activeTurn.pending, null, 2) }}</pre>
-            </details>
-            <button class="primary" @click="review(true)">接受并继续</button
-            ><button @click="review(false)">保留草稿，取消修改</button>
+              </template>
+            </component>
+            <div v-if="activeTurn?.status === 'awaiting_review'" class="review">
+              <strong>本轮状态或设定有修改，等待你的决定</strong>
+              <details>
+                <summary>查看修改</summary>
+                <pre>{{ JSON.stringify(activeTurn.pending, null, 2) }}</pre>
+              </details>
+              <button class="primary" @click="review(true)">接受并继续</button
+              ><button @click="review(false)">保留草稿，取消修改</button>
+            </div>
           </div>
+          <ConversationRail
+            :key="session.id"
+            :messages="session.messages"
+            :reading-id="readingMessageId"
+            :breakpoint-id="writerResponseCache ? cacheBreakpointId : null"
+            @navigate="navigateMessage"
+          />
         </div>
         <AppNotification
           :message="memoryWarning ? `记忆整理失败：${memoryWarning}。旧记忆保留；需要裁剪时将暂停发送。` : ''"
@@ -2076,6 +2083,14 @@ useTimedError(error);
       <div v-if="!layout.rightCollapsed" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
           <button
+            v-if="writerResponseCache"
+            :class="{ active: inspectorTab === 'cache' }"
+            :aria-current="inspectorTab === 'cache' ? 'page' : undefined"
+            @click="inspectorTab = 'cache'"
+          >
+            缓存
+          </button>
+          <button
             v-if="isFullAgent"
             :class="{ active: inspectorTab === 'tools' }"
             :aria-current="inspectorTab === 'tools' ? 'page' : undefined"
@@ -2105,6 +2120,22 @@ useTimedError(error);
             会话设置
           </button>
         </nav>
+        <CacheBreakpointPanel
+          v-if="writerResponseCache && inspectorTab === 'cache'"
+          :session="session"
+          :breakpoint-id="cacheBreakpointId"
+          :request-state="cacheRequestState"
+          :sent-label="sentCacheLabel"
+          :disabled="
+            busy ||
+            cacheBreakpointBusy ||
+            !!editingMessageId ||
+            activeTurn?.status === 'awaiting_review' ||
+            switchingVersion
+          "
+          @save="saveCacheBreakpoint"
+          @locate="locateCacheBreakpoint"
+        />
         <FullAgentTools
           v-if="isFullAgent && inspectorTab === 'tools'"
           :key="session.id"

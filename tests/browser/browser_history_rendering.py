@@ -70,30 +70,37 @@ async def main():
                         page.on('pageerror', lambda error: errors.append(str(error)))
                         await page.goto(address)
                         rows = page.locator('.messages [data-message-id]')
-                        await expect(rows).to_have_count(60)
+                        await expect(page.locator('.story-history')).to_have_attribute('data-virtual', 'true')
+                        last = page.locator('[data-message-id="fixture-299"]')
+                        await expect(last).to_be_visible()
+                        assert await rows.count() < 60
+                        rail = page.get_by_role('slider', name='对话历史导航')
+                        await rail.focus()
+                        await rail.press('Home')
+                        await expect(page.locator(f'[data-message-id="{session["head"]}"]')).to_be_visible()
+                        box = await rail.bounding_box()
+                        await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] * 200 / 299)
+                        await expect(page.locator('[data-message-id="fixture-200"] iframe')).to_be_visible()
+                        await rail.focus()
+                        await rail.press('End')
+                        await expect(last).to_be_visible()
                         await expect(page.locator('.messages iframe')).to_have_count(1)
-                        await expect(rows.first).to_have_attribute('data-message-id', 'fixture-240')
-                        earlier = page.get_by_role('button', name='显示更早消息', exact=False)
-                        await earlier.click()
-                        await expect(rows).to_have_count(120)
-                        await expect(page.locator('.messages iframe')).to_have_count(2)
-                        await expect(rows.first).to_have_attribute('data-message-id', 'fixture-180')
-                        assert await page.locator('.messages').evaluate('e=>e.scrollTop') < 3
-                        await rows.first.get_by_role('button', name='编辑', exact=True).click()
-                        await expect(page.get_by_role('button', name='收起到最近', exact=False)).to_be_disabled()
-                        await rows.first.get_by_role('button', name='取消', exact=True).click()
-                        await page.get_by_role('button', name='收起到最近', exact=False).click()
-                        await expect(rows).to_have_count(60)
-                        await expect(page.locator('.messages iframe')).to_have_count(1)
+                        await last.get_by_role('button', name='编辑', exact=True).click()
+                        await last.locator('textarea').fill('Changed paragraph\n' * 20)
+                        await rail.focus()
+                        await rail.press('Home')
+                        await expect(last.locator('textarea')).to_have_count(1)
+                        await rail.press('End')
+                        await last.get_by_role('button', name='取消', exact=True).click()
                         if width == 1440:
                             await page.get_by_role('button', name='场景', exact=True).click()
                             await page.locator('.memory-group > summary').click()
                             await page.locator('.memory-record details > summary').click()
                             await page.get_by_role('button', name='定位原文', exact=True).click()
-                            await expect(rows).to_have_count(300)
                             await expect(page.locator('mark.source-sentence-highlight')).to_have_text('Old source sentence.')
-                            await page.get_by_role('button', name='收起到最近', exact=False).click()
-                            await expect(rows).to_have_count(60)
+                            assert await rows.count() < 60
+                            await page.get_by_role('button', name='跳到最新', exact=True).click()
+                            await expect(last).to_be_visible()
                         assert await page.evaluate(
                             'document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight')
                         assert not errors, errors
@@ -101,7 +108,7 @@ async def main():
                 finally:
                     await browser.close()
             assert len(store.session(session['id'])['messages']) == 300
-            print('300 messages: 60 initial rows, batch expansion, iframe release, edit guard, old-source navigation; 4 viewports passed.')
+            print('300 messages: bounded virtual rows, retained iframe, pinned edit, old-source navigation; 4 viewports passed.')
         finally:
             server.should_exit = True
             await asyncio.to_thread(thread.join, 10)

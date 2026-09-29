@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import StoryProse from './StoryProse.vue';
-import { marked } from 'marked';
+import { storyHtml } from '../../lib/storyHtml';
 import { loadStoryRuntime } from '../../lib/storyRuntime';
 const props = defineProps<{
   message: any;
@@ -30,19 +30,7 @@ const raw = computed(() =>
     () => props.session.persona || '旅人',
   ),
 );
-const htmlCard = computed(() => {
-  const tokens = marked.lexer(raw.value);
-  const isInterface = (text: string) => /<(?:html|!doctype|script|style|div|section)\b/i.test(text);
-  for (const token of tokens) {
-    if (
-      token.type === 'code' &&
-      (!token.lang || token.lang.toLowerCase() === 'html') &&
-      isInterface(token.text)
-    )
-      return token.text;
-  }
-  return tokens.some((token) => token.type === 'html' && isInterface(token.text)) ? raw.value : '';
-});
+const htmlCard = computed(() => storyHtml(raw.value));
 const hiddenPanel = computed(
   () => props.hidePanel && /stat_data|getAllVariables|getMvuData|StatusPlaceHolder/i.test(htmlCard.value),
 );

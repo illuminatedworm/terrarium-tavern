@@ -6,12 +6,41 @@ from tavern.core.cache_policy import fingerprint
 from tavern.memories.memory import window_history
 
 
-def automatic_message_id(history):
-    """Use the assistant reply two completed exchanges behind the latest reply."""
+def reply_ids(history):
     roles = {message["id"]: message["role"] for message in history}
-    replies = [message["id"] for message in history
-               if message["role"] == "assistant" and roles.get(message.get("parent")) == "user"]
-    return replies[-3] if len(replies) >= 3 else None
+    return [message["id"] for message in history
+            if message["role"] == "assistant" and roles.get(message.get("parent")) == "user"]
+
+
+def automatic_message_id(history, offset=3):
+    replies = reply_ids(history)
+    return replies[-offset] if len(replies) >= offset else None
+
+
+def reset_follow(history, follow=None):
+    follow = follow or {}
+    return {"interval": follow.get("interval", 1), "offset": follow.get("offset", 3),
+            "anchor": automatic_message_id(history, follow.get("offset", 3)), "progress": 0}
+
+
+def advance_follow(history, follow, advance=False):
+    if "anchor" not in follow:
+        return reset_follow(history, follow)
+    result = dict(follow)
+    if advance:
+        result["progress"] += 1
+    if result["progress"] >= result["interval"]:
+        return reset_follow(history, result)
+    if result["anchor"] and result["anchor"] not in reply_ids(history):
+        result["anchor"] = automatic_message_id(history, result["offset"])
+    return result
+
+
+def planned_message_id(session):
+    if not session.get("cache_breakpoint_auto", True):
+        return session.get("cache_breakpoint_message")
+    follow = session.get("cache_breakpoint_follow", {})
+    return advance_follow(session["messages"], follow)["anchor"]
 
 
 def effective_message_id(session, settings):
@@ -23,10 +52,8 @@ def effective_message_id(session, settings):
                and (not block.get("condition") or get_path(state, block["condition"]))
                for block in session.get("recipe", {}).get("blocks", [])):
         return None
-    candidate = (automatic_message_id(session["messages"])
-                 if session.get("cache_breakpoint_auto", True)
-                 else session.get("cache_breakpoint_message"))
-    if not candidate:
+    candidate = planned_message_id(session)
+    if not candidate or candidate not in reply_ids(session["messages"]):
         return None
     if full:
         start = session["snapshot"].get("full_agent", {}).get("window", {}).get("start", 0)
@@ -35,6 +62,21 @@ def effective_message_id(session, settings):
         visible, _ = window_history(session["messages"], session["snapshot"],
                                     enabled=settings.chunk_mode != "off")
     return candidate if any(message["id"] == candidate for message in visible) else None
+
+
+def breakpoint_reason(session, effective_id):
+    candidate = planned_message_id(session)
+    if candidate and candidate not in reply_ids(session["messages"]):
+        return "所选回复已不在当前分支，暂用固定前缀"
+    if candidate and not effective_id:
+        return "所选回复不在实际上下文窗口，暂用固定前缀"
+    if not candidate:
+        follow = session.get("cache_breakpoint_follow", {})
+        if session.get("cache_breakpoint_auto", True) and len(reply_ids(session["messages"])) >= follow.get("offset", 3):
+            return "尚未到下次跟进，暂用固定前缀"
+        return ("已完成回复不足目标位置，暂用固定前缀" if session.get("cache_breakpoint_auto", True)
+                else "手动固定于可用的固定前缀")
+    return None
 
 
 def context_breakpoint_index(trace, message_id):

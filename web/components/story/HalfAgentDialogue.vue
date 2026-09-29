@@ -1,13 +1,34 @@
 <script setup lang="ts">
-defineProps<{ messages: any[] }>();
+import { ref } from 'vue';
+import StoryHistory from './StoryHistory.vue';
+defineProps<{
+  messages: any[];
+  scroller?: HTMLElement;
+  editingId?: string;
+  following?: boolean;
+  retainInteractive?: boolean;
+}>();
+const emit = defineEmits<{ reading: [id: string] }>();
+const history = ref<InstanceType<typeof StoryHistory>>();
+defineExpose({ jumpTo: (id: string) => history.value?.jumpTo(id) });
 </script>
 
 <template>
   <div class="half-agent-dialogue">
-    <template v-for="message in messages" :key="message.id">
-      <slot name="before-message" :message="message" />
-      <slot name="message" :message="message" />
-    </template>
+    <StoryHistory
+      ref="history"
+      :messages="messages"
+      :scroller="scroller"
+      :editing-id="editingId"
+      :following="following"
+      :retain-interactive="retainInteractive"
+      @reading="emit('reading', $event)"
+    >
+      <template #default="{ message }">
+        <slot name="before-message" :message="message" />
+        <slot name="message" :message="message" />
+      </template>
+    </StoryHistory>
     <slot name="pending" />
     <slot name="draft" />
     <slot name="waiting" />

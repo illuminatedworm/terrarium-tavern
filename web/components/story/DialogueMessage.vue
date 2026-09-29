@@ -13,6 +13,7 @@ defineProps<{
   hidePanel: boolean;
   enabled: boolean;
   writerResponseCache: boolean;
+  cacheEligible: boolean;
   cacheBreakpointId: string | null;
   cacheBreakpointBusy: boolean;
 }>();
@@ -58,17 +59,13 @@ function forwardAction(
     :aria-busy="message.id === regeneratingId"
   >
     <button
-      v-if="writerResponseCache && cacheBreakpointId === message.id"
+      v-if="writerResponseCache && cacheEligible"
       class="cache-breakpoint-dot"
-      :class="{ manual: !session.cache_breakpoint_auto }"
-      :disabled="busy || cacheBreakpointBusy || reviewing || switchingVersion"
-      :title="
-        session.cache_breakpoint_auto
-          ? '缓存断点自动跟进中；点击固定在此回复末尾'
-          : '缓存断点已固定；点击恢复自动跟进'
-      "
-      :aria-label="session.cache_breakpoint_auto ? '关闭缓存断点自动跟进' : '开启缓存断点自动跟进'"
-      @click="emit('toggleCacheBreakpoint')"
+      :class="{ manual: !session.cache_breakpoint_auto, planned: cacheBreakpointId === message.id }"
+      :disabled="busy || cacheBreakpointBusy || reviewing || switchingVersion || !!editingMessageId"
+      title="将缓存断点固定在此回复末尾"
+      aria-label="将缓存断点固定在此回复末尾"
+      @click="emit('setCacheBreakpoint', message.id)"
     />
     <div class="avatar">{{ message.role === 'user' ? '你' : name.slice(0, 1) }}</div>
     <div class="message-body">
@@ -200,10 +197,10 @@ function forwardAction(
           </svg>
         </button>
         <button
-          v-if="message.role === 'assistant' && writerResponseCache"
+          v-if="cacheEligible && writerResponseCache"
           class="icon-action cache-set-action"
           :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
-          :disabled="busy || cacheBreakpointBusy || !!editingMessageId || reviewing"
+          :disabled="busy || cacheBreakpointBusy || !!editingMessageId || reviewing || switchingVersion"
           :aria-label="
             cacheBreakpointId === message.id && !session.cache_breakpoint_auto
               ? '缓存断点已固定在此回复末尾'

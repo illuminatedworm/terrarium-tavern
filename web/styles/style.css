@@ -555,16 +555,6 @@ header {
   letter-spacing: 2px;
   margin: 20px 0 40px;
 }
-.history-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 12px 0 24px;
-  color: var(--text-faint);
-  font-size: 12px;
-}
 .chapter span {
   width: 70px;
   height: 1px;
@@ -607,7 +597,34 @@ header {
 .message > .cache-breakpoint-dot {
   position: absolute;
   left: 0;
-  top: 7px;
+  bottom: 0;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.message:hover > .cache-breakpoint-dot,
+.message:focus-within > .cache-breakpoint-dot {
+  opacity: 0.45;
+}
+.message > .cache-breakpoint-dot.planned,
+.message > .cache-breakpoint-dot:hover,
+.message > .cache-breakpoint-dot:focus-visible {
+  opacity: 1;
+}
+.dialogue-viewport {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.dialogue-viewport > .messages {
+  scroll-behavior: auto;
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+  padding-right: max(42px, calc((100% - 850px) / 2));
+}
+.dialogue-viewport > .messages::-webkit-scrollbar {
+  display: none;
 }
 .cache-breakpoint-fallback {
   display: flex;
