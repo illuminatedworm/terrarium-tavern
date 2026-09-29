@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tavern.core.cache_policy import runtime_cache
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -49,13 +50,21 @@ class AgentSettings(StrictSettings):
 
 
 class FullSettings(AgentSettings):
-    model: ModelProfile = Field(default_factory=ModelProfile)
+    model: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
     system_prompt: str = FULL_AGENT_PROMPT
 
+    @model_validator(mode="before")
+    @classmethod
+    def default_writer_cache(cls, value):
+        if isinstance(value, dict) and isinstance(value.get("model"), dict) and "cache" not in value["model"]:
+            value = deepcopy(value)
+            value["model"]["cache"] = {"mode": "runtime"}
+        return value
+
 
 class HalfSettings(AgentSettings):
-    foreground: ModelProfile = Field(default_factory=ModelProfile)
+    foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
@@ -78,6 +87,14 @@ class HalfSettings(AgentSettings):
     memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
     memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
     memory_review_enabled: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_writer_cache(cls, value):
+        if isinstance(value, dict) and isinstance(value.get("foreground"), dict) and "cache" not in value["foreground"]:
+            value = deepcopy(value)
+            value["foreground"]["cache"] = {"mode": "runtime"}
+        return value
 
     @model_validator(mode="after")
     def linked(self):
@@ -162,6 +179,25 @@ class SettingsDocument(StrictSettings):
 
 def migrate_settings(raw: dict) -> SettingsDocument:
     if "version" in raw:
+        raw = deepcopy(raw)
+        changed_scopes = set()
+        for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
+                           ("half_agent", "background"), ("shared", "card_editor")):
+            profile = raw.setdefault(scope, {}).setdefault(key, {})
+            if "cache" not in profile:
+                changed_scopes.add(scope)
+                request = {}
+                if profile.get("prompt_cache_key"):
+                    request["prompt_cache_key"] = profile["prompt_cache_key"]
+                if profile.get("prompt_cache_retention", "default") != "default":
+                    request["prompt_cache_retention"] = profile["prompt_cache_retention"]
+                profile["cache"] = {"mode": "runtime" if key in ("model", "foreground") else "cloud",
+                                    "request": request}
+            for field in ("prompt_cache_key", "prompt_cache_mode", "prompt_cache_retention"):
+                profile.pop(field, None)
+        for scope in changed_scopes:
+            revisions = raw.setdefault("revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")})
+            revisions[scope] = revisions.get(scope, 0) + 1
         return SettingsDocument.model_validate(raw)
     old = Settings.model_validate(raw)
     if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
@@ -176,7 +212,19 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     shared = {key: deepcopy(values[key]) for key in SharedSettings.model_fields if key in values}
     shared["card_editor"] = (old.card_editor or old.background).model_dump()
     shared["local_models"] = {key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields}
-    return SettingsDocument(full_agent=full, half_agent=half, shared=shared)
+    result = SettingsDocument(full_agent=full, half_agent=half, shared=shared).model_dump()
+    for scope, key, profile in (("full_agent", "model", old.full_agent or old.foreground),
+                                ("half_agent", "foreground", old.foreground),
+                                ("half_agent", "background", old.background),
+                                ("shared", "card_editor", old.card_editor or old.background)):
+        original = (raw.get("full_agent") or raw.get("foreground", {}) if scope == "full_agent" else
+                    raw.get("card_editor") or raw.get("background", {}) if key == "card_editor" else
+                    raw.get(key, {}))
+        if "cache" not in original:
+            result[scope][key].pop("cache", None)
+            result[scope][key].update(prompt_cache_key=profile.prompt_cache_key,
+                                      prompt_cache_retention=profile.prompt_cache_retention)
+    return migrate_settings(result)
 
 
 def from_runtime(value: Settings) -> SettingsDocument:

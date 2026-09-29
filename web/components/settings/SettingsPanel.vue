@@ -33,6 +33,8 @@ const emit = defineEmits<{ updated: [settings: SettingsDocument]; close: [] }>()
 const editor = useSettingsEditor((settings) => emit('updated', settings));
 const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
 const pageId = ref('');
+const localErrors = ref<Record<string, string>>({});
+provide('settings-local-errors', localErrors);
 const query = ref('');
 const promptPath = ref('system_prompt');
 const pendingAction = ref<null | (() => void)>(null);
@@ -68,18 +70,24 @@ const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.va
 const status = computed(() =>
   !saved.value
     ? '正在读取…'
-    : error.value
-      ? '保存失败'
-      : busy.value
-        ? '正在保存…'
-        : textDirty.value.length
-          ? '有文本未保存'
-          : pending.value
-            ? '待保存'
-            : '已保存',
+    : Object.keys(localErrors.value).length
+      ? '有参数格式错误'
+      : error.value
+        ? '保存失败'
+        : busy.value
+          ? '正在保存…'
+          : textDirty.value.length
+            ? '有文本未保存'
+            : pending.value
+              ? '待保存'
+              : '已保存',
 );
 function guard(action: () => void, all = false) {
-  if (textDirty.value.length || (all && error.value && pending.value)) {
+  if (
+    Object.keys(localErrors.value).length ||
+    textDirty.value.length ||
+    (all && error.value && pending.value)
+  ) {
     returnFocus = document.activeElement as HTMLElement;
     discardAll.value = all;
     pendingAction.value = action;
@@ -168,7 +176,7 @@ const searchable = computed(() => {
         ['temperature', '温度'],
         ['top_p', '核采样'],
         ['reasoning_effort', '思考强度'],
-        ['prompt_cache_mode', '提示缓存'],
+        ['cache', '提示缓存'],
         ['tokenizer', '计数分词器'],
       ])
         entries.push({ page: p, label, path });

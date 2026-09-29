@@ -4,7 +4,7 @@ import copy
 import json
 
 from tavern.character.cards import lore_entries, normalize
-from tavern.conversation.cache_breakpoint import context_breakpoint_index
+from tavern.conversation.cache_breakpoint import model_messages, prepare_context
 from tavern.conversation.context import compile_context, get_path, search
 from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.provider import make_provider
@@ -26,6 +26,7 @@ class TurnAgent:
         from tavern.memories.history_recall import HistoryBudget
         self.history_recall_budget = HistoryBudget()
         self.settings = (settings or store.settings()).for_role("foreground")
+        self.settings.cache_scope = session["id"]
         self.retrieval = None
         self.retrieval_query = ""
         if request.reasoning_effort is not None:
@@ -62,6 +63,8 @@ class TurnAgent:
                     "content": self.settings.maintenance_system_prompt,
                 }
             ]
+        else:
+            prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
         if self.compiled["estimated_tokens"] > self.settings.context_tokens - self.settings.reply_tokens - 2048:
             self.store.event(self.tid, "context_warning", {"purpose": "writer",
                                                        "message": "正文请求估算超出模型上下文，仍完整发送"})
@@ -266,13 +269,9 @@ class TurnAgent:
                 continuation = copy.deepcopy(messages[marker + 1 :])
                 try:
                     context = owner.compile()
-                    compiled = copy.deepcopy(context["messages"])
-                    if (not maintenance and owner.settings.api_mode == "responses"
-                            and owner.settings.prompt_cache_mode != "no_write"):
-                        at = context_breakpoint_index(
-                            context["trace"], owner.session.get("cache_breakpoint_effective_id"))
-                        if at is not None:
-                            compiled[at]["_cache_breakpoint"] = True
+                    if not maintenance:
+                        prepare_context(context, owner.session, owner.history, owner.snapshot, owner.settings)
+                    compiled = model_messages(context) if not maintenance else copy.deepcopy(context["messages"])
                     compiled += continuation
                     return owner.model_view.messages(compiled) if maintenance else compiled
                 except Exception as error:
@@ -290,11 +289,6 @@ class TurnAgent:
                     {**payload, "purpose": "maintenance" if maintenance else "narrative"},
                 ),
             )
-        if (not maintenance and self.settings.api_mode == "responses"
-                and self.settings.prompt_cache_mode != "no_write"):
-            from tavern.scripting.responses import ResponsesProvider
-            if isinstance(provider, ResponsesProvider):
-                provider.session_breakpoint = True
         config = AgentConfig(
             name="terrarium-tavern-tracker" if maintenance else "terrarium-tavern-writer",
             system_prompt=self.settings.maintenance_system_prompt if maintenance else self.settings.system_prompt,
@@ -348,7 +342,7 @@ class TurnAgent:
                 {
                     "purpose": "maintenance" if maintenance else "narrative",
                     "calls": self.calls,
-                    "usage": result.usage or {},
+                    "usage": getattr(provider, "reported_usage", None) or result.usage or {},
                     "duration_s": result.duration_s,
                 },
             )

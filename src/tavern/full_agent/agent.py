@@ -7,6 +7,7 @@ import jsonpatch
 import jsonpointer
 
 from tavern.character.cards import lore_entries, normalize
+from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
@@ -158,7 +159,7 @@ class FullAgent:
                     "tools": self.definitions,
                     "tool_choice": {"type": "function", "function": {"name": "new_context"}}
                     if self.must_rollover else "auto", "parallel_tool_calls": False} if self.definitions else {}
-                response = await provider.chat_complete(compiled["messages"], extra_body=tool_options)
+                response = await provider.chat_complete(model_messages(compiled), extra_body=tool_options)
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []

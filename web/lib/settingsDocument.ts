@@ -1,3 +1,4 @@
+import type { CacheSettings } from './cachePolicy';
 export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
 export type SettingsObject = Record<string, any>;
 export interface ModelProfile {
@@ -12,9 +13,7 @@ export interface ModelProfile {
   top_k: number | null;
   frequency_penalty: number | null;
   presence_penalty: number | null;
-  prompt_cache_mode: string;
-  prompt_cache_key: string | null;
-  prompt_cache_retention: string;
+  cache: CacheSettings;
   reasoning_format: string;
   capability: string;
   capability_key: string;
@@ -70,7 +69,12 @@ export function difference(before: SettingsObject, after: SettingsObject, prefix
     const path = prefix ? `${prefix}.${key}` : key;
     const value = after[key];
     if (equal(before?.[key], value)) continue;
-    if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      !(prefix.endsWith('cache') && (key === 'value' || key === 'request'))
+    ) {
       Object.assign(result, difference(before?.[key] || {}, value, path));
     } else result[path] = clone(value);
   }

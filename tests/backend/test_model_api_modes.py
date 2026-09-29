@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from tavern.application.api import create_app
@@ -34,50 +34,33 @@ def test_nullable_sampling_and_per_connection_mode():
 
 
 @pytest.mark.parametrize("role,temperature,mode", [
-    ("foreground", 0.3, "default"),
-    ("background", None, "no_write"),
-    ("card_editor", 0.6, "instructions"),
-    ("full_agent", 0.1, "default"),
+    ("foreground", 0.3, "runtime"), ("background", None, "cloud"),
+    ("card_editor", 0.6, "cloud"), ("full_agent", 0.1, "runtime"),
 ])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 async def test_all_roles_send_their_own_model_parameters(role, temperature, mode, api_mode):
-    profiles = {
-        "full_agent": ModelProfile(model="full", temperature=0.1, top_p=0.2, prompt_cache_key="full"),
-        "foreground": ModelProfile(model="writer", temperature=0.3, top_p=0.7,
-                                   prompt_cache_key="writer", prompt_cache_mode="default"),
-        "background": ModelProfile(model="tracker", temperature=None, top_p=0.4,
-                                   prompt_cache_key="tracker", prompt_cache_mode="no_write"),
-        "card_editor": ModelProfile(model="editor", temperature=0.6, top_p=0.9,
-                                    prompt_cache_key="editor", prompt_cache_mode="instructions"),
-    }
-    settings = Settings(providers=[Provider(id="default", api_mode=api_mode, api_key="test",
-                                           use_proxy=False)], **profiles)
-    assert settings.for_role("card_editor").model == "editor"
-    assert Settings(background=profiles["background"]).for_role("card_editor").model == "tracker"
+    profiles = {name: ModelProfile(model=name, temperature=temp, top_p=0.7,
+        cache={"mode": control, "preset": "custom", "field": "prompt_cache_breakpoint",
+               "value": {"mode": "explicit"}, "request": {"prompt_cache_key": name,
+               "prompt_cache_options": {"mode": "explicit"}}})
+        for name, temp, control in [("foreground", 0.3, "runtime"), ("background", None, "cloud"),
+                                   ("card_editor", 0.6, "cloud"), ("full_agent", 0.1, "runtime")]}
+    settings = Settings(providers=[Provider(id="default", api_mode=api_mode, api_key="test", use_proxy=False)], **profiles)
     config = migrate_settings(settings.model_dump()).runtime().for_role(role)
     provider = await make_provider(config)
     try:
-        assert provider.config.model == config.model
+        assert provider.config.model == role
         assert provider.config.temperature == temperature
-        assert provider.user_prompt_cache_key == {"foreground": "writer", "background": "tracker",
-                                                  "card_editor": "editor", "full_agent": "full"}[role]
-        assert provider.prompt_cache_mode == mode
-        if api_mode == "chat_completions":
-            assert provider.extra_body["top_p"] == config.top_p
-            assert (provider.extra_body.get("prompt_cache_options") == {"mode": "explicit"}) is (
-                mode != "default")
-            return
-        request = provider._request([{"role": "system", "content": "stable instructions"},
+        assert provider.settings.cache.mode == mode
+        request = provider._request([{"role": "system", "content": "stable instructions", "_cache_breakpoint": True},
                                      {"role": "user", "content": "hello"}])
-        assert request["model"] == config.model
-        assert request.get("temperature") == temperature
-        assert request["top_p"] == config.top_p
-        assert request["prompt_cache_key"] == provider.user_prompt_cache_key
-        assert (request.get("prompt_cache_options") == {"mode": "explicit"}) is (mode != "default")
-        if mode == "instructions":
-            assert request["input"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert request["model"] == role and request.get("temperature") == temperature
+        assert request["top_p"] == 0.7
+        if mode == "runtime":
+            assert request["prompt_cache_key"] == role
+            assert request["prompt_cache_options"] == {"mode": "explicit"}
         else:
-            assert request["input"][0]["content"] == "stable instructions"
+            assert "prompt_cache_key" not in request and "prompt_cache_options" not in request
     finally:
         await provider.close()
 
@@ -98,7 +81,7 @@ async def test_chat_completions_omits_null_sampling_and_does_not_retry_400():
     provider._client = AsyncOpenAI(api_key="test", max_retries=0,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     try:
-        with pytest.raises(BadRequestError):
+        with pytest.raises(httpx.HTTPStatusError):
             await provider.chat_complete([{"role": "user", "content": "hello"}])
         assert len(requests) == 1
         assert not {"temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"} & requests[0].keys()
@@ -109,8 +92,9 @@ async def test_chat_completions_omits_null_sampling_and_does_not_retry_400():
 async def test_chat_completions_sends_selected_sampling_values():
     provider = await make_provider(Settings(api_key="test", model="fixture", use_proxy=False,
         temperature=0, top_p=0.7, top_k=40, frequency_penalty=-0.5, presence_penalty=0.3,
-        prompt_cache_key="story-prefix", prompt_cache_mode="no_write",
-        prompt_cache_retention="in_memory"))
+        cache={"mode": "runtime", "preset": "custom", "field": "cache_control", "value": {"type": "ephemeral"},
+               "request": {"prompt_cache_key": "story-prefix", "prompt_cache_options": {"mode": "explicit"},
+                           "prompt_cache_retention": "in_memory"}}))
     provider.prompt_cache_key = "runtime-key"
     await provider._client.close()
     requests = []
@@ -124,7 +108,7 @@ async def test_chat_completions_sends_selected_sampling_values():
     provider._client = AsyncOpenAI(api_key="test", max_retries=0,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     try:
-        assert (await provider.chat_complete([{"role": "user", "content": "hello"}])).content == "ok"
+        assert (await provider.chat_complete([{"role": "user", "content": "hello", "_cache_breakpoint": True}])).content == "ok"
         assert {field: requests[0][field] for field in (
             "temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")} == {
             "temperature": 0, "top_p": 0.7, "top_k": 40,
@@ -140,7 +124,9 @@ async def test_responses_text_tools_and_sampling_wire():
     settings = Settings(api_key="test", model="fixture", use_proxy=False, api_mode="responses",
                         temperature=None, top_p=0.9, top_k=20, frequency_penalty=0.2,
                         presence_penalty=0.3, reasoning_effort="high",
-                        prompt_cache_key="tracker-prefix", prompt_cache_mode="no_write")
+                        cache={"mode": "runtime", "preset": "custom", "field": "prompt_cache_breakpoint",
+                               "value": {"mode": "explicit"}, "request": {"prompt_cache_key": "tracker-prefix",
+                               "prompt_cache_options": {"mode": "explicit"}}})
     provider = await make_provider(settings)
     provider.prompt_cache_key = "runtime-key"
     await provider._client.close()
@@ -162,7 +148,7 @@ async def test_responses_text_tools_and_sampling_wire():
     tool = {"type": "function", "function": {"name": "lookup", "description": "Lookup",
             "parameters": {"type": "object", "properties": {}}}}
     try:
-        first = await provider.chat_complete([{"role": "user", "content": "hello"}],
+        first = await provider.chat_complete([{"role": "user", "content": "hello", "_cache_breakpoint": True}],
             extra_body={"tools": [tool], "tool_choice": "auto", "parallel_tool_calls": False})
         assert first.content == ""
         assert [(call.id, call.name) for call in provider.last_tool_calls] == [("call_1", "lookup")]
@@ -173,7 +159,8 @@ async def test_responses_text_tools_and_sampling_wire():
             {"role": "tool", "tool_call_id": "call_1", "content": "result"},
         ])
         assert second.content == "done"
-        assert first.usage == {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+        assert {k: first.usage[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens")} == {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+        assert first.usage["cached_tokens"] is None and first.usage["raw_usage"]["input_tokens"] == 12
         assert requests[0]["store"] is False
         assert "temperature" not in requests[0]
         assert requests[0]["top_p"] == 0.9
@@ -219,9 +206,10 @@ async def test_responses_stream_emits_text():
 
 async def test_responses_legacy_cache_retention_wire():
     provider = await make_provider(Settings(api_key="test", model="fixture", use_proxy=False,
-        api_mode="responses", prompt_cache_retention="24h"))
+        api_mode="responses", cache={"mode": "runtime", "preset": "custom", "field": "cache_control",
+                                    "request": {"prompt_cache_retention": "24h"}}))
     try:
-        request = provider._request([{"role": "user", "content": "hello"}])
+        request = provider._request([{"role": "user", "content": "hello", "_cache_breakpoint": True}])
         assert request["prompt_cache_retention"] == "24h"
         assert "prompt_cache_options" not in request
     finally:
@@ -231,7 +219,9 @@ async def test_responses_legacy_cache_retention_wire():
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 async def test_instruction_breakpoint_marks_only_leading_prefix(api_mode):
     provider = await make_provider(Settings(api_key="test", model="fixture", use_proxy=False,
-        api_mode=api_mode, temperature=None, prompt_cache_mode="instructions"))
+        api_mode=api_mode, temperature=None, cache={"mode": "runtime", "preset": "custom",
+            "field": "prompt_cache_breakpoint", "value": {"mode": "explicit"},
+            "request": {"prompt_cache_options": {"mode": "explicit"}}}))
     await provider._client.close()
     captured = []
 
@@ -248,7 +238,7 @@ async def test_instruction_breakpoint_marks_only_leading_prefix(api_mode):
     provider._client = AsyncOpenAI(api_key="test", max_retries=0,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     messages = [{"role": "system", "content": "rules"},
-                {"role": "developer", "content": "stable character"},
+                {"role": "developer", "content": "stable character", "_cache_breakpoint": True},
                 {"role": "user", "content": "changing scene"}]
     try:
         assert (await provider.chat_complete(messages)).content == "ok"
@@ -295,14 +285,13 @@ async def test_api_saves_null_sampling_and_connection_mode(tmp_path):
         assert result.status_code == 200, result.text
         changes = {f"foreground.{field}": None for field in
                    ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")}
-        changes.update({"background.prompt_cache_mode": "no_write", "background.prompt_cache_key": "tracker",
-                        "background.prompt_cache_retention": "24h"})
+        changes.update({"background.cache.mode": "cloud", "background.cache.request": {
+            "prompt_cache_key": "tracker", "prompt_cache_retention": "24h"}})
         result = await client.patch("/api/settings/half_agent", json={"expected_revision": result.json()["revisions"]["half_agent"], "changes": changes})
         assert result.status_code == 200, result.text
         saved = result.json()
         assert saved["shared"]["providers"][0]["api_mode"] == "responses"
         assert all(saved["half_agent"]["foreground"][field] is None for field in
                    ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"))
-        assert saved["half_agent"]["background"]["prompt_cache_mode"] == "no_write"
-        assert saved["half_agent"]["background"]["prompt_cache_key"] == "tracker"
-        assert saved["half_agent"]["background"]["prompt_cache_retention"] == "24h"
+        assert saved["half_agent"]["background"]["cache"]["mode"] == "cloud"
+        assert saved["half_agent"]["background"]["cache"]["request"] == {"prompt_cache_key": "tracker", "prompt_cache_retention": "24h"}

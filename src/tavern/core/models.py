@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
+from tavern.core.cache_policy import CacheSettings, runtime_cache
 from tavern.core.prompts import (
     DEFAULT_MAINTENANCE_PROMPT,
     DEFAULT_MEMORY_PROMPT,
@@ -77,7 +78,7 @@ class Settings(BaseModel):
     runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
-    foreground: ModelProfile = Field(default_factory=ModelProfile)
+    foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor: ModelProfile | None = None
     full_agent: ModelProfile | None = None
@@ -96,6 +97,7 @@ class Settings(BaseModel):
             return self.model_copy(deep=True)
         provider = next(p for p in self.providers if p.id == profile.provider_id)
         return self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
+            "cache": profile.cache.model_copy(deep=True),
             "base_url": provider.base_url, "api_key": provider.api_key,
             "api_mode": provider.api_mode,
             "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
@@ -118,7 +120,10 @@ class Settings(BaseModel):
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     proxy: str = ""
     use_proxy: bool = True
-    api_mode: Literal["chat_completions", "responses"] = "chat_completions"
+    api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    cache_scope: str = ""
+    cache_window: str = ""
     temperature: float | None = Field(default=0.8, ge=0, le=2)
     top_p: float | None = Field(default=None, ge=0, le=1)
     top_k: int | None = Field(default=None, ge=0)

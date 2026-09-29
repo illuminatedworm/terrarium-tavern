@@ -185,12 +185,33 @@ const memoryProgress = computed(() => {
 const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } | null>(null);
 const cacheBreakpointBusy = ref(false);
 const writerResponseCache = computed(() => {
-  if (isFullAgent.value) return false;
-  const profile = settings.value?.half_agent?.foreground;
-  const provider = settings.value?.shared?.providers?.find((item: any) => item.id === profile?.provider_id);
-  return !!session.value && provider?.api_mode === 'responses' && profile?.prompt_cache_mode !== 'no_write';
+  const profile = isFullAgent.value
+    ? settings.value?.full_agent?.model
+    : settings.value?.half_agent?.foreground;
+  return !!session.value && profile?.cache?.mode === 'runtime';
 });
-const cacheBreakpointId = computed(() => session.value?.cache_breakpoint_effective_id || null);
+const cacheRequestState = computed(
+  () =>
+    [...trace.value]
+      .reverse()
+      .find(
+        (event: any) =>
+          event.kind === 'provider_request' &&
+          event.payload?.cache &&
+          ['full_agent', 'narrative'].includes(event.payload.purpose),
+      )?.payload.cache,
+);
+const cacheBreakpointId = computed(() => {
+  const planned = contextStats.value?.cache;
+  return planned?.scope === session.value?.id && planned?.revision === session.value?.revision
+    ? planned.message_id || null
+    : session.value?.cache_breakpoint_effective_id || null;
+});
+const sentCacheLabel = computed(() => {
+  const cache = cacheRequestState.value;
+  const at = session.value?.messages.findIndex((m: any) => m.id === cache?.message_id) ?? -1;
+  return at >= 0 ? `历史 H${at + 1}` : contextLabel(cache?.source || '固定前缀');
+});
 const sceneSubmitting = ref<'memory' | null>(null);
 const storyView = ref<'dialogue' | 'work'>('dialogue');
 const sceneUpdating = computed(
@@ -1713,6 +1734,17 @@ useTimedError(error);
           @wheel.passive="pauseFollow"
         >
           <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
+          <p v-if="writerResponseCache" class="muted" role="status">
+            {{
+              cacheRequestState?.status === 'fallback'
+                ? '已降级云端：' + cacheRequestState.reason
+                : cacheRequestState?.status === 'sent'
+                  ? `上次请求断点：${sentCacheLabel}（已发送，不代表已命中）`
+                  : session.cache_breakpoint_auto
+                    ? '计划断点：两轮已完成对话之前；不足三轮时使用固定前缀'
+                    : '计划断点：手动固定位置'
+            }}
+          </p>
           <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
             <button
               class="cache-breakpoint-dot"
@@ -1729,7 +1761,7 @@ useTimedError(error);
               @click="toggleCacheBreakpointFollow"
             />
             <span
-              >缓存断点：常驻世界书末尾（无常驻条目时为角色设定） ·
+              >计划断点：常驻世界书／角色设定／固定前缀 ·
               {{ session.cache_breakpoint_auto ? '自动跟进' : '已固定' }}</span
             >
           </div>

@@ -136,15 +136,26 @@ def create_app(data_dir=None):
         proxy = (config.network.proxy or None) if config.network.api_proxy and provider.use_proxy else None
         try:
             async with httpx.AsyncClient(proxy=proxy, trust_env=False, timeout=30) as client:
-                response = await client.get(provider.base_url.rstrip("/") + "/models",
-                                            headers={"Authorization": f"Bearer {key}"} if key else {})
+                from tavern.core.cache_policy import endpoint
+                if provider.api_mode == "gemini":
+                    url = endpoint(provider.base_url, "gemini", resource="models")
+                    headers = {"x-goog-api-key": key} if key else {}
+                else:
+                    url = endpoint(provider.base_url, provider.api_mode)
+                    suffix = {"chat_completions": "/chat/completions", "responses": "/responses",
+                              "anthropic": "/messages"}[provider.api_mode]
+                    url = url[:-len(suffix)] + "/models"
+                    headers = ({"x-api-key": key, "anthropic-version": "2023-06-01"}
+                               if provider.api_mode == "anthropic" else {"Authorization": f"Bearer {key}"}) if key else {}
+                response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 payload = response.json()
-                data = payload.get("data") if isinstance(payload, dict) else None
+                data = payload.get("models" if provider.api_mode == "gemini" else "data") if isinstance(payload, dict) else None
                 if not isinstance(data, list):
                     raise ValueError("模型接口未返回 data 列表")
-                return {"models": sorted({m["id"] for m in data
-                                          if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"]})}
+                field = "name" if provider.api_mode == "gemini" else "id"
+                return {"models": sorted({m[field].removeprefix("models/") for m in data
+                                          if isinstance(m, dict) and isinstance(m.get(field), str) and m[field]})}
         except httpx.HTTPStatusError as error:
             raise ValueError(f"获取模型列表失败：HTTP {error.response.status_code}") from None
         except httpx.RequestError:
@@ -211,6 +222,8 @@ def create_app(data_dir=None):
         saved_config = store.settings()
         config = saved_config.for_role(role)
         captured = []
+        from tavern.scripting.cloud_cache import reset_capability
+        reset_capability(config, config.api_key or os.environ.get("TAVERN_API_KEY", ""))
         provider = await make_provider(config, captured.append)
         try:
             result = await provider.chat_complete(
@@ -225,11 +238,12 @@ def create_app(data_dir=None):
                     {"role": "user", "content": "State the current scene marker."},
                 ]
             )
-            preserved = bool(captured and captured[-1]["messages"][3]["role"] == "system")
+            preserved = bool(captured and (config.api_mode in ("anthropic", "gemini") or
+                             captured[-1]["messages"][3]["role"] == "system"))
             config.capability = (
                 "accepted" if preserved and "TAVERN_MID_42" in result.content else "unsupported"
             )
-            mode_key = "chat-completions" if config.api_mode == "chat_completions" else "responses"
+            mode_key = config.api_mode.replace("_", "-")
             config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|{mode_key}"
             from tavern.application.settings_api import save_probe
             save_probe(store, role, config, saved_config)
@@ -494,6 +508,8 @@ def create_app(data_dir=None):
             document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
             read_only=True,
         )
+        from tavern.conversation.cache_breakpoint import prepare_context
+        prepare_context(result, s, s["messages"], s["snapshot"], store.settings().for_role("foreground"))
         return result, s
 
     @app.post("/api/sessions/{sid}/preview")

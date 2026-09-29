@@ -3,6 +3,7 @@ import copy
 import json
 
 from tavern.character.cards import lore_entries, normalize
+from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import character_content, macros, wrap_lorebook
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.state import full_state
@@ -125,7 +126,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             tokens = updated
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
-    return {"messages": messages, "trace": [{**m, "position": i, "estimated_tokens": message_tokens(m, settings)}
+    result = {"messages": messages, "trace": [{**m, "position": i, "estimated_tokens": message_tokens(m, settings)}
                                             for i, m in enumerate(items)],
             "estimated_tokens": tokens, "tokens": tokens, "available_tokens": available,
             "rollover_required": rollover_required, "context_limit": settings.context_tokens,
@@ -136,3 +137,4 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                                   for source in dict.fromkeys(m["source"] for m in items)},
                                "tool_definitions": request_tokens([], settings, tools) - 3},
             "next_lore_injections": copy.deepcopy(snapshot.get("lore_injections", []))}
+    return prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

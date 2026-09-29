@@ -473,6 +473,7 @@ def compile_context(
                     block.priority,
                     block.required or (block.source == "memory" and bool(protected_memory)),
                     lore_ids=source_lore_ids.get(block.source, []),
+                    context_source=block.source,
                     **({"message_id": input_message_id} if block.source == "input" else {}),
                 )
     for e in positioned:

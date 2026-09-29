@@ -148,16 +148,63 @@ async def main():
                     # Page search opens folded fields and focuses the control.
                     await page.get_by_role('searchbox', name='搜索设置').fill('提示缓存')
                     await page.locator('.settings-search-results').get_by_role('button').filter(has_text='full agent').click()
-                    await expect(page.get_by_role('combobox', name='缓存方式', exact=True)).to_be_focused()
+                    await expect(page.get_by_role('combobox', name='缓存控制', exact=True)).to_be_focused()
+                    # Cache JSON is atomic, invalid drafts are visible and guarded.
+                    control = page.get_by_role('combobox', name='缓存控制', exact=True)
+                    await expect(control).to_have_value('runtime')
+                    await page.get_by_label('参数格式', exact=True).select_option('custom')
+                    await saved()
+                    await page.get_by_label('断点字段名', exact=True).fill('custom_cache')
+                    await page.get_by_label('断点 JSON 值', exact=True).fill('{"enabled": true}')
+                    request_json = page.get_by_label('附加请求参数（JSON，可留 {}）', exact=True)
+                    await request_json.fill('{"prompt_cache_options":{"mode":"explicit"}}')
+                    await saved()
+                    current = await read()
+                    assert current['full_agent']['model']['cache']['value'] == {'enabled': True}
+                    assert current['full_agent']['model']['cache']['request'] == {'prompt_cache_options': {'mode': 'explicit'}}
+                    await request_json.fill('{')
+                    await expect(request_json).to_have_attribute('aria-invalid', 'true')
+                    await expect(page.locator('.settings-save-status')).to_contain_text('有参数格式错误')
+                    await select('half agent 模型与生成')
+                    await expect(page.get_by_role('alertdialog')).to_be_visible()
+                    await page.get_by_role('button', name='继续编辑', exact=True).click()
+                    await request_json.fill('{}')
+                    await saved()
+                    assert (await read())['full_agent']['model']['cache']['request'] == {}
+                    await page.screenshot(path=str(output/'cache-custom-desktop.png'))
+                    await page.get_by_label('参数格式', exact=True).select_option('auto')
+                    await saved()
+                    original_model = (await read())['full_agent']['model']['model']
+                    for protocol in ('chat_completions', 'responses', 'anthropic', 'gemini'):
+                        await select('通用 提供商')
+                        await page.get_by_label('接口方式', exact=True).first.select_option(protocol)
+                        await saved()
+                        assert (await read())['shared']['providers'][0]['api_mode'] == protocol
+                        await select('full agent 模型与生成')
+                        await page.get_by_label('模型名称', exact=True).fill('gemini-3.8-flash-high' if protocol == 'gemini' else 'claude-opus-4-6' if protocol == 'anthropic' else 'gpt-5.6-sol')
+                        await saved()
+                        await page.locator('.settings-advanced summary').click()
+                        if protocol == 'gemini':
+                            await expect(page.get_by_text('由运行时创建和引用 Gemini 缓存对象', exact=False)).to_be_visible()
+                        await expect(page.get_by_role('combobox', name='缓存控制', exact=True)).to_have_value('runtime')
+                    await select('通用 提供商')
+                    await page.get_by_label('接口方式', exact=True).first.select_option('chat_completions')
+                    await saved()
+                    await select('full agent 模型与生成')
+                    await page.get_by_label('模型名称', exact=True).fill(original_model)
+                    await saved()
                     # Recipe metadata auto-saves; custom text commits independently.
                     await select('half agent 上下文编排')
                     await page.get_by_role('button',name='添加内容块',exact=True).click()
                     await saved()
+                    # The backend normalizes dynamic blocks to the end; select by
+                    # identity/label rather than the pre-normalization array index.
+                    await page.get_by_role('button').filter(has_text='· 自定义文本').last.click()
                     await page.get_by_role('textbox',name='自定义内容',exact=True).fill('独立保存编排文本')
-                    assert (await read())['half_agent']['context_recipe']['blocks'][-1]['content'] == ''
+                    assert next(b for b in (await read())['half_agent']['context_recipe']['blocks'] if b['source'] == 'custom')['content'] == ''
                     await page.get_by_role('button',name='保存此文本：自定义内容',exact=True).click()
                     await expect(page.get_by_role('button',name='保存此文本：自定义内容',exact=True)).to_have_count(0)
-                    assert (await read())['half_agent']['context_recipe']['blocks'][-1]['content'] == '独立保存编排文本'
+                    assert next(b for b in (await read())['half_agent']['context_recipe']['blocks'] if b['source'] == 'custom')['content'] == '独立保存编排文本'
                     await page.get_by_role('button',name='撤回本页修改',exact=True).click()
                     await saved()
                     assert (await read())['half_agent']['context_recipe'] == before['half_agent']['context_recipe']
@@ -186,6 +233,10 @@ async def main():
                     assert not errors, errors
                     (output/'after-dimensions.json').write_text(json.dumps(dimensions,ensure_ascii=False,indent=2),encoding='utf-8')
                     print('Settings isolation, in-flight edits, explicit text saves, close guards, undo, search and five viewports passed.')
+                except Exception:
+                    await page.screenshot(path=str(output/'failure.png'), full_page=True)
+                    (output/'failure-aria.txt').write_text(await page.locator('body').aria_snapshot(), encoding='utf-8')
+                    raise
                 finally:
                     await browser.close()
         finally:

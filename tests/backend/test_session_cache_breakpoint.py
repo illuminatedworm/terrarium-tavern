@@ -118,7 +118,7 @@ async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story
     settings.providers[0].api_mode = "responses"
     settings.providers[0].api_key = "test"
     settings.network.api_proxy = False
-    settings.foreground.model = "fixture"
+    settings.foreground.model = "gpt-fixture"
     settings.memory_interval_turns = 100
     store.save_settings(settings)
     provider = await make_provider(settings.for_role("foreground"))

@@ -27,9 +27,11 @@ function add() {
       <label>名称<input v-model="provider.name" /></label>
       <label>接口地址<input v-model="provider.base_url" placeholder="https://…/v1" /></label>
       <label
-        >接口方式<select v-model="provider.api_mode">
+        >接口方式<select v-model="provider.api_mode" aria-label="接口方式">
           <option value="chat_completions">Chat Completions</option>
           <option value="responses">Responses</option>
+          <option value="anthropic">Anthropic Messages</option>
+          <option value="gemini">Gemini GenerateContent</option>
         </select></label
       >
       <label

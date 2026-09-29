@@ -47,6 +47,13 @@ class Store:
                         db.backup(backup_db)
                 elif raw.get("version") != 2:
                     raise ValueError("设置版本与数据库版本不一致")
+                elif any("cache" not in raw.get(scope, {}).get(key, {}) for scope, key in
+                         (("full_agent", "model"), ("half_agent", "foreground"),
+                          ("half_agent", "background"), ("shared", "card_editor"))):
+                    backup_path = root / f"settings-before-cache-{uuid.uuid4().hex[:12]}.sqlite3"
+                    with closing(sqlite3.connect(backup_path)) as backup_db:
+                        db.backup(backup_db)
+                    migrated = validated_settings
         (root / "blobs").mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript("""
@@ -509,7 +516,8 @@ class Store:
         result["policy_effective"] = result["policy"] or settings.policy
         result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
         from tavern.conversation.cache_breakpoint import effective_message_id
-        result["cache_breakpoint_effective_id"] = effective_message_id(result, settings.for_role("foreground"))
+        result["cache_breakpoint_effective_id"] = effective_message_id(
+            result, settings.for_role("full_agent" if result["agent_mode"] == "full_agent" else "foreground"))
         from tavern.memories.memory_records import read_memory, with_source_status
         result["memory_view"] = with_source_status(read_memory(result["snapshot"]), result["messages"])
         return result

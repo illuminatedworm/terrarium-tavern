@@ -3,6 +3,8 @@ import { computed, ref } from 'vue';
 import { api } from '../../lib/api';
 import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
+import CacheSettingsEditor from './CacheSettingsEditor.vue';
+import { modelEndpoint } from '../../lib/cachePolicy';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
@@ -15,6 +17,7 @@ const emit = defineEmits<{ checked: [] }>();
 const models = ref<string[]>([]);
 const busy = ref(false);
 const feedback = ref('');
+const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const errorPrefix = computed(() =>
   props.role === 'full_agent'
@@ -36,8 +39,10 @@ const common = computed<SettingField[]>(() => [
 ]);
 const advanced = computed<SettingField[]>(() => [
   ...(provider.value?.api_mode !== 'responses'
+    ? [{ path: 'top_k', label: '候选数 top_k', optional: true, min: 0 }]
+    : []),
+  ...(!provider.value || provider.value.api_mode === 'chat_completions'
     ? [
-        { path: 'top_k', label: '候选数 top_k', optional: true, min: 0 },
         { path: 'frequency_penalty', label: '频率惩罚', optional: true, min: -2, max: 2, step: 'any' },
         { path: 'presence_penalty', label: '重复惩罚', optional: true, min: -2, max: 2, step: 'any' },
         {
@@ -59,28 +64,13 @@ const advanced = computed<SettingField[]>(() => [
       { value: 'cl100k_base', label: 'cl100k_base' },
     ],
   },
-  {
-    path: 'prompt_cache_mode',
-    label: '缓存方式',
-    options: [
-      { value: 'default', label: '接口默认' },
-      { value: 'no_write', label: '关闭缓存读写' },
-      { value: 'instructions', label: '开头指令末尾放断点' },
-    ],
-  },
-  { path: 'prompt_cache_key', label: '缓存键（可留空）', type: 'text' },
-  {
-    path: 'prompt_cache_retention',
-    label: '旧模型缓存保留时长',
-    options: [
-      { value: 'default', label: '接口默认' },
-      { value: 'in_memory', label: '内存保留' },
-      { value: '24h', label: '24 小时' },
-    ],
-  },
 ]);
 async function action(check: boolean) {
   if (busy.value) return;
+  if (!cacheValid.value) {
+    feedback.value = '请先修正缓存参数 JSON。';
+    return;
+  }
   busy.value = true;
   feedback.value = '';
   try {
@@ -89,8 +79,8 @@ async function action(check: boolean) {
       const result = await api(`/settings/probe?role=${props.role}`, {});
       feedback.value =
         result.capability === 'accepted'
-          ? '连接检查通过，支持中途系统消息。'
-          : '连接成功，但未通过中途系统消息检查。';
+          ? '连接检查通过，测试上下文已传达。'
+          : '连接成功，但未通过测试上下文检查。';
       emit('checked');
     } else {
       models.value = (await api('/settings/models', provider.value)).models;
@@ -124,6 +114,9 @@ async function action(check: boolean) {
       </div>
     </div>
     <p v-if="feedback" role="status" class="inline-feedback">{{ feedback }}</p>
+    <p v-if="provider" class="muted">
+      请求地址：{{ modelEndpoint(provider.base_url, provider.api_mode, profile.model) }}
+    </p>
     <h4>常用参数</h4>
     <SettingsFields :value="profile" :fields="common" :error-prefix="errorPrefix"
       ><slot name="common-extra"
@@ -131,6 +124,13 @@ async function action(check: boolean) {
     <details class="settings-advanced">
       <summary>更多参数：采样细项、分词器与提示缓存</summary>
       <SettingsFields :value="profile" :fields="advanced" :error-prefix="errorPrefix" />
+      <CacheSettingsEditor
+        v-if="profile.cache"
+        :cache="profile.cache"
+        :model="profile.model"
+        :api="provider?.api_mode || 'chat_completions'"
+        @validity="cacheValid = $event"
+      />
       <p class="muted">
         采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
       </p>

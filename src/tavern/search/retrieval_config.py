@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from tavern.core.cache_policy import CacheSettings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
     DEFAULT_QUERY_PROMPT,
@@ -17,13 +18,16 @@ class Provider(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     use_proxy: bool = True
-    api_mode: Literal["chat_completions", "responses"] = "chat_completions"
+    api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
 
     @model_validator(mode="after")
     def valid_url(self):
         from urllib.parse import urlparse
-        if urlparse(self.base_url).scheme not in ("http", "https"):
+        parsed = urlparse(self.base_url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("模型地址必须为 HTTP(S)")
+        if parsed.query or parsed.fragment or parsed.username or parsed.password:
+            raise ValueError("接口地址不能包含查询参数、片段或登录凭据")
         return self
 
 
@@ -38,9 +42,11 @@ class ModelProfile(BaseModel):
     top_k: int | None = Field(None, ge=0)
     frequency_penalty: float | None = Field(None, ge=-2, le=2)
     presence_penalty: float | None = Field(None, ge=-2, le=2)
-    prompt_cache_key: str | None = Field(None, max_length=256)
-    prompt_cache_mode: Literal["default", "no_write", "instructions"] = "default"
-    prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    # Accepted only for importing old profiles; new saved documents use cache.
+    prompt_cache_key: str | None = Field(None, max_length=256, exclude=True)
+    prompt_cache_mode: Literal["default", "no_write", "instructions"] = Field("default", exclude=True)
+    prompt_cache_retention: Literal["default", "in_memory", "24h"] = Field("default", exclude=True)
     reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh"] = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"

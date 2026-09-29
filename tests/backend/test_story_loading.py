@@ -17,7 +17,7 @@ async def test_slow_preview_does_not_block_other_requests(tmp_path, monkeypatch)
     def slow_compile(*args, **kwargs):
         started.set()
         assert release.wait(5), 'Preview blocked the event loop'
-        return {'tokens': 123}
+        return {'tokens': 123, 'messages': [], 'trace': []}
 
     monkeypatch.setattr('tavern.application.api.compile_context', slow_compile)
     try:
