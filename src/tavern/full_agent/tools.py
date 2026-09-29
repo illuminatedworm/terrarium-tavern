@@ -58,14 +58,11 @@ class StateRead(Arguments):
 
 
 CHECKPOINT_GUIDANCE = (
-    "Build cumulatively on the complete existing checkpoint in <tavern_memory>. "
-    "content replaces the checkpoint in full. Preserve valid scene details, relationships, player creative constraints, "
-    "important experiences, unresolved issues, narrative tone, and useful H references and note keys. "
-    "Label future directions as pending. The checkpoint is included in <tavern_memory> in each window. "
-    "If stale, verify edited source text before revising. Changes remain in the turn draft until the final narrative commits, "
-    "subject to approval in review mode. "
+    "content replaces the entire checkpoint. Build on <tavern_memory>; preserve valid scene context, "
+    "relationships, player constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
+    "Mark plans as pending and verify stale sources. Draft changes commit with the turn; review mode requires approval."
 )
-REFERENCE_GUIDANCE = "H/L references are internal navigation handles, separate from story prose."
+REFERENCE_GUIDANCE = "H/L references are navigation handles, not story prose."
 RESULT_FIELDS = {
     "search_lore": {"include_ref": False, "include_title": False},
     "read_lore": {"include_metadata": True},
@@ -83,51 +80,47 @@ def result_field(session, tool, field):
 
 
 SPECS = {
-    "search_lore": (Query, "Search the lorebook using the same retrieval engine, indexes, and admission rules as runtime auto-retrieval. "
-        "Results depend on entry enablement, timeline, secondary-key conditions, probability and cooldown, "
-        "relevance thresholds and entry-count limits. Selected entries are returned complete. "
-        "Write a concise query with full entity names, places, and the specific information needed, "
-        "using keywords or natural language in the lorebook's language. Previous-turn retrieval clues are not appended. "
-        "Returns entry text wrapped in <lorebook>. User-selected result fields may also include L references, "
-        "titles, and already_in_context references for entries retained by auto-retrieval."),
-    "read_lore": (Read, "Read a complete enabled lorebook entry by its L reference, wrapped in <lorebook>. " + REFERENCE_GUIDANCE),
-    "search_history": (Search, "Search original dialogue in this branch, returning H references and optional previews. "
-        "query=* lists recent records. Use read_history to verify facts and note sources against original text."),
-    "read_history": (Read, "Read complete original dialogue by H reference. The current player input also has an H reference. "
-        + REFERENCE_GUIDANCE),
-    "write_checkpoint": (Checkpoint, "Update the checkpoint while keeping the current window. " + CHECKPOINT_GUIDANCE),
-    "new_context": (NewContext, "Save a checkpoint and switch the working window. " + CHECKPOINT_GUIDANCE
-        + "Call this tool alone. The current player input is always retained; keep_recent counts recent dialogue messages, "
-        "with boundaries expanded to preserve complete exchanges. Old tool exchanges leave the active window and remain searchable. "
-        "Include needed results or references in the checkpoint. Switch windows when useful; budget warnings guide timing. "
-        "During forced rollover, only this tool is accepted. The runtime does not summarize or silently trim history. "
-        "Continue the current turn after switching; the model-call budget does not reset."),
-    "search_notes": (Search, "Search active long-term notes in this branch by text and meaningful key; query=* lists notes. "
-        "Notes are retrieved on demand rather than automatically injected. Use read_note for full text, kind, sources, and stale status."),
-    "read_note": (Read, "Read an active or archived note by key, including its kind, sources, and stale warning by default. "
-        "stale means source text changed or became unavailable; verify the H source before relying on it. " + REFERENCE_GUIDANCE),
-    "write_note": (Note, "Create or fully replace a long-term note under a meaningful key. Notes are retrieved on demand. "
-        "Before replacing an existing key, including an archived note, read its complete current version using read_note in this turn and window. "
-        "Then revise cumulatively while preserving valid information and important experiences. "
-        "kind=fact requires H sources actually searched or read this turn; verify that they support the content. "
-        "hypothesis records uncertainty; plan records intent. Attribute character claims and preserve their unverified status. "
-        "Writing the same key replaces its text and reactivates it if archived. Respect revoked information. "
-        "Changes remain in the turn draft until the final narrative commits, subject to approval in review mode."),
-    "archive_note": (NoteKey, "Archive an outdated or completed note, excluding it from normal searches while keeping it readable by key. "
-        "History and older branches are preserved. Changes commit with the successful turn, subject to approval in review mode."),
-    "read_state": (StateRead, "Read current story state, excluding internal runtime ledgers. Use an empty path for the whole state or a dot-separated field path. "
-        "Check relevant values and structure before updating."),
-    "patch_state": (Patch, "Call exactly once for this turn only when a system message for the current turn requires an MVU update. "
-        "Apply JSON Patch operations to story fields inside stat_data, validated by MVU. "
-        "Paths are JSON Pointers relative to the story-state root; reason gives story evidence. Read current values first and align changes with the final narrative. "
-        "Changes commit with the successful turn, subject to approval in review mode; use this tool rather than MVU blocks in story prose."),
-    "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, leaving the library card intact. "
-        "Use read_character to verify fields and structure first. Follow turn authorization and review policy; reason explains the change. "
-        "Changes commit with the successful turn, subject to approval in review mode."),
-    "read_character": (Read, "Read the reversible character view for inspection and editing. ref is a top-level field such as "
-        "description, personality, scenario, character_book, or extensions. Reads return the complete field."),
-    "set_retrieval_query": (Query, "Save concise clues for next-turn automatic lorebook retrieval: current scene, relevant entities, and unresolved issues. "
-        "Use full entity names and distinguish anticipated events from facts. Clues commit with the successful turn and remain outside story prose and context."),
+    "search_lore": (Query, "Search the lorebook. "
+        "Use a concise, self-contained query in the lorebook's language to describe what you're looking for. "
+        "Entry conditions, cooldowns, relevance thresholds, and limits may filter matches. "
+        "Returns complete selected entries in <lorebook>; auto-injected entries already in context are omitted. "
+        "Optional result fields may include L references and titles."),
+    "read_lore": (Read, "Read a complete enabled lorebook entry by L reference in <lorebook>. " + REFERENCE_GUIDANCE),
+    "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
+        "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
+    "read_history": (Read, "Read original dialogue by H reference, including the current player input. " + REFERENCE_GUIDANCE),
+    "write_checkpoint": (Checkpoint, "Update the checkpoint in the current window. " + CHECKPOINT_GUIDANCE),
+    "new_context": (NewContext, "Save a checkpoint and switch windows. " + CHECKPOINT_GUIDANCE
+        + " Call this tool alone. The current player input stays; keep_recent counts dialogue messages, "
+        "expanded to complete exchanges. Old tool exchanges leave the window, so include needed results or references "
+        "in the checkpoint. Forced rollover accepts only this tool. Continue the turn after switching; "
+        "the model-call budget does not reset."),
+    "search_notes": (Search, "Search active notes in this branch by literal text terms in content or keys. "
+        "Use short text fragments; query=* lists notes. Notes are not automatically injected. "
+        "Use read_note for full text and optional source metadata."),
+    "read_note": (Read, "Read an active or archived note by key, with optional kind, H sources, and stale status. "
+        "Stale means sources changed or became unavailable; verify them before relying on the note."),
+    "write_note": (Note, "Create or fully replace a note by key. Before replacing any existing or archived note, "
+        "read its complete current version with read_note in this turn and window; preserve still-valid information. "
+        "kind=fact requires supporting H sources searched or read this turn. hypothesis marks uncertainty; plan marks intent. "
+        "Attribute character claims and preserve uncertainty where evidence is insufficient. Respect revoked information. "
+        "Replacing an archived key reactivates it. Draft changes commit with the turn; review mode requires approval."),
+    "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
+        "History and older branches remain. Draft changes commit with the turn; review mode requires approval."),
+    "read_state": (StateRead, "Read story state, excluding runtime ledgers. An empty path reads all state; "
+        "a dot-separated path reads one field. Check values and structure before updating."),
+    "patch_state": (Patch, "Call exactly once only when this turn's system message requires an MVU update. "
+        "Apply MVU-validated JSON Patch relative to stat_data; omit the /stat_data prefix from paths. "
+        "Read current values first; give story evidence in reason and align changes with the final narrative. "
+        "Use this tool instead of MVU blocks in prose. Draft changes commit with the turn; review mode requires approval."),
+    "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, not the library card. "
+        "Read fields with read_character first; follow turn authorization and give a reason. "
+        "Draft changes commit with the turn; review mode requires approval."),
+    "read_character": (Read, "Read a complete top-level character field, such as description, personality, "
+        "scenario, character_book, or extensions, for inspection or editing."),
+    "set_retrieval_query": (Query, "Save concise next-turn automatic lorebook retrieval clues about the scene, "
+        "relevant entities, or unresolved issues. Distinguish anticipated events from facts. "
+        "Clues commit with the final narrative and stay outside story prose."),
 }
 
 
@@ -145,16 +138,16 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     }
     if settings is not None:
         mechanisms = {
-            "keyword": "Keyword matching applies each entry's configured keywords or regular expressions to the query text, respecting case, whole-word, and secondary-key conditions",
-            "bm25": "BM25 tokenizes the query and entry titles, keywords, and body text, then performs lexical retrieval using term frequency, term rarity, length normalization, and character bigrams",
-            "embedding": "Semantic vector search encodes the query and entry body fragments as embeddings and retrieves semantically related content by semantic similarity",
+            "keyword": "keyword",
+            "bm25": "BM25",
+            "embedding": "semantic",
         }
         channels = list(dict.fromkeys(settings.retrieval.channels))
-        mechanism = " Currently enabled retrieval mechanisms: " + ". ".join(mechanisms[c] for c in channels) + "."
-        if len(channels) > 1:
-            mechanism += " Multiple recall channels are combined using weighted reciprocal rank fusion (RRF)."
+        labels = [mechanisms[c] for c in channels]
+        channel_names = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+        mechanism = " Uses " + channel_names + " recall."
         if settings.local_models.reranker_enabled:
-            mechanism += " Finally, the reranker scores query-candidate relevance, reorders candidates, and filters them by the relevance threshold."
+            mechanism += " Reranking orders and filters candidates by relevance."
         limits["search_lore"] = mechanism
     return [{"type": "function", "function": {"name": name, "description": description + limits.get(name, ""),
              "parameters": model.model_json_schema()}} for name, (model, description) in SPECS.items() if name in names]

@@ -37,6 +37,8 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             catalog = (await client.get(url)).json()["tools"]
+            preview_url = f"/api/sessions/{session['id']}/preview"
+            original_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
             assert {t["name"] for t in catalog} == set(SPECS)
             for tool in catalog:
                 assert tool["enabled"]
@@ -77,6 +79,8 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
             session = response.json()
             assert session["disabled_tools"] == []
+            restored_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
+            assert json.dumps(restored_tools, ensure_ascii=False) == json.dumps(original_tools, ensure_ascii=False)
             tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="pending", expected_revision=session["revision"]))
             assert (await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})).status_code == 409
             store.set_turn(tid, status="cancelled")

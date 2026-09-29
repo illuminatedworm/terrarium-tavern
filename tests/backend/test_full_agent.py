@@ -681,10 +681,10 @@ def test_lore_tool_description_matches_enabled_retrieval(story, channels, rerank
     definitions = tool_definitions(TurnRequest(operation_id="description", expected_revision=0),
                                    session, settings.full_agent_config, settings=settings)
     description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "search_lore")
-    for channel, marker in (("keyword", "regular expressions"), ("bm25", "BM25"), ("embedding", "semantic similarity")):
+    for channel, marker in (("keyword", "keyword"), ("bm25", "BM25"), ("embedding", "semantic")):
         assert (marker in description) == (channel in channels)
-    assert ("Finally, the reranker" in description) == rerank
-    assert ("RRF" in description) == (len(channels) > 1)
+    assert ("Reranking orders" in description) == rerank
+    assert "Previous-turn retrieval clues" not in description
 
 
 async def test_empty_note_and_history_search_results_are_minimal(story):
@@ -832,7 +832,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call this tool alone" in definitions["new_context"]["description"]
         assert "offset" not in definitions["read_history"]["parameters"]["properties"]
-        assert "rather than automatically injected" in definitions["search_notes"]["description"]
+        assert "not automatically injected" in definitions["search_notes"]["description"]
     finally:
         await service.close()
 
