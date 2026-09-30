@@ -24,6 +24,7 @@ from tavern.scripting.protocols import (
     response_input,
     response_tools,
 )
+from tavern.scripting.reasoning import anthropic_thinking, gemini_effort, gemini_thinking
 
 
 class ModelTransport(BaseLLMProvider):
@@ -101,8 +102,9 @@ class ModelTransport(BaseLLMProvider):
                 if getattr(cfg, field) is not None:
                     body[field] = getattr(cfg, field)
             if cfg.reasoning_effort != "default":
-                body.update({"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_format == "reasoning_effort"
-                            else {"reasoning": {"effort": cfg.reasoning_effort}})
+                effort = gemini_effort(cfg.model, cfg.reasoning_effort)
+                body.update({"reasoning_effort": effort} if cfg.reasoning_format == "reasoning_effort"
+                            else {"reasoning": {"effort": effort}})
             if stream:
                 body.update(stream=True, stream_options={"include_usage": True})
         elif api == "responses":
@@ -130,21 +132,31 @@ class ModelTransport(BaseLLMProvider):
             system, contents, _ = native_messages(messages, api, marker)
             if api == "anthropic":
                 body = {"model": cfg.model, "system": system, "messages": contents, "max_tokens": maximum}
+                policy, thinking = anthropic_thinking(cfg.model, cfg.reasoning_effort)
                 if tools:
                     selection = {"type": "auto", "disable_parallel_tool_use": True}
+                    selected_tools = tools
                     if isinstance(choice, dict):
-                        selection = {"type": "tool", "name": choice.get("function", choice)["name"],
-                                     "disable_parallel_tool_use": True}
+                        name = choice.get("function", choice)["name"]
+                        if not policy.forced_tools:
+                            # Full Agent still enforces new_context during forced
+                            # rollover. Expose only the requested tool, using the
+                            # auto mode accepted by the model's native API.
+                            selected_tools = [t for t in definitions(tools) if t.get("function", t)["name"] == name]
+                            if not selected_tools:
+                                raise ValueError("指定工具不在当前允许的工具列表中")
+                        else:
+                            selection = {"type": "tool", "name": name, "disable_parallel_tool_use": True}
                     elif choice == "none":
                         selection = {"type": "none"}
-                    body.update(tools=native_tools(tools, api), tool_choice=selection)
-                if cfg.reasoning_effort not in ("default", "none") and maximum > 1024:
-                    budget = {"minimal": 1024, "low": 1024, "medium": 2048, "high": 4096, "xhigh": 8192}[cfg.reasoning_effort]
-                    body["thinking"] = {"type": "enabled", "budget_tokens": min(budget, maximum - 1)}
+                    body.update(tools=native_tools(selected_tools, api), tool_choice=selection)
+                body.update(thinking)
+                thinking_on = thinking.get("thinking", {}).get("type") == "adaptive"
+                if not policy.sampling or thinking_on:
                     temperature = None
-                if cfg.top_p is not None:
+                if cfg.top_p is not None and policy.sampling and (not thinking_on or cfg.top_p >= 0.95):
                     body["top_p"] = cfg.top_p
-                if cfg.top_k is not None:
+                if cfg.top_k is not None and policy.sampling and not thinking_on:
                     body["top_k"] = cfg.top_k
                 if stream:
                     body["stream"] = True
@@ -156,13 +168,9 @@ class ModelTransport(BaseLLMProvider):
                     generation["topP"] = cfg.top_p
                 if cfg.top_k is not None:
                     generation["topK"] = cfg.top_k
-                if cfg.reasoning_effort != "default":
-                    effort = cfg.reasoning_effort
-                    thinking = ({"thinkingBudget": 0} if effort == "none" else
-                                {"thinkingLevel": {"xhigh": "HIGH"}.get(effort, effort.upper())}
-                                if "gemini-3" in cfg.model else
-                                {"thinkingBudget": {"minimal": 128, "low": 1024, "medium": 4096, "high": 8192, "xhigh": 16384}[effort]})
-                    generation["thinkingConfig"] = {**thinking, "includeThoughts": True}
+                thinking = gemini_thinking(cfg.model, cfg.reasoning_effort)
+                if thinking:
+                    generation["thinkingConfig"] = thinking
                 body = {"systemInstruction": {"parts": system}, "contents": contents, "generationConfig": generation}
                 if tools:
                     fc = {"mode": "AUTO"}

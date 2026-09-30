@@ -296,7 +296,7 @@ def test_settings_migration_backs_up_old_settings_once(tmp_path):
 
 
 def test_custom_fields_validation_urls_and_usage():
-    for key in ("messages", "model", "tools", "max_tokens", "headers"):
+    for key in ("messages", "model", "tools", "max_tokens", "headers", "output_config"):
         with pytest.raises(ValidationError):
             CacheSettings(request={key: "override"})
     with pytest.raises(ValidationError):
@@ -420,8 +420,211 @@ async def test_gemini_never_caches_system_content_beyond_selected_boundary():
     assert events[-1]["cache"]["status"] == "fallback"
 
 
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5", "relay/claude-opus-5.5-20260922"])
+@pytest.mark.parametrize("effort", ["default", "minimal", "low", "medium", "high", "xhigh"])
+async def test_claude_55_uses_adaptive_effort_without_manual_budget_or_sampling(model, effort):
+    cfg = config("anthropic", reasoning_effort=effort, reply_tokens=512, temperature=0.8, top_p=0.9, top_k=20)
+    cfg.model = model
+    def route(request):
+        body = json.loads(request.content)
+        assert body["max_tokens"] == 512
+        assert not any(k in body for k in ("temperature", "top_p", "top_k"))
+        if effort == "default":
+            assert "thinking" not in body and "output_config" not in body
+        else:
+            assert body["thinking"] == {"type": "adaptive"}
+            assert body["output_config"] == {"effort": "low" if effort == "minimal" else effort}
+        return httpx.Response(200, json=reply("anthropic"))
+    async with provider(cfg, route) as p:
+        assert (await p.chat_complete([{"role": "user", "content": "hello"}])).content == "OK"
+
+
+async def test_claude_55_rejects_thinking_off_before_sending_request():
+    cfg = config("anthropic", reasoning_effort="none")
+    cfg.model = "claude-opus-5-5"
+    def route(request):
+        pytest.fail("unsupported thinking mode must not make a paid request")
+    async with provider(cfg, route) as p:
+        with pytest.raises(ValueError, match="不支持完全关闭思考"):
+            await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-opus-4-6"])
+async def test_claude_requested_rollover_tool_preserves_permission_boundary(model):
+    cfg = config("anthropic")
+    cfg.model = model
+    tools = [{"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+             for name in ("read_history", "new_context")]
+    def route(request):
+        body = json.loads(request.content)
+        if model == "claude-opus-5-5":
+            assert body["tool_choice"]["type"] == "auto"
+            assert [t["name"] for t in body["tools"]] == ["new_context"]
+        else:
+            assert body["tool_choice"]["type"] == "tool"
+            assert body["tool_choice"]["name"] == "new_context"
+            assert len(body["tools"]) == 2
+        return httpx.Response(200, json=reply("anthropic"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "save checkpoint"}], extra_body={
+            "tools": tools, "tool_choice": {"type": "function", "function": {"name": "new_context"}}})
+
+
+@pytest.mark.parametrize("model,effort,expected,adaptive", [
+    ("claude-opus-4-6", "high", "high", True),
+    ("claude-sonnet-4-6", "xhigh", "max", True),
+    ("claude-opus-4-7", "high", "high", True),
+    ("claude-opus-4-8", "xhigh", "xhigh", True),
+    ("claude-opus-5", "high", "high", True),
+    ("claude-sonnet-5", "high", "high", True),
+    ("claude-fable-5-1", "high", "high", True),
+    ("claude-mythos-preview", "xhigh", "max", True),
+    ("claude-opus-4-5", "high", "high", False),
+    ("claude-opus-4-5", "xhigh", "high", False),
+    ("claude-opus-5-50", "high", "high", False),
+    ("relay-alias", "high", "high", False),
+])
+async def test_claude_effort_never_synthesizes_legacy_thinking_budget(model, effort, expected, adaptive):
+    cfg = config("anthropic", reasoning_effort=effort, reply_tokens=8192)
+    cfg.model = model
+    def route(request):
+        body = json.loads(request.content)
+        assert body["output_config"] == {"effort": expected}
+        assert "budget_tokens" not in json.dumps(body)
+        if adaptive:
+            assert body["thinking"] == {"type": "adaptive"}
+        else:
+            assert "thinking" not in body
+        return httpx.Response(200, json=reply("anthropic"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"])
+async def test_legacy_claude_without_effort_requires_default_before_sending(model):
+    cfg = config("anthropic", reasoning_effort="high")
+    cfg.model = model
+    def route(request):
+        pytest.fail("unsupported legacy effort must not make a paid request")
+    async with provider(cfg, route) as p:
+        with pytest.raises(ValueError, match="不支持文字思考档位"):
+            await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("model,expected", [("claude-opus-4-6", {"type": "disabled"}),
+                                          ("claude-opus-5", {"type": "disabled"}),
+                                          ("claude-sonnet-4-5", {"type": "disabled"})])
+async def test_claude_none_explicitly_disables_thinking_where_supported(model, expected):
+    cfg = config("anthropic", reasoning_effort="none")
+    cfg.model = model
+    def route(request):
+        body = json.loads(request.content)
+        assert body["thinking"] == expected
+        assert "output_config" not in body
+        return httpx.Response(200, json=reply("anthropic"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("api,style", [("chat_completions", "reasoning_effort"),
+                                     ("chat_completions", "reasoning"), ("responses", "reasoning_effort")])
+@pytest.mark.parametrize("effort", ["default", "none", "minimal", "low", "medium", "high", "xhigh"])
+async def test_openai_protocols_keep_selected_text_effort(api, style, effort):
+    cfg = config(api, reasoning_effort=effort, reasoning_format=style)
+    def route(request):
+        body = json.loads(request.content)
+        assert "thinking" not in body and "output_config" not in body
+        if effort == "default":
+            assert "reasoning" not in body and "reasoning_effort" not in body
+        elif api == "responses" or style == "reasoning":
+            assert body["reasoning"] == {"effort": effort}
+            assert "reasoning_effort" not in body
+        else:
+            assert body["reasoning_effort"] == effort
+            assert "reasoning" not in body
+        return httpx.Response(200, json=reply(api))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("model,effort,thinking", [
+    ("gemini-3.8-flash", "high", {"thinkingLevel": "HIGH"}),
+    ("gemini-3.8-flash", "xhigh", {"thinkingLevel": "HIGH"}),
+    ("gemini-3.8-flash", "minimal", {"thinkingLevel": "MINIMAL"}),
+    ("gemini-3.1-pro-preview", "minimal", {"thinkingLevel": "LOW"}),
+    ("gemini-3.1-pro-preview", "medium", {"thinkingLevel": "MEDIUM"}),
+    ("gemini-2.5-flash", "none", {"thinkingBudget": 0}),
+    ("gemini-2.5-pro", "high", {"thinkingBudget": 8192}),
+])
+async def test_gemini_native_uses_model_supported_thinking_control(model, effort, thinking):
+    cfg = config("gemini", reasoning_effort=effort)
+    cfg.model = model
+    def route(request):
+        body = json.loads(request.content)
+        assert body["generationConfig"]["thinkingConfig"] == {**thinking, "includeThoughts": True}
+        return httpx.Response(200, json=reply("gemini"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("api", ["chat_completions", "gemini"])
+@pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-pro"])
+async def test_gemini_rejects_unsupported_thinking_off_before_sending(api, model):
+    cfg = config(api, reasoning_effort="none")
+    cfg.model = model
+    def route(request):
+        pytest.fail("unsupported thinking mode must not make a paid request")
+    async with provider(cfg, route) as p:
+        with pytest.raises(ValueError, match="不支持关闭思考"):
+            await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("model,effort,expected", [("gemini-3.1-pro-preview", "minimal", "low"),
+                                                ("gemini-3.8-flash", "xhigh", "high")])
+async def test_gemini_chat_maps_shared_effort_to_supported_text_level(model, effort, expected):
+    cfg = config(reasoning_effort=effort)
+    cfg.model = model
+    def route(request):
+        body = json.loads(request.content)
+        assert body["reasoning_effort"] == expected
+        return httpx.Response(200, json=reply("chat_completions"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "hello"}])
+
+
+@pytest.mark.parametrize("marked_result", [None, 0, 1])
+def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marked_result):
+    messages = [{"role": "system", "content": "fixed"}]
+    for batch in range(2):
+        ids = [f"batch-{batch}-{i}" for i in range(2)]
+        messages.append({"role": "assistant", "content": "inspect", "tool_calls": [
+            {"id": id_, "function": {"name": "read_history", "arguments": '{"ref":"H2"}'}} for id_ in ids]})
+        for i, id_ in enumerate(ids):
+            messages.append({"role": "tool", "tool_call_id": id_, "content": f"result-{id_}",
+                             "_cache_breakpoint": batch == 0 and i == marked_result})
+        messages.append({"role": "system", "content": f"chronological context {batch}", "_cache_static": False})
+    original = copy.deepcopy(messages)
+    marker = {"field": "cache_control", "value": {"type": "ephemeral"}}
+    _, body, boundary = native_messages(messages, "anthropic", marker)
+    assert messages == original
+    assert len(body) == 6
+    for batch in range(2):
+        assistant, results, context = body[batch * 3:batch * 3 + 3]
+        calls = [b["id"] for b in assistant["content"] if b["type"] == "tool_use"]
+        assert results["role"] == "user"
+        assert [b["tool_use_id"] for b in results["content"]] == calls
+        assert [b["content"] for b in results["content"]] == [f"result-{id_}" for id_ in calls]
+        assert f"chronological context {batch}" in context["content"][0]["text"]
+    assert boundary == (None if marked_result is None else 2)
+    marked = [b for m in body for b in m["content"] if "cache_control" in b]
+    assert len(marked) == (0 if marked_result is None else 1)
+    if marked:
+        assert marked[0]["tool_use_id"] == f"batch-0-{marked_result}"
+
+
 @pytest.mark.parametrize("api", ["anthropic", "gemini"])
-async def test_full_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api):
+@pytest.mark.parametrize("call_count", [1, 2])
+async def test_full_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api, call_count):
     from tests.backend.test_full_agent import runtime, turn
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
@@ -442,12 +645,21 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
             if api == "anthropic":
                 return httpx.Response(200, json={"stop_reason": "tool_use", "content": [
                     {"type": "thinking", "thinking": "inspect", "signature": "opaque-signature"},
-                    {"type": "tool_use", "id": "native-id", "name": "read_history", "input": {"ref": "H2"}}]})
+                    *[{"type": "tool_use", "id": f"native-id-{i}", "name": "read_history", "input": {"ref": "H2"}}
+                      for i in range(call_count)]]})
             return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [
-                {"functionCall": {"id": "native-id", "name": "read_history", "args": {"ref": "H2"}},
-                 "thoughtSignature": "opaque-signature"}]}}]})
+                {"functionCall": {"id": f"native-id-{i}", "name": "read_history", "args": {"ref": "H2"}},
+                 "thoughtSignature": "opaque-signature"} for i in range(call_count)]}}]})
         assert "opaque-signature" in json.dumps(body)
         assert "tool_result" in json.dumps(body) if api == "anthropic" else "functionResponse" in json.dumps(body)
+        if api == "anthropic":
+            messages = body["messages"]
+            at = next(i for i, m in enumerate(messages)
+                      if any(b["type"] == "tool_use" for b in m["content"]))
+            calls = [b["id"] for b in messages[at]["content"] if b["type"] == "tool_use"]
+            results = messages[at + 1]
+            assert results["role"] == "user"
+            assert [b["tool_use_id"] for b in results["content"]] == calls
         return httpx.Response(200, json=reply(api))
     service = runtime(store)
     try:
@@ -458,5 +670,9 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
         with store.connection() as db:
             payload = " ".join(row[0] for row in db.execute("SELECT payload FROM full_agent_trace"))
         assert "opaque-signature" in payload
+        async with provider(store.settings().for_role("full_agent"), route) as model:
+            result, _ = await turn(service, store.session(session["id"]), model)
+        assert result["status"] == "committed", result["error"]
+        assert len(seen) == 3
     finally:
         await service.close()

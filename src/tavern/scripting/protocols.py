@@ -81,8 +81,11 @@ def native_messages(messages, api, marker=None):
     """Return native system/body and the body count up to the canonical breakpoint."""
     system, body, names, native_ids = [], [], {}, set()
     prefix_count, leading = None, True
+    previous_role = None
     for message in messages:
         role, content = message["role"], text_content(message.get("content", ""))
+        consecutive_tools = role == "tool" and previous_role == "tool"
+        previous_role = role
         fixed = role in ("system", "developer") and message.get("_cache_static", leading)
         if role not in ("system", "developer") or not fixed:
             leading = False
@@ -122,7 +125,12 @@ def native_messages(messages, api, marker=None):
             if marker and message.get("_cache_breakpoint") and parts:
                 parts[-1][marker["field"]] = copy.deepcopy(marker["value"])
             if parts:
-                body.append({"role": role, "content": parts})
+                # A parallel tool batch must return all results in the one user
+                # message immediately following its assistant tool_use blocks.
+                if consecutive_tools:
+                    body[-1]["content"].extend(parts)
+                else:
+                    body.append({"role": role, "content": parts})
         else:
             if native and role == "assistant":
                 parts = copy.deepcopy(native["parts"])

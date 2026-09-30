@@ -36,6 +36,23 @@
 - 下载清单不会绕过访问控制或自动完成网站登录。任意动态 URL、CDN 特殊加载器和 ST 相对导入可能需要适配。
 - 不宣称支持所有 MVU/Zod 第三方扩展。当前直接复用的上游核心行为与本应用宿主适配需分别验证。
 
+## 模型思考档位
+
+界面中的思考强度是共用选项，实际字段按接口协议发送；默认表示省略思考控制参数，让服务商采用模型默认行为。
+
+| 接口 | 发送方式 |
+|---|---|
+| Chat Completions | 文字 `reasoning_effort` 或 `reasoning.effort`；在模型配置的“更多参数”选择格式，中转的实际支持以其协议为准 |
+| Responses | 文字 `reasoning.effort` |
+| Anthropic Messages | 支持 adaptive 的 Claude 使用 `thinking.type=adaptive` 和文字 `output_config.effort`；不生成 `budget_tokens` |
+| Gemini 原生 | Gemini 3 使用文字 `generationConfig.thinkingConfig.thinkingLevel`；Gemini 2.5 使用其原生 `thinkingBudget` 协议 |
+
+Claude Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos 模型使用 adaptive。Opus 4.5 可以单独发送 effort，但不因此启用旧式 extended thinking。Sonnet/Haiku 4.5 等已知旧模型不支持文字档位，选择非默认档位时在请求前提示；未知中转别名直接发送标准 effort，由服务商校验。应用和 Claude SDK 都不会替旧模型把文字档位换算成思考预算。
+
+共用选项不是各模型能力的承诺：Claude 的 minimal 映射到 low；不支持 xhigh、但支持 max 的 adaptive 模型映射到 max，Opus 4.5 的 xhigh 映射到 high。Gemini 3 的 xhigh 映射到 HIGH，Pro 的 minimal 映射到 LOW。Opus/Sonnet 5.5、Gemini 3 和 Gemini 2.5 Pro 不支持完全关闭思考，选择 none 会在请求前提示。新 Claude 不支持的采样控制不会发送；不支持强制工具选择的模型使用 auto 并只暴露目标工具，Full Agent 仍由运行时校验换窗要求。
+
+协议参考：[Claude thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort)、[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Gemini ThinkingConfig](https://ai.google.dev/api/generate-content#ThinkingConfig)、[Gemini 的 OpenAI 兼容映射](https://ai.google.dev/gemini-api/docs/openai)。
+
 ## 测试样本
 
 - `samples/雾港来信.json`：原创文本卡、中文世界书、角色提示词与未知扩展。

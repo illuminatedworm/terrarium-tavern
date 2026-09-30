@@ -13,7 +13,7 @@ RESERVED = {"model", "messages", "input", "contents", "system", "systemInstructi
             "max_tokens", "max_output_tokens", "temperature", "api_key", "headers", "authorization",
             "cachedContent", "previous_response_id", "conversation", "store", "top_p", "top_k",
             "frequency_penalty", "presence_penalty", "max_completion_tokens", "reasoning", "reasoning_effort",
-            "parallel_tool_calls", "include", "stop", "stop_sequences", "thinking"}
+            "parallel_tool_calls", "include", "stop", "stop_sequences", "thinking", "output_config"}
 
 
 class CacheSettings(BaseModel):
