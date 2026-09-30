@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cachePreset, modelEndpoint, type CacheSettings } from '../../web/lib/cachePolicy';
+import { cachePreset, cacheRetention, modelEndpoint, type CacheSettings } from '../../web/lib/cachePolicy';
 import { difference } from '../../web/lib/settingsDocument';
 
 const cache: CacheSettings = {
@@ -11,6 +11,33 @@ const cache: CacheSettings = {
 };
 
 describe('cache configuration', () => {
+  it('offers protocol-specific retention tiers and the lowest default after switching models', () => {
+    expect(cacheRetention('claude-opus-5-5', 'anthropic', cache).options.map((o) => o.value)).toEqual([
+      '5m',
+      '1h',
+    ]);
+    expect(cacheRetention('gemini-3.8-flash', 'gemini', cache).options.map((o) => o.value)).toEqual([
+      '5m',
+      '15m',
+      '1h',
+      '24h',
+    ]);
+    expect(cacheRetention('gpt-5.4', 'responses', cache).value).toBe('in_memory');
+    expect(cacheRetention('gpt-5.5', 'responses', cache).options.map((o) => o.value)).toEqual(['24h']);
+    expect(cacheRetention('gpt-6-sol', 'responses', { ...cache, retention: '1h' }).value).toBe('30m');
+    expect(cacheRetention('unknown', 'responses', cache).enabled).toBe(false);
+    expect(cacheRetention('claude', 'responses', cache).enabled).toBe(false);
+    expect(cacheRetention('claude', 'anthropic', { ...cache, mode: 'cloud' }).enabled).toBe(true);
+    expect(cacheRetention('claude', 'chat_completions', { ...cache, mode: 'cloud' }).enabled).toBe(false);
+    expect(cacheRetention('gpt-5.4', 'chat_completions', { ...cache, mode: 'cloud' }).enabled).toBe(true);
+    expect(cachePreset('claude', 'anthropic', { ...cache, retention: '1h' }).value).toEqual({
+      type: 'ephemeral',
+      ttl: '1h',
+    });
+    expect(cachePreset('gpt-6-sol', 'responses', cache).request).toEqual({
+      prompt_cache_options: { mode: 'explicit', ttl: '30m' },
+    });
+  });
   it('matches protocols and preserves explicit custom values', () => {
     expect(cachePreset('claude-opus-4-6', 'chat_completions', cache).field).toBe('cache_control');
     expect(cachePreset('gpt-5.6-sol', 'responses', cache).field).toBe('prompt_cache_breakpoint');

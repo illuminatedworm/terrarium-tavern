@@ -149,7 +149,8 @@ async def test_cloud_mode_never_injects_runtime_controls(api):
     async with provider(cfg, route) as p:
         await p.chat_complete(model_messages(context))
     assert len(seen) == 1
-    assert not any(token in json.dumps(seen) for token in ("cache_control", "prompt_cache_", "cachedContent", "_cache"))
+    assert not any(token in json.dumps(seen) for token in ("cache_control", "prompt_cache_breakpoint", "prompt_cache_key", "cachedContent", "_cache_breakpoint"))
+    assert seen[0].get("prompt_cache_retention") == ("in_memory" if api in ("responses", "chat_completions") else None)
 
 
 async def test_explicit_rejection_falls_back_once_and_remembers_capability():
@@ -218,6 +219,134 @@ async def test_gemini_reuse_rollover_expiry_and_complete_fallback():
     assert "stable ledger data" in str(generated[-1]["systemInstruction"])
     assert "Question 0" in str(generated[-1]["contents"])
     assert len(deleted) == 2
+
+
+@pytest.mark.parametrize("api,model,retention,expected", [
+    ("anthropic", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
+    ("chat_completions", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
+    ("anthropic", "claude-opus-5-5", "default", {"type": "ephemeral"}),
+    ("chat_completions", "gpt-5.4", "24h", "24h"),
+    ("responses", "gpt-5.4", "default", "in_memory"),
+    ("responses", "gpt-5.5", "default", "24h"),
+    ("responses", "gpt-6-sol", "default", "30m"),
+    ("chat_completions", "gpt-5.6-sol", "default", "30m"),
+])
+async def test_retention_reaches_final_http_request(api, model, retention, expected):
+    cfg = config(api)
+    cfg.model, cfg.cache.retention = model, retention
+    cfg.cache.request = {"prompt_cache_key": "preserved"}
+    seen = []
+    def route(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=reply(api))
+    messages = [{"role": "system", "content": "fixed", "_cache_breakpoint": True},
+                {"role": "user", "content": "suffix"}]
+    async with provider(cfg, route) as p:
+        await p.chat_complete(messages)
+    body = seen[0]
+    assert body["prompt_cache_key"] == "preserved"
+    if "claude" in model:
+        marker = body["system"][-1] if api == "anthropic" else body["messages"][0]["content"][0]
+        assert marker["cache_control"] == expected
+    elif expected == "30m":
+        assert body["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+        assert "prompt_cache_retention" not in body
+    else:
+        assert body["prompt_cache_retention"] == expected
+        assert "prompt_cache_breakpoint" not in json.dumps(body)
+        assert "prompt_cache_options" not in body
+
+
+@pytest.mark.parametrize("api", ["responses", "chat_completions"])
+async def test_cloud_retention_without_explicit_breakpoints(api):
+    cfg = config(api)
+    cfg.model = "gpt-6-sol"
+    cfg.cache = CacheSettings(mode="cloud")
+    seen = []
+    def route(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=reply(api))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "complete content"}])
+    assert seen[0]["prompt_cache_options"] == {"ttl": "30m"}
+    assert "prompt_cache_breakpoint" not in json.dumps(seen)
+
+
+async def test_legacy_gpt_runtime_retention_does_not_require_instruction_breakpoint():
+    cfg = config("responses")
+    cfg.model, cfg.cache.retention = "gpt-5.4", "24h"
+    seen = []
+    def route(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=reply("responses"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "user", "content": "complete user text"}])
+    assert seen[0]["prompt_cache_retention"] == "24h"
+    assert seen[0]["input"] == [{"role": "user", "content": "complete user text"}]
+    assert "prompt_cache_options" not in seen[0]
+
+
+async def test_native_claude_cloud_uses_automatic_retention_without_local_breakpoint():
+    cfg = config("anthropic")
+    cfg.cache = CacheSettings(mode="cloud", retention="1h")
+    seen = []
+    def route(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=reply("anthropic"))
+    async with provider(cfg, route) as p:
+        await p.chat_complete([{"role": "system", "content": "complete fixed rules"},
+                               {"role": "user", "content": "complete user text"}])
+    assert seen[0].pop("cache_control") == {"type": "ephemeral", "ttl": "1h"}
+    assert "cache_control" not in json.dumps(seen[0])
+
+
+def test_old_custom_retention_is_imported_and_explicit_selection_wins():
+    from tavern.core.cache_policy import preset
+    cfg = config("anthropic")
+    cfg.cache = CacheSettings(mode="runtime", preset="custom", value={"type": "ephemeral", "ttl": "1h"})
+    assert cfg.cache.retention == "1h"
+    assert preset(cfg)["value"]["ttl"] == "1h"
+    cfg.cache.retention = "5m"
+    assert preset(cfg)["value"] == {"type": "ephemeral"}
+    cfg = config("responses")
+    cfg.model = "gpt-6-sol"
+    cfg.cache = CacheSettings(mode="runtime", request={"prompt_cache_retention": "24h",
+        "prompt_cache_options": {"mode": "explicit", "custom_option": True}})
+    assert cfg.cache.retention == "24h"
+    assert preset(cfg)["request"] == {"prompt_cache_options": {"mode": "explicit", "ttl": "30m", "custom_option": True}}
+
+
+@pytest.mark.parametrize("api", ["gemini", "chat_completions"])
+async def test_gemini_retention_replaces_old_object_and_honors_server_expiry(api):
+    import time
+    from datetime import datetime, timezone
+    cfg = config(api)
+    cfg.model = "gemini-3.8-flash"
+    context, *_ = compiled("full_agent", cfg)
+    created, deleted = [], []
+    def route(request):
+        if request.method == "DELETE":
+            deleted.append(request.url.path)
+            return httpx.Response(200, json={})
+        body = json.loads(request.content)
+        if request.url.path.endswith("cachedContents"):
+            created.append(body)
+            return httpx.Response(200, json={"name": f"cachedContents/{len(created)}",
+                "expireTime": datetime.fromtimestamp(time.time() + 1800, timezone.utc).isoformat()})
+        return httpx.Response(200, json=reply(api))
+    async with provider(cfg, route) as p:
+        await p.chat_complete(model_messages(context))
+        await p.chat_complete(model_messages(context))
+    assert len(created) == 1 and created[0]["ttl"] == "300s"
+    cfg.cache.retention = "1h"
+    async with provider(cfg, route) as p:
+        await p.chat_complete(model_messages(context))
+        await p.chat_complete(model_messages(context))
+    assert len(created) == 2 and created[-1]["ttl"] == "3600s"
+    assert len(deleted) == 1 and deleted[0].endswith("cachedContents/1")
+    assert len(OBJECTS) == 1
+    remaining = next(iter(OBJECTS.values()))["expires"] - time.time()
+    assert 1700 < remaining <= 1800
 
 
 async def test_gemini_create_failure_uses_complete_context():

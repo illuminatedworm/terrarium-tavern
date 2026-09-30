@@ -171,8 +171,10 @@ async def main():
                             if control_mode == 'cloud':
                                 await expect(page.locator('.cache-breakpoint-dot')).to_have_count(0)
                                 await page.get_by_role('button', name='展开右侧栏', exact=True).click()
-                                await expect(page.get_by_role('button', name='缓存', exact=True)).to_have_count(0)
-                                await expect(page.get_by_role('button', name='会话设置', exact=True)).to_have_attribute('aria-current', 'page')
+                                await page.get_by_role('button', name='缓存', exact=True).click()
+                                await expect(panel).to_be_visible()
+                                await expect(panel.get_by_label('每新增几轮跟进')).to_have_count(0)
+                                await expect(page.get_by_role('button', name='缓存', exact=True)).to_have_attribute('aria-current', 'page')
                             else:
                                 await page.get_by_role('button', name='缓存', exact=True).click()
                                 await expect(panel.get_by_label('每新增几轮跟进')).to_have_value('3')

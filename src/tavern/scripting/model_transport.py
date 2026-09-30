@@ -6,7 +6,14 @@ import uuid
 from kohakuterrarium.llm.base import BaseLLMProvider, ChatResponse, LLMConfig, NativeToolCall
 from openai import AsyncOpenAI
 
-from tavern.core.cache_policy import endpoint, fingerprint, normalize_usage, preset
+from tavern.core.cache_policy import (
+    effective_retention,
+    endpoint,
+    fingerprint,
+    normalize_usage,
+    preset,
+    retention_request,
+)
 from tavern.core.tokens import counting_info, request_tokens
 from tavern.scripting.cloud_cache import (
     DISABLED,
@@ -85,7 +92,8 @@ class ModelTransport(BaseLLMProvider):
         enabled = self.settings.cache.mode == "runtime" and any(m.get("_cache_breakpoint") for m in messages)
         marker = selected if enabled and selected["kind"] == "block" else None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
-        return self._body(messages, tools, False, marker, selected["request"] if marker else {}, kwargs)
+        return self._body(messages, tools, False, marker,
+                          selected["request"] if marker or selected["kind"] == "implicit" else {}, kwargs)
 
     def _body(self, messages, tools, stream, marker, params, kwargs):
         cfg, api = self.settings, self.settings.api_mode
@@ -205,10 +213,11 @@ class ModelTransport(BaseLLMProvider):
         if planned is not None:
             diagnostic.update(source=messages[planned].get("_cache_source"),
                               message_id=messages[planned].get("_cache_message_id"))
-        marker, params, resource = None, {}, None
+        marker, params, resource = None, (retention_request(cfg) if cfg.cache.mode == "cloud" and not fallback else {}), None
+        diagnostic["retention"] = effective_retention(cfg)[1]
         if cfg.cache.mode == "runtime":
             reason = fallback or DISABLED.get(self.capability_key)
-            if not reason and planned is None:
+            if not reason and planned is None and selected["kind"] != "implicit":
                 reason = "没有可用的固定前缀断点"
             if not reason and selected["kind"] == "unknown":
                 reason = "模型没有已匹配的缓存参数，请手动配置"
@@ -225,6 +234,8 @@ class ModelTransport(BaseLLMProvider):
                 params = selected["request"]
                 if selected["kind"] == "block":
                     marker = selected
+                elif selected["kind"] == "implicit":
+                    diagnostic.update(status="cloud", sent_index=None, reason="该模型由服务端管理缓存前缀，仅发送时效参数")
         body = self._body(messages, tools, stream, marker, params, kwargs)
         if resource:
             if api == "gemini":

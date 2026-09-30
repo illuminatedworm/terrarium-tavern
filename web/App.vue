@@ -3,6 +3,7 @@ import { notification, notify } from './lib/notifications';
 import { useTimedError } from './composables/useTimedError';
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from './lib/api';
+import { cacheRetention } from './lib/cachePolicy';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
@@ -198,7 +199,16 @@ const writerResponseCache = computed(() => {
   const profile = isFullAgent.value
     ? settings.value?.full_agent?.model
     : settings.value?.half_agent?.foreground;
-  return !!session.value && profile?.cache?.mode === 'runtime';
+  return !!session.value && profile?.cache?.mode === 'runtime' && writerCacheRetention.value.explicit;
+});
+const writerCacheRetention = computed(() => {
+  const profile = activeModel.value;
+  const provider = settings.value.shared?.providers?.find((item: any) => item.id === profile?.provider_id);
+  return cacheRetention(
+    profile?.model || '',
+    provider?.api_mode || 'chat_completions',
+    profile?.cache || { mode: 'cloud', preset: 'auto', field: 'cache_control', value: {}, request: {} },
+  );
 });
 const cacheRequestState = computed(
   () =>
@@ -243,9 +253,6 @@ const sidebarSection = ref(localStorage.getItem('tavern-sidebar-section') === 'c
 const deleteBubble = ref<any>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
-watch(writerResponseCache, (enabled) => {
-  if (!enabled && inspectorTab.value === 'cache') inspectorTab.value = 'options';
-});
 const deletingCard = ref<any>(null),
   deletingCardBusy = ref(false);
 const forkMessage = ref<any>(null),
@@ -1305,6 +1312,27 @@ function toggleCacheBreakpointFollow() {
   const automatic = !session.value?.cache_breakpoint_auto;
   void saveCacheBreakpoint(automatic, automatic ? null : cacheBreakpointId.value);
 }
+async function saveCacheRetention(value: string) {
+  if (busy.value || cacheBreakpointBusy.value || !writerCacheRetention.value.enabled) return;
+  const scope = isFullAgent.value ? 'full_agent' : 'half_agent';
+  const path = isFullAgent.value ? 'model.cache.retention' : 'foreground.cache.retention';
+  cacheBreakpointBusy.value = true;
+  try {
+    await guarded(async () => {
+      settings.value = await api(
+        `/settings/${scope}`,
+        {
+          expected_revision: settings.value.revisions[scope],
+          changes: { [path]: value },
+        },
+        'PATCH',
+      );
+      notify('缓存时效已保存，从下一次请求生效。');
+    });
+  } finally {
+    cacheBreakpointBusy.value = false;
+  }
+}
 async function saveOptions() {
   await guarded(async () => {
     session.value = await viewApi(
@@ -2086,7 +2114,6 @@ useTimedError(error);
       <div v-if="!layout.rightCollapsed" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
           <button
-            v-if="writerResponseCache"
             :class="{ active: inspectorTab === 'cache' }"
             :aria-current="inspectorTab === 'cache' ? 'page' : undefined"
             @click="inspectorTab = 'cache'"
@@ -2124,11 +2151,13 @@ useTimedError(error);
           </button>
         </nav>
         <CacheBreakpointPanel
-          v-if="writerResponseCache && inspectorTab === 'cache'"
+          v-if="inspectorTab === 'cache'"
           :session="session"
           :breakpoint-id="cacheBreakpointId"
           :request-state="cacheRequestState"
           :sent-label="sentCacheLabel"
+          :retention="writerCacheRetention"
+          :runtime="writerResponseCache"
           :disabled="
             busy ||
             cacheBreakpointBusy ||
@@ -2137,6 +2166,7 @@ useTimedError(error);
             switchingVersion
           "
           @save="saveCacheBreakpoint"
+          @save-retention="saveCacheRetention"
           @locate="locateCacheBreakpoint"
         />
         <FullAgentTools

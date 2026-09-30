@@ -93,7 +93,9 @@ function edit(kind: 'value' | 'request', event: Event) {
         <option value="runtime">本地运行时控制</option>
       </select></label
     >
-    <p v-if="cache.mode === 'cloud'" class="muted">不发送本地缓存控制参数，由服务商决定缓存行为。</p>
+    <p v-if="cache.mode === 'cloud'" class="muted">
+      不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
+    </p>
     <template v-else>
       <p class="muted">
         断点默认每新增 5 轮推进一次，每次定位到倒数第 3 个已完成 AI
@@ -110,6 +112,9 @@ function edit(kind: 'value' | 'request', event: Event) {
       </p>
       <p v-else-if="selected.kind === 'unknown'" class="muted">
         没有匹配的断点格式。请选择自定义参数；未配置时使用云端默认。
+      </p>
+      <p v-else-if="selected.kind === 'implicit'" class="muted">
+        当前模型由服务端管理缓存前缀，不发送显式断点；时效可在右侧缓存页选择。
       </p>
       <p v-else-if="cache.preset === 'auto'" class="muted">
         匹配参数：{{ selected.field }} = {{ JSON.stringify(selected.value) }}。模型名称匹配不保证服务商支持。

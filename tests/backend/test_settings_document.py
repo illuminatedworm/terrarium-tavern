@@ -13,6 +13,30 @@ from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.storage.store import Store
 
 
+@pytest.mark.parametrize("scope,path", [("full_agent", "model"), ("half_agent", "foreground")])
+async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_path, scope, path):
+    app = create_app(tmp_path)
+    store = app.state.store
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        before = (await client.get("/api/settings")).json()
+        assert before[scope][path]["cache"]["retention"] == "default"
+        payload = {"expected_revision": before["revisions"][scope],
+                   "changes": {f"{path}.cache.retention": "1h"}}
+        changed = await client.patch(f"/api/settings/{scope}", json=payload)
+        assert changed.status_code == 200
+        after = changed.json()
+        assert after[scope][path]["cache"]["retention"] == "1h"
+        other = "half_agent" if scope == "full_agent" else "full_agent"
+        assert after[other] == before[other]
+        assert (await client.patch(f"/api/settings/{scope}", json=payload)).status_code == 409
+        payload["expected_revision"] = after["revisions"][scope]
+        payload["changes"][f"{path}.cache.retention"] = "forever"
+        assert (await client.patch(f"/api/settings/{scope}", json=payload)).status_code == 400
+    restored = Store(store.root).settings_document()
+    assert getattr(getattr(restored, scope), path).cache.retention == "1h"
+    assert Store(store.root).settings(scope).cache.retention == "1h"
+
+
 def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_data(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode(), "card.json")

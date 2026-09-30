@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 from typing import Any, Literal
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -23,6 +24,23 @@ class CacheSettings(BaseModel):
     field: str = Field(default="cache_control", min_length=1, max_length=100)
     value: Any = Field(default_factory=lambda: {"type": "ephemeral"})
     request: dict = Field(default_factory=dict)
+    retention: Literal["default", "5m", "15m", "1h", "24h", "30m", "in_memory"] = "default"
+
+    @model_validator(mode="before")
+    @classmethod
+    def import_retention(cls, value):
+        # Keep previously configured JSON retention visible in the new selector.
+        if isinstance(value, dict) and "retention" not in value:
+            value = copy.deepcopy(value)
+            block = value.get("value")
+            request = value.get("request") or {}
+            request = request if isinstance(request, dict) else {}
+            options = request.get("prompt_cache_options")
+            ttl = (block.get("ttl") if isinstance(block, dict) else None)
+            ttl = ttl or request.get("prompt_cache_retention") or (options.get("ttl") if isinstance(options, dict) else None)
+            if ttl in ("5m", "1h", "24h", "30m", "in_memory"):
+                value["retention"] = ttl
+        return value
 
     @model_validator(mode="after")
     def safe_extensions(self):
@@ -49,7 +67,52 @@ def fingerprint(value):
                                      separators=(",", ":")).encode()).hexdigest()
 
 
-def preset(settings):
+def retention_policy(settings):
+    """Only advertise documented retention controls for the selected wire protocol."""
+    api, cache, model = settings.api_mode, settings.cache, settings.model.lower()
+    claude_marker = cache.preset != "custom" or (cache.field == "cache_control"
+                    and isinstance(cache.value, dict) and cache.value.get("type") == "ephemeral")
+    if claude_marker and (api == "anthropic" or api == "chat_completions" and (
+            "claude" in model or cache.preset == "custom")):
+        return "anthropic", ("5m", "1h")
+    if api in ("gemini", "chat_completions") and cache.preset != "custom" and (api == "gemini" or "gemini" in model):
+        return "gemini", ("5m", "15m", "1h", "24h")
+    if api not in ("chat_completions", "responses"):
+        return None, ()
+    version = re.search(r"(?:^|/)gpt-(\d+)(?:[.-](\d+))?(?:-|$)", model)
+    if version:
+        major, minor = int(version[1]), int(version[2] or 0)
+        if (major, minor) >= (5, 6):
+            return "openai_ttl", ("30m",)
+        if (major, minor) == (5, 5):
+            return "openai_retention", ("24h",)
+        if (major == 5 and minor in (0, 1, 2, 4)) or (major, minor) == (4, 1):
+            return "openai_retention", ("in_memory", "24h")
+    if "gpt" in model or re.match(r"^(o1|o3|o4)(-|$)", model):
+        return "openai_retention", ("in_memory",)
+    return None, ()
+
+
+def effective_retention(settings):
+    kind, options = retention_policy(settings)
+    value = settings.cache.retention
+    return kind, value if value in options else options[0] if options else None
+
+
+def retention_request(settings):
+    kind, value = effective_retention(settings)
+    if kind == "anthropic" and settings.api_mode == "anthropic" and settings.cache.mode == "cloud" and settings.cache.retention != "default":
+        # Native Messages has an automatic cache control independent of local
+        # breakpoints. Leave untouched cloud defaults alone until the user opts in.
+        return {"cache_control": {"type": "ephemeral", "ttl": value}}
+    if kind == "openai_ttl":
+        return {"prompt_cache_options": {"ttl": value}}
+    if kind == "openai_retention":
+        return {"prompt_cache_retention": value}
+    return {}
+
+
+def _preset(settings):
     cache = settings.cache
     if cache.preset == "custom":
         return {"kind": "block", "field": cache.field, "value": copy.deepcopy(cache.value),
@@ -61,9 +124,34 @@ def preset(settings):
         return {"kind": "block", "field": "cache_control", "value": {"type": "ephemeral"},
                 "request": copy.deepcopy(cache.request)}
     if "gpt" in model or model.startswith(("o1", "o3", "o4")):
+        kind, _ = retention_policy(settings)
+        if kind == "openai_retention" and re.search(r"(?:^|/)gpt-\d", model):
+            # Earlier GPT models accept retention but not the newer explicit
+            # breakpoint protocol. Keep their cache selection server-managed.
+            return {"kind": "implicit", "request": copy.deepcopy(cache.request)}
         return {"kind": "block", "field": "prompt_cache_breakpoint", "value": {"mode": "explicit"},
                 "request": {"prompt_cache_options": {"mode": "explicit"}, **copy.deepcopy(cache.request)}}
     return {"kind": "unknown", "request": {}}
+
+
+def preset(settings):
+    result = _preset(settings)
+    kind, value = effective_retention(settings)
+    if kind == "anthropic" and result.get("field") == "cache_control" and isinstance(result.get("value"), dict):
+        if value == "1h":
+            result["value"]["ttl"] = value
+        else:
+            result["value"].pop("ttl", None)  # Anthropic's default is the lowest, 5m tier.
+    # The explicit selector takes precedence over legacy extension JSON. Merge
+    # nested OpenAI options without losing mode or unrelated custom options.
+    request = result["request"]
+    for key, item in retention_request(settings).items():
+        if key == "prompt_cache_options":
+            request.pop("prompt_cache_retention", None)
+            request[key] = {**request.get(key, {}), **item}
+        else:
+            request[key] = item
+    return result
 
 
 def endpoint(base_url, api, model="", *, stream=False, resource=None):

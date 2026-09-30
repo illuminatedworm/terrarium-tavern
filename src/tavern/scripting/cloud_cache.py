@@ -7,7 +7,7 @@ from datetime import datetime
 
 import httpx
 
-from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.core.cache_policy import effective_retention, endpoint, fingerprint
 from tavern.core.tokens import count_text
 from tavern.scripting.protocols import native_messages, native_tools
 
@@ -42,6 +42,8 @@ def cache_rejection(status, payload, field, *, resource=False):
 
 async def gemini_object(provider, messages, tools, tool_choice="auto"):
     settings = provider.settings
+    _, retention = effective_retention(settings)
+    ttl = {"5m": 300, "15m": 900, "1h": 3600, "24h": 86400}.get(retention, 300)
     system, contents, boundary = native_messages(messages, "gemini")
     if boundary is None:
         return None, "没有可用的固定前缀断点"
@@ -69,8 +71,11 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
     cap = provider.capability_key
     scope = next((m.get("_cache_scope") for m in messages if m.get("_cache_scope")), settings.cache_scope)
     window = next((m.get("_cache_window") for m in messages if m.get("_cache_window")), settings.cache_window)
-    slot = fingerprint([cap, scope or "standalone", settings.model])
-    digest = fingerprint([prefix, window])
+    # TTL changes must replace and delete the old object in the same slot,
+    # rather than abandon a paid long-lived object under a new capability key.
+    slot = fingerprint([settings.base_url, fingerprint(provider.key), settings.api_mode,
+                        scope or "standalone", settings.model])
+    digest = fingerprint([prefix, window, ttl])
     lock_key = (id(asyncio.get_running_loop()), slot)
     lock = LOCKS.setdefault(lock_key, asyncio.Lock())
     async with lock:
@@ -80,7 +85,7 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
         url = endpoint(settings.base_url, "gemini", resource="cachedContents")
         try:
             response = await provider.http.post(url, headers=provider.gemini_headers,
-                                                json={**prefix, "ttl": "300s"})
+                                                json={**prefix, "ttl": f"{ttl}s"})
             if response.status_code >= 400:
                 if response.status_code in (404, 405):
                     DISABLED[cap] = f"服务商不支持创建 Gemini 缓存对象（HTTP {response.status_code}）"
@@ -90,7 +95,7 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
             # Never send the credential to a URL returned by the service.
             if not re.fullmatch(r"cachedContents/[A-Za-z0-9_-]+", name):
                 return None, "服务商未返回有效缓存资源名称"
-            expires = time.time() + 300
+            expires = time.time() + ttl
             if payload.get("expireTime"):
                 expires = min(expires, datetime.fromisoformat(payload["expireTime"].replace("Z", "+00:00")).timestamp())
             entry = {"name": name, "digest": digest, "expires": expires, "boundary": boundary, "slot": slot}

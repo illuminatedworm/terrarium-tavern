@@ -4,9 +4,85 @@ export interface CacheSettings {
   field: string;
   value: unknown;
   request: Record<string, unknown>;
+  retention?: string;
 }
 
-export function cachePreset(
+export function cacheRetention(model: string, api: string, cache: CacheSettings) {
+  const name = model.toLowerCase();
+  let kind = '';
+  let values: string[] = [];
+  const customClaude =
+    cache.preset === 'custom' &&
+    cache.field === 'cache_control' &&
+    (cache.value as any)?.type === 'ephemeral';
+  if (
+    (cache.preset !== 'custom' || customClaude) &&
+    (api === 'anthropic' || (api === 'chat_completions' && (name.includes('claude') || customClaude)))
+  ) {
+    kind = 'anthropic';
+    values = ['5m', '1h'];
+  } else if (
+    ['gemini', 'chat_completions'].includes(api) &&
+    cache.preset !== 'custom' &&
+    (api === 'gemini' || name.includes('gemini'))
+  ) {
+    kind = 'gemini';
+    values = ['5m', '15m', '1h', '24h'];
+  } else if (['chat_completions', 'responses'].includes(api)) {
+    const match = name.match(/(?:^|\/)gpt-(\d+)(?:[.-](\d+))?(?:-|$)/);
+    const major = Number(match?.[1]),
+      minor = Number(match?.[2] || 0);
+    if (match && (major > 5 || (major === 5 && minor >= 6))) {
+      kind = 'openai_ttl';
+      values = ['30m'];
+    } else if (match && major === 5 && minor === 5) {
+      kind = 'openai_retention';
+      values = ['24h'];
+    } else if (match && ((major === 5 && [0, 1, 2, 4].includes(minor)) || (major === 4 && minor === 1))) {
+      kind = 'openai_retention';
+      values = ['in_memory', '24h'];
+    } else if (name.includes('gpt') || /^(o1|o3|o4)(-|$)/.test(name)) {
+      kind = 'openai_retention';
+      values = ['in_memory'];
+    }
+  }
+  const labels: Record<string, string> = {
+    '5m': '5 分钟',
+    '15m': '15 分钟',
+    '1h': '1 小时',
+    '24h': '24 小时',
+    '30m': '30 分钟',
+    in_memory: '内存缓存（通常 5–10 分钟）',
+  };
+  const value = values.includes(cache.retention || '') ? cache.retention! : values[0] || '';
+  const enabled =
+    !!kind &&
+    (cache.mode === 'runtime' || kind.startsWith('openai') || (kind === 'anthropic' && api === 'anthropic'));
+  const note = !kind
+    ? '当前接入方式没有可选的缓存时效参数。'
+    : !enabled
+      ? '云端默认缓存的时效由服务商管理；切换本地运行时控制后可设置。'
+      : kind === 'anthropic'
+        ? cache.mode === 'cloud'
+          ? '保存后使用原生自动缓存，由服务端选择终点；1 小时档的写入价格通常更高。'
+          : '1 小时缓存的写入价格通常高于 5 分钟；命中会刷新时效。'
+        : kind === 'gemini'
+          ? '控制显式缓存对象的保存时长；保存越久，存储费用越高。'
+          : kind === 'openai_ttl'
+            ? '当前模型支持的最低缓存时效为 30 分钟，仅有这一档。'
+            : '实际保留时间由服务端决定，24 小时是最长保留上限。';
+  const explicit = !(cache.preset === 'auto' && kind === 'openai_retention' && /(?:^|\/)gpt-\d/.test(name));
+  return {
+    kind,
+    value,
+    enabled,
+    note,
+    explicit,
+    options: values.map((value) => ({ value, label: labels[value] })),
+  };
+}
+
+function baseCachePreset(
   model: string,
   api: string,
   cache: CacheSettings,
@@ -18,9 +94,17 @@ export function cachePreset(
 } {
   if (cache.preset === 'custom') return { kind: 'block', field: cache.field, value: cache.value };
   const name = model.toLowerCase();
+  if (!cacheRetention(model, api, cache).explicit) return { kind: 'implicit' };
   if (api === 'gemini' || (api !== 'anthropic' && name.includes('gemini'))) return { kind: 'gemini' };
   if (api === 'anthropic' || name.includes('claude'))
-    return { kind: 'block', field: 'cache_control', value: { type: 'ephemeral' } };
+    return {
+      kind: 'block',
+      field: 'cache_control',
+      value: {
+        type: 'ephemeral',
+        ...(cacheRetention(model, api, cache).value === '1h' ? { ttl: '1h' } : {}),
+      },
+    };
   if (name.includes('gpt') || /^(o1|o3|o4)/.test(name))
     return {
       kind: 'block',
@@ -29,6 +113,35 @@ export function cachePreset(
       request: { prompt_cache_options: { mode: 'explicit' } },
     };
   return { kind: 'unknown' };
+}
+
+export function cachePreset(model: string, api: string, cache: CacheSettings) {
+  const result = baseCachePreset(model, api, cache);
+  const policy = cacheRetention(model, api, cache);
+  if (
+    policy.kind === 'anthropic' &&
+    result.field === 'cache_control' &&
+    typeof result.value === 'object' &&
+    result.value !== null
+  ) {
+    const value = { ...result.value } as Record<string, unknown>;
+    if (policy.value === '1h') value.ttl = '1h';
+    else delete value.ttl;
+    result.value = value;
+  }
+  if (policy.kind.startsWith('openai')) {
+    result.request =
+      policy.kind === 'openai_ttl'
+        ? {
+            ...(result.request || {}),
+            prompt_cache_options: {
+              ...((result.request?.prompt_cache_options as Record<string, unknown>) || {}),
+              ttl: policy.value,
+            },
+          }
+        : { ...(result.request || {}), prompt_cache_retention: policy.value };
+  }
+  return result;
 }
 
 export function modelEndpoint(base: string, api: string, model = '{model}') {
