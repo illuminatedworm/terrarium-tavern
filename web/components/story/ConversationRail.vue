@@ -4,6 +4,7 @@ import { historyRounds, historySummary, type HistoryMessage } from '../../lib/st
 const props = defineProps<{ messages: HistoryMessage[]; readingId: string; breakpointId?: string | null }>();
 const emit = defineEmits<{ navigate: [id: string] }>();
 const rail = ref<HTMLElement>();
+const wrap = ref<HTMLElement>();
 const height = ref(400);
 const hovered = ref<number | null>(null);
 const dragging = ref(false);
@@ -13,17 +14,27 @@ const roundIndices = computed(
 );
 const current = computed(() => roundIndices.value.get(props.readingId) || 0);
 const cached = computed(() => (props.breakpointId ? roundIndices.value.get(props.breakpointId) : undefined));
-const count = computed(() => Math.min(rounds.value.length, Math.max(2, Math.floor(height.value / 12))));
+const railHeight = computed(() => Math.min(height.value, Math.max(24, (rounds.value.length - 1) * 12 + 24)));
+const span = computed(() => Math.max(0, railHeight.value - 24));
+const count = computed(() => Math.min(rounds.value.length, Math.max(2, Math.floor(span.value / 12) + 1)));
 const preview = computed(() => (hovered.value === null ? undefined : rounds.value[hovered.value]));
+const fraction = (index: number) => (rounds.value.length <= 1 ? 0.5 : index / (rounds.value.length - 1));
 const percent = (index: number) =>
-  rounds.value.length <= 1 ? 50 : (index / (rounds.value.length - 1)) * 100;
+  (((railHeight.value - span.value) / 2 + fraction(index) * span.value) / railHeight.value) * 100;
+const previewPercent = (index: number) =>
+  (((height.value - span.value) / 2 + fraction(index) * span.value) / height.value) * 100;
 function indexAt(event: PointerEvent) {
   const rect = rail.value!.getBoundingClientRect();
   return Math.max(
     0,
     Math.min(
       rounds.value.length - 1,
-      Math.round(((event.clientY - rect.top) / rect.height) * (rounds.value.length - 1)),
+      span.value
+        ? Math.round(
+            ((event.clientY - rect.top - (railHeight.value - span.value) / 2) / span.value) *
+              (rounds.value.length - 1),
+          )
+        : 0,
     ),
   );
 }
@@ -61,18 +72,19 @@ function key(event: KeyboardEvent) {
 let observer: ResizeObserver | undefined;
 onMounted(() => {
   observer = new ResizeObserver(() => {
-    height.value = rail.value?.clientHeight || 400;
+    height.value = wrap.value?.clientHeight || 400;
   });
-  if (rail.value) observer.observe(rail.value);
+  if (wrap.value) observer.observe(wrap.value);
 });
 onBeforeUnmount(() => observer?.disconnect());
 </script>
 
 <template>
-  <div v-if="rounds.length" class="conversation-rail-wrap">
+  <div v-if="rounds.length" ref="wrap" class="conversation-rail-wrap">
     <div
       ref="rail"
       class="conversation-rail"
+      :style="{ height: railHeight + 'px' }"
       role="slider"
       tabindex="0"
       aria-label="对话历史导航"
@@ -93,7 +105,7 @@ onBeforeUnmount(() => observer?.disconnect());
         v-for="tick in count"
         :key="tick"
         class="rail-tick"
-        :style="{ top: (count <= 1 ? 50 : ((tick - 1) / (count - 1)) * 100) + '%' }"
+        :style="{ top: percent(count <= 1 ? 0 : ((tick - 1) / (count - 1)) * (rounds.length - 1)) + '%' }"
       />
       <span class="rail-tick current" :style="{ top: percent(current) + '%' }" />
       <span v-if="cached !== undefined" class="rail-tick cached" :style="{ top: percent(cached) + '%' }" />
@@ -102,7 +114,7 @@ onBeforeUnmount(() => observer?.disconnect());
     <div
       v-if="preview"
       class="rail-preview"
-      :style="{ top: `clamp(0px, ${percent(hovered!)}%, calc(100% - 132px))` }"
+      :style="{ top: `clamp(0px, ${previewPercent(hovered!)}%, calc(100% - 132px))` }"
     >
       <small>{{ (hovered || 0) + 1 }} / {{ rounds.length }}</small>
       <strong>{{ historySummary(preview.user) || '故事开场' }}</strong>
@@ -123,7 +135,10 @@ onBeforeUnmount(() => observer?.disconnect());
 }
 .conversation-rail {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
   cursor: pointer;
   touch-action: none;
   pointer-events: auto;
