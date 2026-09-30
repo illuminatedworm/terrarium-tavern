@@ -14,7 +14,7 @@ import DialogueMessage from './components/story/DialogueMessage.vue';
 import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
-import PromptPrefix from './components/common/PromptPrefix.vue';
+import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
@@ -1950,22 +1950,21 @@ useTimedError(error);
               "
             />
             <div v-if="(latestReply || retryableTurn) && rewriteExpanded">
-              <PromptPrefix
-                :text="activeSettings.regenerate_prompt || ''"
-                label="重新生成补充要求的系统预制头"
-              />
               <div class="retry-toolbar regenerate-bar">
-                <input
-                  v-model="regenerationNote"
-                  aria-label="重新生成补充要求"
-                  :placeholder="
-                    retryableTurn
-                      ? '补充本次要求，例如：严格遵守变量输出格式'
-                      : '补充要求；将重写上一条已提交回复'
-                  "
-                  :disabled="busy || !!editingMessageId"
-                  @keydown.enter.prevent="regenerateReply"
-                /><button
+                <PromptField :prefix="activeSettings.regenerate_prompt || ''" label="重新生成补充要求">
+                  <input
+                    v-model="regenerationNote"
+                    aria-label="重新生成补充要求"
+                    :placeholder="
+                      retryableTurn
+                        ? '补充本次要求，例如：严格遵守变量输出格式'
+                        : '补充要求；将重写上一条已提交回复'
+                    "
+                    :disabled="busy || !!editingMessageId"
+                    @keydown.enter.prevent="regenerateReply"
+                  />
+                </PromptField>
+                <button
                   :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
                   @click="regenerateReply"
                 >

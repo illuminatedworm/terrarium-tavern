@@ -2157,6 +2157,12 @@ header {
   padding: 7px 10px;
   font-size: 12px;
 }
+.regenerate-bar > .prompt-field {
+  flex: 1;
+}
+.regenerate-bar {
+  align-items: end;
+}
 .regenerate-bar button {
   white-space: nowrap;
 }
@@ -2963,7 +2969,7 @@ header {
   margin: 13px 0;
   font-size: 13px;
 }
-.inspector-options .expandable-textarea > textarea {
+.inspector-options .expandable-textarea > .prompt-field:not(.has-prefix) > textarea {
   height: 112px;
   min-height: 112px;
   max-height: 112px;

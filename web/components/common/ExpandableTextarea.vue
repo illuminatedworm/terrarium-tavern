@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useTimedError } from '../../composables/useTimedError';
 import { nextTick, ref } from 'vue';
-import PromptPrefix from './PromptPrefix.vue';
+import PromptField from './PromptField.vue';
 const props = defineProps<{
   modelValue?: string | null;
   label: string;
@@ -67,19 +67,20 @@ useTimedError(error);
     class="expandable-textarea"
     :class="{ 'is-code': code, 'is-compact': compact, 'expand-on-focus': expandOnFocus }"
   >
-    <PromptPrefix v-if="prefix !== undefined" :text="prefix" :label="`${label}的系统预制头`" />
-    <textarea
-      ref="inline"
-      :value="modelValue || ''"
-      :aria-label="label"
-      :placeholder="placeholder"
-      :disabled="disabled"
-      :rows="rows"
-      :spellcheck="code ? false : undefined"
-      @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
-      @change="emit('change', ($event.target as HTMLTextAreaElement).value)"
-      @keydown.enter.exact="submitOnEnter && ($event.preventDefault(), emit('submit'))"
-    />
+    <PromptField :prefix="prefix" :label="label">
+      <textarea
+        ref="inline"
+        :value="modelValue || ''"
+        :aria-label="label"
+        :placeholder="placeholder"
+        :disabled="disabled"
+        :rows="rows"
+        :spellcheck="code ? false : undefined"
+        @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
+        @change="emit('change', ($event.target as HTMLTextAreaElement).value)"
+        @keydown.enter.exact="submitOnEnter && ($event.preventDefault(), emit('submit'))"
+      />
+    </PromptField>
     <button
       ref="trigger"
       type="button"
@@ -115,15 +116,16 @@ useTimedError(error);
           <h2>{{ label }}</h2>
           <button type="button" aria-label="关闭放大编辑" @click="closeEditor">×</button>
         </header>
-        <PromptPrefix v-if="prefix !== undefined" :text="prefix" :label="`${label}的系统预制头`" />
-        <textarea
-          ref="large"
-          v-model="draft"
-          :class="{ 'is-code': code }"
-          :aria-label="`编辑内容：${label}`"
-          :spellcheck="code ? false : undefined"
-          @input="error = ''"
-        />
+        <PromptField :prefix="prefix" :label="label">
+          <textarea
+            ref="large"
+            v-model="draft"
+            :class="{ 'is-code': code }"
+            :aria-label="`编辑内容：${label}`"
+            :spellcheck="code ? false : undefined"
+            @input="error = ''"
+          />
+        </PromptField>
         <AppNotification :message="error" />
         <footer>
           <span>Ctrl + Enter 应用 · Esc 取消</span><button type="button" @click="closeEditor">取消</button
@@ -140,7 +142,7 @@ useTimedError(error);
   width: 100%;
   margin-top: 8px;
 }
-.expandable-textarea > textarea {
+.expandable-textarea > .prompt-field > textarea {
   display: block;
   width: 100%;
   height: 144px;
@@ -152,7 +154,16 @@ useTimedError(error);
   font-size: 14px;
   line-height: 1.75;
 }
-.expandable-textarea.is-code > textarea {
+.expandable-textarea > .prompt-field.has-prefix {
+  min-height: 144px;
+  grid-template-rows: auto minmax(72px, 1fr);
+}
+.expandable-textarea > .prompt-field.has-prefix > textarea {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+.expandable-textarea.is-code > .prompt-field > textarea {
   font:
     12px/1.7 Consolas,
     monospace;
@@ -160,7 +171,7 @@ useTimedError(error);
 .expandable-textarea.is-compact {
   margin-top: 0;
 }
-.expandable-textarea.is-compact > textarea {
+.expandable-textarea.is-compact > .prompt-field > textarea {
   height: auto;
   min-height: 70px;
   max-height: 180px;
@@ -240,22 +251,22 @@ useTimedError(error);
   color: var(--text-muted);
   font-size: 23px;
 }
-.expanded-editor > textarea {
+.expanded-editor > .prompt-field {
   flex: 1;
   min-height: 0;
-  width: auto;
   margin: 16px 20px;
+}
+.expanded-editor > .prompt-field > textarea {
+  height: 100%;
+  min-height: 0;
+  margin: 0;
   resize: none;
   padding: 14px;
   color: var(--text-story);
   font-size: 15px;
   line-height: 1.8;
 }
-.expanded-editor > .prompt-prefix {
-  flex-shrink: 0;
-  margin: 16px 20px 0;
-}
-.expanded-editor > textarea.is-code {
+.expanded-editor > .prompt-field > textarea.is-code {
   font:
     13px/1.75 Consolas,
     monospace;
@@ -292,7 +303,7 @@ useTimedError(error);
   .expanded-editor footer span {
     display: none;
   }
-  .expanded-editor > textarea {
+  .expanded-editor > .prompt-field {
     margin: 12px;
   }
 }
