@@ -11,6 +11,8 @@ from tools.package_release import publishable
     'samples/secrets-personal.json', 'src/tavern/settings.json', 'tests/story.sqlite3-wal',
     'docs/backup.zip', 'web/editor.local.json', 'src/tavern/__pycache__/api.pyc',
     'web/.cache/request.json', 'src/tavern/private.key',
+    '.agents/AGENTS.md', '.agents/TEXT_INTEGRITY.md', '.agents/skills/example/SKILL.md',
+    'docs/.agents/notes.md', 'src/tavern/static/.agents/notes.json',
 ])
 def test_archive_rejects_private_artifacts(name):
     assert not publishable(PurePosixPath(name))

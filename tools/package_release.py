@@ -13,12 +13,14 @@ FILES = (
     "compatibility.lock.json", "index.html", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
     "setup.ps1", "start.ps1", "stop.ps1", "run-dev.ps1", "build.ps1",
 )
-DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools", ".agents")
+DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools")
 
 
 def publishable(relative):
     """Limit source archives to source/resources, even outside a Git checkout."""
     name = relative.name.lower()
+    if any(part.lower() == ".agents" for part in relative.parts):
+        return False
     if any(part.startswith('.') or part in {"__pycache__", "node_modules"}
            for part in relative.parts[1:]):
         return False

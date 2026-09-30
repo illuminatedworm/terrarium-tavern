@@ -129,7 +129,7 @@ Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 qu
 - [架构与职责](docs/design/architecture.md) · [上下文生命周期](docs/design/context-lifecycle.md)
 - [世界书检索](docs/guides/retrieval.md) · [积累式记忆](docs/design/memory-consistency.md)
 - [角色卡编辑](docs/guides/card-editor.md) · [项目目录](docs/development/structure.md)
-- [验证与发行](docs/development/validation.md) · [开发约定](.agents/AGENTS.md)
+- [验证与发行](docs/development/validation.md) · [开发工作流](docs/design/agent-workflow.md)
 
 常用开发命令：
 
