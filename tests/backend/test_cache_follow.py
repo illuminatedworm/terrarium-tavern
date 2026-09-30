@@ -39,6 +39,22 @@ def commit_reply(store, session, regenerate=False):
     return store.session(session["id"])
 
 
+def test_default_follow_advances_every_eight_replies_to_third_latest(story):
+    store, session = story
+    assert session["cache_breakpoint_follow"] == {"interval": 8, "offset": 3, "anchor": None, "progress": 0}
+    anchor = None
+    for count in range(1, 17):
+        session = commit_reply(store, session)
+        if count % 8 == 0:
+            anchor = session["messages"][-5]["id"]
+        assert session["cache_breakpoint_follow"] == {
+            "interval": 8, "offset": 3, "anchor": anchor, "progress": count % 8}
+        assert session["cache_breakpoint_effective_id"] == anchor
+        if count == 4:
+            store = Store(store.root)
+            assert store.session(session["id"])["cache_breakpoint_follow"] == session["cache_breakpoint_follow"]
+
+
 def test_follow_counts_only_new_committed_replies_and_survives_restart(story):
     store, session = story
     for _ in range(4):
@@ -102,7 +118,7 @@ async def test_api_validation_legacy_updates_and_additive_migration(story):
     migrated = Store(store.root).session(session["id"])
     assert migrated["cache_breakpoint_auto"] is False
     assert migrated["cache_breakpoint_message"] == session["head"]
-    assert migrated["cache_breakpoint_follow"]["interval"] == 1
+    assert migrated["cache_breakpoint_follow"]["interval"] == 8
     assert migrated["cache_breakpoint_follow"]["offset"] == 3
 
 

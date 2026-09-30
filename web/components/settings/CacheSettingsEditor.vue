@@ -95,7 +95,10 @@ function edit(kind: 'value' | 'request', event: Event) {
     >
     <p v-if="cache.mode === 'cloud'" class="muted">不发送本地缓存控制参数，由服务商决定缓存行为。</p>
     <template v-else>
-      <p class="muted">断点自动停在两轮已完成对话之前，也可在对话中手动固定。断点不代表已命中缓存。</p>
+      <p class="muted">
+        断点默认每新增 8 轮推进一次，每次定位到倒数第 3 个已完成 AI
+        回复，也可在对话中手动固定。断点不代表已命中缓存。
+      </p>
       <label
         >参数格式<select v-model="cache.preset" aria-label="参数格式">
           <option value="auto">按模型和接口自动匹配</option>
