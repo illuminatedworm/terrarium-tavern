@@ -23,6 +23,8 @@
 
 `compat/` 为兼容桥，`vendor/` 为固定上游源码。测试统一位于 `tests/`，具体入口见[验证说明](validation.md)。文档分为 `guides/` 使用指南、`design/` 当前实现说明和 `development/` 开发指引；不保存历史验收报告。
 
+[`LICENSE/`](../../LICENSE/README.md) 集中保存本项目非商业许可、Kohaku Terrarium 上游许可原文和第三方声明；`vendor/` 内原有第三方许可保留在源码旁。前端构建、Python 包和源码发行包均随附许可文件。
+
 ## Git 与发行隐私
 
 `data/`、备份与恢复目录、`.cache/`、日志、数据库、依赖环境及构建产物不提交。锁文件、合成测试夹具、示例卡、内置 tokenizer 词表和第三方许可必须保留。

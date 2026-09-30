@@ -4,7 +4,10 @@ from pathlib import Path
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Terrarium Tavern — powered by KohakuTerrarium")
+    parser = argparse.ArgumentParser(
+        description="Terrarium Tavern — powered by KohakuTerrarium",
+        epilog="KohakuTerrarium: https://github.com/Kohaku-Lab/KohakuTerrarium",
+    )
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--data", default="data")
     parser.add_argument("--backup", help="创建完整备份 ZIP 后退出")

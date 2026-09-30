@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "terrarium-tavern"
 version = "0.2.0"
 description = "Local-first roleplay agents powered by KohakuTerrarium"
+license = "LicenseRef-Terrarium-Tavern-NonCommercial-1.1"
+license-files = ["LICENSE/*", "vendor/mvu/LICENSE"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "kohakuterrarium @ https://github.com/Kohaku-Lab/KohakuTerrarium/archive/c01854de42eacf280d09b2dcdaeae51bab28d5ef.zip",
@@ -31,6 +33,9 @@ dev = ["pytest>=8", "pytest-asyncio>=0.25", "ruff>=0.11"]
 
 [project.scripts]
 tavern = "tavern.__main__:main"
+
+[project.urls]
+Upstream = "https://github.com/Kohaku-Lab/KohakuTerrarium"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tavern"]

@@ -11,4 +11,4 @@ fs.rmSync(output, {recursive: true, force: true});
 fs.cpSync('dist','src/tavern/static/web',{recursive:true});
 fs.mkdirSync('src/tavern/static/licenses',{recursive:true});
 fs.copyFileSync('vendor/mvu/LICENSE','src/tavern/static/licenses/MagVarUpdate.txt');
-fs.copyFileSync('THIRD_PARTY_NOTICES.md','src/tavern/static/licenses/THIRD_PARTY_NOTICES.md');
+fs.cpSync('LICENSE','src/tavern/static/licenses',{recursive:true});

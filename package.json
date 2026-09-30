@@ -2,6 +2,7 @@
   "name": "terrarium-tavern",
   "version": "0.2.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE/PROJECT_LICENSE.md",
   "type": "module",
   "scripts": {
     "dev": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./run-dev.ps1",

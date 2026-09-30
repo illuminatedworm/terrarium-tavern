@@ -12,6 +12,14 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/Koha
 
 项目目前处于实验阶段，面向 Windows 本机使用。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过兼容 OpenAI 的 API 接入，不同功能部分可以使用不同模型。
 
+## 许可
+
+**本项目原创代码及随附原创资料严格禁止任何形式的商业用途**，采用 [Terrarium Tavern 非商业许可 1.1](LICENSE/PROJECT_LICENSE.md)。除禁止商用及为落实该限制所需的调整外，授权结构基本遵从 Apache 2.0：允许非商业使用、修改和免费再分发，保留署名、修改声明、专利授权及防御性终止、商标和免责规则，不额外要求公开源码。商业托管、收费分发、广告变现和企业内部业务使用等均不在授权范围内。
+
+这是改编后的独立许可，**不是 Apache-2.0，也不是与 Apache-2.0 二选一的双重许可**；以上为摘要，正式授权以许可全文为准。当前依赖中的 GPL／AGPL 兼容性仍有待解决，详见[许可审查与发行边界](docs/development/licensing.md)。
+
+Kohaku Terrarium 部分继续适用其原有的 [KohakuTerrarium License 1.0](LICENSE/KohakuTerrarium.txt)，其他第三方组件也保留各自许可。本项目属于“源码可用、仅限非商业用途”。完整范围及第三方声明见 [LICENSE/](LICENSE/README.md)。
+
 ## 核心设计
 
 ### 两种独立运行模式
@@ -146,4 +154,4 @@ npm.cmd test
 
 Powered by **KohakuTerrarium**。Copyright 2024–2026 Shih-Ying Yeh (KohakuBlueLeaf) and contributors。
 
-第三方组件的来源、固定版本与许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+第三方组件的来源、固定版本与许可说明见 [LICENSE/THIRD_PARTY_NOTICES.md](LICENSE/THIRD_PARTY_NOTICES.md)。

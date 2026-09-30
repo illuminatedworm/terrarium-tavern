@@ -9,11 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
     ".gitignore", ".python-version", ".prettierrc.json", "README.md",
-    "THIRD_PARTY_NOTICES.md", "pyproject.toml", "uv.lock", "package.json", "package-lock.json",
+    "pyproject.toml", "uv.lock", "package.json", "package-lock.json",
     "compatibility.lock.json", "index.html", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
     "setup.ps1", "start.ps1", "stop.ps1", "run-dev.ps1", "build.ps1",
 )
-DIRECTORIES = ("src", "web", "compat", "vendor", "samples", "docs", "tests", "tools", ".agents")
+DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools", ".agents")
 
 
 def publishable(relative):
@@ -24,6 +24,10 @@ def publishable(relative):
         return False
     if name.startswith(("credentials", "secrets")) or name == "settings.json" or ".local." in name:
         return False
+    if relative.suffix.lower() == ".txt" and (
+        relative.parts[0] == "LICENSE" or relative.parts[:4] == ("src", "tavern", "static", "licenses")
+    ):
+        return True
     return relative.suffix.lower() in {
         ".py", ".ts", ".vue", ".css", ".js", ".mjs", ".html", ".md", ".json", ".ttf",
     } or name in {"license", "copying", "notice", "cl100k_base.tiktoken.gz", "o200k_base.tiktoken.gz"}
@@ -63,6 +67,8 @@ def package(destination=None):
                 name = path.relative_to(ROOT / "node_modules").as_posix()
                 contents[f"third-party/npm/{name}"] = path.read_bytes()
     assert "src/tavern/static/web/index.html" in contents, "Run npm run build first"
+    for name in ("PROJECT_LICENSE.md", "KohakuTerrarium.txt", "THIRD_PARTY_NOTICES.md", "README.md"):
+        assert f"LICENSE/{name}" in contents, f"Missing license file: {name}"
     assert any("kohakuterrarium" in name.lower() and "license" in name.lower() for name in contents)
     manifest = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(contents.items())}
     contents["release-manifest.json"] = json.dumps(
