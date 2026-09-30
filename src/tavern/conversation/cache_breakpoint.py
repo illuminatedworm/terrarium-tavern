@@ -19,7 +19,7 @@ def automatic_message_id(history, offset=3):
 
 def reset_follow(history, follow=None):
     follow = follow or {}
-    return {"interval": follow.get("interval", 8), "offset": follow.get("offset", 3),
+    return {"interval": follow.get("interval", 5), "offset": follow.get("offset", 3),
             "anchor": automatic_message_id(history, follow.get("offset", 3)), "progress": 0}
 
 

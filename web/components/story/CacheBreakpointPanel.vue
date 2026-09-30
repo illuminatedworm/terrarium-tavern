@@ -12,13 +12,13 @@ const emit = defineEmits<{
   locate: [];
 }>();
 const automatic = ref(true);
-const interval = ref<number | string>(8);
+const interval = ref<number | string>(5);
 const offset = ref<number | string>(3);
 watch(
   () => [props.session.id, props.session.revision],
   () => {
     automatic.value = props.session.cache_breakpoint_auto;
-    interval.value = props.session.cache_breakpoint_follow?.interval || 8;
+    interval.value = props.session.cache_breakpoint_follow?.interval || 5;
     offset.value = props.session.cache_breakpoint_follow?.offset || 3;
   },
   { immediate: true },

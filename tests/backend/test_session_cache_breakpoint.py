@@ -151,7 +151,7 @@ async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story
         committed = store.session(session["id"])
         assert committed["cache_breakpoint_effective_id"] == replies[0]
         assert committed["cache_breakpoint_follow"] == {
-            "interval": 8, "offset": 3, "anchor": replies[0], "progress": 1}
+            "interval": 5, "offset": 3, "anchor": replies[0], "progress": 1}
         assert len(requests) == 1
         wire = requests[0]
         assert wire["prompt_cache_options"] == {"mode": "explicit"}
