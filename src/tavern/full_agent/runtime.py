@@ -184,8 +184,9 @@ class FullAgentRuntime:
             self.store.set_turn(tid, status="cancelled", error="用户取消，草稿未提交")
             self.store.event(tid, "cancelled", {})
         except Exception as error:
-            self.store.set_turn(tid, status="error", error=str(error))
-            self.store.event(tid, "error", {"message": str(error)})
+            message = str(error) or type(error).__name__
+            self.store.set_turn(tid, status="error", error=message)
+            self.store.event(tid, "error", {"message": message, "error_type": type(error).__name__})
         finally:
             self.agents.pop(tid, None)
             if script:

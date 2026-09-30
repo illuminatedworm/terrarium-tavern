@@ -21,7 +21,7 @@
 
 `web/App.vue` 和 `web/main.ts` 负责应用组装。`components/` 按 `common`、`story`、`settings`、`character`、`records` 分类；`lib/` 为请求与业务辅助逻辑，`composables/` 为共享组合式函数，`styles/` 和 `assets/` 保存样式与素材。
 
-`compat/` 为兼容桥，`vendor/` 为固定上游源码。测试统一位于 `tests/`，具体入口见[验证说明](validation.md)。文档分为 `guides/` 使用指南、`design/` 当前实现说明和 `development/` 开发指引；不保存历史验收报告。
+`compat/` 为兼容桥，`vendor/` 为固定上游源码。测试统一位于 `tests/`，具体入口见[验证说明](validation.md)。文档分为 `guides/` 使用指南、`design/` 当前实现说明、`development/` 开发指引和 `reports/` 经明确要求归档的脱敏综合报告；原始验收记录不纳入仓库。
 
 [`LICENSE/`](../../LICENSE/README.md) 集中保存本项目非商业许可、Kohaku Terrarium 上游许可原文和第三方声明；`vendor/` 内原有第三方许可保留在源码旁。前端构建、Python 包和源码发行包均随附许可文件。
 

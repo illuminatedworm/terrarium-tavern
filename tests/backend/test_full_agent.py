@@ -451,6 +451,53 @@ async def test_native_wire_and_atomic_checkpoint_on_invalid_arguments(story, mon
         await service.close()
 
 
+async def test_malformed_relay_arguments_stop_without_spending_retry_budget(story):
+    store, session = story
+    service = runtime(store)
+    settings = store.settings().for_role("full_agent")
+    settings.model, settings.api_key, settings.use_proxy = "claude-fixture", "test-key", False
+    provider = await make_provider(settings)
+    requests = []
+    malformed = '{}{"content":"checkpoint"}'
+    def transport(request):
+        requests.append(json.loads(request.content))
+        arguments = '{"content":"saved progress"}' if len(requests) == 1 else malformed
+        return sdk_httpx.Response(200, json={"choices": [{"finish_reason": "tool_calls", "message": {
+            "content": "", "tool_calls": [{"id": f"c{len(requests)}", "type": "function",
+                "function": {"name": "write_checkpoint", "arguments": arguments}}]}}],
+            "usage": {"prompt_tokens": 9908, "completion_tokens": 159,
+                      "prompt_tokens_details": {"cache_creation_tokens": 9812}}})
+    await provider._client._client.aclose()
+    provider._client._client = sdk_httpx.AsyncClient(transport=sdk_httpx.MockTransport(transport), trust_env=False)
+    try:
+        failed, current = await turn(service, session, provider)
+        assert failed["status"] == "error" and "不是合法 JSON" in failed["error"]
+        assert len(requests) == 2
+        assert current["head"] == session["head"]
+        events = store.events(failed["id"])
+        assert [e["payload"]["usage"]["cache_write_tokens"] for e in events if e["kind"] == "usage"] == [9812, 9812]
+        responses = [e["payload"] for e in events if e["kind"] == "full_agent_response"]
+        assert responses[-1]["tool_calls"][0]["arguments"] == malformed
+        with store.connection() as db:
+            progress = json.loads(db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (failed["id"],)).fetchone()[0])
+        assert progress["snapshot"]["full_agent"]["checkpoint"]["text"] == "saved progress"
+        assert malformed not in json.dumps(progress["continuation"])
+    finally:
+        await service.close()
+
+
+async def test_empty_provider_error_keeps_diagnostic_type(story):
+    store, session = story
+    service = runtime(store)
+    try:
+        failed, _ = await turn(service, session, Model(TimeoutError()))
+        assert failed["status"] == "error" and failed["error"] == "TimeoutError"
+        error = next(e["payload"] for e in store.events(failed["id"]) if e["kind"] == "error")
+        assert error["error_type"] == "TimeoutError"
+    finally:
+        await service.close()
+
+
 async def test_full_api_preview_recovery_and_mode_boundaries(story):
     store, session = story
     app = create_app(store.root)

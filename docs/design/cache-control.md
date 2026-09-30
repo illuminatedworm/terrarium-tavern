@@ -157,6 +157,8 @@ Gemini 对象包含断点之前的系统规则、消息、工具定义与工具�
 
 真实服务商对照工具见[Prefix cache diagnostic](../../tools/probe_prefix_cache.md)，仅使用短输出合成样本，日志写入被忽略的 `.cache/`。测试结果只描述被测端点与模型，不能推断中转内部转换或所有服务商表现。
 
+真实项目回合的审计入口见[验证与发行](../development/validation.md)：`tools/audit_runtime_cache.py` 从运行数据库读取请求与原始用量，核对包含工具定义的最终 HTTP 缓存前缀。兼容接口的缓存写入识别 `cache_write_tokens`、`cached_creation_tokens` 和 `cache_creation_tokens` 三种 details 字段；保留真实的 0，不把缺失字段当作 0。同一中转的 Chat Completions 与原生 Messages 路径可能具有不同的缓存和工具转换行为，出现稳定前缀却大量重写时应分别实测，不能仅凭 `status=sent` 判定已命中。
+
 ## 历史导航与渲染
 
 对话刻度栏按回合提供预览、点击/拖动跳转、方向键及 Home/End 定位；白色表示阅读位置，黄色表示计划断点。引用原文、定位缓存和历史导航共用消息定位入口，覆盖当前分支完整历史；UI 渲染范围不影响模型上下文。

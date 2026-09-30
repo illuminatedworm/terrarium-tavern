@@ -187,6 +187,17 @@ class FullAgent:
                     return text
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                     raise ValueError("模型返回了无效的工具调用序列")
+                # A malformed protocol payload (observed from relays as
+                # '{}{"content":...}') cannot be repaired by executing a tool.
+                # Do not echo it through up to max_steps paid requests. Usage and
+                # the raw response are already recorded; prior progress survives.
+                for call in calls:
+                    try:
+                        json.loads(call.arguments)
+                    except (ValueError, TypeError):
+                        raise ValueError(
+                            f"服务商返回的 {call.name} 工具参数不是合法 JSON；已停止本回合，避免连续付费重试。"
+                            "请检查提供商的工具调用协议；Claude 可尝试 Anthropic Messages 接口。") from None
                 window_id = self.state["window"]["id"]
                 assistant_seq = len(self.new_trace) + 1
                 assistant = {"role": "assistant", "content": response.content or "", "tool_calls": [

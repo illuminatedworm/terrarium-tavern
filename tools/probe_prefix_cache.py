@@ -96,8 +96,8 @@ def cache_metrics(usage):
     details = usage.get(detail_field) or {}
     read = details.get("cached_tokens", usage.get("cache_read_input_tokens"))
     writes = {}
-    for field in ("cache_write_tokens", "cached_creation_tokens"):
-        if field in details:
+    for field in ("cache_write_tokens", "cached_creation_tokens", "cache_creation_tokens"):
+        if details.get(field) is not None:
             writes[detail_field + "." + field] = details[field]
     if "cache_creation_input_tokens" in usage:
         writes["cache_creation_input_tokens"] = usage["cache_creation_input_tokens"]

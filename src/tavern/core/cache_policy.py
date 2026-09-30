@@ -111,7 +111,12 @@ def normalize_usage(raw, api):
         prompt = raw.get("input_tokens", 0) if api == "responses" else raw.get("prompt_tokens", 0)
         output = raw.get("output_tokens", 0) if api == "responses" else raw.get("completion_tokens", 0)
         read = details.get("cached_tokens", raw.get("cache_read_input_tokens"))
-        write = details.get("cache_write_tokens", details.get("cached_creation_tokens", raw.get("cache_creation_input_tokens")))
+        # Relays use all three spellings. Some Chat endpoints
+        # report cache_creation_tokens; retain a real zero and skip null aliases.
+        write = next((value for value in (
+            details.get("cache_write_tokens"), details.get("cached_creation_tokens"),
+            details.get("cache_creation_tokens"), raw.get("cache_creation_input_tokens"))
+            if value is not None), None)
         if write is None and raw.get("usage_source") == "anthropic":
             fields = ("claude_cache_creation_5_m_tokens", "claude_cache_creation_1_h_tokens")
             if all(k in raw for k in fields):

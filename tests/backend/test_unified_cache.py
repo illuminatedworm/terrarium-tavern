@@ -59,6 +59,31 @@ def reply(api):
             "usage": {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 8, "cached_creation_tokens": 2}}}
 
 
+async def test_poke_chat_creation_usage_survives_transport_and_accounting():
+    # Actual shape observed in a real Full Agent request to Poke, 2026-09-30.
+    raw = {"prompt_tokens": 9908, "completion_tokens": 159, "total_tokens": 10067,
+           "prompt_tokens_details": {"cache_creation_tokens": 9812}}
+    def route(request):
+        return httpx.Response(200, json={**reply("chat_completions"), "usage": raw})
+    async with provider(config(), route) as p:
+        result = await p.chat_complete([{"role": "user", "content": "Continue"}])
+        assert result.usage["cache_write_tokens"] == 9812
+        assert result.usage["cached_tokens"] is None
+        assert result.usage["raw_usage"] == raw
+        assert p.reported_usage["cache_write_tokens"] == 9812
+        assert p.last_usage["cache_write_tokens"] == 9812
+
+
+@pytest.mark.parametrize("api,field", [("chat_completions", "prompt_tokens_details"),
+                                      ("responses", "input_tokens_details")])
+def test_creation_alias_keeps_zero_and_skips_null(api, field):
+    assert normalize_usage({field: {"cache_write_tokens": None, "cache_creation_tokens": 72}}, api)[
+        "cache_write_tokens"] == 72
+    assert normalize_usage({field: {"cache_write_tokens": 0, "cache_creation_tokens": 72}}, api)[
+        "cache_write_tokens"] == 0
+    assert normalize_usage({field: {"cache_creation_tokens": 0}}, api)["cache_write_tokens"] == 0
+
+
 def compiled(mode, cfg):
     history = [{"id": "greeting", "parent": None, "role": "assistant", "raw": "Opening"}]
     for index in range(4):

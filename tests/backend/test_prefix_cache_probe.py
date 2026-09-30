@@ -2,6 +2,14 @@
 from tools.probe_prefix_cache import cache_metrics, cases, protocol_body
 
 
+def test_poke_creation_alias_is_reported_by_diagnostic():
+    metrics = cache_metrics({"prompt_tokens": 9908, "completion_tokens": 159,
+                             "prompt_tokens_details": {"cache_creation_tokens": 9812}})
+    assert metrics["write_tokens"] == 9812
+    assert metrics["read_tokens"] is None
+    assert metrics["write_sources"] == {"prompt_tokens_details.cache_creation_tokens": 9812}
+
+
 def test_probe_controlled_differences():
     matrix = dict(cases("fixed"))
     a = matrix["baseline"]

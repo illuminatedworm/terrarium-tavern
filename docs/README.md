@@ -7,4 +7,4 @@
 - 开发维护：[项目目录与提交边界](development/structure.md)、[验证与发行](development/validation.md)。
 - 许可：[适用范围](../LICENSE/README.md)、[许可审查与发行边界](development/licensing.md)。
 
-文档描述当前实现；具体测试报告、性能记录和私人回放不纳入仓库。
+文档描述当前实现，并保留经明确要求归档的脱敏综合报告；原始测试日志、私人回放、凭据和剧情数据不纳入仓库。
