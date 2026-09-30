@@ -61,7 +61,7 @@ useTimedError(error);
   <section v-else class="editor-page story-setup">
     <button class="quiet" @click="emit('back')">← 重新选择角色卡</button>
     <div class="story-steps">
-      <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 玩家与开场</span>
+      <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 用户与开场</span>
     </div>
     <div class="eyebrow">START A NEW STORY</div>
     <h1>进入 {{ data.name }}</h1>
@@ -83,12 +83,12 @@ useTimedError(error);
           }}
         </p>
         <label
-          >玩家角色<select v-model="personaId">
+          >用户角色<select v-model="personaId">
             <option value="">临时身份</option>
             <option v-for="p in personas" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select></label
         >
-        <label v-if="!personaId">临时玩家名称<input v-model="personaName" /></label>
+        <label v-if="!personaId">临时用户名称<input v-model="personaName" /></label>
         <p v-else class="persona-preview">{{ personas.find((p) => p.id === personaId)?.description }}</p>
         <button class="primary" :disabled="busy || (!personaId && !personaName.trim())" @click="start">
           {{ busy ? '正在准备…' : '进入故事 →' }}

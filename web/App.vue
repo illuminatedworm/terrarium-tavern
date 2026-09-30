@@ -14,6 +14,7 @@ import DialogueMessage from './components/story/DialogueMessage.vue';
 import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
+import PromptPrefix from './components/common/PromptPrefix.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
@@ -408,7 +409,7 @@ const contextLabels: Record<string, string> = {
   lore_depth: '世界书（历史深度插入）',
   lore_conversation: '中途注入世界书',
   character: '角色',
-  persona: '玩家',
+  persona: '用户',
   examples: '示例',
   memory: '记忆',
   checkpoint: '交接笔记',
@@ -478,7 +479,7 @@ function contextItemTitle(item: any) {
     const entry = preview.value?.lore?.find((e: any) => String(e.id) === source.slice(5));
     return entry?.comment || entry?.name || `lore · ${source.slice(5)}`;
   }
-  if (source === 'persona') return `玩家 · ${session.value?.persona || ''}`;
+  if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;
   if (source === 'agent_tools') {
     if (item.role === 'tool') {
       const call = (preview.value?.trace || [])
@@ -1611,7 +1612,7 @@ useTimedError(error);
         </nav></template
       >
       <div class="sidebar-bottom">
-        <button @click="pageMode = 'personas'">♙ 玩家角色</button
+        <button @click="pageMode = 'personas'">♙ 用户角色</button
         ><button @click="panel = 'layout'">Aa 阅读排版</button
         ><button @click="panel = 'settings'">⚙ 设置</button
         ><button @click="panel = 'about'">关于 Terrarium Tavern ↗</button>
@@ -1948,26 +1949,29 @@ useTimedError(error);
                   : '本次生成失败，正文与状态未提交。'
               "
             />
-            <div
-              class="retry-toolbar regenerate-bar"
-              v-if="(latestReply || retryableTurn) && rewriteExpanded"
-            >
-              <input
-                v-model="regenerationNote"
-                aria-label="重新生成补充要求"
-                :placeholder="
-                  retryableTurn
-                    ? '补充本次要求，例如：严格遵守变量输出格式'
-                    : '补充要求；将重写上一条已提交回复'
-                "
-                :disabled="busy || !!editingMessageId"
-                @keydown.enter.prevent="regenerateReply"
-              /><button
-                :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                @click="regenerateReply"
-              >
-                ↻ 重新生成
-              </button>
+            <div v-if="(latestReply || retryableTurn) && rewriteExpanded">
+              <PromptPrefix
+                :text="activeSettings.regenerate_prompt || ''"
+                label="重新生成补充要求的系统预制头"
+              />
+              <div class="retry-toolbar regenerate-bar">
+                <input
+                  v-model="regenerationNote"
+                  aria-label="重新生成补充要求"
+                  :placeholder="
+                    retryableTurn
+                      ? '补充本次要求，例如：严格遵守变量输出格式'
+                      : '补充要求；将重写上一条已提交回复'
+                  "
+                  :disabled="busy || !!editingMessageId"
+                  @keydown.enter.prevent="regenerateReply"
+                /><button
+                  :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+                  @click="regenerateReply"
+                >
+                  ↻ 重新生成
+                </button>
+              </div>
             </div>
             <div class="compose-box">
               <ExpandableTextarea
@@ -2226,14 +2230,15 @@ useTimedError(error);
           </div>
           <label>你的身份<input v-model="session.persona" /></label
           ><label
-            >玩家完整描述<ExpandableTextarea
+            >用户完整描述<ExpandableTextarea
               v-model="session.persona_data.description"
-              label="玩家完整描述"
+              label="用户完整描述"
               placeholder="外貌、背景、性格、能力与边界" /></label
           ><label
             >本轮偏好（可选）<ExpandableTextarea
               v-model="session.turn_preference"
               label="本轮偏好"
+              :prefix="activeSettings.preference_prompt || ''"
               placeholder="例如：多用对话推进，节奏放缓，给我留下行动空间。"
             />
           </label>

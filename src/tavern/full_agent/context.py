@@ -50,7 +50,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         add(role, wrap_lorebook(expand(entry["content"])), "lore:" + entry["id"],
             lore_ids=[entry["id"]], lore_region="constant")
     add("system", expand(character_content(card)), "character")
-    add("system", "<user_character>\n玩家：" + session["persona"] + "\n"
+    add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(card.get("mes_example", "")), "examples")
     checkpoint = state["checkpoint"]
@@ -99,7 +99,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     history_status = f"原始历史 H1–H{len(history)}" if history else "尚无原始历史"
     visible_status = f"当前保留 H{window['start']+1} 起的正文" if visible else "当前窗口没有已完成的历史正文"
     status = (f"上下文窗口：当前第 {window['number']} 个，总计 {window['number']} 个。\n"
-              f"{history_status}；当前玩家输入引用 H{len(history)+1}；{visible_status}。\n"
+              f"{history_status}；当前用户输入引用 H{len(history)+1}；{visible_status}。\n"
               f"{memory_status}\n"
               f"本回合还可调用模型 {max(0, settings.full_agent_config.max_steps - calls)} 次。")
     memory_at = next(i for i, item in enumerate(items) if item["source"] == "checkpoint") + 1
@@ -117,7 +117,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                 f"本轮回复额度 {settings.reply_tokens} tokens。\n"
                 + ("当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
                    "必须单独调用 new_context 保存完整交接笔记并换窗；运行时否决其他一切工具调用和正文回复。"
-                   "换窗成功后继续当前玩家请求。"
+                   "换窗成功后继续当前用户请求。"
                    if rollover_required else "窗口预算提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。")
             )
             updated = request_tokens(wire(), settings, tools) + reasoning_cost

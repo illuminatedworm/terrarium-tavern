@@ -30,7 +30,7 @@ record 的 category 为 current/episode/open/uncertain，kind 为 fact/claim/inf
 callback 是 record 内的布尔字段，只能用于 episode；最多三条、合计300 tokens，只补充本批原话/动作，不为此请求复核。
 questions 仅用于关键局部疑问，最多八项；topic 为 ownership/identity/knowledge/injury/relationship/completion，record_ids 指向本次已有的非手工 active、uncertain 条目。证据不足的结论先保存为 uncertain，不能一边请求核验一边当作确定事实。
 需要补查时先调用提供的只读工具，最终答复只返回一个合法 JSON 对象，顶层必须为 operations 和 questions；无修改且无疑问时返回 {"operations":[],"questions":[]}。
-最小格式示例（S1须换成实际支持该内容的片段编号）：{"operations":[{"op":"add","record":{"category":"episode","content":"她把戒指借给了玩家。","sources":["S1"]}}],"questions":[]}。新增时 kind 默认 fact，status 默认 active，people/known_to 默认 []，story_time 默认“未知”，callback 默认 false；修订时省略的内容字段继承旧值。sources 每次必填，setting_refs 每次默认 []。不确定或角色说法必须明确填写 kind，不能用默认值冒充事实。
+最小格式示例（S1须换成实际支持该内容的片段编号）：{"operations":[{"op":"add","record":{"category":"episode","content":"她把戒指借给了用户。","sources":["S1"]}}],"questions":[]}。新增时 kind 默认 fact，status 默认 active，people/known_to 默认 []，story_time 默认“未知”，callback 默认 false；修订时省略的内容字段继承旧值。sources 每次必填，setting_refs 每次默认 []。不确定或角色说法必须明确填写 kind，不能用默认值冒充事实。
 疑问格式：{"topic":"ownership","query":"待核对的对象与属性","record_ids":["对应待确认条目ID"]}。不返回完整快照、text/memories、Markdown或解释文字。引用成立只代表原文存在，不代表说法客观为真。
 """
 

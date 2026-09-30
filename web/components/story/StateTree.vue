@@ -12,7 +12,7 @@ const labels: Record<string, string> = {
   memory: '记忆',
   state: '状态',
   stat_data: '场景变量',
-  user: '玩家',
+  user: '用户',
   facts: '已知事实',
   events: '事件',
   characters: '角色',

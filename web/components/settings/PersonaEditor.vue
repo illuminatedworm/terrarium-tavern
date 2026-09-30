@@ -24,7 +24,7 @@ async function save() {
       draft.value.id ? 'PUT' : 'POST',
     );
     await load();
-    notice.value = '已保存；新故事可以选择这个玩家角色。';
+    notice.value = '已保存；新故事可以选择这个用户角色。';
   } catch (e: any) {
     error.value = e.message;
   }
@@ -35,7 +35,7 @@ async function remove() {
     await api(`/personas/${draft.value.id}`, undefined, 'DELETE');
     draft.value = { name: '', description: '' };
     await load();
-    notice.value = '已永久删除玩家角色；已有故事保留其独立身份快照。';
+    notice.value = '已永久删除用户角色；已有故事保留其独立身份快照。';
   } catch (e: any) {
     error.value = e.message;
   }
@@ -48,11 +48,11 @@ useTimedError(error);
     <div class="editor-header">
       <div>
         <button class="quiet" @click="emit('back')">← 返回</button>
-        <h1>玩家角色</h1>
+        <h1>用户角色</h1>
         <p class="muted">名字之外，也写下外貌、身份、性格、能力、背景和希望保留的边界。</p>
       </div>
-      <button v-if="draft.id" @click="remove">永久删除玩家角色</button
-      ><button class="primary" @click="save">保存玩家角色</button>
+      <button v-if="draft.id" @click="remove">永久删除用户角色</button
+      ><button class="primary" @click="save">保存用户角色</button>
     </div>
     <AppNotification :message="error" />
     <AppNotification :message="notice" />
@@ -74,7 +74,7 @@ useTimedError(error);
             notice = '';
           "
         >
-          ＋ 新玩家角色</button
+          ＋ 新用户角色</button
         ><button
           v-for="p in items"
           class="persona-item"

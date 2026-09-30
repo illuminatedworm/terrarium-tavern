@@ -54,6 +54,8 @@ class Store:
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
                     migrated = validated_settings
+                elif validated_settings.model_dump() != raw:
+                    migrated = validated_settings
         (root / "blobs").mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript("""
@@ -1124,13 +1126,13 @@ class Store:
         with self.connection() as db:
             row = db.execute("SELECT * FROM personas WHERE id=?", (pid,)).fetchone()
         if not row:
-            raise KeyError("玩家角色不存在")
+            raise KeyError("用户角色不存在")
         return dict(row)
 
     def delete_persona(self, pid):
         with self.connection() as db:
             if db.execute("DELETE FROM personas WHERE id=?", (pid,)).rowcount != 1:
-                raise KeyError("玩家角色不存在")
+                raise KeyError("用户角色不存在")
 
     def save_persona(self, pid, edit):
         with self.connection() as db:
@@ -1143,5 +1145,5 @@ class Store:
                     (edit.name, edit.description, pid, edit.expected_version),
                 )
                 if result.rowcount != 1:
-                    raise Conflict("玩家角色已被修改，请重新载入")
+                    raise Conflict("用户角色已被修改，请重新载入")
         return self.persona(pid)

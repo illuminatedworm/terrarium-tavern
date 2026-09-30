@@ -28,6 +28,9 @@ def test_defaults_and_custom_prompts():
         assert read_path(defaults, item["path"]) == item["default"]
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
+    assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
+    assert "用户的输入代表其角色" in DEFAULT_SYSTEM_PROMPT
+    assert "用户的输入代表其角色" in FULL_AGENT_PROMPT
 
 
 def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):

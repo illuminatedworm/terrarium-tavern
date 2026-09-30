@@ -59,7 +59,7 @@ class StateRead(Arguments):
 
 CHECKPOINT_GUIDANCE = (
     "content replaces the entire checkpoint. Build on <tavern_memory>; preserve valid scene context, "
-    "relationships, player constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
+    "relationships, user constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
     "Mark plans as pending and verify stale sources. Draft changes commit with the turn; review mode requires approval."
 )
 REFERENCE_GUIDANCE = "H/L references are navigation handles, not story prose."
@@ -86,10 +86,10 @@ SPECS = {
         "Optional result fields may include L references and titles."),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
-    "read_history": (Read, "Read original dialogue by H reference, including the current player input. " + REFERENCE_GUIDANCE),
+    "read_history": (Read, "Read original dialogue by H reference, including the current user input. " + REFERENCE_GUIDANCE),
     "write_checkpoint": (Checkpoint, "Update the checkpoint in the current window. " + CHECKPOINT_GUIDANCE),
     "new_context": (NewContext, "Save a checkpoint and switch windows. " + CHECKPOINT_GUIDANCE
-        + " Call this tool alone. The current player input stays; keep_recent counts dialogue messages, "
+        + " Call this tool alone. The current user input stays; keep_recent counts dialogue messages, "
         "expanded to complete exchanges. Old tool exchanges leave the window, so include needed results or references "
         "in the checkpoint. Forced rollover accepts only this tool. Continue the turn after switching; "
         "the model-call budget does not reset."),

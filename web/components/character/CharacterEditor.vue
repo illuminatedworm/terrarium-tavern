@@ -959,7 +959,7 @@ useTimedError(error);
         </div>
         <aside v-if="!props.session" class="editor-start">
           <h3>角色卡管理</h3>
-          <p class="muted">开始故事请到左侧“会话”页点击“开始新故事”，选择角色卡后设置玩家和开场。</p>
+          <p class="muted">开始故事请到左侧“会话”页点击“开始新故事”，选择角色卡后设置用户和开场。</p>
           <button :disabled="busy || agentRunning || card._draftOnly" @click="copyCard">
             复制已保存角色卡
           </button>

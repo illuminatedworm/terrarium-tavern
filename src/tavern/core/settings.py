@@ -1,4 +1,5 @@
 """Persisted settings; runtime projections are disposable, never the source of truth."""
+import re
 from copy import deepcopy
 from typing import Literal
 
@@ -181,6 +182,23 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     if "version" in raw:
         raw = deepcopy(raw)
         changed_scopes = set()
+        # Only application prompt settings use the human participant terminology.
+        # Character documents, persona names, dialogue and user input stay verbatim.
+        for scope in ("full_agent", "half_agent"):
+            agent = raw.setdefault(scope, {})
+            groups = [(agent, ("system_prompt", "memory_system_prompt", "maintenance_system_prompt",
+                               "preference_prompt", "regenerate_prompt", "probe_system_prompt", "probe_marker_prompt")),
+                      (agent.get("retrieval", {}), ("query_prompt", "protocol_prompt")),
+                      (agent.get("local_runtime", {}), ("instruction_prompt", "reranker_prompt"))]
+            for values, fields in groups:
+                for field in fields:
+                    old = values.get(field)
+                    if not isinstance(old, str):
+                        continue
+                    new = re.sub(r"\bplayer\b", "user", old.replace("玩家", "用户"), flags=re.IGNORECASE)
+                    if new != old:
+                        values[field] = new
+                        changed_scopes.add(scope)
         for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
                            ("half_agent", "background"), ("shared", "card_editor")):
             profile = raw.setdefault(scope, {}).setdefault(key, {})

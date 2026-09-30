@@ -349,7 +349,7 @@ def compile_context(
     sources = {
         "rules": settings.system_prompt,
         "character": character_content(card),
-        "persona": "玩家名字：" + persona + "\n" + session.get("persona_data", {}).get("description", ""),
+        "persona": "用户名字：" + persona + "\n" + session.get("persona_data", {}).get("description", ""),
         "examples": card.get("mes_example", ""),
         "post": card.get("post_history_instructions", ""),
         "memory": "\n".join(part for part in (story_summary, render_memory(snapshot, history)) if part),
@@ -678,7 +678,7 @@ def compile_context(
         at += 1
     messages[at:at] = constant_messages
     # Finalize the wire order after lore, depth entries, and compatibility overrides.
-    # Current-turn lore stays immediately before the latest player input; dynamic
+    # Current-turn lore stays immediately before the latest user input; dynamic
     # context comes after all other request messages, even for saved older recipes.
     dynamic_sources = {block.id: block.source for block in recipe.blocks
                        if block.source in ("author_note", "memory", "state")}

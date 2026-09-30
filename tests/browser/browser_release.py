@@ -153,7 +153,7 @@ async def main():
             if width // zoom < 760:
                 await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
                 await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
-            await page.get_by_role("button", name="玩家角色", exact=False).click()
+            await page.get_by_role("button", name="用户角色", exact=False).click()
             await assert_viewport(page, label + ":persona")
             await page.get_by_role("button", name="阅读排版", exact=False).click()
             await assert_viewport(page, label + ":reading")

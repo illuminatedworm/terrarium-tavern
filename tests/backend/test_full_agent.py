@@ -816,12 +816,12 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         wire = model.requests[-1]
         assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
         assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
-        assert any(m.get("content", "").startswith("<user_character>\n玩家：")
+        assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
         assert any(m.get("content", "").startswith("<tavern_memory>")
                    and "约定仍待兑现" in m["content"]
                    and m["content"].endswith("</tavern_memory>") for m in wire["messages"])
-        assert any("当前玩家输入引用 H2" in m.get("content", "") for m in wire["messages"])
+        assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         assert set(definitions) == set(SPECS) - {"revise_content"}
         assert "Call exactly once" in definitions["patch_state"]["description"]

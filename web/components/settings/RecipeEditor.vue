@@ -193,7 +193,7 @@ useTimedError(error);
           </button>
         </li>
       </ol>
-      <p v-if="!items.length" class="recipe-intro">暂无内容块。添加来源后编排角色、历史和玩家输入。</p>
+      <p v-if="!items.length" class="recipe-intro">暂无内容块。添加来源后编排角色、历史和用户输入。</p>
       <div class="recipe-add">
         <select v-model="adding" aria-label="添加内容块来源" :disabled="saving">
           <option v-for="source in sources" :key="source.value" :value="source.value">
@@ -244,7 +244,7 @@ useTimedError(error);
           >消息角色<select v-model="selected.block.role" aria-label="消息角色" :disabled="history">
             <option value="system">system · 系统指令</option>
             <option value="developer">developer · 开发者指令</option>
-            <option value="user">user · 玩家发言</option>
+            <option value="user">user · 用户发言</option>
             <option value="assistant">assistant · AI 发言</option></select
           ><small>{{
             history ? '历史消息保留各自角色。' : '决定模型如何理解这个块；输入通常用 user。'

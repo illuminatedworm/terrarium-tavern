@@ -32,7 +32,7 @@ const fields: SettingField[] = [
     options: [
       { value: 'system', label: '系统指令' },
       { value: 'developer', label: '开发者指令' },
-      { value: 'user', label: '玩家发言' },
+      { value: 'user', label: '用户发言' },
       { value: 'assistant', label: '模型回复' },
     ],
   },

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useTimedError } from '../../composables/useTimedError';
 import { nextTick, ref } from 'vue';
+import PromptPrefix from './PromptPrefix.vue';
 const props = defineProps<{
   modelValue?: string | null;
   label: string;
   placeholder?: string;
+  prefix?: string;
   code?: boolean;
   compact?: boolean;
   disabled?: boolean;
@@ -65,6 +67,7 @@ useTimedError(error);
     class="expandable-textarea"
     :class="{ 'is-code': code, 'is-compact': compact, 'expand-on-focus': expandOnFocus }"
   >
+    <PromptPrefix v-if="prefix !== undefined" :text="prefix" :label="`${label}的系统预制头`" />
     <textarea
       ref="inline"
       :value="modelValue || ''"
@@ -112,6 +115,7 @@ useTimedError(error);
           <h2>{{ label }}</h2>
           <button type="button" aria-label="关闭放大编辑" @click="closeEditor">×</button>
         </header>
+        <PromptPrefix v-if="prefix !== undefined" :text="prefix" :label="`${label}的系统预制头`" />
         <textarea
           ref="large"
           v-model="draft"
@@ -246,6 +250,10 @@ useTimedError(error);
   color: var(--text-story);
   font-size: 15px;
   line-height: 1.8;
+}
+.expanded-editor > .prompt-prefix {
+  flex-shrink: 0;
+  margin: 16px 20px 0;
 }
 .expanded-editor > textarea.is-code {
   font:

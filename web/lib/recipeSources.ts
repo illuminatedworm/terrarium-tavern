@@ -19,8 +19,8 @@ export const sources = [
   },
   {
     value: 'persona',
-    label: '玩家身份',
-    description: '注入会话设置中的玩家名字与完整描述，帮助角色理解玩家的身份和背景。',
+    label: '用户身份',
+    description: '注入会话设置中的用户名字与完整描述，帮助角色理解用户的身份和背景。',
   },
   {
     value: 'lore_after',
@@ -42,7 +42,7 @@ export const sources = [
     value: 'history',
     label: '剧情消息历史',
     description:
-      '注入当前进度中尚未退出历史窗口的历史消息，逐条保留原来的玩家 / AI 角色。锚定在这些消息前的滚动世界书随消息一起注入或退出。这个块的消息角色、深度、超长提示阈值和保留标记不控制历史窗口。',
+      '注入当前进度中尚未退出历史窗口的历史消息，逐条保留原来的用户 / AI 角色。锚定在这些消息前的滚动世界书随消息一起注入或退出。这个块的消息角色、深度、超长提示阈值和保留标记不控制历史窗口。',
   },
   {
     value: 'author_note',
@@ -56,8 +56,8 @@ export const sources = [
   },
   {
     value: 'input',
-    label: '本次玩家输入',
-    description: '注入本次发送的玩家文字，通常使用 user 角色。拖动这个块会改变输入在配方中的位置。',
+    label: '本次用户输入',
+    description: '注入本次发送的用户文字，通常使用 user 角色。拖动这个块会改变输入在配方中的位置。',
   },
   {
     value: 'post',

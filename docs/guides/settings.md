@@ -25,6 +25,10 @@
 
 保存成功后的下一次操作采用新配置，已经运行的回合继续使用开始时的配置快照。未单独设置权限的对话动态继承对应模式的默认策略；扩大默认权限同样从下一轮生效。上下文编排和 half agent 的注入方案仅复制给新对话，已有对话继续使用自己的设置。
 
+会话设置中的“本轮偏好”和重新生成时的“补充要求”会显示当前模式配置的系统预制头；本轮偏好的放大编辑窗口也显示同一预制头。此区域只读，编辑和保存只涉及用户填写的部分。需要修改预制头时，在对应模式的提示词设置中修改“对话偏好引导词”或“重新生成引导词”。
+
+应用提示词统一将参与游玩的人类方称为“用户”。启动时会将已保存应用提示词中的“玩家”及英文 player 统一替换，并更新受影响模式的修订号；其余定制文本、用户角色名称、角色卡和历史正文保留原样。重复启动不重复增加修订号。
+
 ## 升级与接口
 
 首次升级会在写入前检查版本、备份原数据库为数据目录中的 `settings-before-v2-*.sqlite3`，随后事务提交设置和数据库版本 2。保留原连接、密钥和自定义文本；曾经继承模型的 full agent、角色卡编辑，按升级前实际生效值复制为明确的独立配置。原共用运行参数深拷贝到两套配置。重复启动不会再次覆盖，未知版本拒绝写入。
@@ -37,4 +41,4 @@
 
 `POST /api/settings/edit-sessions` 返回编辑标识和当前设置。更新可携带 `edit_session`；`POST /api/settings/edit-sessions/{id}/undo` 使用页面标识和预期修订号撤回该页，`DELETE` 同路径释放编辑快照。修订冲突返回 409，校验失败返回 400；错误不回显提交的密钥。
 
-验证入口：后端 `test_settings_document.py`、前端 `settingsDocument.test.ts`，浏览器 `python -m tests.browser.browser_settings`。所有检查使用隔离数据和本地模拟模型。
+验证入口：后端 `test_settings_document.py`、前端 `settingsDocument.test.ts`，浏览器 `python -m tests.browser.browser_settings` 和 `python -m tests.browser.browser_prompt_prefixes`。所有检查使用隔离数据和本地模拟模型。
