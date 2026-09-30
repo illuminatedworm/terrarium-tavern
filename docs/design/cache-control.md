@@ -169,7 +169,7 @@ Gemini 对象包含断点之前的系统规则、消息、工具定义与工具�
 
 旧模型设置首次迁移前保存 SQLite 备份；正文配置切换本地控制，保留提供商、模型与手动断点，旧缓存键与保留时长转入附加请求参数。迁移递增对应设置版本，后台配置保持云端模式。
 
-主要验证入口是 `tests/backend/test_cache_follow.py`、`test_session_cache_breakpoint.py`、`test_unified_cache.py` 与 `test_prefix_cache_probe.py`，覆盖计数、分支、四协议最终 HTTP 请求、固定锚点下的前缀复用、Gemini 对象及失败降级。编译顺序另由 Full/Half Agent 上下文测试核对，确保变化的消息与工具提示处于预期位置。
+主要验证入口是 `tests/backend/test_cache_follow.py`、`test_session_cache_breakpoint.py` 与 `test_unified_cache.py`，覆盖计数、分支、四协议最终 HTTP 请求、固定锚点下的前缀复用、Gemini 对象及失败降级。编译顺序另由 Full/Half Agent 上下文测试核对，确保变化的消息与工具提示处于预期位置。供应商调查脚本作为按需诊断工具保留，其一次性实验专用测试不纳入常规后端套件。
 
 真实服务商对照工具见[Prefix cache diagnostic](../../tools/probe_prefix_cache.md)，仅使用短输出合成样本，日志写入被忽略的 `.cache/`。测试结果只描述被测端点与模型，不能推断中转内部转换或所有服务商表现。
 

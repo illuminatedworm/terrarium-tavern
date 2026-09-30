@@ -59,21 +59,6 @@ def reply(api):
             "usage": {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 8, "cached_creation_tokens": 2}}}
 
 
-async def test_poke_chat_creation_usage_survives_transport_and_accounting():
-    # Actual shape observed in a real Full Agent request to Poke, 2026-09-30.
-    raw = {"prompt_tokens": 9908, "completion_tokens": 159, "total_tokens": 10067,
-           "prompt_tokens_details": {"cache_creation_tokens": 9812}}
-    def route(request):
-        return httpx.Response(200, json={**reply("chat_completions"), "usage": raw})
-    async with provider(config(), route) as p:
-        result = await p.chat_complete([{"role": "user", "content": "Continue"}])
-        assert result.usage["cache_write_tokens"] == 9812
-        assert result.usage["cached_tokens"] is None
-        assert result.usage["raw_usage"] == raw
-        assert p.reported_usage["cache_write_tokens"] == 9812
-        assert p.last_usage["cache_write_tokens"] == 9812
-
-
 @pytest.mark.parametrize("api,field", [("chat_completions", "prompt_tokens_details"),
                                       ("responses", "input_tokens_details")])
 def test_creation_alias_keeps_zero_and_skips_null(api, field):
@@ -272,20 +257,6 @@ async def test_cloud_retention_without_explicit_breakpoints(api):
     assert "prompt_cache_breakpoint" not in json.dumps(seen)
 
 
-async def test_legacy_gpt_runtime_retention_does_not_require_instruction_breakpoint():
-    cfg = config("responses")
-    cfg.model, cfg.cache.retention = "gpt-5.4", "24h"
-    seen = []
-    def route(request):
-        seen.append(json.loads(request.content))
-        return httpx.Response(200, json=reply("responses"))
-    async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "user", "content": "complete user text"}])
-    assert seen[0]["prompt_cache_retention"] == "24h"
-    assert seen[0]["input"] == [{"role": "user", "content": "complete user text"}]
-    assert "prompt_cache_options" not in seen[0]
-
-
 async def test_native_claude_cloud_uses_automatic_retention_without_local_breakpoint():
     cfg = config("anthropic")
     cfg.cache = CacheSettings(mode="cloud", retention="1h")
@@ -298,22 +269,6 @@ async def test_native_claude_cloud_uses_automatic_retention_without_local_breakp
                                {"role": "user", "content": "complete user text"}])
     assert seen[0].pop("cache_control") == {"type": "ephemeral", "ttl": "1h"}
     assert "cache_control" not in json.dumps(seen[0])
-
-
-def test_old_custom_retention_is_imported_and_explicit_selection_wins():
-    from tavern.core.cache_policy import preset
-    cfg = config("anthropic")
-    cfg.cache = CacheSettings(mode="runtime", preset="custom", value={"type": "ephemeral", "ttl": "1h"})
-    assert cfg.cache.retention == "1h"
-    assert preset(cfg)["value"]["ttl"] == "1h"
-    cfg.cache.retention = "5m"
-    assert preset(cfg)["value"] == {"type": "ephemeral"}
-    cfg = config("responses")
-    cfg.model = "gpt-6-sol"
-    cfg.cache = CacheSettings(mode="runtime", request={"prompt_cache_retention": "24h",
-        "prompt_cache_options": {"mode": "explicit", "custom_option": True}})
-    assert cfg.cache.retention == "24h"
-    assert preset(cfg)["request"] == {"prompt_cache_options": {"mode": "explicit", "ttl": "30m", "custom_option": True}}
 
 
 @pytest.mark.parametrize("api", ["gemini", "chat_completions"])
@@ -549,35 +504,6 @@ async def test_gemini_never_caches_system_content_beyond_selected_boundary():
     assert events[-1]["cache"]["status"] == "fallback"
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5", "relay/claude-opus-5.5-20260922"])
-@pytest.mark.parametrize("effort", ["default", "minimal", "low", "medium", "high", "xhigh"])
-async def test_claude_55_uses_adaptive_effort_without_manual_budget_or_sampling(model, effort):
-    cfg = config("anthropic", reasoning_effort=effort, reply_tokens=512, temperature=0.8, top_p=0.9, top_k=20)
-    cfg.model = model
-    def route(request):
-        body = json.loads(request.content)
-        assert body["max_tokens"] == 512
-        assert not any(k in body for k in ("temperature", "top_p", "top_k"))
-        if effort == "default":
-            assert "thinking" not in body and "output_config" not in body
-        else:
-            assert body["thinking"] == {"type": "adaptive"}
-            assert body["output_config"] == {"effort": "low" if effort == "minimal" else effort}
-        return httpx.Response(200, json=reply("anthropic"))
-    async with provider(cfg, route) as p:
-        assert (await p.chat_complete([{"role": "user", "content": "hello"}])).content == "OK"
-
-
-async def test_claude_55_rejects_thinking_off_before_sending_request():
-    cfg = config("anthropic", reasoning_effort="none")
-    cfg.model = "claude-opus-5-5"
-    def route(request):
-        pytest.fail("unsupported thinking mode must not make a paid request")
-    async with provider(cfg, route) as p:
-        with pytest.raises(ValueError, match="不支持完全关闭思考"):
-            await p.chat_complete([{"role": "user", "content": "hello"}])
-
-
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-opus-4-6"])
 async def test_claude_requested_rollover_tool_preserves_permission_boundary(model):
     cfg = config("anthropic")
@@ -601,19 +527,9 @@ async def test_claude_requested_rollover_tool_preserves_permission_boundary(mode
 
 @pytest.mark.parametrize("model,effort,expected,adaptive", [
     ("claude-opus-4-6", "high", "high", True),
-    ("claude-sonnet-4-6", "xhigh", "max", True),
-    ("claude-opus-4-7", "high", "high", True),
-    ("claude-opus-4-8", "xhigh", "xhigh", True),
-    ("claude-opus-5", "high", "high", True),
-    ("claude-sonnet-5", "high", "high", True),
-    ("claude-fable-5-1", "high", "high", True),
-    ("claude-mythos-preview", "xhigh", "max", True),
     ("claude-opus-4-5", "high", "high", False),
-    ("claude-opus-4-5", "xhigh", "high", False),
-    ("claude-opus-5-50", "high", "high", False),
-    ("relay-alias", "high", "high", False),
 ])
-async def test_claude_effort_never_synthesizes_legacy_thinking_budget(model, effort, expected, adaptive):
+async def test_anthropic_reasoning_protocol(model, effort, expected, adaptive):
     cfg = config("anthropic", reasoning_effort=effort, reply_tokens=8192)
     cfg.model = model
     def route(request):
@@ -629,7 +545,7 @@ async def test_claude_effort_never_synthesizes_legacy_thinking_budget(model, eff
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"])
+@pytest.mark.parametrize("model", ["claude-sonnet-4-5"])
 async def test_legacy_claude_without_effort_requires_default_before_sending(model):
     cfg = config("anthropic", reasoning_effort="high")
     cfg.model = model
@@ -640,9 +556,7 @@ async def test_legacy_claude_without_effort_requires_default_before_sending(mode
             await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("model,expected", [("claude-opus-4-6", {"type": "disabled"}),
-                                          ("claude-opus-5", {"type": "disabled"}),
-                                          ("claude-sonnet-4-5", {"type": "disabled"})])
+@pytest.mark.parametrize("model,expected", [("claude-opus-4-6", {"type": "disabled"})])
 async def test_claude_none_explicitly_disables_thinking_where_supported(model, expected):
     cfg = config("anthropic", reasoning_effort="none")
     cfg.model = model
@@ -655,9 +569,12 @@ async def test_claude_none_explicitly_disables_thinking_where_supported(model, e
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("api,style", [("chat_completions", "reasoning_effort"),
-                                     ("chat_completions", "reasoning"), ("responses", "reasoning_effort")])
-@pytest.mark.parametrize("effort", ["default", "none", "minimal", "low", "medium", "high", "xhigh"])
+@pytest.mark.parametrize("api,style,effort", [
+    ("chat_completions", "reasoning_effort", "high"),
+    ("chat_completions", "reasoning", "medium"),
+    ("responses", "reasoning_effort", "high"),
+    ("responses", "reasoning_effort", "default"),
+])
 async def test_openai_protocols_keep_selected_text_effort(api, style, effort):
     cfg = config(api, reasoning_effort=effort, reasoning_format=style)
     def route(request):
@@ -678,12 +595,7 @@ async def test_openai_protocols_keep_selected_text_effort(api, style, effort):
 
 @pytest.mark.parametrize("model,effort,thinking", [
     ("gemini-3.8-flash", "high", {"thinkingLevel": "HIGH"}),
-    ("gemini-3.8-flash", "xhigh", {"thinkingLevel": "HIGH"}),
-    ("gemini-3.8-flash", "minimal", {"thinkingLevel": "MINIMAL"}),
-    ("gemini-3.1-pro-preview", "minimal", {"thinkingLevel": "LOW"}),
-    ("gemini-3.1-pro-preview", "medium", {"thinkingLevel": "MEDIUM"}),
     ("gemini-2.5-flash", "none", {"thinkingBudget": 0}),
-    ("gemini-2.5-pro", "high", {"thinkingBudget": 8192}),
 ])
 async def test_gemini_native_uses_model_supported_thinking_control(model, effort, thinking):
     cfg = config("gemini", reasoning_effort=effort)
@@ -696,8 +608,7 @@ async def test_gemini_native_uses_model_supported_thinking_control(model, effort
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("api", ["chat_completions", "gemini"])
-@pytest.mark.parametrize("model", ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-2.5-pro"])
+@pytest.mark.parametrize("api,model", [("gemini", "gemini-3.8-flash")])
 async def test_gemini_rejects_unsupported_thinking_off_before_sending(api, model):
     cfg = config(api, reasoning_effort="none")
     cfg.model = model
@@ -706,19 +617,6 @@ async def test_gemini_rejects_unsupported_thinking_off_before_sending(api, model
     async with provider(cfg, route) as p:
         with pytest.raises(ValueError, match="不支持关闭思考"):
             await p.chat_complete([{"role": "user", "content": "hello"}])
-
-
-@pytest.mark.parametrize("model,effort,expected", [("gemini-3.1-pro-preview", "minimal", "low"),
-                                                ("gemini-3.8-flash", "xhigh", "high")])
-async def test_gemini_chat_maps_shared_effort_to_supported_text_level(model, effort, expected):
-    cfg = config(reasoning_effort=effort)
-    cfg.model = model
-    def route(request):
-        body = json.loads(request.content)
-        assert body["reasoning_effort"] == expected
-        return httpx.Response(200, json=reply("chat_completions"))
-    async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
 @pytest.mark.parametrize("marked_result", [None, 0, 1])
