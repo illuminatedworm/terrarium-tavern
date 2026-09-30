@@ -6,7 +6,15 @@ const props = defineProps<{
   requestState?: any;
   sentLabel: string;
   disabled: boolean;
-  retention: { value: string; enabled: boolean; note: string; options: { value: string; label: string }[] };
+  retention: {
+    model: string;
+    apiLabel: string;
+    protocolNote: string;
+    value: string;
+    enabled: boolean;
+    note: string;
+    options: { value: string; label: string }[];
+  };
   runtime: boolean;
 }>();
 const emit = defineEmits<{
@@ -56,6 +64,11 @@ function save() {
 <template>
   <section class="cache-panel" aria-label="缓存断点控制">
     <h2>缓存时效</h2>
+    <div class="cache-connection" aria-label="当前缓存接入">
+      <p>当前模型：{{ retention.model || '尚未配置' }}</p>
+      <p>接入方式：{{ retention.apiLabel }}</p>
+      <p v-if="retention.protocolNote">{{ retention.protocolNote }}</p>
+    </div>
     <form v-if="retention.options.length" @submit.prevent="emit('save-retention', retentionValue)">
       <label
         >缓存时效档位<select
@@ -143,6 +156,16 @@ function save() {
 <style scoped>
 .cache-panel {
   padding: 0 2px 24px;
+}
+.cache-connection {
+  margin-bottom: 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.cache-connection p {
+  margin: 4px 0;
 }
 .cache-panel h2 {
   margin: 0 0 12px;

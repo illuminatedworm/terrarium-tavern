@@ -11,6 +11,15 @@ const cache: CacheSettings = {
 };
 
 describe('cache configuration', () => {
+  it('explains model names routed through another native protocol', () => {
+    const policy = cacheRetention('gemini-3.8-flash-high', 'anthropic', cache);
+    expect(policy.model).toBe('gemini-3.8-flash-high');
+    expect(policy.apiLabel).toBe('Anthropic Messages');
+    expect(policy.options.map((option) => option.value)).toEqual(['5m', '1h']);
+    expect(policy.protocolNote).toContain('切换模型名称不会自动更改提供商协议');
+    expect(cacheRetention('gemini-3.8-flash-high', 'gemini', cache).protocolNote).toBe('');
+    expect(cacheRetention('gemini-3.8-flash-high', 'chat_completions', cache).protocolNote).toBe('');
+  });
   it('offers protocol-specific retention tiers and the lowest default after switching models', () => {
     expect(cacheRetention('claude-opus-5-5', 'anthropic', cache).options.map((o) => o.value)).toEqual([
       '5m',
@@ -27,6 +36,11 @@ describe('cache configuration', () => {
     expect(cacheRetention('gpt-6-sol', 'responses', { ...cache, retention: '1h' }).value).toBe('30m');
     expect(cacheRetention('unknown', 'responses', cache).enabled).toBe(false);
     expect(cacheRetention('claude', 'responses', cache).enabled).toBe(false);
+    expect(cachePreset('claude', 'responses', cache).kind).toBe('unknown');
+    expect(cachePreset('o3', 'responses', cache)).toEqual({
+      kind: 'implicit',
+      request: { prompt_cache_retention: 'in_memory' },
+    });
     expect(cacheRetention('claude', 'anthropic', { ...cache, mode: 'cloud' }).enabled).toBe(true);
     expect(cacheRetention('claude', 'chat_completions', { ...cache, mode: 'cloud' }).enabled).toBe(false);
     expect(cacheRetention('gpt-5.4', 'chat_completions', { ...cache, mode: 'cloud' }).enabled).toBe(true);

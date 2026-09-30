@@ -120,12 +120,12 @@ def _preset(settings):
     model = settings.model.lower()
     if settings.api_mode == "gemini" or (settings.api_mode != "anthropic" and "gemini" in model):
         return {"kind": "gemini", "request": copy.deepcopy(cache.request)}
-    if settings.api_mode == "anthropic" or "claude" in model:
+    if settings.api_mode == "anthropic" or (settings.api_mode == "chat_completions" and "claude" in model):
         return {"kind": "block", "field": "cache_control", "value": {"type": "ephemeral"},
                 "request": copy.deepcopy(cache.request)}
     if "gpt" in model or model.startswith(("o1", "o3", "o4")):
         kind, _ = retention_policy(settings)
-        if kind == "openai_retention" and re.search(r"(?:^|/)gpt-\d", model):
+        if kind == "openai_retention" and (re.search(r"(?:^|/)gpt-\d", model) or re.match(r"^(o1|o3|o4)(-|$)", model)):
             # Earlier GPT models accept retention but not the newer explicit
             # breakpoint protocol. Keep their cache selection server-managed.
             return {"kind": "implicit", "request": copy.deepcopy(cache.request)}

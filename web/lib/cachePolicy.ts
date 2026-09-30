@@ -9,6 +9,27 @@ export interface CacheSettings {
 
 export function cacheRetention(model: string, api: string, cache: CacheSettings) {
   const name = model.toLowerCase();
+  const apiLabel =
+    (
+      {
+        anthropic: 'Anthropic Messages',
+        gemini: 'Gemini GenerateContent',
+        chat_completions: 'Chat Completions',
+        responses: 'Responses',
+      } as Record<string, string>
+    )[api] || api;
+  const family = name.includes('gemini')
+    ? 'Gemini'
+    : name.includes('claude')
+      ? 'Claude'
+      : name.includes('gpt') || /^(o1|o3|o4)(-|$)/.test(name)
+        ? 'OpenAI'
+        : '';
+  const nativeFamily = api === 'anthropic' ? 'Claude' : api === 'gemini' ? 'Gemini' : '';
+  const protocolNote =
+    nativeFamily && family && family !== nativeFamily
+      ? `模型名称属于 ${family}，接入方式仍为 ${apiLabel}。缓存档位按接入协议匹配；切换模型名称不会自动更改提供商协议。`
+      : '';
   let kind = '';
   let values: string[] = [];
   const customClaude =
@@ -71,8 +92,15 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
           : kind === 'openai_ttl'
             ? '当前模型支持的最低缓存时效为 30 分钟，仅有这一档。'
             : '实际保留时间由服务端决定，24 小时是最长保留上限。';
-  const explicit = !(cache.preset === 'auto' && kind === 'openai_retention' && /(?:^|\/)gpt-\d/.test(name));
+  const explicit = !(
+    cache.preset === 'auto' &&
+    kind === 'openai_retention' &&
+    (/(?:^|\/)gpt-\d/.test(name) || /^(o1|o3|o4)(-|$)/.test(name))
+  );
   return {
+    model,
+    apiLabel,
+    protocolNote,
     kind,
     value,
     enabled,
@@ -96,7 +124,7 @@ function baseCachePreset(
   const name = model.toLowerCase();
   if (!cacheRetention(model, api, cache).explicit) return { kind: 'implicit' };
   if (api === 'gemini' || (api !== 'anthropic' && name.includes('gemini'))) return { kind: 'gemini' };
-  if (api === 'anthropic' || name.includes('claude'))
+  if (api === 'anthropic' || (api === 'chat_completions' && name.includes('claude')))
     return {
       kind: 'block',
       field: 'cache_control',
