@@ -144,30 +144,77 @@ function save() {
 .cache-panel {
   padding: 0 2px 24px;
 }
-form,
-form label {
+.cache-panel h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.cache-panel form + h2,
+.cache-panel > .inspector-note + h2 {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+form {
   display: grid;
   gap: 10px;
 }
-form {
-  gap: 16px;
+form label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 .cache-follow-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 8px;
 }
 input,
 select {
-  width: 100%;
   min-width: 0;
+  max-width: 100%;
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+select {
+  width: 140px;
+}
+input {
+  width: 76px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-panel .inspector-note,
+.cache-panel .error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.cache-panel > h2 + .inspector-note {
+  margin-bottom: 12px;
+}
+.cache-panel button {
+  width: fit-content;
+  min-height: 34px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+form > button {
+  justify-self: end;
+  margin-top: 2px;
 }
 .cache-plan-state {
   border-top: 1px solid var(--border-subtle);
-  margin-top: 24px;
-  padding-top: 18px;
+  margin-top: 18px;
+  padding-top: 14px;
   font-size: 12px;
-  line-height: 1.7;
+  line-height: 1.6;
 }
 .cache-plan-state small,
 .cache-plan-state strong {
@@ -175,9 +222,18 @@ select {
 }
 .cache-plan-state small {
   color: var(--text-muted);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.cache-plan-state strong {
+  font-size: 13px;
+  font-weight: 500;
 }
 .cache-plan-state p {
   color: var(--text-secondary);
+  margin: 4px 0 0;
+}
+.cache-plan-state button {
+  margin-top: 10px;
 }
 </style>
