@@ -89,7 +89,7 @@ class TurnAgent:
                 return "该字段由程序维护，无需模型读取或回写。"
             return json.dumps(self.model_view.expose(data), ensure_ascii=False)
 
-        def lore_view(entry, *, preview=False):
+        def lore_view(entry):
             handle = next((h for h, eid in self.lore_handles.items() if eid == entry["id"]), None)
             if handle is None:
                 handle = f"L{len(self.lore_handles) + 1}"
@@ -97,12 +97,11 @@ class TurnAgent:
             # Admission controls, cooldowns, hashes, source IDs and cached
             # scoring are Runtime bookkeeping. This tool only needs text.
             text = self.model_view.text(entry.get("content", ""))
-            return {"ref": handle, "name": entry.get("comment") or entry.get("name", ""),
-                    "preview" if preview else "content": text[:240] if preview else text}
+            return {"ref": handle, "name": entry.get("comment") or entry.get("name", ""), "content": text}
 
         @tool
         async def search_lore(query: str) -> str:
-            """Search worldbook entries using Chinese-aware text matching. Read an entry to include it."""
+            """Search worldbook entries using Chinese-aware text matching; return complete entries and select them for context admission."""
             query = self.model_view.restore(query)
             if getattr(self, "retrieval_engine", None):
                 result = await self.retrieval_engine.prepare(self.document, self.history, query, self.snapshot,
@@ -111,17 +110,9 @@ class TurnAgent:
                 rows = [by_id[eid] for eid in result["ids"]]
             else:
                 rows = search(lore_entries(self.document, "writer"), query)
-            return json.dumps(self.model_view.expose([lore_view(e, preview=True) for e in rows]), ensure_ascii=False)
-
-        @tool
-        async def read_lore(entry_ref: str) -> str:
-            """Read and activate a worldbook entry by the L1/L2 ref returned by search_lore."""
-            entry_id = self.lore_handles.get(entry_ref)
-            for entry in lore_entries(self.document, "writer"):
-                if entry["id"] == entry_id and entry["enabled"]:
-                    self.requested.add(entry_id)
-                    return json.dumps(self.model_view.expose(lore_view(entry)), ensure_ascii=False)
-            raise ValueError("世界书短编号不存在或未启用；先搜索并选择返回的 L 编号")
+            rows = [entry for entry in rows if entry["enabled"]]
+            self.requested.update(entry["id"] for entry in rows)
+            return json.dumps(self.model_view.expose([lore_view(e) for e in rows]), ensure_ascii=False)
 
         @tool
         async def read_state(path: str = "") -> str:
@@ -208,7 +199,6 @@ class TurnAgent:
         return [
             read_character,
             search_lore,
-            read_lore,
             read_state,
             patch_state,
             search_memory,
@@ -232,7 +222,6 @@ class TurnAgent:
             {
                 "read_character",
                 "search_lore",
-                "read_lore",
                 "read_state",
                 "search_memory",
                 "tavern_recall_history",

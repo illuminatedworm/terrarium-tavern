@@ -20,7 +20,6 @@ const resultLabels: Record<string, string> = {
   include_metadata: '返回附加信息',
 };
 const metadataLabels: Record<string, string> = {
-  read_lore: '返回编号和标题',
   read_history: '返回编号和角色',
   read_note: '返回类型、来源和过时状态',
   read_state: '返回路径',
@@ -155,7 +154,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
           />
           {{ resultLabel(tool.name, String(key)) }}
         </label>
-        <small v-if="tool.name === 'search_lore'">默认只返回正文；开启编号后可用 read_lore 继续读取。</small>
+        <small v-if="tool.name === 'search_lore'">搜索直接返回命中条目的完整正文；编号和标题为可选附加信息。</small>
       </fieldset>
       <details>
         <summary>描述与参数</summary>

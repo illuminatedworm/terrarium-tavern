@@ -278,7 +278,7 @@ async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
             self.schemas.append(kwargs.get("tools", []))
             steps = [
                 [("search_lore", {"query": ""}), ("tavern_recall_history", {"turn": 1, "radius": 0})],
-                [("read_lore", {"entry_ref": "L1"}),
+                [("search_lore", {"query": "灯塔"}),
                  ("write_memory", {"content": "书店提供毛巾", "source_ref": "H1", "kind": "fact"})],
             ]
             if self.call_count < len(steps):
@@ -314,7 +314,8 @@ async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
         calls = {c["id"] for m in wire for c in m.get("tool_calls", [])}
         assert ids == calls
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
-        assert "read_lore" in names
+        assert "search_lore" in names
+        assert "read_lore" not in names
         assert not {"bash", "read", "write", "group_spawn"} & names
         assert not provider.schemas[-1]
         assert not any(m.get("role") == "tool" for m in provider.call_log[-1])

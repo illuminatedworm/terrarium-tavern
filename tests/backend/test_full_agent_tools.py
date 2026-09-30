@@ -15,6 +15,57 @@ from tests.backend.test_full_agent import Model, runtime, turn
 story = test_full_agent.story
 
 
+async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story):
+    store, session = story
+    options = {"read_lore": {"include_metadata": False}, "search_lore": {"include_title": True}}
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET disabled_tools=?,tool_result_options=? WHERE id=?",
+                   (json.dumps(["read_lore", "write_note"]), json.dumps(options), session["id"]))
+    session = Store(store.root).session(session["id"])
+    assert session["disabled_tools"] == ["write_note"]
+    assert session["tool_result_options"] == {"search_lore": options["search_lore"]}
+    fork = store.fork_session(session["id"], session["head"], session["revision"])
+    assert fork["disabled_tools"] == session["disabled_tools"]
+    assert fork["tool_result_options"] == session["tool_result_options"]
+    app = create_app(store.root)
+    service = runtime(store)
+    url = f"/api/sessions/{session['id']}/full-agent/tools"
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            # A pre-upgrade open client may submit every switch, including the retired tool.
+            response = await client.put(url, json={"expected_revision": 0,
+                "disabled_tools": [*SPECS, "read_lore"], "tool_result_options": options})
+            assert response.status_code == 200
+            session = response.json()
+            assert set(session["disabled_tools"]) == set(SPECS)
+            assert session["tool_result_options"] == {"search_lore": options["search_lore"]}
+            response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
+            assert response.status_code == 200
+            session = response.json()
+        model = Model(("read_lore", {"ref": "L1"}), ("search_lore", {"query": "灯塔"}), "继续。")
+        result, _ = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        assert all("read_lore" not in {t["function"]["name"] for t in r["extra_body"]["tools"]}
+                   for r in model.requests)
+        assert all(r["extra_body"]["tools"] == model.requests[0]["extra_body"]["tools"] for r in model.requests)
+        initial = model.requests[0]["messages"]
+        input_at = max(i for i, message in enumerate(initial) if message["role"] == "user")
+        assert all(r["messages"][:input_at + 1] == initial[:input_at + 1] for r in model.requests)
+        output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert "不允许此工具" in output[0]["error"]
+        assert output[1]["matches"]
+        assert all("text" in match and "error" not in match for match in output[1]["matches"])
+        # The rejected historical call/result remains a complete exchange before the successful search.
+        messages = model.requests[-1]["messages"]
+        exchange = [m for m in messages if m.get("tool_calls") or m["role"] == "tool"]
+        assert [m["role"] for m in exchange] == ["assistant", "tool", "assistant", "tool"]
+        assert exchange[1]["tool_call_id"] == exchange[0]["tool_calls"][0]["id"]
+        assert exchange[3]["tool_call_id"] == exchange[2]["tool_calls"][0]["id"]
+    finally:
+        await service.close()
+        await app.state.service.close()
+
+
 async def test_required_mvu_update_rejects_disabled_patch_tool(story):
     store, session = story
     with store.connection() as db:
@@ -40,6 +91,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             preview_url = f"/api/sessions/{session['id']}/preview"
             original_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
             assert {t["name"] for t in catalog} == set(SPECS)
+            assert "read_lore" not in {t["name"] for t in catalog}
             for tool in catalog:
                 assert tool["enabled"]
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
@@ -107,7 +159,7 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
     url = f"/api/sessions/{session['id']}/full-agent/tools"
     options = {"search_lore": {"include_ref": True, "include_title": True},
                "search_history": {"include_preview": False},
-               "read_lore": {"include_metadata": False}}
+               "read_history": {"include_metadata": False}}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
@@ -123,7 +175,7 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
             assert fork["tool_result_options"] == options
             model = Model(("search_lore", {"query": "旧港"}),
                           ("search_history", {"query": "开场"}),
-                          ("read_lore", {"ref": "L1"}), "继续。")
+                          ("read_history", {"ref": "H1"}), "继续。")
             result, _ = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
             output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]

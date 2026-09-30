@@ -55,7 +55,7 @@ def test_tool_result_field_options(story):
     assert result_field({}, "search_lore", "include_ref") is False
     assert result_field({}, "search_lore", "include_title") is False
     assert result_field({}, "search_history", "include_preview") is True
-    assert result_field({}, "read_lore", "include_metadata") is True
+    assert result_field({}, "read_history", "include_metadata") is True
     assert result_field({"tool_result_options": {"search_lore": {"include_ref": True}}},
                         "search_lore", "include_ref") is True
     assert set(RESULT_FIELDS["search_lore"]) == {"include_ref", "include_title"}
@@ -516,8 +516,7 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
     service = runtime(store)
     try:
         model = Model(("search_lore", {"query": "旧港"}), ("search_lore", {"query": "钟楼"}),
-                      ("search_lore", {"query": "旧港"}),
-                      ("read_lore", {"ref": "L2"}), "向导指向旧港。")
+                      ("search_lore", {"query": "旧港"}), "向导指向旧港。")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
@@ -531,8 +530,6 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
         assert set(tool_results[0]) == {"matches"}
         assert set(tool_results[0]["matches"][0]) == {"text"}
         assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
-        assert tool_results[3]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
-        assert set(tool_results[3]) == {"text", "ref", "title"}
         assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
         records = current["snapshot"]["lore_injections"]
         assert len(records) == 1 and records[0]["title"] == "钟楼"
@@ -618,19 +615,20 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
     store = Store(tmp_path)
     content = "loreword " * 2500 + "ENDMARK"
     document = {"name": "向导", "first_mes": "开场。", "character_book": {"entries": [
-        {"id": "long", "content": content, "comment": "长条目", "enabled": True}]}}
+        {"id": "long", "keys": ["loreword"], "content": content, "comment": "长条目", "enabled": True}]}}
     card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
     settings = store.settings()
+    settings.retrieval.channels = ["keyword"]
     settings.full_agent_config.auto_retrieval = False
     store.save_settings(settings)
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
-    model = Model(("read_lore", {"ref": "L1"}), "继续。")
+    model = Model(("search_lore", {"query": "loreword"}), "继续。")
     try:
         result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         tool_result = next(json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool")
-        assert tool_result["text"] == f"<lorebook>\n{content}\n</lorebook>"
+        assert tool_result["matches"] == [{"text": f"<lorebook>\n{content}\n</lorebook>"}]
     finally:
         await service.close()
 

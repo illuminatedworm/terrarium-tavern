@@ -146,6 +146,10 @@ async def test_mvu_final_request_and_memory_auxiliary_state_exclude_bookkeeping(
 async def test_authorized_tools_only_return_short_refs_and_program_fills_sources(tmp_path):
     store = Store(tmp_path)
     doc = document()
+    content = "银戒属于艾琳。" * 80 + "ENDMARK"
+    doc["character_book"]["entries"][KEY]["content"] = content
+    doc["character_book"]["entries"]["disabled"] = {
+        "id": "disabled", "content": "银戒的禁用条目", "enabled": False}
     card = store.import_card(json.dumps(doc).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session["snapshot"]["state"] = runtime_state()
@@ -159,8 +163,10 @@ async def test_authorized_tools_only_return_short_refs_and_program_fills_sources
         assert all(value not in body for value in (ID, HASH, KEY, session["head"]))
         return body
     lore = json.loads(await invoke("search_lore", {"query": "银戒"}))
-    assert set(lore[0]) == {"ref", "name", "preview"}
-    await invoke("read_lore", {"entry_ref": lore[0]["ref"]})
+    assert "read_lore" not in tools
+    assert set(lore[0]) == {"ref", "name", "content"}
+    assert len(lore) == 1 and lore[0]["content"] == content
+    assert agent.requested == {ID}
     recalled = json.loads(await invoke("tavern_recall_history", {"turn": 1, "radius": 0}))
     ref = recalled["rounds"][0]["passages"][0]["ref"]
     await invoke("write_memory", {"content": "已经相遇", "source_ref": ref})

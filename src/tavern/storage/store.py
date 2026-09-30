@@ -508,8 +508,9 @@ class Store:
             result = dict(row)
             result["recipe"] = ContextRecipe.model_validate_json(result["recipe"]).model_dump()
             result["persona_data"] = json.loads(result["persona_data"])
-            result["disabled_tools"] = json.loads(result["disabled_tools"])
+            result["disabled_tools"] = [name for name in json.loads(result["disabled_tools"]) if name != "read_lore"]
             result["tool_result_options"] = json.loads(result["tool_result_options"])
+            result["tool_result_options"].pop("read_lore", None)
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
         result["messages"] = self.history(sid, result["head"])

@@ -5,8 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tavern.character.cards import lore_entries, normalize
-from tavern.conversation.context import get_path, wrap_lorebook
+from tavern.character.cards import normalize
+from tavern.conversation.context import get_path
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.config import FullAgentConfig
@@ -65,7 +65,6 @@ CHECKPOINT_GUIDANCE = (
 REFERENCE_GUIDANCE = "H/L references are navigation handles, not story prose."
 RESULT_FIELDS = {
     "search_lore": {"include_ref": False, "include_title": False},
-    "read_lore": {"include_metadata": True},
     "search_history": {"include_preview": True},
     "read_history": {"include_metadata": True},
     "search_notes": {"include_preview": True},
@@ -85,7 +84,6 @@ SPECS = {
         "Entry conditions, cooldowns, relevance thresholds, and limits may filter matches. "
         "Returns complete selected entries in <lorebook>; auto-injected entries already in context are omitted. "
         "Optional result fields may include L references and titles."),
-    "read_lore": (Read, "Read a complete enabled lorebook entry by L reference in <lorebook>. " + REFERENCE_GUIDANCE),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
     "read_history": (Read, "Read original dialogue by H reference, including the current player input. " + REFERENCE_GUIDANCE),
@@ -217,15 +215,6 @@ class AgentTools:
             return await owner.retrieve(args.query, source="agent",
                                         include_ref=result_field(owner.session, name, "include_ref"),
                                         include_title=result_field(owner.session, name, "include_title"))
-        if name == "read_lore":
-            entries = lore_entries(owner.document, "writer")
-            entry_id = owner.lore_refs().get(args.ref)
-            entry = next((e for e in entries if e["id"] == entry_id and e["enabled"]), None)
-            if not entry:
-                raise ValueError("世界书引用不存在或未启用")
-            metadata = ({"ref": args.ref, "title": entry.get("comment", "")}
-                        if result_field(owner.session, name, "include_metadata") else {})
-            return self.read(owner.expand(entry["content"]), wrap=wrap_lorebook, **metadata)
         if name == "search_history":
             return self.search(self.archive(), args.query, args.limit,
                                include_preview=result_field(owner.session, name, "include_preview"))
