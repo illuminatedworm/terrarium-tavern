@@ -39,7 +39,10 @@ class ContextRecipe(BaseModel):
         default_factory=lambda: [
             ContextBlock(id="rules", source="rules", required=True, priority=100),
             ContextBlock(id="lore_before", source="lore_before"),
-            ContextBlock(id="character", source="character", required=True, priority=100),
+            ContextBlock(id="card_system_prompt", source="system_prompt", required=True, priority=100),
+            ContextBlock(id="character", source="description", required=True, priority=100),
+            ContextBlock(id="card_personality", source="personality", required=True, priority=100),
+            ContextBlock(id="card_scenario", source="scenario", required=True, priority=100),
             ContextBlock(id="persona", source="persona"),
             ContextBlock(id="lore_after", source="lore_after"),
             ContextBlock(id="examples", source="examples", role="assistant", priority=30),
@@ -48,27 +51,9 @@ class ContextRecipe(BaseModel):
             ContextBlock(id="post", source="post", priority=90),
             ContextBlock(id="author_note", source="author_note", priority=80),
             ContextBlock(id="memory", source="memory", priority=70),
-            ContextBlock(id="state", source="state", required=True, priority=100, depth=0),
+            ContextBlock(id="state", source="state", required=True, priority=100),
         ]
     )
-
-    @model_validator(mode="after")
-    def current_input_follows_history(self):
-        """Keep dialogue adjacent and dynamic context at the end of old recipes too."""
-        blocks = self.blocks
-        dialogue = {"history", "input"}
-        trailing = ("author_note", "memory", "state")
-        first = next((i for i, block in enumerate(blocks) if block.source in dialogue), len(blocks))
-        special = dialogue | set(trailing)
-        before = [block for i, block in enumerate(blocks) if i < first and block.source not in special]
-        after = [block for i, block in enumerate(blocks) if i >= first and block.source not in special]
-        self.blocks = (before
-                       + [block for block in blocks if block.source == "history"]
-                       + [block for block in blocks if block.source == "input"]
-                       + after
-                       + [block for source in trailing for block in blocks if block.source == source])
-        return self
-
 
 class Settings(BaseModel):
     """Operation-local runtime configuration (persist SettingsDocument instead)."""

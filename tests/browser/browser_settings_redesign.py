@@ -10,6 +10,7 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
+from tavern.core.models import ContextBlock
 
 
 async def main():
@@ -17,6 +18,12 @@ async def main():
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='tavern-settings-browser-') as root:
         app = create_app(root)
+        settings = app.state.store.settings_document()
+        recipe = settings.half_agent.context_recipe
+        recipe.blocks = [b for b in recipe.blocks if b.source not in
+                         ('system_prompt', 'description', 'personality', 'scenario')]
+        recipe.blocks.insert(2, ContextBlock(id='character', source='character', depth=2, priority=90))
+        app.state.store.save_settings(settings)
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
         address = f'http://127.0.0.1:{sock.getsockname()[1]}'
@@ -195,10 +202,29 @@ async def main():
                     await saved()
                     # Recipe metadata auto-saves; custom text commits independently.
                     await select('half agent 上下文编排')
+                    # A saved move keeps the selected block and its exact array position.
+                    blocks = (await read())['half_agent']['context_recipe']['blocks']
+                    original_state_at = next(i for i,b in enumerate(blocks) if b['source'] == 'state')
+                    await page.locator('.settings-block-list').get_by_role('button').filter(has_text='· 当前状态与变量').click()
+                    await page.get_by_role('button', name='上移', exact=True).click()
+                    await expect(page.get_by_role('combobox', name='内容来源', exact=True)).to_have_value('state')
+                    await saved()
+                    blocks = (await read())['half_agent']['context_recipe']['blocks']
+                    assert next(i for i,b in enumerate(blocks) if b['source'] == 'state') == original_state_at - 1
+                    await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                    await saved()
+                    await page.locator('.settings-block-list').get_by_role('button').filter(has_text='· 角色设定（合并）').click()
+                    await page.get_by_role('button', name='拆分角色设定为独立块', exact=True).click()
+                    await expect(page.get_by_role('combobox', name='内容来源', exact=True)).to_have_value('system_prompt')
+                    await saved()
+                    split = (await read())['half_agent']['context_recipe']['blocks'][2:6]
+                    assert [b['source'] for b in split] == ['system_prompt', 'description', 'personality', 'scenario']
+                    assert all(b['depth'] == 2 and b['priority'] == 90 for b in split)
+                    await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                    await saved()
                     await page.get_by_role('button',name='添加内容块',exact=True).click()
                     await saved()
-                    # The backend normalizes dynamic blocks to the end; select by
-                    # identity/label rather than the pre-normalization array index.
+                    # Select custom content by its label, independently of array length.
                     await page.get_by_role('button').filter(has_text='· 自定义文本').last.click()
                     await page.get_by_role('textbox',name='自定义内容',exact=True).fill('独立保存编排文本')
                     assert next(b for b in (await read())['half_agent']['context_recipe']['blocks'] if b['source'] == 'custom')['content'] == ''

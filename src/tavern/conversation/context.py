@@ -65,14 +65,25 @@ def wrap_lorebook(content):
     return f"<lorebook>\n{content}\n</lorebook>"
 
 
+CARD_FIELDS = {
+    "system_prompt": "card_system_prompt", "description": "card_description",
+    "personality": "card_personality", "scenario": "card_scenario",
+    "mes_example": "card_mes_example", "post_history_instructions": "card_post_history_instructions",
+}
+
+
+def wrap_card_field(field, content):
+    tag = CARD_FIELDS[field]
+    return f"<{tag}>\n{content}\n</{tag}>" if content and str(content).strip() else ""
+
+
 def wrap_card_description(content):
-    return f"<card_description>\n{content}\n</card_description>" if content else ""
+    return wrap_card_field("description", content)
 
 
 def character_content(card):
-    return "\n\n".join((str(card.get("system_prompt", "")),
-                        wrap_card_description(str(card.get("description", ""))),
-                        str(card.get("personality", "")), str(card.get("scenario", ""))))
+    return "\n\n".join(text for field in ("system_prompt", "description", "personality", "scenario")
+                       if (text := wrap_card_field(field, card.get(field, ""))))
 
 
 def matches(key, text, entry):
@@ -351,8 +362,8 @@ def compile_context(
         "rules": settings.system_prompt,
         "character": character_content(card),
         "persona": "用户名字：" + persona + "\n" + session.get("persona_data", {}).get("description", ""),
-        "examples": card.get("mes_example", ""),
-        "post": card.get("post_history_instructions", ""),
+        "examples": wrap_card_field("mes_example", card.get("mes_example", "")),
+        "post": wrap_card_field("post_history_instructions", card.get("post_history_instructions", "")),
         "memory": "\n".join(part for part in (story_summary, render_memory(snapshot, history)) if part),
         "state": "当前剧情状态：\n" + json.dumps(state_for_model(state), ensure_ascii=False),
         "input": user_input,
@@ -415,7 +426,8 @@ def compile_context(
     }
     for key, source in mapping.items():
         if key in overrides:
-            sources[source] = overrides[key]
+            sources[source] = (wrap_card_field("mes_example", overrides[key])
+                               if source == "examples" else overrides[key])
             source_lore_ids.pop(source, None)
     if sources["persona"]:
         sources["persona"] = "<user_character>\n" + sources["persona"] + "\n</user_character>"
@@ -428,6 +440,8 @@ def compile_context(
             card[field] = overrides[key]
     if any(k in overrides for k in ("char_description", "char_personality", "scenario")):
         sources["character"] = character_content(card)
+    sources.update({field: wrap_card_field(field, card.get(field, ""))
+                    for field in ("system_prompt", "description", "personality", "scenario")})
     messages, pending_depth = [], []
 
     def add(role, content, source, priority=50, required=False, **extra):
@@ -464,7 +478,7 @@ def compile_context(
             if block.depth is not None:
                 pending_depth.append(
                     (block.depth, block.role, content, block.id, block.priority, block.required,
-                     source_lore_ids.get(block.source, []))
+                     source_lore_ids.get(block.source, []), block.source)
                 )
             else:
                 add(
@@ -482,7 +496,8 @@ def compile_context(
         if isinstance(role, int):
             role = {0: "system", 1: "user", 2: "assistant"}.get(role, "system")
         if e.get("anchor"):
-            anchors = [i for i, m in enumerate(messages) if m["source"] == e["anchor"]]
+            anchors = [i for i, m in enumerate(messages)
+                       if m.get("context_source", m["source"]) == e["anchor"]]
             at = (
                 anchors[-1] + 1
                 if anchors and e["side"] == "after"
@@ -506,10 +521,11 @@ def compile_context(
             continue
         pending_depth.append(
             (int(e.get("depth", 0) or 0), role, wrap_lorebook(e.get("content", "")), "lore:" + e["id"], 80, False,
-             [e["id"]])
+             [e["id"]], "lore")
         )
-    for depth, role, content, source, priority, required, lore_ids in pending_depth:
-        dialogue_indices = [i for i, m in enumerate(messages) if m["source"] in ("history", "input")]
+    for depth, role, content, source, priority, required, lore_ids, context_source in pending_depth:
+        dialogue_indices = [i for i, m in enumerate(messages)
+                            if m.get("context_source", m["source"]) in ("history", "input")]
         at = (
             dialogue_indices[-depth]
             if depth and len(dialogue_indices) >= depth
@@ -521,6 +537,7 @@ def compile_context(
                 "role": role,
                 "content": expand(content),
                 "source": source,
+                "context_source": context_source,
                 "lore_ids": lore_ids,
                 "insertion_depth": depth,
                 "priority": priority,
@@ -528,7 +545,7 @@ def compile_context(
             },
         )
     if "ordered_prompts" in gen:
-        reordered = [m for m in messages if m["source"] == "rules"]
+        reordered = [m for m in messages if m.get("context_source", m["source"]) == "rules"]
         placeholders = {
             **mapping,
             "chat_history": "history",
@@ -537,7 +554,7 @@ def compile_context(
             "char_personality": "character",
             "scenario": "character",
         }
-        seen = set()
+        seen = {"rules"}
         for item in gen["ordered_prompts"]:
             if isinstance(item, str):
                 individual = {
@@ -549,8 +566,7 @@ def compile_context(
                     reordered.append(
                         {
                             "role": "system",
-                            "content": expand(wrap_card_description(card.get("description", ""))
-                                              if item == "char_description" else card.get(individual[item], "")),
+                            "content": expand(wrap_card_field(individual[item], card.get(individual[item], ""))),
                             "source": item,
                             "priority": 100,
                             "required": False,
@@ -559,7 +575,9 @@ def compile_context(
                     continue
                 source = placeholders.get(item, item)
                 if source not in seen:
-                    reordered.extend(m for m in messages if m["source"] == source)
+                    reordered.extend(m for m in messages if m.get("context_source", m["source"]) == source
+                                     or (source == "character" and m.get("context_source") in
+                                         ("system_prompt", "description", "personality", "scenario")))
                     seen.add(source)
             elif isinstance(item, dict) and item.get("role") in ("system", "assistant", "user"):
                 reordered.append(
@@ -576,7 +594,8 @@ def compile_context(
         role = injection.get("role", "system")
         if role not in ("system", "user", "assistant", "developer"):
             raise ValueError("无效注入角色")
-        indices = [i for i, m in enumerate(messages) if m["source"] in ("history", "input")]
+        indices = [i for i, m in enumerate(messages)
+                   if m.get("context_source", m["source"]) in ("history", "input")]
         depth = max(0, int(injection.get("depth", 0)))
         at = (
             indices[-depth]
@@ -616,7 +635,7 @@ def compile_context(
                 "anchor_id": record["anchor_id"], "priority": 60, "required": record["id"] in retained_ids,
             })
             actual_records.append(record)
-    if protected_memory and not any(m["source"] == "memory" for m in messages):
+    if protected_memory and not any(m.get("context_source", m["source"]) == "memory" for m in messages):
         at = next((i for i, m in enumerate(messages) if m["source"] == "history"), len(messages))
         messages.insert(
             at,
@@ -650,10 +669,14 @@ def compile_context(
     if retrieval_protocol:
         messages.insert(0, {"role": "system", "content": query_instruction(settings.retrieval),
                             "source": "retrieval_protocol", "priority": 100, "required": True})
-    # These application-owned instructions always lead in a fixed order.
-    leading_sources = ("rules", "retrieval_protocol", "session_preference")
-    messages = ([m for source in leading_sources for m in messages if m["source"] == source]
-                + [m for m in messages if m["source"] not in leading_sources])
+    # Automatically supplied protocol/preferences lead; recipe rules keep their position.
+    leading_sources = ("retrieval_protocol", "session_preference")
+    leading = [m for source in leading_sources for m in messages if m["source"] == source]
+    messages = [m for m in messages if m["source"] not in leading_sources]
+    at = 0
+    while at < len(messages) and messages[at].get("context_source", messages[at]["source"]) == "rules":
+        at += 1
+    messages[at:at] = leading
     available = settings.context_tokens - settings.reply_tokens - 2048
     # Constants form one protected request region. Card positions are local to
     # this region, never offsets into conversation history or recipe blocks.
@@ -675,32 +698,10 @@ def compile_context(
         })
     # Keep only the global rules/preferences before the contiguous constant region.
     at = 0
-    while at < len(messages) and messages[at]["source"] in ("rules", "session_preference", "retrieval_protocol"):
+    while at < len(messages) and messages[at].get("context_source", messages[at]["source"]) in (
+            "rules", "session_preference", "retrieval_protocol"):
         at += 1
     messages[at:at] = constant_messages
-    # Finalize the wire order after lore, depth entries, and compatibility overrides.
-    # Current-turn lore stays immediately before the latest user input; dynamic
-    # context comes after all other request messages, even for saved older recipes.
-    dynamic_sources = {block.id: block.source for block in recipe.blocks
-                       if block.source in ("author_note", "memory", "state")}
-    dynamic_sources["memory"] = "memory"  # Protected fallback memory has this source.
-    dynamic_order = {"author_note": 0, "memory": 1, "state": 2}
-    dynamic = [m for m in messages if m["source"] in dynamic_sources]
-    messages = [m for m in messages if m["source"] not in dynamic_sources]
-    current_input = [m for m in messages if m["source"] in input_sources
-                     and m.get("message_id") == input_message_id]
-    if current_input:
-        current_lore = [m for m in messages if m.get("anchor_id") == input_message_id]
-        lore_ids = {id(m) for m in current_lore}
-        first_input_at = next(i for i, m in enumerate(messages)
-                              if m is current_input[0] or id(m) in lore_ids)
-        current_ids = lore_ids | {id(m) for m in current_input}
-        messages = [m for m in messages if id(m) not in current_ids]
-        last_history = next((i for i in range(len(messages) - 1, -1, -1)
-                             if messages[i]["source"] == "history"), None)
-        at = last_history + 1 if last_history is not None else min(first_input_at, len(messages))
-        messages[at:at] = current_lore + current_input
-    messages.extend(sorted(dynamic, key=lambda m: dynamic_order[dynamic_sources[m["source"]]]))
     total = REPLY_PRIMING + sum(message_tokens(m, settings) for m in messages)
     if enforce_budget and total > available:
         diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})

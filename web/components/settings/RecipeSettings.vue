@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { sources } from '../../lib/recipeSources';
+import { splitCharacterBlock } from '../../lib/recipeBlocks';
 import type { SettingsObject } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import SavedText from './SavedText.vue';
@@ -75,9 +76,15 @@ function remove() {
     index.value = Math.max(0, index.value - 1);
   });
 }
+function splitCharacter() {
+  props.guard(() => {
+    props.recipe.blocks.splice(index.value, 1, ...splitCharacterBlock(block.value, props.recipe.blocks));
+  });
+}
 </script>
 <template>
   <p class="muted">新对话复制此编排；已有对话保持原编排。顺序和参数自动保存，文本修改需点击绿色勾。</p>
+  <p class="muted">每块可单独上移、下移或设置深度；深度留空时按列表顺序注入，0 放在末尾。</p>
   <div class="settings-recipe-layout">
     <div class="settings-block-list">
       <button
@@ -96,6 +103,7 @@ function remove() {
         ><button @click="remove">移除块</button>
       </div>
       <p class="muted">{{ sources.find((s) => s.value === block.source)?.description }}</p>
+      <button v-if="block.source === 'character'" @click="splitCharacter">拆分角色设定为独立块</button>
       <SettingsFields :value="block" :fields="fields" />
       <SavedText
         v-if="block.source === 'custom' || !sources.some((s) => s.value === block.source)"

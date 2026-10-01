@@ -91,7 +91,8 @@ def context_breakpoint_index(trace, message_id):
         indices = [index for index, entry in enumerate(trace)
                    if index < first_history and
                    (entry.get("lore_region") == source if source == "constant"
-                    else entry.get("context_source", entry.get("source")) == source)]
+                    else entry.get("context_source", entry.get("source")) in
+                    {"character", "system_prompt", "description", "personality", "scenario"})]
         if indices:
             return indices[-1]
     indices = [index for index, entry in enumerate(trace[:first_history]) if is_static(entry)]
@@ -100,7 +101,8 @@ def context_breakpoint_index(trace, message_id):
 
 def is_static(entry):
     source = entry.get("context_source", entry.get("source"))
-    return source in {"rules", "system", "character", "persona", "examples", "custom", "session_preference"} or entry.get("lore_region") == "constant"
+    return source in {"rules", "system", "character", "system_prompt", "description", "personality", "scenario",
+                      "persona", "examples", "custom", "session_preference"} or entry.get("lore_region") == "constant"
 
 
 def prepare_context(context, session, history, snapshot, settings):

@@ -99,7 +99,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     origin = response_origin(settings)
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
                           snapshot.get("context_window", {}) if settings.chunk_mode != "off" else {}])
-    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose])
+    layout = [(b["id"], b["source"], b.get("depth")) for b in session.get("recipe", {}).get("blocks", [])]
+    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:

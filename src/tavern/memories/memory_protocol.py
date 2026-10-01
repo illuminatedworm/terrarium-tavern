@@ -10,6 +10,7 @@ import copy
 import re
 import uuid
 
+from tavern.conversation.context import CARD_FIELDS, wrap_card_field, wrap_lorebook
 from tavern.memories.memory_records import is_retained_record
 
 
@@ -62,8 +63,8 @@ class References:
         # Tool excerpts are disjoint. Never create a quote spanning the unseen
         # gap between search hits, or make the unreturned tail citable in review.
         texts = message.get("exposed_excerpts", [message.get("model", message.get("raw", ""))])
-        return {"id": alias, "role": message["role"], "passages": [
-            p for text in texts for p in self.passages(mid, text)]}
+        passages = [p for text in texts for p in self.passages(mid, text)]
+        return {"id": alias, "role": message["role"], "passages": passages}
 
     def previous(self, memory):
         records = []
@@ -91,8 +92,13 @@ class References:
             # a hash into either the prompt or the model's response.
             version = str(item.get("version", "unknown"))
             self.versions.setdefault(version, f"V{len(self.versions) + 1}")
-            result.append({"id": alias, "version": self.versions[version], **{
-                k: item[k] for k in ("kind", "text", "historical") if k in item}})
+            row = {"id": alias, "version": self.versions[version], **{
+                k: item[k] for k in ("kind", "text", "historical") if k in item}}
+            if item.get("kind") == "character" and item.get("identity") in CARD_FIELDS:
+                row["text"] = wrap_card_field(item["identity"], item["text"])
+            elif item.get("kind") in ("lore", "frozen_lore"):
+                row["text"] = wrap_lorebook(item["text"])
+            result.append(row)
         return result
 
     def questions(self, questions):

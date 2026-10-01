@@ -3,6 +3,7 @@ import { useTimedError } from '../../composables/useTimedError';
 import { computed, ref } from 'vue';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { sources } from '../../lib/recipeSources';
+import { splitCharacterBlock } from '../../lib/recipeBlocks';
 type Block = {
   id: string;
   source: string;
@@ -100,6 +101,16 @@ function remove() {
   items.value.splice(index, 1);
   selectedKey.value = items.value[Math.min(index, items.value.length - 1)]?.key || '';
 }
+function splitCharacter() {
+  if (!selected.value || props.saving) return;
+  const replacements = splitCharacterBlock(
+    selected.value.block,
+    items.value.map((item) => item.block),
+  );
+  const entries = replacements.map((block) => ({ key: crypto.randomUUID(), block }));
+  items.value.splice(selectedIndex.value, 1, ...entries);
+  selectedKey.value = entries[0].key;
+}
 function nullable(event: Event) {
   const value = (event.target as HTMLInputElement).value;
   return value === '' ? null : Number(value);
@@ -134,7 +145,7 @@ useTimedError(error);
 <template>
   <h2>上下文配方</h2>
   <p class="recipe-intro">
-    拖动左侧手柄调整注入顺序，选择内容块后在右侧编辑。历史消息之后是本次输入锚定的世界书条目（如有），随后紧接本次输入；作者注、记忆、当前状态固定在最后。常驻世界书统一放在顶部独立区域，条目位置和深度只影响区域内顺序，不穿插历史，也不参与可选内容裁剪。
+    拖动左侧手柄调整每个内容块的注入顺序，选择后在右侧编辑。角色卡系统提示、描述、性格和场景可分别定位；作者注、记忆、状态和用户输入也遵循配方顺序。常驻世界书统一放在顶部独立区域，条目位置和深度只影响区域内顺序。
     深度定位的配方块会由 Roleplay Runtime
     移到剧情消息附近；滚动方案的非常驻世界书自动紧贴对应消息，忽略前后置世界书块；ST
     方案的非常驻条目使用原位置规则。对话偏好和本次重写要求仍会参与最终编排。
@@ -222,6 +233,9 @@ useTimedError(error);
         </div>
       </div>
       <p class="recipe-source-description">{{ description.description }}</p>
+      <button v-if="selected.block.source === 'character'" @click="splitCharacter">
+        拆分角色设定为独立块
+      </button>
       <label
         >注入内容来源<select v-model="selected.block.source">
           <option v-for="source in sources" :key="source.value" :value="source.value">

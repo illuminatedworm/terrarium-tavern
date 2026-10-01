@@ -4,7 +4,12 @@ import json
 
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import prepare_context
-from tavern.conversation.context import character_content, macros, wrap_lorebook
+from tavern.conversation.context import (
+    character_content,
+    macros,
+    wrap_card_field,
+    wrap_lorebook,
+)
 from tavern.core.cache_policy import fingerprint
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.context_ledger import ContextLedger
@@ -54,7 +59,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     add("system", expand(character_content(card)), "character")
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
-    add("system", expand(card.get("mes_example", "")), "examples")
+    add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
     checkpoint = state["checkpoint"]
 
     by_owner = {}
@@ -104,7 +109,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     update("turn_variable_instruction",
            "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
            value={"required": True, "input_id": input_id} if require_state_patch else False)
-    update("post", expand(card.get("post_history_instructions", "")))
+    update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     update("turn_instruction", instruction)
     warning = ""
     if checkpoint.get("stale"):

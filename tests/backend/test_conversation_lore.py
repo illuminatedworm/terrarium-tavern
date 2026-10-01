@@ -42,7 +42,7 @@ def test_card_description_is_labeled_even_when_it_describes_a_world():
     result = compile(doc, [], {"state": {}}, text="继续")
     character = next(item["content"] for item in result["trace"] if item["source"] == "character")
     assert "<card_description>\n这座城每晚移动。\n</card_description>" in character
-    assert "语气平静" in character
+    assert any(item["content"] == "<card_personality>\n语气平静\n</card_personality>" for item in result["trace"])
     empty = compile({"name": "旁白"}, [], {"state": {}}, text="继续")
     assert all("<card_description>" not in item["content"] for item in empty["trace"])
 

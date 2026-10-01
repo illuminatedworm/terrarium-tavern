@@ -13,9 +13,29 @@ export const sources = [
   },
   {
     value: 'character',
-    label: '角色设定',
+    label: '角色设定（合并）',
     description:
-      '注入当前对话有效角色的系统提示、角色描述、性格和场景。优先使用对话中演化后的设定，否则使用当前角色卡。',
+      '兼容旧配方：合并注入角色卡的系统提示、描述、性格和场景，各字段分别加标签。可拆成独立内容块调整位置。',
+  },
+  {
+    value: 'system_prompt',
+    label: '角色卡系统提示',
+    description: '注入角色卡的 system_prompt 字段，以 <card_system_prompt> 包裹；与应用系统提示词独立。',
+  },
+  {
+    value: 'description',
+    label: '角色卡描述',
+    description: '注入角色卡的 description 字段，以 <card_description> 包裹，可包含人物或世界设定。',
+  },
+  {
+    value: 'personality',
+    label: '角色卡性格',
+    description: '注入角色卡的 personality 字段，以 <card_personality> 包裹。',
+  },
+  {
+    value: 'scenario',
+    label: '角色卡场景',
+    description: '注入角色卡的 scenario 字段，以 <card_scenario> 包裹。',
   },
   {
     value: 'persona',
