@@ -20,10 +20,10 @@ def response(output, *, status="completed"):
 
 
 def test_nullable_sampling_and_per_connection_mode():
-    profile = ModelProfile(temperature=None, top_p=None, top_k=None,
+    profile = ModelProfile(api_mode="responses", temperature=None, top_p=None, top_k=None,
                            frequency_penalty=None, presence_penalty=None)
     assert profile.model_dump()["temperature"] is None
-    config = Settings(providers=[Provider(id="default", api_mode="responses")], foreground=profile)
+    config = Settings(providers=[Provider(id="default")], foreground=profile)
     assert config.for_role("foreground").api_mode == "responses"
     with pytest.raises(ValidationError):
         ModelProfile(top_p=1.1)
@@ -39,13 +39,13 @@ def test_nullable_sampling_and_per_connection_mode():
 ])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 async def test_all_roles_send_their_own_model_parameters(role, temperature, mode, api_mode):
-    profiles = {name: ModelProfile(model=name, temperature=temp, top_p=0.7,
+    profiles = {name: ModelProfile(model=name, api_mode=api_mode, temperature=temp, top_p=0.7,
         cache={"mode": control, "preset": "custom", "field": "prompt_cache_breakpoint",
                "value": {"mode": "explicit"}, "request": {"prompt_cache_key": name,
                "prompt_cache_options": {"mode": "explicit"}}})
         for name, temp, control in [("foreground", 0.3, "runtime"), ("background", None, "cloud"),
                                    ("card_editor", 0.6, "cloud"), ("full_agent", 0.1, "runtime")]}
-    settings = Settings(providers=[Provider(id="default", api_mode=api_mode, api_key="test", use_proxy=False)], **profiles)
+    settings = Settings(providers=[Provider(id="default", api_key="test", use_proxy=False)], **profiles)
     config = migrate_settings(settings.model_dump()).runtime().for_role(role)
     provider = await make_provider(config)
     try:
@@ -279,18 +279,18 @@ async def test_api_saves_null_sampling_and_connection_mode(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         settings = (await client.get("/api/settings")).json()
-        settings["shared"]["providers"][0]["api_mode"] = "responses"
         result = await client.patch("/api/settings/shared", json={"expected_revision": 0,
             "changes": {"providers": settings["shared"]["providers"]}})
         assert result.status_code == 200, result.text
         changes = {f"foreground.{field}": None for field in
                    ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty")}
+        changes["foreground.api_mode"] = "responses"
         changes.update({"background.cache.mode": "cloud", "background.cache.request": {
             "prompt_cache_key": "tracker", "prompt_cache_retention": "24h"}})
         result = await client.patch("/api/settings/half_agent", json={"expected_revision": result.json()["revisions"]["half_agent"], "changes": changes})
         assert result.status_code == 200, result.text
         saved = result.json()
-        assert saved["shared"]["providers"][0]["api_mode"] == "responses"
+        assert saved["half_agent"]["foreground"]["api_mode"] == "responses"
         assert all(saved["half_agent"]["foreground"][field] is None for field in
                    ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"))
         assert saved["half_agent"]["background"]["cache"]["mode"] == "cloud"

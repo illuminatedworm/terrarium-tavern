@@ -256,9 +256,12 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
 
     store = Store(tmp_path)
     settings = store.settings_document()
-    settings.shared.providers[0].api_mode = api
+    settings.full_agent.model.api_mode = api
+    settings.half_agent.foreground.api_mode = api
+    settings.half_agent.background.api_mode = api
+    settings.shared.card_editor.api_mode = api
     settings.shared.providers[0].api_key = "fixture-secret"
-    settings.shared.providers[0].base_url = "https://fixture.test/v1"
+    settings.shared.providers[0].base_url = "https://fixture.test"
     settings.shared.network.api_proxy = False
     settings.half_agent.foreground.model = "claude-opus-5-5" if api == "anthropic" else "gpt-6-sol"
     settings.half_agent.foreground.reasoning_effort = "high"
@@ -376,8 +379,11 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
     store = Store(tmp_path)
     cfg = Story(api).cfg
     settings = store.settings_document()
-    settings.shared.providers[0].api_mode = api
-    settings.shared.providers[0].base_url = cfg.base_url
+    settings.full_agent.model.api_mode = api
+    settings.half_agent.foreground.api_mode = api
+    settings.half_agent.background.api_mode = api
+    settings.shared.card_editor.api_mode = api
+    settings.shared.providers[0].base_url = "https://fixture.test"
     settings.shared.providers[0].api_key = cfg.api_key
     settings.shared.network.api_proxy = False
     settings.half_agent.background.model = cfg.model

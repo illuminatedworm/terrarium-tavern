@@ -21,9 +21,12 @@ class Editor:
     def __init__(self, tmp_path, monkeypatch, api, mode="runtime"):
         self.store = Store(tmp_path)
         settings = self.store.settings_document()
-        settings.shared.providers[0].api_mode = api
+        settings.full_agent.model.api_mode = api
+        settings.half_agent.foreground.api_mode = api
+        settings.half_agent.background.api_mode = api
+        settings.shared.card_editor.api_mode = api
         settings.shared.providers[0].api_key = "editor-test-secret"
-        settings.shared.providers[0].base_url = "https://fixture.test/v1"
+        settings.shared.providers[0].base_url = "https://fixture.test"
         settings.shared.network.api_proxy = False
         settings.shared.card_editor.model = "editor-model"
         settings.shared.card_editor.cache.mode = mode

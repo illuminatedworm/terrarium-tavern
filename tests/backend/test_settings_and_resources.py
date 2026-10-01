@@ -14,7 +14,7 @@ from tavern.search.local_models import LocalModelManager, _download
 from tavern.storage.store import Conflict, Store
 
 
-async def test_model_listing_uses_saved_key_proxy_and_unsaved_provider(tmp_path, monkeypatch):
+async def test_model_listing_uses_saved_key_and_proxy(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     settings = app.state.store.settings()
     settings.providers[0].api_key = 'secret'
@@ -34,9 +34,10 @@ async def test_model_listing_uses_saved_key_proxy_and_unsaved_provider(tmp_path,
 
     monkeypatch.setattr(httpx, 'AsyncClient', client)
     async with real_client(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as api:
-        response = await api.post('/api/settings/models', json=settings.providers[0].model_copy(update={'api_key': ''}).model_dump())
+        response = await api.post('/api/settings/models', json={'provider_id': 'default'})
         assert response.status_code == 200
-        assert response.json() == {'models': ['a', 'b']}
+        assert response.json()['models'] == ['a', 'b']
+        assert response.json()['updated_at'] is not None
     assert calls[0]['proxy'] is None
     assert calls[0]['trust_env'] is False
 

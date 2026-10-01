@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import CacheSettingsEditor from './CacheSettingsEditor.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
+import { useModelCatalog } from '../../lib/modelCatalog';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
@@ -14,11 +15,27 @@ const props = defineProps<{
   flush: () => Promise<unknown>;
 }>();
 const emit = defineEmits<{ checked: [] }>();
-const models = ref<string[]>([]);
 const busy = ref(false);
+const fetching = ref(false);
 const feedback = ref('');
 const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
+const {
+  catalog,
+  error: catalogError,
+  refresh,
+} = useModelCatalog(
+  () => props.profile,
+  () => provider.value,
+);
+const models = computed(() => catalog.value?.models || []);
+const defaultPath = computed(() => (props.profile.api_mode === 'gemini' ? 'v1beta' : 'v1'));
+watch(
+  () => [props.profile.provider_id, props.profile.api_mode, props.profile.api_path],
+  () => {
+    feedback.value = '';
+  },
+);
 const errorPrefix = computed(() =>
   props.role === 'full_agent'
     ? 'full_agent.model.'
@@ -38,10 +55,10 @@ const common = computed<SettingField[]>(() => [
   { path: 'top_p', label: '核采样 top_p', optional: true, min: 0, max: 1, step: 'any' },
 ]);
 const advanced = computed<SettingField[]>(() => [
-  ...(provider.value?.api_mode !== 'responses'
+  ...(props.profile.api_mode !== 'responses'
     ? [{ path: 'top_k', label: '候选数 top_k', optional: true, min: 0 }]
     : []),
-  ...(!provider.value || provider.value.api_mode === 'chat_completions'
+  ...(props.profile.api_mode === 'chat_completions'
     ? [
         { path: 'frequency_penalty', label: '频率惩罚', optional: true, min: -2, max: 2, step: 'any' },
         { path: 'presence_penalty', label: '重复惩罚', optional: true, min: -2, max: 2, step: 'any' },
@@ -72,6 +89,7 @@ async function action(check: boolean) {
     return;
   }
   busy.value = true;
+  fetching.value = !check;
   feedback.value = '';
   try {
     await props.flush();
@@ -83,13 +101,14 @@ async function action(check: boolean) {
           : '连接成功，但未通过测试上下文检查。';
       emit('checked');
     } else {
-      models.value = (await api('/settings/models', provider.value)).models;
-      feedback.value = `已获取 ${models.value.length} 个模型，可选择或直接输入。`;
+      const result = await refresh();
+      feedback.value = `已更新 ${result.models.length} 个模型，列表已缓存。`;
     }
   } catch (e) {
     feedback.value = String(e);
   } finally {
     busy.value = false;
+    fetching.value = false;
   }
 }
 </script>
@@ -99,23 +118,45 @@ async function action(check: boolean) {
     <div class="profile-connection-row">
       <div class="settings-field-grid profile-connection">
         <label
-          >提供商<select v-model="profile.provider_id">
+          >提供商<select v-model="profile.provider_id" :disabled="busy">
             <option v-for="item in providers" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select></label
         >
+        <label
+          >接口方式<select v-model="profile.api_mode" aria-label="接口方式" :disabled="busy">
+            <option value="chat_completions">Chat Completions</option>
+            <option value="responses">Responses</option>
+            <option value="anthropic">Anthropic Messages</option>
+            <option value="gemini">Gemini GenerateContent</option>
+          </select></label
+        >
+        <label
+          >API 路径<input v-model="profile.api_path" :placeholder="`默认：${defaultPath}`" :disabled="busy"
+        /></label>
         <label
           >模型名称<input v-model="profile.model" :list="'models-' + role" /><datalist :id="'models-' + role">
             <option v-for="name in models" :key="name" :value="name" /></datalist
         ></label>
       </div>
       <div class="profile-actions">
-        <button class="primary" :disabled="busy" @click="action(false)">获取模型列表</button
-        ><button :disabled="busy" @click="action(true)">{{ busy ? '正在检查…' : '检查连接' }}</button>
+        <button class="primary" :disabled="busy" @click="action(false)">
+          {{ fetching ? '正在更新…' : '更新模型列表' }}</button
+        ><button :disabled="busy" @click="action(true)">
+          {{ busy && !fetching ? '正在检查…' : '检查连接' }}
+        </button>
       </div>
     </div>
     <p v-if="feedback" role="status" class="inline-feedback">{{ feedback }}</p>
+    <p v-else-if="catalogError.message" class="inline-feedback">{{ catalogError.message }}</p>
+    <p class="muted">
+      {{
+        catalog?.updated_at
+          ? `已缓存 ${models.length} 个模型 · 更新于 ${new Date(catalog.updated_at * 1000).toLocaleString()}`
+          : '暂无模型列表缓存，可更新列表或直接输入模型名称。'
+      }}
+    </p>
     <p v-if="provider" class="muted">
-      请求地址：{{ modelEndpoint(provider.base_url, provider.api_mode, profile.model) }}
+      请求地址：{{ modelEndpoint(provider.base_url, profile.api_mode, profile.model, profile.api_path) }}
     </p>
     <h4>常用参数</h4>
     <SettingsFields :value="profile" :fields="common" :error-prefix="errorPrefix"
@@ -128,7 +169,7 @@ async function action(check: boolean) {
         v-if="profile.cache"
         :cache="profile.cache"
         :model="profile.model"
-        :api="provider?.api_mode || 'chat_completions'"
+        :api="profile.api_mode"
         @validity="cacheValid = $event"
       />
       <p class="muted">

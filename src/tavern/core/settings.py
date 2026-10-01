@@ -2,10 +2,11 @@
 import re
 from copy import deepcopy
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tavern.core.cache_policy import fingerprint, runtime_cache
+from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -178,10 +179,50 @@ class SettingsDocument(StrictSettings):
         return value.for_role("full_agent" if mode == "full_agent" else "foreground")
 
 
+def migrate_model_connections(raw):
+    """Move legacy provider protocols/API roots onto each referencing profile."""
+    scoped = "version" in raw
+    shared = raw.setdefault("shared", {}) if scoped else raw
+    providers = shared.get("providers", [])
+    originals = {p["id"]: deepcopy(p) for p in providers}
+    changed = set()
+    profiles = (("full_agent", "model"), ("half_agent", "foreground"),
+                ("half_agent", "background"), ("shared", "card_editor")) if scoped else (
+                (None, "foreground"), (None, "background"), (None, "full_agent"), (None, "card_editor"))
+    for scope, name in profiles:
+        owner = raw.setdefault(scope, {}) if scope else raw
+        if not scoped and name in ("full_agent", "card_editor") and owner.get(name) is None:
+            continue
+        profile = owner.setdefault(name, {})
+        provider = originals.get(profile.get("provider_id", "default"), {})
+        if "api_mode" not in profile:
+            profile["api_mode"] = provider.get("api_mode", "chat_completions")
+            changed.add(scope)
+        if "api_path" not in profile:
+            base = provider.get("base_url", "https://api.openai.com")
+            mode = profile["api_mode"]
+            path = urlsplit(endpoint(base, mode)).path
+            suffix = {"chat_completions": "/chat/completions", "responses": "/responses",
+                      "anthropic": "/messages", "gemini": "/models/:generateContent"}[mode]
+            path = path.removesuffix(suffix).strip("/")
+            profile["api_path"] = "" if path == ("v1beta" if mode == "gemini" else "v1") else path
+            changed.add(scope)
+    for provider in providers:
+        original = deepcopy(provider)
+        provider.pop("api_mode", None)
+        parsed = urlsplit(provider.get("base_url", "https://api.openai.com"))
+        # Query/credential validation still runs on the normalized provider.
+        provider["base_url"] = urlunsplit((parsed.scheme, parsed.netloc, "", parsed.query, parsed.fragment))
+        if provider != original:
+            changed.add("shared" if scoped else None)
+    return changed
+
+
 def migrate_settings(raw: dict) -> SettingsDocument:
+    raw = deepcopy(raw)
+    connection_changes = migrate_model_connections(raw)
     if "version" in raw:
-        raw = deepcopy(raw)
-        changed_scopes = set()
+        changed_scopes = connection_changes
         # Only application prompt settings use the human participant terminology.
         # Character documents, persona names, dialogue and user input stay verbatim.
         for scope in ("full_agent", "half_agent"):

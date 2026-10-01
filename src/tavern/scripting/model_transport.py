@@ -306,7 +306,7 @@ class ModelTransport(BaseLLMProvider):
 
     async def _send(self, messages, tools, stream, kwargs):
         cfg, api = self.settings, self.settings.api_mode
-        url = endpoint(cfg.base_url, api, cfg.model, stream=stream)
+        url = endpoint(cfg.base_url, api, cfg.model, stream=stream, api_path=cfg.api_path)
         headers = ({"x-api-key": self.key, "anthropic-version": "2023-06-01"} if api == "anthropic" else
                    self.gemini_headers if api == "gemini" else {"Authorization": "Bearer " + self.key})
         if self.request_context:

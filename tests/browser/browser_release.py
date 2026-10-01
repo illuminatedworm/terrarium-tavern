@@ -185,7 +185,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="release-ui-", dir=".cache") as data:
         store = Store(Path(data))
         cfg = store.settings()
-        cfg.providers[0].base_url = "http://127.0.0.1:8016/v1"
+        cfg.providers[0].base_url = "http://127.0.0.1:8016"
         cfg.providers[0].api_key = "local-fixture"
         cfg.providers[0].use_proxy = False
         cfg.foreground.model = cfg.background.model = "fixture"

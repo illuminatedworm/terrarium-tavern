@@ -184,9 +184,12 @@ async def main():
                     original_model = (await read())['full_agent']['model']['model']
                     for protocol in ('chat_completions', 'responses', 'anthropic', 'gemini'):
                         await select('通用 提供商')
+                        await expect(page.get_by_label('接口方式', exact=True)).to_have_count(0)
+                        await expect(page.get_by_label('主域名', exact=True)).to_have_value('https://api.openai.com')
+                        await select('full agent 模型与生成')
                         await page.get_by_label('接口方式', exact=True).first.select_option(protocol)
                         await saved()
-                        assert (await read())['shared']['providers'][0]['api_mode'] == protocol
+                        assert (await read())['full_agent']['model']['api_mode'] == protocol
                         await select('full agent 模型与生成')
                         await page.get_by_label('模型名称', exact=True).fill('gemini-3.8-flash-high' if protocol == 'gemini' else 'claude-opus-4-6' if protocol == 'anthropic' else 'gpt-5.6-sol')
                         await saved()
@@ -194,7 +197,7 @@ async def main():
                         if protocol == 'gemini':
                             await expect(page.get_by_text('由运行时创建和引用 Gemini 缓存对象', exact=False)).to_be_visible()
                         await expect(page.get_by_role('combobox', name='缓存控制', exact=True)).to_have_value('runtime')
-                    await select('通用 提供商')
+                    await select('full agent 模型与生成')
                     await page.get_by_label('接口方式', exact=True).first.select_option('chat_completions')
                     await saved()
                     await select('full agent 模型与生成')

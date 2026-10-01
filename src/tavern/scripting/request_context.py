@@ -11,7 +11,7 @@ def response_origin(settings, key=None):
     """Bind opaque provider state to its actual credential, endpoint and model."""
     key = key if key is not None else settings.api_key or os.environ.get("TAVERN_API_KEY", "")
     return {"api": settings.api_mode, "model": settings.model,
-            "endpoint": endpoint(settings.base_url, settings.api_mode, settings.model),
+            "endpoint": endpoint(settings.base_url, settings.api_mode, settings.model, api_path=settings.api_path),
             "credential": fingerprint(key)}
 
 

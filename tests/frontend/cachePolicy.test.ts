@@ -16,7 +16,7 @@ describe('cache configuration', () => {
     expect(policy.model).toBe('gemini-3.8-flash-high');
     expect(policy.apiLabel).toBe('Anthropic Messages');
     expect(policy.options.map((option) => option.value)).toEqual(['5m', '1h']);
-    expect(policy.protocolNote).toContain('切换模型名称不会自动更改提供商协议');
+    expect(policy.protocolNote).toContain('切换模型名称不会自动更改接口方式');
     expect(cacheRetention('gemini-3.8-flash-high', 'gemini', cache).protocolNote).toBe('');
     expect(cacheRetention('gemini-3.8-flash-high', 'chat_completions', cache).protocolNote).toBe('');
   });

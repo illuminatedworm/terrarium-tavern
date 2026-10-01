@@ -656,7 +656,7 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     settings = store.settings()
-    settings.providers[0].api_mode = api
+    settings.full_agent.api_mode = api
     settings.providers[0].api_key = "test-key"
     settings.full_agent.model = "claude-fixture" if api == "anthropic" else "gemini-3.8-flash"
     settings.full_agent_config.auto_retrieval = False

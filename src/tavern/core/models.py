@@ -13,7 +13,14 @@ from tavern.core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
 )
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
-from tavern.search.retrieval_config import LocalModels, ModelProfile, Network, Provider, RetrievalSettings
+from tavern.search.retrieval_config import (
+    LocalModels,
+    ModelProfile,
+    Network,
+    Provider,
+    RetrievalSettings,
+    api_root,
+)
 
 Policy = Literal["directed", "evolving", "preview"]
 LoreInjectionMode = Literal["conversation", "st_top"]
@@ -83,8 +90,7 @@ class Settings(BaseModel):
         provider = next(p for p in self.providers if p.id == profile.provider_id)
         return self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
             "cache": profile.cache.model_copy(deep=True),
-            "base_url": provider.base_url, "api_key": provider.api_key,
-            "api_mode": provider.api_mode,
+            "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path), "api_key": provider.api_key,
             "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
 
     base_url: str = "https://api.openai.com/v1"
@@ -106,6 +112,7 @@ class Settings(BaseModel):
     proxy: str = ""
     use_proxy: bool = True
     api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
+    api_path: str | None = None
     cache: CacheSettings = Field(default_factory=CacheSettings)
     cache_scope: str = ""
     cache_window: str = ""

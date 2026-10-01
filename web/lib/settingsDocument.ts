@@ -4,6 +4,8 @@ export type SettingsObject = Record<string, any>;
 export interface ModelProfile {
   provider_id: string;
   model: string;
+  api_mode: string;
+  api_path: string;
   context_tokens: number;
   reply_tokens: number;
   reasoning_effort: string;
@@ -24,7 +26,6 @@ export interface Provider {
   base_url: string;
   api_key?: string;
   has_api_key?: boolean;
-  api_mode: string;
   use_proxy: boolean;
 }
 export interface SettingsPage {

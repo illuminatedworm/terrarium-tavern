@@ -28,7 +28,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
   const nativeFamily = api === 'anthropic' ? 'Claude' : api === 'gemini' ? 'Gemini' : '';
   const protocolNote =
     nativeFamily && family && family !== nativeFamily
-      ? `模型名称属于 ${family}，接入方式仍为 ${apiLabel}。缓存档位按接入协议匹配；切换模型名称不会自动更改提供商协议。`
+      ? `模型名称属于 ${family}，接入方式仍为 ${apiLabel}。缓存档位按接入协议匹配；切换模型名称不会自动更改接口方式。`
       : '';
   let kind = '';
   let values: string[] = [];
@@ -172,11 +172,21 @@ export function cachePreset(model: string, api: string, cache: CacheSettings) {
   return result;
 }
 
-export function modelEndpoint(base: string, api: string, model = '{model}') {
+export function modelEndpoint(base: string, api: string, model = '{model}', apiPath?: string) {
   try {
     const url = new URL(base);
     let path = url.pathname.replace(/\/$/, '');
-    if (api === 'gemini') {
+    if (apiPath !== undefined) {
+      path = '/' + (apiPath.trim().replace(/^\/+|\/+$/g, '') || (api === 'gemini' ? 'v1beta' : 'v1'));
+      path +=
+        api === 'gemini'
+          ? '/models/' + encodeURIComponent(model.replace(/^models\//, '')) + ':generateContent'
+          : api === 'responses'
+            ? '/responses'
+            : api === 'anthropic'
+              ? '/messages'
+              : '/chat/completions';
+    } else if (api === 'gemini') {
       path = path.replace(/\/v1$/, '').replace(/\/openai$/, '');
       if (!/\/v1(beta|alpha)$/.test(path)) path += '/v1beta';
       path += '/models/' + encodeURIComponent(model.replace(/^models\//, '')) + ':generateContent';

@@ -154,13 +154,22 @@ def preset(settings):
     return result
 
 
-def endpoint(base_url, api, model="", *, stream=False, resource=None):
+def endpoint(base_url, api, model="", *, stream=False, resource=None, api_path=None):
     """Accept a root or an API root; preserve deployment-specific path prefixes."""
     parsed = urlsplit(base_url)
     path = parsed.path.rstrip("/")
     if parsed.query or parsed.fragment or parsed.username or parsed.password:
         raise ValueError("接口地址不能包含查询参数、片段或登录凭据")
-    if api in ("chat_completions", "responses", "anthropic"):
+    if api_path is not None:
+        path = "/" + (api_path or ("v1beta" if api == "gemini" else "v1")).strip("/")
+        if resource is not None:
+            path += "/" + resource.lstrip("/")
+        elif api == "gemini":
+            path += "/models/" + quote(model.removeprefix("models/"), safe="-._")
+            path += ":streamGenerateContent" if stream else ":generateContent"
+        else:
+            path += {"chat_completions": "/chat/completions", "responses": "/responses", "anthropic": "/messages"}[api]
+    elif api in ("chat_completions", "responses", "anthropic"):
         suffix = {"chat_completions": "/chat/completions", "responses": "/responses", "anthropic": "/messages"}[api]
         if path.endswith(suffix):
             path = path[:-len(suffix)]

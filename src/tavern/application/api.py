@@ -28,7 +28,6 @@ from tavern.core.models import (
     SessionTitle,
     TurnRequest,
 )
-from tavern.search.retrieval_config import Provider
 from tavern.storage.store import Conflict, Store, dump
 
 
@@ -126,40 +125,8 @@ def create_app(data_dir=None):
     from tavern.application.settings_api import register_settings_routes
     register_settings_routes(app, store)
 
-    @app.post("/api/settings/models")
-    async def provider_models(provider: Provider):
-        import httpx
-
-        config = store.settings()
-        saved = next((p for p in config.providers if p.id == provider.id), None)
-        key = provider.api_key or (saved.api_key if saved and saved.base_url == provider.base_url else "")
-        proxy = (config.network.proxy or None) if config.network.api_proxy and provider.use_proxy else None
-        try:
-            async with httpx.AsyncClient(proxy=proxy, trust_env=False, timeout=30) as client:
-                from tavern.core.cache_policy import endpoint
-                if provider.api_mode == "gemini":
-                    url = endpoint(provider.base_url, "gemini", resource="models")
-                    headers = {"x-goog-api-key": key} if key else {}
-                else:
-                    url = endpoint(provider.base_url, provider.api_mode)
-                    suffix = {"chat_completions": "/chat/completions", "responses": "/responses",
-                              "anthropic": "/messages"}[provider.api_mode]
-                    url = url[:-len(suffix)] + "/models"
-                    headers = ({"x-api-key": key, "anthropic-version": "2023-06-01"}
-                               if provider.api_mode == "anthropic" else {"Authorization": f"Bearer {key}"}) if key else {}
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                payload = response.json()
-                data = payload.get("models" if provider.api_mode == "gemini" else "data") if isinstance(payload, dict) else None
-                if not isinstance(data, list):
-                    raise ValueError("模型接口未返回 data 列表")
-                field = "name" if provider.api_mode == "gemini" else "id"
-                return {"models": sorted({m[field].removeprefix("models/") for m in data
-                                          if isinstance(m, dict) and isinstance(m.get(field), str) and m[field]})}
-        except httpx.HTTPStatusError as error:
-            raise ValueError(f"获取模型列表失败：HTTP {error.response.status_code}") from None
-        except httpx.RequestError:
-            raise ValueError("无法连接模型接口，请检查地址、代理和网络") from None
+    from tavern.application.provider_models import register_model_routes
+    register_model_routes(app, store)
 
     @app.get("/api/local-models")
     async def local_model_status():

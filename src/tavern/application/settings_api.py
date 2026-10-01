@@ -114,7 +114,7 @@ def invalidate_capabilities(old, new):
         before, after = getattr(getattr(old, scope), key), getattr(getattr(new, scope), key)
         old_provider = next(p for p in old.shared.providers if p.id == before.provider_id)
         provider = next(p for p in new.shared.providers if p.id == after.provider_id)
-        if (before.model, before.provider_id, old_provider.base_url, old_provider.api_mode) != (after.model, after.provider_id, provider.base_url, provider.api_mode):
+        if (before.model, before.provider_id, old_provider.base_url, before.api_mode, before.api_path) != (after.model, after.provider_id, provider.base_url, after.api_mode, after.api_path):
             after.capability, after.capability_key = "unknown", ""
 
 

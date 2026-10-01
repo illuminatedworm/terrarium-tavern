@@ -1,7 +1,8 @@
 """Validated, independently configurable retrieval and provider profiles."""
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tavern.core.cache_policy import CacheSettings
 from tavern.core.prompts import (
@@ -11,14 +12,19 @@ from tavern.core.prompts import (
     DEFAULT_RETRIEVAL_PROTOCOL,
 )
 
+ApiMode = Literal["chat_completions", "responses", "anthropic", "gemini"]
+
+
+def api_root(base_url, api_mode, api_path=""):
+    return base_url.rstrip("/") + "/" + (api_path or ("v1beta" if api_mode == "gemini" else "v1"))
+
 
 class Provider(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     name: str = "默认提供商"
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = "https://api.openai.com"
     api_key: str = ""
     use_proxy: bool = True
-    api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
 
     @model_validator(mode="after")
     def valid_url(self):
@@ -28,12 +34,17 @@ class Provider(BaseModel):
             raise ValueError("模型地址必须为 HTTP(S)")
         if parsed.query or parsed.fragment or parsed.username or parsed.password:
             raise ValueError("接口地址不能包含查询参数、片段或登录凭据")
+        if parsed.path.strip("/"):
+            raise ValueError("提供商只填写主域名，API 路径请在模型设置中填写")
+        self.base_url = self.base_url.rstrip("/")
         return self
 
 
 class ModelProfile(BaseModel):
     provider_id: str = "default"
     model: str = ""
+    api_mode: ApiMode = "chat_completions"
+    api_path: str = Field(default="", max_length=256)
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     context_tokens: int = Field(32768, ge=2048, le=2000000)
     reply_tokens: int = Field(2048, ge=128, le=65536)
@@ -51,6 +62,15 @@ class ModelProfile(BaseModel):
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""
+
+    @field_validator("api_path")
+    @classmethod
+    def valid_api_path(cls, value):
+        value = value.strip().strip("/")
+        if value and (not re.fullmatch(r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*", value)
+                      or any(part in (".", "..") for part in value.split("/"))):
+            raise ValueError("API 路径应为 v1、v1beta 等路径，不含域名或查询参数")
+        return value
 
     @model_validator(mode="after")
     def budget(self):

@@ -19,7 +19,7 @@ async def main():
         app = create_app(root)
         store = app.state.store
         settings = store.settings()
-        settings.providers[0].api_mode = "responses"
+        settings.foreground.api_mode = "responses"
         settings.foreground.model = "fixture"
         store.save_settings(settings)
         card = store.import_card(json.dumps({"name": "缓存位置测试", "first_mes": "开场"}).encode(), "card.json")

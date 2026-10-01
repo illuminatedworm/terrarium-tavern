@@ -177,9 +177,12 @@ def game(tmp_path, api="anthropic"):
     document.full_agent.model.model = "claude-opus-5-5" if api == "anthropic" else "gpt-6-sol"
     document.full_agent.model.reasoning_effort = "high"
     document.full_agent.model.cache.retention = "1h" if api == "anthropic" else "default"
-    document.shared.providers[0].api_mode = api
+    document.full_agent.model.api_mode = api
+    document.half_agent.foreground.api_mode = api
+    document.half_agent.background.api_mode = api
+    document.shared.card_editor.api_mode = api
     document.shared.providers[0].api_key = "local-audit-secret"
-    document.shared.providers[0].base_url = "https://fixture.test/v1"
+    document.shared.providers[0].base_url = "https://fixture.test"
     document.shared.network.api_proxy = False
     store.save_settings(document)
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
@@ -434,7 +437,10 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
         for api, model in [("anthropic", "claude-opus-5-5"), ("anthropic", "claude-sonnet-4-6"),
                            ("anthropic", "claude-opus-5-5"), ("responses", "gpt-6-sol")]:
             doc = store.settings_document()
-            doc.shared.providers[0].api_mode = api
+            doc.full_agent.model.api_mode = api
+            doc.half_agent.foreground.api_mode = api
+            doc.half_agent.background.api_mode = api
+            doc.shared.card_editor.api_mode = api
             doc.full_agent.model.model = model
             store.save_settings(doc)
             pending = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex,

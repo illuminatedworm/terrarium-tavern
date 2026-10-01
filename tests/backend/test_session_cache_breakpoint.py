@@ -115,7 +115,7 @@ async def test_cache_breakpoint_endpoint_and_schema_migration(story):
 async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story):
     store, session, replies = story
     settings = store.settings()
-    settings.providers[0].api_mode = "responses"
+    settings.foreground.api_mode = "responses"
     settings.providers[0].api_key = "test"
     settings.network.api_proxy = False
     settings.foreground.model = "gpt-fixture"

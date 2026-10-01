@@ -210,10 +210,9 @@ const writerResponseCache = computed(() => {
 });
 const writerCacheRetention = computed(() => {
   const profile = activeModel.value;
-  const provider = settings.value.shared?.providers?.find((item: any) => item.id === profile?.provider_id);
   return cacheRetention(
     profile?.model || '',
-    provider?.api_mode || 'chat_completions',
+    profile?.api_mode || 'chat_completions',
     profile?.cache || { mode: 'cloud', preset: 'auto', field: 'cache_control', value: {}, request: {} },
   );
 });

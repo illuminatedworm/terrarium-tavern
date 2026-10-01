@@ -51,8 +51,8 @@ async def main():
                 for mode, sid in sessions.items():
                     for api, model, control, lowest, target in cases:
                         doc = store.settings_document()
-                        doc.shared.providers[0].api_mode = api
                         profile = doc.full_agent.model if mode == 'full_agent' else doc.half_agent.foreground
+                        profile.api_mode = api
                         profile.model = model
                         profile.cache.mode, profile.cache.retention = control, 'default'
                         store.save_settings(doc)
@@ -88,8 +88,8 @@ async def main():
                             await page.set_viewport_size({'width': 1920, 'height': 1080})
                     # Unsupported controls remain readable without a misleading selector.
                     doc = store.settings_document()
-                    doc.shared.providers[0].api_mode = 'responses'
                     profile = doc.full_agent.model if mode == 'full_agent' else doc.half_agent.foreground
+                    profile.api_mode = 'responses'
                     profile.model = 'unknown-alias'
                     profile.cache.mode = 'cloud'
                     store.save_settings(doc)

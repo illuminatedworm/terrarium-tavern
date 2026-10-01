@@ -82,7 +82,7 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
         old = OBJECTS.get(slot)
         if old and old["digest"] == digest and old["expires"] > time.time() + 10:
             return {**old, "boundary": boundary, "slot": slot}, None
-        url = endpoint(settings.base_url, "gemini", resource="cachedContents")
+        url = endpoint(settings.base_url, "gemini", resource="cachedContents", api_path=settings.api_path)
         try:
             response = await provider.http.post(url, headers=provider.gemini_headers,
                                                 json={**prefix, "ttl": f"{ttl}s"})
@@ -102,7 +102,7 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
             OBJECTS[slot] = entry
             if old and old["name"] != name:
                 try:
-                    await provider.http.delete(endpoint(settings.base_url, "gemini", resource=old["name"]),
+                    await provider.http.delete(endpoint(settings.base_url, "gemini", resource=old["name"], api_path=settings.api_path),
                                                headers=provider.gemini_headers)
                 except httpx.HTTPError:
                     pass  # The old object has a bounded TTL.
@@ -115,7 +115,7 @@ async def invalidate_object(provider, entry):
     if entry:
         OBJECTS.pop(entry["slot"], None)
         try:
-            await provider.http.delete(endpoint(provider.settings.base_url, "gemini", resource=entry["name"]),
+            await provider.http.delete(endpoint(provider.settings.base_url, "gemini", resource=entry["name"], api_path=provider.settings.api_path),
                                        headers=provider.gemini_headers)
         except httpx.HTTPError:
             pass
