@@ -621,7 +621,12 @@ header {
   scroll-behavior: auto;
   scrollbar-width: none;
   scrollbar-gutter: auto;
-  padding-right: max(42px, calc((100% - 850px) / 2));
+  padding-right: max(88px, calc((100% - 850px) / 2));
+}
+@media (max-width: 620px) {
+  .dialogue-viewport > .messages {
+    padding-right: 76px;
+  }
 }
 .dialogue-viewport > .messages::-webkit-scrollbar {
   display: none;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import StoryMessage from './StoryMessage.vue';
-defineProps<{
+import { computed } from 'vue';
+const props = defineProps<{
   message: any;
   session: any;
   name: string;
@@ -17,6 +18,12 @@ defineProps<{
   cacheBreakpointId: string | null;
   cacheBreakpointBusy: boolean;
 }>();
+const sentAt = computed(() => {
+  const value = props.message.created;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const date = new Date(value * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
+});
 const editingMessageText = defineModel<string>('editingMessageText', { required: true });
 const emit = defineEmits<{
   cancelEdit: [];
@@ -94,6 +101,7 @@ function forwardAction(
       </div>
       <StoryMessage
         v-else
+        find-in-dialogue
         :hide-panel="hidePanel"
         :message="message"
         :session="session"
@@ -226,6 +234,31 @@ function forwardAction(
           </svg>
         </button>
       </div>
+      <time
+        v-if="sentAt"
+        class="message-time"
+        :datetime="sentAt.toISOString()"
+        :title="sentAt.toLocaleString()"
+        >{{
+          sentAt.toLocaleTimeString('zh-CN', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        }}</time
+      >
     </div>
   </article>
 </template>
+
+<style scoped>
+.message-time {
+  display: block;
+  margin-top: 8px;
+  text-align: right;
+  color: var(--text-muted);
+  font: 11px/1.5 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+</style>

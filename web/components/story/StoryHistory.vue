@@ -47,6 +47,26 @@ let observer: ResizeObserver | undefined;
 let scrollFrame = 0;
 let disposed = false;
 let jumpVersion = 0;
+let pinned: { id: string; edge: 'start' | 'end' } | undefined;
+let lastBoundary: { id: string; edge: 'start' | 'end'; top: number } | undefined;
+function releaseAnchor() {
+  pinned = undefined;
+  lastBoundary = undefined;
+  jumpVersion++;
+}
+function alignPinned() {
+  const scroller = props.scroller;
+  if (!pinned || !scroller) return;
+  const row = nodes.get(pinned.id);
+  const node = row?.querySelector<HTMLElement>('.message') || row;
+  if (!node) return;
+  const rect = node.getBoundingClientRect();
+  const viewport = scroller.getBoundingClientRect();
+  scroller.scrollTop +=
+    pinned.edge === 'start' ? rect.top - viewport.top - 16 : rect.bottom - viewport.bottom + 16;
+  if (lastBoundary?.id === pinned.id && lastBoundary.edge === pinned.edge)
+    lastBoundary.top = scroller.scrollTop;
+}
 
 function origin() {
   if (!root.value || !props.scroller) return 0;
@@ -92,7 +112,6 @@ async function measure(entries: ResizeObserverEntry[]) {
   const top = scroller.scrollTop - origin();
   const anchor = heights.indexAt(Math.max(0, top));
   const previousOffset = heights.offset(anchor);
-  const following = props.following;
   let changed = false;
   for (const entry of entries) {
     const node = entry.target as HTMLElement;
@@ -111,8 +130,9 @@ async function measure(entries: ResizeObserverEntry[]) {
     const correction = heights.offset(anchor) - previousOffset;
     await nextTick();
     if (disposed) return;
-    if (following) scroller.scrollTop = scroller.scrollHeight;
-    else if (correction) scroller.scrollTop += correction;
+    if (pinned) alignPinned();
+    else if (props.following) scroller.scrollTop = scroller.scrollHeight;
+    else if (virtual.value && correction) scroller.scrollTop += correction;
   }
   updateViewport();
 }
@@ -127,26 +147,53 @@ function rowStyle(id: string) {
     containIntrinsicSize: `auto ${measured.get(id) || 280}px`,
   };
 }
-async function jumpTo(id: string) {
+async function jumpTo(id: string, edge: 'start' | 'end' = 'start') {
   const index = indices.value.get(id);
   const scroller = props.scroller;
   if (index === undefined || !scroller) return;
   const version = ++jumpVersion;
+  pinned = { id, edge };
   for (let attempt = 0; attempt < 3; attempt++) {
     if (disposed || version !== jumpVersion) return;
-    if (virtual.value) scroller.scrollTop = origin() + heights.offset(index);
-    else {
-      const node = nodes.get(id);
-      if (node) scroller.scrollTop += node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    }
+    if (virtual.value && !nodes.has(id)) scroller.scrollTop = origin() + heights.offset(index);
+    alignPinned();
     updateViewport();
     await nextTick();
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
 }
+async function jumpBoundary(edge: 'start' | 'end') {
+  const scroller = props.scroller;
+  if (!scroller || !props.messages.length) return;
+  const remembered =
+    lastBoundary && indices.value.has(lastBoundary.id) && Math.abs(lastBoundary.top - scroller.scrollTop) < 3
+      ? lastBoundary
+      : undefined;
+  let index = remembered
+    ? indices.value.get(remembered.id)!
+    : heights.indexAt(Math.max(0, scroller.scrollTop - origin() + 24));
+  if (!virtual.value && !remembered) {
+    const top = scroller.getBoundingClientRect().top + 24;
+    index = props.messages.findIndex(
+      (message) => (nodes.get(message.id)?.getBoundingClientRect().bottom || 0) > top,
+    );
+    if (index < 0) index = props.messages.length - 1;
+  }
+  const row = nodes.get(props.messages[index].id);
+  const rect = (row?.querySelector('.message') || row)?.getBoundingClientRect();
+  const bounds = scroller.getBoundingClientRect();
+  const atEdge =
+    remembered?.edge === edge ||
+    (rect && (edge === 'start' ? rect.top >= bounds.top + 13 : rect.bottom <= bounds.bottom - 13));
+  if (atEdge) index = Math.max(0, Math.min(props.messages.length - 1, index + (edge === 'start' ? -1 : 1)));
+  const id = props.messages[index].id;
+  await jumpTo(id, edge);
+  if (pinned?.id === id && pinned.edge === edge) lastBoundary = { id, edge, top: scroller.scrollTop };
+}
 watch(
   () => [props.messages, props.messages.length],
   async () => {
+    if (pinned && !indices.value.has(pinned.id)) releaseAnchor();
     const previousTop = props.scroller?.scrollTop || 0;
     let readingId: string | undefined;
     let readingOffset = 0;
@@ -171,7 +218,7 @@ watch(
     revision.value++;
     await nextTick();
     if (disposed) return;
-    if (virtual.value && !observer) {
+    if (!observer) {
       observer = new ResizeObserver((entries) => void measure(entries));
       if (props.scroller) observer.observe(props.scroller);
       for (const node of nodes.values()) observer.observe(node);
@@ -208,6 +255,11 @@ watch(
   () => props.scroller,
   (scroller, previous) => {
     previous?.removeEventListener('scroll', scheduleViewport);
+    if (previous) observer?.unobserve(previous);
+    for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+      previous?.removeEventListener(event, releaseAnchor);
+      scroller?.addEventListener(event, releaseAnchor, { passive: true });
+    }
     scroller?.addEventListener('scroll', scheduleViewport, { passive: true });
     if (scroller) observer?.observe(scroller);
     scheduleViewport();
@@ -220,9 +272,11 @@ onBeforeUnmount(() => {
   observer?.disconnect();
   cancelAnimationFrame(scrollFrame);
   props.scroller?.removeEventListener('scroll', scheduleViewport);
+  for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown'])
+    props.scroller?.removeEventListener(event, releaseAnchor);
   window.removeEventListener('resize', scheduleViewport);
 });
-defineExpose({ jumpTo, updateViewport });
+defineExpose({ jumpTo, jumpBoundary, releaseAnchor, updateViewport });
 </script>
 
 <template>

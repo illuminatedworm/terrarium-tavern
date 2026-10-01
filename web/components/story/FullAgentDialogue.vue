@@ -20,7 +20,11 @@ const emit = defineEmits<{ contentChange: []; reading: [id: string] }>();
 const history = ref<InstanceType<typeof StoryHistory>>();
 const visibleMessages = ref<any[]>([]);
 const loadingMessages = new Set<string>();
-defineExpose({ jumpTo: (id: string) => history.value?.jumpTo(id) });
+defineExpose({
+  jumpTo: (id: string) => history.value?.jumpTo(id),
+  jumpBoundary: (edge: 'start' | 'end') => history.value?.jumpBoundary(edge),
+  releaseAnchor: () => history.value?.releaseAnchor(),
+});
 const records = ref<Record<string, AgentActivity[]>>({});
 const pendingRecords = ref<AgentActivity[]>([]);
 const error = ref('');

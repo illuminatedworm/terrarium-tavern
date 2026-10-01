@@ -9,6 +9,7 @@ const props = defineProps<{
   enabled: boolean;
   hidePanel?: boolean;
   expandFirstLevel?: boolean;
+  findInDialogue?: boolean;
 }>();
 const emit = defineEmits<{
   action: [
@@ -64,6 +65,7 @@ async function build() {
   const bootstrap = `const token=${JSON.stringify(token)};const pending=new Map();
     const host=(method,args)=>new Promise((resolve,reject)=>{const id=crypto.randomUUID();pending.set(id,{resolve,reject});parent.postMessage({token,id,method,args},'*');});
     addEventListener('message',e=>{if(e.source!==parent||e.data.token!==token)return;const p=pending.get(e.data.id);if(p){if(e.data.stream!==undefined){p.full=(p.full||'')+e.data.stream;TavernRuntime.emit('stream_token_received_incrementally',e.data.stream);TavernRuntime.emit('stream_token_received_fully',p.full);return;}pending.delete(e.data.id);e.data.error?p.reject(Error(e.data.error)):p.resolve(e.data.result);}});
+    if (${JSON.stringify(!!props.findInDialogue)}) addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='f'){e.preventDefault();parent.postMessage({token,method:'find'},'*');}});
     TavernRuntime.install(${JSON.stringify(data)},host);
     addEventListener('DOMContentLoaded',()=>{if(!document.querySelector('#send_textarea')){const proxy=document.createElement('textarea');proxy.id='send_textarea';proxy.hidden=true;proxy.addEventListener('input',()=>host('input',{text:proxy.value}));document.body.append(proxy);}});
     if (${JSON.stringify(!!props.expandFirstLevel)}) {
@@ -89,6 +91,10 @@ async function build() {
 function receive(event: MessageEvent) {
   if (event.source !== frame.value?.contentWindow || event.data?.token !== token) return;
   const { method, args, id } = event.data;
+  if (method === 'find') {
+    if (frame.value?.closest('.message')) window.dispatchEvent(new Event('tavern-dialogue-find'));
+    return;
+  }
   if (method === 'height') {
     height.value = Math.min(1500, Math.max(100, Number(args) || 280));
     return;
@@ -120,6 +126,7 @@ watch(
     props.enabled,
     props.hidePanel,
     props.expandFirstLevel,
+    props.findInDialogue,
   ],
   build,
   { immediate: true, deep: true },

@@ -14,6 +14,7 @@ import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
 import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
+import DialogueTools from './components/story/DialogueTools.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
@@ -53,7 +54,11 @@ const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 function applyFullSession(updated: any) {
   if (session.value?.id === updated.id) session.value = updated;
 }
-const dialogue = ref<{ jumpTo: (id: string) => Promise<void> | undefined }>();
+const dialogue = ref<{
+  jumpTo: (id: string) => Promise<void> | undefined;
+  jumpBoundary: (edge: 'start' | 'end') => Promise<void> | undefined;
+  releaseAnchor: () => void;
+}>();
 const readingMessageId = ref('');
 const eligibleCacheReplies = computed(() => {
   const messages = session.value?.messages || [];
@@ -178,6 +183,8 @@ const allowEdit = ref(false),
   importInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>();
 const followLatest = ref(true);
+const readingPinned = ref(false);
+const pendingReplyStart = ref('');
 const pageMode = ref(''),
   regenerateNote = ref(''),
   quickEffort = ref('inherit');
@@ -587,6 +594,7 @@ async function refreshContextStats() {
   }
 }
 async function openSession(id: string, creating = false, createdSession?: any) {
+  pendingReplyStart.value = '';
   const token = viewScope.enter();
   storyLoad.value = {
     id,
@@ -650,7 +658,12 @@ async function openSession(id: string, creating = false, createdSession?: any) {
     // Publish the complete reading state before dismissing the loading screen.
     storyLoad.value = null;
     if (busy.value && restored) observe(restored.id);
-    await scroll(true);
+    const latest = opened.messages
+      .slice()
+      .reverse()
+      .find((message: any) => message.role === 'assistant');
+    if (!restored && latest) await navigateMessage(latest.id);
+    else await scroll(true);
     if (viewScope.owns(token)) void refreshContextStats();
   } catch (e: any) {
     if (!viewScope.owns(token)) return;
@@ -781,14 +794,17 @@ async function saveSessionTitle(item: any) {
 }
 function trackScroll() {
   const el = chat.value;
-  if (el) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+  if (el && !readingPinned.value) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
 }
 function pauseFollow(event: WheelEvent) {
+  readingPinned.value = false;
   if (event.deltaY < 0 && chat.value && chat.value.scrollHeight > chat.value.clientHeight)
     followLatest.value = false;
 }
 async function navigateMessage(id: string) {
+  pendingReplyStart.value = '';
   storyView.value = 'dialogue';
+  readingPinned.value = true;
   followLatest.value = false;
   await nextTick();
   await dialogue.value?.jumpTo(id);
@@ -797,13 +813,28 @@ async function locateCacheBreakpoint() {
   if (cacheBreakpointId.value) await navigateMessage(cacheBreakpointId.value);
   else {
     storyView.value = 'dialogue';
+    dialogue.value?.releaseAnchor();
+    readingPinned.value = true;
     followLatest.value = false;
     await nextTick();
     chat.value?.scrollTo({ top: 0, behavior: 'instant' });
   }
 }
+async function jumpBoundary(edge: 'start' | 'end') {
+  readingPinned.value = true;
+  followLatest.value = false;
+  await nextTick();
+  await dialogue.value?.jumpBoundary(edge);
+}
+watch(storyView, (view) => {
+  if (view === 'dialogue' && pendingReplyStart.value) void navigateMessage(pendingReplyStart.value);
+});
 async function scroll(force = false) {
-  if (force) followLatest.value = true;
+  if (force) {
+    readingPinned.value = false;
+    dialogue.value?.releaseAnchor();
+    followLatest.value = true;
+  }
   await nextTick();
   if (chat.value && followLatest.value)
     chat.value.scrollTo({ top: chat.value.scrollHeight, behavior: 'instant' });
@@ -838,6 +869,7 @@ async function retryTurn() {
   try {
     activeTurn.value = await viewApi(`/sessions/${session.value.id}/turns`, request);
     workCount.value += 1;
+    void scroll(true);
     observe(activeTurn.value.id);
   } catch (e: any) {
     if (viewScope.owns(token)) {
@@ -967,6 +999,7 @@ async function send(mode = 'send', message?: any, text?: string, note = '') {
     regenerateNote.value = '';
     rewriteExpanded.value = false;
     workCount.value += 1;
+    void scroll(true);
     observe(turn.id);
   } catch (e: any) {
     if (viewScope.owns(token)) {
@@ -1014,13 +1047,27 @@ function observe(id: string) {
         if (!viewScope.owns(token)) return;
         const following = followLatest.value,
           top = chat.value?.scrollTop || 0;
+        const completedReply =
+          turn.status === 'committed' && !turn.request?.scene_refresh
+            ? updated.messages
+                .slice()
+                .reverse()
+                .find((message: any) => message.role === 'assistant')
+            : null;
+        if (following && completedReply) {
+          readingPinned.value = true;
+          followLatest.value = false;
+        }
         activeTurn.value = turn;
         draft.value = turn.draft;
         busy.value = false;
         session.value = updated;
         await nextTick();
         if (!viewScope.owns(token)) return;
-        if (following) await scroll();
+        if (following && completedReply) {
+          if (storyView.value === 'dialogue') await navigateMessage(completedReply.id);
+          else pendingReplyStart.value = completedReply.id;
+        } else if (following) await scroll();
         else {
           chat.value?.scrollTo({ top, behavior: 'instant' });
           followLatest.value = false;
@@ -1061,6 +1108,7 @@ async function locateSource(id: string, excerpt: string) {
   followLatest.value = false;
   sourceHighlight.value = { id, excerpt, fallback: false };
   await navigateMessage(id);
+  dialogue.value?.releaseAnchor();
   const target = Array.from(chat.value?.querySelectorAll<HTMLElement>('[data-message-id]') || []).find(
     (node) => node.dataset.messageId === id,
   );
@@ -1450,6 +1498,7 @@ async function frameAction(
       activeTurn.value = turn;
       busy.value = true;
       draft.value = '';
+      void scroll(true);
       observe(turn.id);
       const stream = args.should_stream ? new EventSource(`/api/turns/${turn.id}/events`) : null;
       if (stream) {
@@ -1813,7 +1862,15 @@ useTimedError(error);
           :events="trace"
         />
         <div v-show="storyView === 'dialogue'" class="dialogue-viewport">
-          <div ref="chat" class="messages" @scroll="trackScroll" @wheel.passive="pauseFollow">
+          <div
+            ref="chat"
+            class="messages"
+            tabindex="-1"
+            @scroll="trackScroll"
+            @wheel.passive="pauseFollow"
+            @touchstart.passive="readingPinned = false"
+            @keydown="readingPinned = false"
+          >
             <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
             <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
               <button
@@ -1978,6 +2035,16 @@ useTimedError(error);
               ><button @click="review(false)">保留草稿，取消修改</button>
             </div>
           </div>
+          <DialogueTools
+            :key="session.id"
+            :messages="session.messages"
+            :persona="session.persona"
+            :scroller="chat"
+            :active="storyView === 'dialogue' && !pageMode"
+            :navigate="navigateMessage"
+            :release-anchor="() => dialogue?.releaseAnchor()"
+            @boundary="jumpBoundary"
+          />
           <ConversationRail
             :key="session.id"
             :messages="session.messages"
