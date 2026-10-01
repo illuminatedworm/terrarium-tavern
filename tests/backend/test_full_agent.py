@@ -57,13 +57,13 @@ def test_tool_result_field_options(story):
     assert tools.search(rows, "旧港", 5, include_preview=False)["matches"] == [
         {"ref": "H1", "role": "user"}]
     assert tools.search(rows, "旧港", 5)["matches"][0]["preview"] == "旧港的船只出发"
-    assert result_field({}, "search_lore", "include_ref") is False
-    assert result_field({}, "search_lore", "include_title") is False
+    assert result_field({}, "search_read_lore", "include_ref") is False
+    assert result_field({}, "search_read_lore", "include_title") is False
     assert result_field({}, "search_history", "include_preview") is True
     assert result_field({}, "read_history", "include_metadata") is True
-    assert result_field({"tool_result_options": {"search_lore": {"include_ref": True}}},
-                        "search_lore", "include_ref") is True
-    assert set(RESULT_FIELDS["search_lore"]) == {"include_ref", "include_title"}
+    assert result_field({"tool_result_options": {"search_read_lore": {"include_ref": True}}},
+                        "search_read_lore", "include_ref") is True
+    assert set(RESULT_FIELDS["search_read_lore"]) == {"include_ref", "include_title"}
 
 
 class Script:
@@ -535,8 +535,8 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
     try:
-        model = Model(("search_lore", {"query": "旧港"}), ("search_lore", {"query": "钟楼"}),
-                      ("search_lore", {"query": "旧港"}), "向导指向旧港。")
+        model = Model(("search_read_lore", {"query": "旧港"}), ("search_read_lore", {"query": "钟楼"}),
+                      ("search_read_lore", {"query": "旧港"}), "向导指向旧港。")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
@@ -643,7 +643,7 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
     store.save_settings(settings)
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
-    model = Model(("search_lore", {"query": "loreword"}), "继续。")
+    model = Model(("search_read_lore", {"query": "loreword"}), "继续。")
     try:
         result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
@@ -698,7 +698,7 @@ def test_lore_tool_description_matches_enabled_retrieval(story, channels, rerank
     settings.local_models.reranker_enabled = rerank
     definitions = tool_definitions(TurnRequest(operation_id="description", expected_revision=0),
                                    session, settings.full_agent_config, settings=settings)
-    description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "search_lore")
+    description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "search_read_lore")
     for channel, marker in (("keyword", "keyword"), ("bm25", "BM25"), ("embedding", "semantic")):
         assert (marker in description) == (channel in channels)
     assert ("Reranking orders" in description) == rerank

@@ -15,15 +15,16 @@ from tests.backend.test_full_agent import Model, runtime, turn
 story = test_full_agent.story
 
 
-async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story):
+@pytest.mark.parametrize("lore_name", ["search_lore", "search_read_lore"])
+async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story, lore_name):
     store, session = story
-    options = {"read_lore": {"include_metadata": False}, "search_lore": {"include_title": True}}
+    options = {"read_lore": {"include_metadata": False}, lore_name: {"include_title": True}}
     with store.connection() as db:
         db.execute("UPDATE sessions SET disabled_tools=?,tool_result_options=? WHERE id=?",
-                   (json.dumps(["read_lore", "write_note"]), json.dumps(options), session["id"]))
+                   (json.dumps(["read_lore", "write_note", lore_name]), json.dumps(options), session["id"]))
     session = Store(store.root).session(session["id"])
-    assert session["disabled_tools"] == ["write_note"]
-    assert session["tool_result_options"] == {"search_lore": options["search_lore"]}
+    assert session["disabled_tools"] == ["write_note", "search_read_lore"]
+    assert session["tool_result_options"] == {"search_read_lore": options[lore_name]}
     fork = store.fork_session(session["id"], session["head"], session["revision"])
     assert fork["disabled_tools"] == session["disabled_tools"]
     assert fork["tool_result_options"] == session["tool_result_options"]
@@ -38,11 +39,11 @@ async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected
             assert response.status_code == 200
             session = response.json()
             assert set(session["disabled_tools"]) == set(SPECS)
-            assert session["tool_result_options"] == {"search_lore": options["search_lore"]}
+            assert session["tool_result_options"] == {"search_read_lore": options[lore_name]}
             response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
             assert response.status_code == 200
             session = response.json()
-        model = Model(("read_lore", {"ref": "L1"}), ("search_lore", {"query": "灯塔"}), "继续。")
+        model = Model(("read_lore", {"ref": "L1"}), ("search_read_lore", {"query": "灯塔"}), "继续。")
         result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert all("read_lore" not in {t["function"]["name"] for t in r["extra_body"]["tools"]}
@@ -96,7 +97,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 assert tool["enabled"]
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
-            lore = next(t for t in catalog if t["name"] == "search_lore")
+            lore = next(t for t in catalog if t["name"] == "search_read_lore")
             assert lore["result_options"] == {"include_ref": False, "include_title": False}
             assert set(lore["parameters"]["properties"]) == {"query"}
             patch = next(t for t in catalog if t["name"] == "patch_state")
@@ -157,23 +158,23 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
     app = create_app(store.root)
     service = runtime(store)
     url = f"/api/sessions/{session['id']}/full-agent/tools"
-    options = {"search_lore": {"include_ref": True, "include_title": True},
+    options = {"search_read_lore": {"include_ref": True, "include_title": True},
                "search_history": {"include_preview": False},
                "read_history": {"include_metadata": False}}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
-                                                "tool_result_options": {"search_lore": {"unknown": True}}})).status_code == 400
+                                                "tool_result_options": {"search_read_lore": {"unknown": True}}})).status_code == 400
             response = await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
                                                     "tool_result_options": options})
             assert response.status_code == 200
             session = response.json()
             assert session["tool_result_options"] == options
             catalog = (await client.get(url)).json()["tools"]
-            assert next(t for t in catalog if t["name"] == "search_lore")["result_options"] == options["search_lore"]
+            assert next(t for t in catalog if t["name"] == "search_read_lore")["result_options"] == options["search_read_lore"]
             fork = store.fork_session(session["id"], session["head"], session["revision"])
             assert fork["tool_result_options"] == options
-            model = Model(("search_lore", {"query": "旧港"}),
+            model = Model(("search_read_lore", {"query": "旧港"}),
                           ("search_history", {"query": "开场"}),
                           ("read_history", {"ref": "H1"}), "继续。")
             result, _ = await turn(service, session, model)
@@ -212,3 +213,29 @@ async def test_disabled_rollover_fails_before_requesting_unavailable_tool(story,
         assert current["snapshot"] == session["snapshot"]
     finally:
         await service.close()
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_character_tool_guidance_matches_read_and_patch_roots(wrapped):
+    from types import SimpleNamespace
+
+    from tavern.core.model_view import ModelView
+    from tavern.full_agent.tools import AgentTools, tool_definitions
+
+    data = {"name": "Guide", "description": "Before", "custom_field": "Custom"}
+    document = {"spec": "chara_card_v2", "spec_version": "2.0", "data": data} if wrapped else data
+    definitions = tool_definitions(TurnRequest(operation_id="guidance", expected_revision=0),
+                                   {"policy_effective": "auto"}, document=document)
+    catalog = {item["function"]["name"]: item["function"] for item in definitions}
+    assert "custom_field" in catalog["read_character"]["description"]
+    prefix = "/data" if wrapped else ""
+    assert f'prefix: {json.dumps(prefix)}.' in catalog["revise_content"]["description"]
+    owner = SimpleNamespace(document=document, definitions=definitions, state={}, snapshot={},
+                            session={}, model_view=ModelView(document), tid="guidance")
+    tools = AgentTools(owner)
+    before = await tools.execute("read_character", json.dumps({"ref": "description"}))
+    assert before["text"] == "Before"
+    await tools.execute("revise_content", json.dumps({"operations": [
+        {"op": "replace", "path": prefix + "/description", "value": "After"}], "reason": "Update setting"}))
+    after = await tools.execute("read_character", json.dumps({"ref": "description"}))
+    assert after["text"] == "After"

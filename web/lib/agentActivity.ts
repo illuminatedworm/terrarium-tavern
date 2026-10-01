@@ -91,6 +91,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
 
 export const toolLabels: Record<string, string> = {
   search_lore: '检索世界书',
+  search_read_lore: '检索并读取世界书',
   read_lore: '读取世界书',
   search_history: '搜索历史',
   read_history: '读取历史',

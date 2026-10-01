@@ -540,6 +540,12 @@ class Store:
             result["disabled_tools"] = [name for name in json.loads(result["disabled_tools"]) if name != "read_lore"]
             result["tool_result_options"] = json.loads(result["tool_result_options"])
             result["tool_result_options"].pop("read_lore", None)
+            if result["agent_mode"] == "full_agent":
+                result["disabled_tools"] = list(dict.fromkeys(
+                    "search_read_lore" if name == "search_lore" else name for name in result["disabled_tools"]))
+                legacy_lore = result["tool_result_options"].pop("search_lore", None)
+                if legacy_lore is not None:
+                    result["tool_result_options"].setdefault("search_read_lore", legacy_lore)
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
         result["messages"] = self.history(sid, result["head"])

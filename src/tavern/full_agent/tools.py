@@ -29,17 +29,29 @@ class Read(Arguments):
     ref: str = Field(min_length=1, max_length=80, description="Reference, note key, or character field to read.")
 
 
+class HistoryRead(Read):
+    ref: str = Field(min_length=1, max_length=80, description="Exact H reference from search_history or retained context, e.g. H1; must exist in the current branch.")
+
+
+class NoteRead(Read):
+    ref: str = Field(min_length=1, max_length=80, description="Exact existing note key, e.g. relationships/guide; accepts active or archived notes, not H/L references.")
+
+
+class CharacterRead(Read):
+    ref: str = Field(min_length=1, max_length=80, description="Exact existing top-level field of normalized character data, e.g. description or character_book. No data prefix, dotted paths, or JSON Pointers; read the whole field to inspect nested values.")
+
+
 class Checkpoint(Arguments):
-    content: str = Field(min_length=1, max_length=64000, description="Complete updated checkpoint text.")
+    content: str = Field(min_length=1, max_length=64000, description="Complete updated checkpoint text; must contain non-whitespace text.")
 
 
 class NewContext(Checkpoint):
-    keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain, expanded to complete exchanges.")
+    keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain (0-12; default 2), normally up to 6 user/assistant exchanges. Expanded to complete exchanges; current user input is retained separately.")
 
 
 class Note(Arguments):
     key: str = Field(min_length=1, max_length=80, pattern=r"^[\w\-/ .\u4e00-\u9fff]+$", description="Meaningful, stable note key.")
-    content: str = Field(min_length=1, max_length=64000, description="Complete updated note text.")
+    content: str = Field(min_length=1, max_length=64000, description="Complete updated note text; must contain non-whitespace text.")
     kind: Literal["fact", "hypothesis", "plan"] = Field(description="Whether the note records evidence-backed facts, a hypothesis, or a plan.")
     sources: list[str] = Field(default_factory=list, max_length=20, description="H references searched or read in this turn; required for facts.")
 
@@ -49,12 +61,18 @@ class NoteKey(Arguments):
 
 
 class Patch(Arguments):
-    operations: list[dict] = Field(min_length=1, max_length=100, description="JSON Patch operations using JSON Pointer paths.")
+    operations: list[dict] = Field(min_length=1, max_length=100, description=("1-100 JSON Patch objects. Each requires op and path. "
+        "op is add, remove, replace, move, copy, or test. add/replace/test require value (any JSON value, including null); "
+        "move/copy require from (source JSON Pointer); remove needs only op/path. "
+        "path/from use slash-separated JSON Pointers, not dot paths: escape ~ as ~0 and / as ~1 within keys. "
+        "Array indices are zero-based; add may use a final /- to append. "
+        "An empty pointer targets the root. Follow this tool's root rules; existing targets are required for "
+        "remove/replace/test and from, and add requires an existing parent."))
     reason: str = Field(min_length=1, max_length=1000, description="Story evidence and purpose of this change.")
 
 
 class StateRead(Arguments):
-    path: str = Field(default="", max_length=200, description="Dot-separated state path; empty reads the entire story state.")
+    path: str = Field(default="", max_length=200, description="Dot-separated state path, including stat_data for MVU variables (e.g. stat_data.hp); array elements use zero-based numeric segments (e.g. stat_data.items.0.name). Empty reads the entire story state; missing paths return null. Literal dots in keys cannot be escaped with this path syntax.")
 
 
 CHECKPOINT_GUIDANCE = (
@@ -65,7 +83,7 @@ CHECKPOINT_GUIDANCE = (
 )
 REFERENCE_GUIDANCE = "H/L references are navigation handles, not story prose."
 RESULT_FIELDS = {
-    "search_lore": {"include_ref": False, "include_title": False},
+    "search_read_lore": {"include_ref": False, "include_title": False},
     "search_history": {"include_preview": True},
     "read_history": {"include_metadata": True},
     "search_notes": {"include_preview": True},
@@ -80,14 +98,14 @@ def result_field(session, tool, field):
 
 
 SPECS = {
-    "search_lore": (Query, "Search the lorebook. "
+    "search_read_lore": (Query, "Search the lorebook and read complete matching entries. "
         "Use a concise, self-contained query in the lorebook's language to describe what you're looking for. "
         "Entry conditions, cooldowns, relevance thresholds, and limits may filter matches. "
         "Returns complete selected entries in <lorebook>; auto-injected entries already in context are omitted. "
         "Optional result fields may include L references and titles."),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
-    "read_history": (Read, "Read original dialogue by H reference, including the current user input. " + REFERENCE_GUIDANCE),
+    "read_history": (HistoryRead, "Read original dialogue by H reference, including the current user input. " + REFERENCE_GUIDANCE),
     "write_checkpoint": (Checkpoint, "Update the checkpoint in the current window. " + CHECKPOINT_GUIDANCE),
     "new_context": (NewContext, "Save a checkpoint and switch windows. " + CHECKPOINT_GUIDANCE
         + " Call this tool alone. The current user input stays; keep_recent counts dialogue messages, "
@@ -97,7 +115,7 @@ SPECS = {
     "search_notes": (Search, "Search active notes in this branch by literal text terms in content or keys. "
         "Use short text fragments; query=* lists notes. Notes are not automatically injected. "
         "Use read_note for full text and optional source metadata."),
-    "read_note": (Read, "Read an active or archived note by key, with optional kind, H sources, and stale status. "
+    "read_note": (NoteRead, "Read an active or archived note by key, with optional kind, H sources, and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
     "write_note": (Note, "Create or fully replace a note by key. Before replacing any existing or archived note, "
         "read its complete current version with read_note in this turn and window; preserve still-valid information. "
@@ -106,16 +124,16 @@ SPECS = {
         "Replacing an archived key reactivates it. Draft changes commit with the turn; review mode requires approval."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
         "History and older branches remain. Draft changes commit with the turn; review mode requires approval."),
-    "read_state": (StateRead, "Read story state, excluding runtime ledgers. An empty path reads all state; "
-        "a dot-separated path reads one field. Check values and structure before updating."),
+    "read_state": (StateRead, "Read story state, including MVU variables under stat_data, excluding runtime ledgers and MVU internals. An empty path reads all state; "
+        "a dot-separated path reads one field. For MVU variables include stat_data in the read path (e.g. stat_data.hp), unlike patch_state paths which are relative to stat_data. Check values and structure before updating."),
     "patch_state": (Patch, "Call exactly once only when this turn's system message requires an MVU update. "
         "Apply MVU-validated JSON Patch relative to stat_data; omit the /stat_data prefix from paths. "
         "Read current values first; give story evidence in reason and align changes with the final narrative. "
         "Use this tool instead of MVU blocks in prose. Draft changes commit with the turn; review mode requires approval."),
     "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, not the library card. "
-        "Read fields with read_character first; follow turn authorization and give a reason. "
+        "Paths are relative to the original card document: for spec-wrapped cards use /data/description or /data/character_book; for unwrapped cards use /description or /character_book. read_character strips the data wrapper when reading. Read fields with read_character first; follow turn authorization and give a reason. Do not modify internal fingerprints or hashes. "
         "Draft changes commit with the turn; review mode requires approval."),
-    "read_character": (Read, "Read a complete top-level character field, such as description, personality, "
+    "read_character": (CharacterRead, "Read a complete top-level character field, such as description, personality, "
         "scenario, character_book, or extensions, for inspection or editing."),
     "set_retrieval_query": (Query, "Save concise next-turn automatic lorebook retrieval clues about the scene, "
         "relevant entities, or unresolved issues. Distinguish anticipated events from facts. "
@@ -123,7 +141,7 @@ SPECS = {
 }
 
 
-def tool_definitions(request, session, config=None, *, settings=None, catalog=False):
+def tool_definitions(request, session, config=None, *, settings=None, catalog=False, document=None):
     config = config or FullAgentConfig()
     names = set(SPECS)
     if not catalog:
@@ -135,6 +153,11 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         "new_context": f" content limit: {config.checkpoint_tokens} tokens.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
     }
+    if document is not None:
+        fields = json.dumps(list(normalize(document)), ensure_ascii=True)
+        limits["read_character"] = f" Existing fields at the start of this tool context: {fields}. Successful revisions may change them."
+        root = "/data" if document.get("spec") else ""
+        limits["revise_content"] = f" Current character-field JSON Pointer prefix: {json.dumps(root)}."
     if settings is not None:
         mechanisms = {
             "keyword": "keyword",
@@ -147,7 +170,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         mechanism = " Uses " + channel_names + " recall."
         if settings.local_models.reranker_enabled:
             mechanism += " Reranking orders and filters candidates by relevance."
-        limits["search_lore"] = mechanism
+        limits["search_read_lore"] = mechanism
     return [{"type": "function", "function": {"name": name, "description": description + limits.get(name, ""),
              "parameters": model.model_json_schema()}} for name, (model, description) in SPECS.items() if name in names]
 
@@ -212,7 +235,7 @@ class AgentTools:
                 raise ValueError("本轮已完成一次 patch_state，不允许重复更新")
         args = SPECS[name][0].model_validate_json(arguments)
         state = owner.state
-        if name == "search_lore":
+        if name == "search_read_lore":
             return await owner.retrieve(args.query, source="agent",
                                         include_ref=result_field(owner.session, name, "include_ref"),
                                         include_title=result_field(owner.session, name, "include_title"))

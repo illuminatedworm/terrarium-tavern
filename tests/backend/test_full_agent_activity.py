@@ -90,7 +90,7 @@ async def test_pending_activity_survives_reopen_and_marks_unfinished_calls(tmp_p
     try:
         tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="partial", expected_revision=0))
         store.event(tid, "full_agent_tool_started", {"activity_id": "call-1-0", "order": 11,
-                    "name": "search_lore", "arguments": '{"query":"钟楼"}'})
+                    "name": "search_read_lore", "arguments": '{"query":"钟楼"}'})
         store.set_turn(tid, status="cancelled")
         other = store.new_session(SessionCreate(card_id=session["card"], agent_mode="full_agent"))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

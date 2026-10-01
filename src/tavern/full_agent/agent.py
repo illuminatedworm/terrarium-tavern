@@ -30,7 +30,7 @@ class FullAgent:
         self.state = full_state(snapshot)
         self.trace = load_trace(store, session["id"], history)
         self.continuation, self.new_trace = [], []
-        self.definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings)
+        self.definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings, document=document)
         self.tools = AgentTools(self)
         # Tool exchanges survive turns/windows. Their short document handles
         # must keep the same meaning after document reorder or a new provider.

@@ -32,7 +32,8 @@ class ToolSettings(BaseModel):
     @classmethod
     def remove_retired_tools(cls, value):
         # Older open clients can still submit the retired tool switch.
-        return [name for name in value if name != "read_lore"] if isinstance(value, list) else value
+        return list(dict.fromkeys("search_read_lore" if name == "search_lore" else name
+                                  for name in value if name != "read_lore")) if isinstance(value, list) else value
 
 
 def require_full(store, sid):
@@ -53,7 +54,9 @@ def register_full_agent_routes(app, store):
             request, session, settings.full_agent_config, settings=settings)}
         if not update_variables:
             available.discard("patch_state")
-        definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings, catalog=True)
+        document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
+        definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings,
+                                       catalog=True, document=document)
         return {"tools": [{**t["function"], "enabled": t["function"]["name"] not in session["disabled_tools"],
                            "available": t["function"]["name"] in available,
                            "result_options": {key: result_field(session, t["function"]["name"], key)
@@ -67,6 +70,10 @@ def register_full_agent_routes(app, store):
             raise ValueError("未知的 Full Agent 工具")
         session = require_full(store, sid)
         options = session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
+        options = dict(options)
+        legacy_lore = options.pop("search_lore", None)
+        if legacy_lore is not None:
+            options.setdefault("search_read_lore", legacy_lore)
         options = {name: {key: value for key, value in fields.items() if key != "include_offset"}
                    for name, fields in options.items() if name != "read_lore"}
         if any(name not in RESULT_FIELDS or set(fields) - set(RESULT_FIELDS[name])
