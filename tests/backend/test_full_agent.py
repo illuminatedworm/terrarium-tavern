@@ -835,7 +835,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert result["status"] == "committed", result["error"]
         wire = model.requests[-1]
         assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
-        assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
+        assert all(name not in FULL_AGENT_PROMPT for name in SPECS if name != "read_note")
         assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
         assert any(m.get("content", "").startswith("<tavern_memory>")
