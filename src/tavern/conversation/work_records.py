@@ -3,10 +3,12 @@
 import json
 
 LABELS = {
+    "provider_response": "模型原生响应",
     "full_agent_response": "模型响应", "full_agent_assistant": "Agent 中间回复",
     "full_agent_tool_started": "工具调用开始",
     "full_agent_tool": "Full Agent 工具调用", "context_rollover": "工作窗口切换",
     "context_warning": "上下文超长提示",
+    "context_baseline": "上下文基线重建",
     "memory_history_recall": "Tracker 历史补查", "memory_history_limit": "历史补查达到3次上限",
     "memory_history_budget": "历史补查预算不足",
     "memory_batch": "记忆整理批次与来源", "memory_batch_completed": "记忆批次返回",
@@ -55,7 +57,7 @@ def background_records(events):
             purpose = payload.get("kind", "memory")
         elif kind == "scene_refresh_started":
             purpose = payload.get("kind", "runtime")
-        if kind in ("provider_request", "usage", "activity") and purpose == "narrative":
+        if kind in ("provider_request", "provider_response", "usage", "activity") and purpose == "narrative":
             continue
         yield {**event, "purpose": purpose}
 
@@ -69,6 +71,16 @@ def compact_record(event):
         description = f"{payload.get('model', '')} · {len(payload.get('messages', []))} 条输入 · {len(payload.get('tools', []))} 个工具"
     if kind == "activity":
         label = str(payload.get("kind") or label)
+    if kind == "context_baseline":
+        description = {"initial_context": "建立当前窗口的首个基线",
+                       "legacy_context": "旧记录首次接入追加式续答",
+                       "context_version_changed": "上下文记录版本变化",
+                       "provider_or_model_changed": "提供商、认证或模型变化，使用可迁移历史重建",
+                       "context_sources_changed": "固定资料、工具或请求策略变化",
+                       "history_content_changed": "历史正文或宏展开结果变化",
+                       "context_prefix_changed": "原有内容或注入位置改变，按原编排重建",
+                       "context_window_changed": "可见历史窗口或分支改变"}.get(
+                           payload.get("rebuild_reason"), payload.get("rebuild_reason", ""))
     return {"seq": event["seq"], "kind": kind, "label": label, "purpose": event["purpose"],
             "created": event["created"], "description": str(description)[:180],
             "bytes": len(json.dumps(payload, ensure_ascii=False).encode())}

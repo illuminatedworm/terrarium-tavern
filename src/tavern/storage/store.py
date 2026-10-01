@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import secrets
 import sqlite3
 import time
 import uuid
@@ -121,6 +122,10 @@ class Store:
                 seq INTEGER NOT NULL, window_id TEXT NOT NULL, payload TEXT NOT NULL,
                 PRIMARY KEY(message_id, seq))""")
             db.execute("CREATE INDEX IF NOT EXISTS full_trace_session ON full_agent_trace(session)")
+            db.execute("""CREATE TABLE IF NOT EXISTS half_agent_trace (
+                session TEXT NOT NULL, message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+                seq INTEGER NOT NULL, window_id TEXT NOT NULL, payload TEXT NOT NULL)""")
+            db.execute("CREATE INDEX IF NOT EXISTS half_trace_session ON half_agent_trace(session)")
             db.execute("""CREATE TABLE IF NOT EXISTS full_agent_progress (
                 turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
                 payload TEXT NOT NULL)""")
@@ -141,6 +146,13 @@ class Store:
             raise
         finally:
             db.close()
+
+    def device_id(self):
+        """An application-local opaque identity, never a hardware/user identifier."""
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO meta(key,value) VALUES ('provider_device_id',?)",
+                       (secrets.token_hex(32),))
+            return db.execute("SELECT value FROM meta WHERE key='provider_device_id'").fetchone()[0]
 
     def recover(self):
         from tavern.character.card_editor_store import recover_editor_runs
@@ -490,9 +502,24 @@ class Store:
             follow = reset_follow(copies, json.loads(source["cache_breakpoint_follow"]))
             db.execute("UPDATE sessions SET cache_breakpoint_follow=? WHERE id=?", (dump(follow), new_sid))
             for original, cloned_id in ids.items():
-                db.execute("""INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload)
-                    SELECT ?,?,seq,window_id,payload FROM full_agent_trace WHERE message_id=?""",
-                           (new_sid, cloned_id, original))
+                for row in db.execute("SELECT seq,window_id,payload FROM full_agent_trace WHERE message_id=?",
+                                      (original,)).fetchall():
+                    payload = json.loads(row["payload"])
+                    value = payload.get("_runtime_context", {}).get("value")
+                    if isinstance(value, dict) and "input_id" in value:
+                        value["input_id"] = ids.get(value["input_id"], value["input_id"])
+                    for owner, key in ((payload, "_history_observations"),
+                                       (payload.get("_context_baseline", {}), "history")):
+                        if key in owner:
+                            owner[key] = {ids.get(mid, mid): value for mid, value in owner[key].items()}
+                    db.execute("INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
+                               (new_sid, cloned_id, row["seq"], row["window_id"], dump(payload)))
+                row = db.execute("SELECT * FROM half_agent_trace WHERE message_id=?", (original,)).fetchone()
+                if row:
+                    from tavern.conversation.half_context import remap_record
+                    payload = remap_record(json.loads(row["payload"]), ids)
+                    db.execute("INSERT INTO half_agent_trace VALUES (?,?,?,?,?)",
+                               (new_sid, cloned_id, row["seq"], payload["window"], dump(payload)))
         return self.session(new_sid)
 
     def session(self, sid):
@@ -892,7 +919,8 @@ class Store:
                     trace = json.loads(row["payload"])["new_trace"]
                     for index, item in enumerate(trace):
                         message = item["message"]
-                        if message["role"] != "assistant":
+                        if (message["role"] != "assistant" or message.get("_full_agent_final")
+                                or message.get("_full_agent_rejected")):
                             continue
                         assistant_seq = index + 1
                         if message.get("content"):
@@ -1095,6 +1123,9 @@ class Store:
             for seq, item in enumerate(pending.get("full_agent_trace", []), 1):
                 db.execute("INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
                            (turn["session"], last, seq, item["window_id"], dump(item["message"])))
+            if record := pending.get("half_agent_record"):
+                db.execute("INSERT INTO half_agent_trace VALUES (?,?,?,?,?)",
+                           (turn["session"], last, 1, record["window"], dump(record)))
             db.execute(
                 "INSERT INTO changes VALUES (?,?,?,?,?,?)",
                 (

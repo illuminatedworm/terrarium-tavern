@@ -31,14 +31,15 @@ async def test_dialogue_uses_durable_trace_and_pages_results_without_reasoning(t
         message_id = current["head"]
         large_result = "原始结果<>\n" * 5000
         with store.connection() as db:
-            row = db.execute("SELECT payload FROM full_agent_trace WHERE message_id=? AND seq=2", (message_id,)).fetchone()
+            row = db.execute("SELECT seq,payload FROM full_agent_trace WHERE message_id=? "
+                             "AND json_extract(payload,'$.role')='tool' ORDER BY seq LIMIT 1", (message_id,)).fetchone()
             payload = json.loads(row["payload"])
             payload["_archive_content"] = large_result
-            db.execute("UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=2",
-                       (json.dumps(payload), message_id))
+            db.execute("UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=?",
+                       (json.dumps(payload), message_id, row["seq"]))
             db.execute("DELETE FROM events WHERE turn=?", (result["id"],))
         recovered = load_trace(store, session["id"], current["messages"])
-        assert recovered[1]["message"]["content"] == large_result
+        assert next(r["message"]["content"] for r in recovered if r["message"]["role"] == "tool") == large_result
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             prefix = f"/api/sessions/{session['id']}/full-agent"
             response = await client.post(prefix + "/activity", json={"message_ids": [message_id]})

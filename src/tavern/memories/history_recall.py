@@ -207,7 +207,8 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
                     8192 if phase == "memory_review" else settings.memory_input_tokens)
         reasoning_tokens = sum(count_text(_json({k: m[k] for k in (
             "reasoning_content", "reasoning_details", "reasoning") if k in m}), settings)
-            for m in thread if any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
+            for m in thread if not m.get("_native_response")
+            and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
         used_tokens = request_tokens(thread, settings, [HISTORY_TOOL]) + reasoning_tokens
         if used_tokens > limit:
             event("context_warning", {"purpose": phase, "message": "记忆请求估算超出输入预算，仍完整发送"})
@@ -235,7 +236,7 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
         assistant = {"role": "assistant", "content": response.content or "", "tool_calls": [
             {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}} for c in calls]}
         assistant.update({k: v for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
-                          if k in ("reasoning_content", "reasoning_details", "reasoning")})
+                          if k in ("reasoning_content", "reasoning_details", "reasoning", "_native_response")})
         thread.append(assistant)
         for call in calls:
             result = recall.execute(call.arguments)

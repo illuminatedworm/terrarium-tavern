@@ -44,6 +44,11 @@ class Model:
         self.closed = True
 
 
+def tool_exchanges(trace):
+    # Durable traces also carry runtime frames and final-response attachments.
+    return [item for item in trace if item["message"].get("tool_calls") or item["message"]["role"] == "tool"]
+
+
 def test_tool_result_field_options(story):
     store, _ = story
     owner = SimpleNamespace(settings=store.settings())
@@ -148,7 +153,7 @@ async def test_tools_checkpoint_rollover_recovery_and_no_tracker(story):
         assert any(m["role"] == "user" and "我答应明天" in m["content"] for m in after_rollover)
         assert any(m["role"] == "tool" and "H2" in m["content"] for m in model.requests[-1]["messages"])
         with store.connection() as db:
-            assert db.execute("SELECT count(*) FROM full_agent_trace").fetchone()[0] == 8
+            assert db.execute("SELECT count(*) FROM full_agent_trace WHERE json_extract(payload,'$.role')='tool'").fetchone()[0] == 4
         follow = Model("第二天如约而至。")
         result2, _ = await turn(service, current, follow)
         assert result2["status"] == "committed", result2["error"]
@@ -236,7 +241,7 @@ async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen
         assert failed["status"] == "error"
         assert unchanged["revision"] == 0
         progress = store.full_agent_progress(failed["id"])
-        assert [item["message"]["role"] for item in progress["new_trace"]] == [
+        assert [item["message"]["role"] for item in tool_exchanges(progress["new_trace"])] == [
             "assistant", "tool", "assistant", "tool"]
         assert progress["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
     finally:
@@ -256,12 +261,13 @@ async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen
         sent = model.requests[0]["messages"]
         exchanges = [m for m in sent if m["role"] == "tool" or m.get("tool_calls")]
         assert [m["role"] for m in exchanges] == ["assistant", "tool", "assistant", "tool"]
-        assert exchanges[0]["tool_calls"][0] == progress["new_trace"][0]["message"]["tool_calls"][0]
-        assert exchanges[1]["content"] == progress["new_trace"][1]["message"]["content"]
-        assert exchanges[3]["content"] == progress["new_trace"][3]["message"]["content"]
+        recorded = tool_exchanges(progress["new_trace"])
+        assert exchanges[0]["tool_calls"][0] == recorded[0]["message"]["tool_calls"][0]
+        assert exchanges[1]["content"] == recorded[1]["message"]["content"]
+        assert exchanges[3]["content"] == recorded[3]["message"]["content"]
         current = reopened.session(session["id"])
         assert current["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
-        assert len(load_trace(reopened, session["id"], current["messages"])) == 4
+        assert len(tool_exchanges(load_trace(reopened, session["id"], current["messages"]))) == 4
         from tavern.full_agent.activity import turn_items
         assert [item["name"] for item in turn_items(reopened, session["id"], resumed["id"])
                 if item["kind"] == "tool"] == ["read_history", "write_note"]
@@ -289,7 +295,7 @@ async def test_failed_request_after_rollover_resumes_new_window_without_replayin
         assert any("钟楼约定已经发生" in m.get("content", "") for m in sent)
         current = store.session(session["id"])
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
-        assert len(load_trace(store, session["id"], current["messages"])) == 2
+        assert len(tool_exchanges(load_trace(store, session["id"], current["messages"]))) == 2
     finally:
         await service.close()
 
@@ -309,9 +315,9 @@ async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards
         await service.tasks[retried["id"]]
         assert store.turn(retried["id"])["status"] == "error"
         retried_progress = store.full_agent_progress(retried["id"])
-        assert len(retried_progress["new_trace"]) == 4
+        assert len(tool_exchanges(retried_progress["new_trace"])) == 4
         assert retried_progress["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
-        assert len(store.full_agent_progress(failed["id"])["new_trace"]) == 2
+        assert len(tool_exchanges(store.full_agent_progress(failed["id"])["new_trace"])) == 2
 
         store.edit_pending_input(retried["id"], "改成另一个行动。", 0)
         assert store.full_agent_progress(retried["id"]) is None
@@ -342,17 +348,17 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         note = fork["snapshot"]["full_agent"]["notes"]["见面"]
         assert note["sources"][0]["message_id"] == fork["messages"][1]["id"]
         assert not note_view(note, fork["messages"])["stale"]
-        assert len(load_trace(store, fork["id"], fork["messages"])) == 6
+        assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
         result, regenerated = await turn(service, first, Model("第二版正文"), mode="regenerate")
         assert result["status"] == "committed", result["error"]
         assert regenerated["snapshot"]["full_agent"]["notes"] == {}
-        assert load_trace(store, first["id"], regenerated["messages"]) == []
+        assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
         switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
         edited = store.edit_message(first["id"], first["messages"][1]["id"], "我们取消约定。", switched["revision"])
         assert edited["snapshot"]["full_agent"]["checkpoint"]["stale"]
         assert note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
         await service.delete_session(first["id"])
-        assert len(load_trace(store, fork["id"], fork["messages"])) == 6
+        assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM full_agent_trace WHERE session=?", (first["id"],)).fetchone()[0] == 0
     finally:
@@ -779,7 +785,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
             read_result = json.loads(next(m["content"] for m in reversed(model.requests[1]["messages"])
                                           if m["role"] == "tool"))
             assert read_result["text"] == "旧线索"
-            assert any("旧交接" in m.get("content", "") for m in model.requests[0]["messages"])
+            assert "旧交接" in json.dumps(model.requests[0]["messages"], ensure_ascii=False)
             assert f"候选{index - 1}" not in json.dumps(model.requests[0]["messages"], ensure_ascii=False)
         for version in versions:
             current = store.update_session(current["id"], current["revision"], head=version["head"])
@@ -831,8 +837,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
         assert any(m.get("content", "").startswith("<tavern_memory>")
-                   and "约定仍待兑现" in m["content"]
                    and m["content"].endswith("</tavern_memory>") for m in wire["messages"])
+        assert "约定仍待兑现" in json.dumps(wire["messages"], ensure_ascii=False)
+        assert not any("约定仍待兑现" in m.get("content", "") for m in wire["messages"] if m["role"] == "system")
         assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         assert set(definitions) == set(SPECS) - {"revise_content"}

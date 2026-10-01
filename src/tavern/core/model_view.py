@@ -110,6 +110,8 @@ class ModelView:
         """Project business text only; native call IDs remain transport-owned."""
         rows = copy.deepcopy(messages)
         for row in rows:
+            if row.get("_native_response"):
+                continue  # Opaque provider blocks and their canonical text must agree exactly.
             if isinstance(row.get("content"), str):
                 row["content"] = self.text(row["content"])
             for call in row.get("tool_calls", []):

@@ -347,7 +347,7 @@ async def test_nested_generate_does_not_consume_narrative_usage(story, monkeypat
     service.provider_factory = lambda: ScriptedLLM(["正文"])
     nested = ScriptedLLM(["嵌套回复"])
 
-    async def nested_provider(settings):
+    async def nested_provider(settings, capture=None):
         return nested
 
     monkeypatch.setattr("tavern.scripting.agent.make_provider", nested_provider)
@@ -363,6 +363,8 @@ async def test_nested_generate_does_not_consume_narrative_usage(story, monkeypat
     try:
         turn = await send(service, initial, text="无关话题")
         assert turn["status"] == "committed", turn["error"]
+        from uuid import UUID, uuid5
+        assert nested.request_context.session_id == str(uuid5(UUID(initial["id"]), "half_agent:script"))
         assert any("灯塔设定" in str(m.get("content")) for m in nested.call_log[0])
         assert store.session(initial["id"])["snapshot"]["lore"] == {}
     finally:

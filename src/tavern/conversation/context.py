@@ -276,6 +276,7 @@ def compile_context(
     retrieval=None,
     retrieval_protocol=True,
     read_only=False,
+    replay_records=None,
 ):
     from tavern.memories.memory import render_memory, window_history
 
@@ -726,7 +727,7 @@ def compile_context(
             old.pop("removed_at", None)
         elif old.get("present"):
             old.update(present=False, removed_at=turn_number)
-    return {
+    result = {
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
         "trace": [
             {**m, "position": i, "estimated_tokens": message_tokens(m, settings),
@@ -750,3 +751,9 @@ def compile_context(
                                     and (m["source"] == "history" or m["source"] in input_sources)
                                     for m in messages),
     }
+    result["position_sensitive"] = bool(gen.get("injects") or "ordered_prompts" in gen
+                                         or "prompts" in history_override)
+    if replay_records is not None:
+        from tavern.conversation.half_context import apply_context
+        apply_context(result, replay_records, session, history, snapshot, settings, input_id=input_message_id)
+    return result

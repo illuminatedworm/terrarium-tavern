@@ -562,7 +562,11 @@ async function refreshContextStats() {
     token = viewScope.current();
   try {
     const [stats, records] = await Promise.allSettled([
-      api(`/sessions/${sid}/preview`, { text: input.value, update_variables: updateVariables.value }),
+      api(`/sessions/${sid}/preview`, {
+        text: input.value,
+        update_variables: updateVariables.value,
+        allow_content_edit: allowEdit.value,
+      }),
       api(`/sessions/${sid}/work-records?limit=1`),
     ]);
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
@@ -1185,7 +1189,11 @@ async function saveMessageEdit(message: any) {
 }
 async function inspectContext() {
   await guarded(async () => {
-    preview.value = await viewApi(`/sessions/${session.value.id}/preview`, { text: input.value });
+    preview.value = await viewApi(`/sessions/${session.value.id}/preview`, {
+      text: input.value,
+      update_variables: updateVariables.value,
+      allow_content_edit: allowEdit.value,
+    });
     contextStats.value = preview.value;
     panel.value = 'context';
   });
@@ -1199,6 +1207,7 @@ async function exportNextMessages() {
       const messages = await viewApi(`/sessions/${sid}/messages-preview`, {
         text: input.value,
         update_variables: updateVariables.value,
+        allow_content_edit: allowEdit.value,
       });
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),

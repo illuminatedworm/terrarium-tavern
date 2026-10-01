@@ -1,5 +1,6 @@
 """Four HTTP protocols behind the same Terrarium chat/tool contract."""
 import copy
+import hashlib
 import json
 import uuid
 
@@ -23,6 +24,7 @@ from tavern.scripting.cloud_cache import (
     invalidate_object,
 )
 from tavern.scripting.model_stream import StreamState
+from tavern.scripting.native_response import attachment, prepare_messages
 from tavern.scripting.protocols import (
     definitions,
     native_messages,
@@ -32,10 +34,11 @@ from tavern.scripting.protocols import (
     response_tools,
 )
 from tavern.scripting.reasoning import anthropic_thinking, gemini_effort, gemini_thinking
+from tavern.scripting.request_context import identity_headers, response_origin
 
 
 class ModelTransport(BaseLLMProvider):
-    def __init__(self, settings, key, capture=None, *, http_client=None):
+    def __init__(self, settings, key, capture=None, *, http_client=None, request_context=None):
         super().__init__(LLMConfig(model=settings.model, temperature=settings.temperature,
                                    max_tokens=settings.reply_tokens))
         self.settings, self.key, self.capture = settings, key, capture
@@ -44,6 +47,13 @@ class ModelTransport(BaseLLMProvider):
         self._last_usage, self._last_assistant_extra_fields = {}, {}
         self.usage_history = []
         self.echo_reasoning = True
+        self.request_context = request_context
+        self.last_native_response = None
+        self.last_response_record = {}
+        self.response_capture = None
+        self._response_headers = {}
+        if request_context:
+            request_context.bind(response_origin(settings, key))
 
     @property
     def http(self):
@@ -82,6 +92,10 @@ class ModelTransport(BaseLLMProvider):
         clone.config.model = name
         clone.capability_key = capability_key(clone.settings, self.key)
         clone._last_tool_calls, clone._last_usage, clone._last_assistant_extra_fields, clone.usage_history = [], {}, {}, []
+        clone.last_native_response, clone.last_response_record, clone._response_headers = None, {}, {}
+        clone.request_context = copy.deepcopy(self.request_context)
+        if clone.request_context:
+            clone.request_context.bind(response_origin(clone.settings, clone.key))
         return clone
 
     async def close(self):
@@ -97,6 +111,7 @@ class ModelTransport(BaseLLMProvider):
 
     def _body(self, messages, tools, stream, marker, params, kwargs):
         cfg, api = self.settings, self.settings.api_mode
+        messages, _ = prepare_messages(messages, response_origin(cfg, self.key))
         maximum = kwargs.get("max_tokens", self.config.max_tokens)
         temperature = kwargs.get("temperature", self.config.temperature)
         extra = kwargs.get("extra_body") or {}
@@ -190,10 +205,13 @@ class ModelTransport(BaseLLMProvider):
         if api != "gemini" and temperature is not None:
             body["temperature"] = temperature
         body.update(copy.deepcopy(params))
+        if self.request_context:
+            self.request_context.apply(body, cfg)
         return body
 
     async def _prepare(self, messages, tools, stream, kwargs, *, fallback=None):
         cfg, api = self.settings, self.settings.api_mode
+        messages, invalid_native = prepare_messages(messages, response_origin(cfg, self.key))
         if cfg.cache.mode == "runtime" and not any(m.get("_cache_breakpoint") for m in messages):
             # Standalone editor/maintenance calls can opt in without a story history.
             # Annotated story messages explicitly exclude dynamic system content.
@@ -210,6 +228,8 @@ class ModelTransport(BaseLLMProvider):
         planned = next((i for i, m in enumerate(messages) if m.get("_cache_breakpoint")), None)
         diagnostic = {"mode": cfg.cache.mode, "status": "cloud", "planned_index": planned,
                       "sent_index": None, "reason": fallback, "kind": selected["kind"]}
+        if invalid_native:
+            diagnostic["native_replay_invalidations"] = invalid_native
         if planned is not None:
             diagnostic.update(source=messages[planned].get("_cache_source"),
                               message_id=messages[planned].get("_cache_message_id"))
@@ -260,12 +280,13 @@ class ModelTransport(BaseLLMProvider):
         diagnostic["prefix_sha256"] = fingerprint(messages[:planned + 1]) if planned is not None else None
         return body, diagnostic, resource
 
-    def _capture(self, messages, tools, body, diagnostic, url):
+    def _capture(self, messages, tools, body, diagnostic, url, request=None):
         if not self.capture:
             return
         cfg = self.settings
         wire_messages = body.get("messages", body.get("input", body.get("contents", [])))
-        cost = request_tokens(openai_messages(messages), cfg, definitions(tools))
+        effective_messages, _ = prepare_messages(messages, response_origin(cfg, self.key))
+        cost = request_tokens(effective_messages, cfg, definitions(tools))
         payload = {"model": cfg.model, "api_mode": cfg.api_mode, "url": url,
                       "messages": wire_messages, "wire": copy.deepcopy(body), "cache": diagnostic,
                       "tools": [t.get("function", t).get("name") for t in definitions(tools)],
@@ -273,6 +294,11 @@ class ModelTransport(BaseLLMProvider):
                       "reasoning": cfg.reasoning_effort, "estimated_input_tokens": cost,
                       "context_warning": "估算超出模型上下文，完整发送" if cost + cfg.reply_tokens + 2048 > cfg.context_tokens else None,
                       "token_counting": counting_info(cfg)}
+        if request is not None:
+            payload.update(headers=identity_headers(request.headers),
+                           wire_sha256=hashlib.sha256(request.content).hexdigest())
+        if self.request_context:
+            payload["request_context"] = self.request_context.audit()
         serialized = json.dumps(payload, ensure_ascii=False)
         if len(self.key) >= 8:
             serialized = serialized.replace(self.key, "[REDACTED]")
@@ -283,13 +309,20 @@ class ModelTransport(BaseLLMProvider):
         url = endpoint(cfg.base_url, api, cfg.model, stream=stream)
         headers = ({"x-api-key": self.key, "anthropic-version": "2023-06-01"} if api == "anthropic" else
                    self.gemini_headers if api == "gemini" else {"Authorization": "Bearer " + self.key})
+        if self.request_context:
+            self.request_context.bind(response_origin(cfg, self.key))
+            headers.update(self.request_context.headers(api))
         fallback = None
         for attempt in range(2):
             body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
-            self._capture(messages, tools, body, diagnostic, url)
             request = self.http.build_request("POST", url, headers=headers, json=body)
+            self._capture(messages, tools, body, diagnostic, url, request)
             response = await self.http.send(request, stream=stream)
             if response.status_code < 400:
+                self._response_headers = {k: response.headers[k] for k in ("request-id", "x-request-id")
+                                          if k in response.headers}
+                if self.request_context:
+                    self.request_context.receive(api, response.headers)
                 return response
             await response.aread()
             try:
@@ -299,6 +332,7 @@ class ModelTransport(BaseLLMProvider):
             selected = preset(cfg)
             fields = [selected.get("field", "cachedContent"), *selected["request"]]
             retry = (attempt == 0 and diagnostic["status"] == "sent"
+                     and not (self.request_context and self.request_context.identity_rejection(api, payload))
                      and cache_rejection(response.status_code, payload, fields, resource=bool(resource)))
             if not retry:
                 await response.aclose()
@@ -369,10 +403,22 @@ class ModelTransport(BaseLLMProvider):
                 raise ValueError("Gemini 响应未完整结束")
         self._last_usage = normalize_usage(raw, api)
         self.usage_history.append(copy.deepcopy(self._last_usage))
+        canonical = {"role": "assistant", "content": text, "tool_calls": [
+            {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}} for c in self._last_tool_calls]}
+        self.last_native_response = attachment(payload, response_origin(self.settings, self.key), canonical)
+        if self.last_native_response is not None and self.request_context is not None:
+            self._last_assistant_extra_fields["_native_response"] = copy.deepcopy(self.last_native_response)
+        self.last_response_record = {"api_mode": api, "response_id": payload.get("id"), "model": model,
+            "headers": dict(self._response_headers), "raw_usage": copy.deepcopy(raw),
+            "diagnostics": copy.deepcopy(payload.get("diagnostics")),
+            "native": copy.deepcopy(self.last_native_response)}
+        if self.response_capture:
+            self.response_capture(copy.deepcopy(self.last_response_record))
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
 
     async def _complete_chat(self, messages, **kwargs):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
+        self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
         response = await self._send(messages, tools, False, kwargs)
         try:
@@ -383,6 +429,7 @@ class ModelTransport(BaseLLMProvider):
     async def _stream_chat(self, messages, *, tools=None, **kwargs):
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
+        self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         response = await self._send(messages, tools, True, kwargs)
         state = StreamState(self.settings.api_mode)
         try:

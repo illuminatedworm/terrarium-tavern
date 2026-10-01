@@ -43,6 +43,8 @@ def from_trace(rows):
     items, pending = [], {}
     for row in rows:
         seq, message = row["seq"], json.loads(row["payload"])
+        if message.get("_full_agent_final") or message.get("_full_agent_rejected"):
+            continue
         if message.get("role") == "assistant":
             if message.get("content"):
                 items.append(text_item(f"text-{seq}", seq * 10, message["content"]))

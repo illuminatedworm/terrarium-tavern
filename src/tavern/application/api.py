@@ -487,7 +487,7 @@ def create_app(data_dir=None):
                      else ContextRecipe.model_validate(payload["recipe"]))
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
-    def compile_preview(sid: str, text: str, update_variables: bool = False):
+    def compile_preview(sid: str, text: str, update_variables: bool = False, allow_content_edit: bool = False):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
         s = store.session(sid)
@@ -498,15 +498,18 @@ def create_app(data_dir=None):
             from tavern.full_agent.tools import tool_definitions
             full_settings = store.settings().for_role("full_agent")
             preview_request = TurnRequest(operation_id="preview", expected_revision=s["revision"],
-                                          update_variables=update_variables)
+                                          update_variables=update_variables, allow_content_edit=allow_content_edit)
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
                 full_settings,
                 tool_definitions(preview_request, s,
                                  full_settings.full_agent_config, settings=full_settings),
-                trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables)
+                trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables,
+                instruction=f"允许修改设定：{allow_content_edit or s['policy_effective'] != 'directed'}。")
             return result, s
+        from tavern.conversation.half_context import load_trace as load_half_trace
         result = compile_context(
             document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
+            replay_records=load_half_trace(store, sid, s["messages"]),
             read_only=True,
         )
         from tavern.conversation.cache_breakpoint import prepare_context
@@ -515,14 +518,16 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
-        result, s = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True)
+        result, s = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True,
+                                    payload.get("allow_content_edit") is True)
         result["usage"] = store.latest_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
         return result
 
     @app.post("/api/sessions/{sid}/messages-preview")
     def messages_preview(sid: str, payload: dict):
-        result, _ = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True)
+        result, _ = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True,
+                                    payload.get("allow_content_edit") is True)
         return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)

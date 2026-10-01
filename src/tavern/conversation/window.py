@@ -8,7 +8,7 @@ import copy
 from tavern.conversation.context import compile_context
 
 
-def plan_window(document, session, history, snapshot, text, settings, seed, retrieval=None):
+def plan_window(document, session, history, snapshot, text, settings, seed, retrieval=None, *, replay_records=None):
     from tavern.memories.memory import fingerprint, window_valid
 
     window = snapshot.get("context_window")
@@ -23,7 +23,7 @@ def plan_window(document, session, history, snapshot, text, settings, seed, retr
         if count:
             draft["context_window"] = {"covered_count": count, "fingerprint": fingerprint(history[:count])}
         context = compile_context(document, session, history, draft, text, settings, seed,
-                                  retrieval=retrieval, enforce_budget=False)
+                                  retrieval=retrieval, enforce_budget=False, replay_records=replay_records)
         total = context["estimated_tokens"]
         pressure |= total > capacity * settings.context_pressure_trigger
         history_cost = sum(m["estimated_tokens"] for m in context["trace"]

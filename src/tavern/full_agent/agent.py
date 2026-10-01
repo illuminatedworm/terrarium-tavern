@@ -15,6 +15,8 @@ from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
+from tavern.scripting.native_response import message_digest
+from tavern.scripting.request_context import ProviderRequestContext, response_origin
 
 
 class FullAgent:
@@ -44,11 +46,22 @@ class FullAgent:
         self.exiting = set()
         self.patch_state_done = False
         self.resumed = progress is not None
+        self.final_response = None
+        self.context_epoch = ""
+        self.native_epoch = ""
+        saved_context = (progress or {}).get("request_context", {})
+        self.request_context = ProviderRequestContext(
+            session["id"], saved_context.get("turn_id", request.resume_turn_id or tid),
+            self.state["window"]["id"], store.device_id(), routing=copy.deepcopy(saved_context.get("routing", {})))
         if progress:
             self.continuation = copy.deepcopy(progress["continuation"])
             self.new_trace = copy.deepcopy(progress["new_trace"])
             self.retrieval_query = progress["retrieval_query"]
             self.must_rollover = progress["must_rollover"]
+            if progress.get("provider_origin") and progress["provider_origin"] != response_origin(settings):
+                # A different model may have a different context limit. Reassess
+                # it from portable history instead of inheriting the old limit.
+                self.must_rollover = False
             self.exiting = set(progress["exiting"])
             self.tools.read_sources = copy.deepcopy(progress["read_sources"])
             self.tools.note_reads = {tuple(key): True for key in progress["note_reads"]}
@@ -73,6 +86,8 @@ class FullAgent:
             "patch_state_done": self.patch_state_done,
             "exiting": sorted(self.exiting), "read_sources": self.tools.read_sources,
             "note_reads": [list(key) for key in self.tools.note_reads],
+            "request_context": self.request_context.saved(),
+            "provider_origin": response_origin(self.settings),
         })
 
     def event(self, kind, payload):
@@ -130,18 +145,30 @@ class FullAgent:
             calls=self.calls, force_rollover=self.must_rollover,
             require_state_patch=self.request.update_variables)
         self.must_rollover = result["rollover_required"]
+        self.context_epoch = result["context_ledger"]["epoch"]
+        self.native_epoch = result["context_ledger"]["native_epoch"]
+        self.request_context.window_id = self.state["window"]["id"]
+        self.request_context.diagnostics = copy.deepcopy(result["context_ledger"])
+        for message in result["context_additions"]:
+            self.append(message, self.state["window"]["id"])
+        if result["context_ledger"]["rebuild_reason"]:
+            self.event("context_baseline", result["context_ledger"])
         if result["estimated_tokens"] > self.settings.context_tokens:
             self.event("context_warning", {"message": "Full Agent 请求估算超出模型上下文，仍保留完整文本"})
         self.store.set_turn(self.tid, preview=encoded(result))
         return result
 
     def append(self, message, window_id):
+        message = {**message, "_context_epoch": self.context_epoch}
         self.continuation.append(copy.deepcopy(message))
         self.new_trace.append({"window_id": window_id, "message": copy.deepcopy(message)})
 
     async def run(self, provider=None):
         provider = provider or await make_provider(self.settings,
-            lambda payload: self.event("provider_request", payload))
+            lambda payload: self.event("provider_request", payload), request_context=self.request_context)
+        if hasattr(provider, "request_context"):
+            provider.request_context = self.request_context
+            self.request_context.bind(response_origin(provider.settings, provider.key))
         if hasattr(provider, "echo_reasoning"):
             provider.echo_reasoning = True
         try:
@@ -149,6 +176,8 @@ class FullAgent:
                 await self.retrieve(self.request.text, source="auto")
             self.store.event(self.tid, "input_ready", {"message": self.user_message,
                 "lore_injections": self.snapshot.get("lore_injections", [])})
+            if self.resumed:
+                await self.resume_tools()
             for _ in range(self.settings.full_agent_config.max_steps):
                 compiled = self.compile()
                 if self.must_rollover and not any(t["function"]["name"] == "new_context" for t in self.definitions):
@@ -159,31 +188,36 @@ class FullAgent:
                     "tools": self.definitions,
                     "tool_choice": {"type": "function", "function": {"name": "new_context"}}
                     if self.must_rollover else "auto", "parallel_tool_calls": False} if self.definitions else {}
+                # Persist the actual runtime frames even when the very first
+                # model request fails. Resume then reuses them instead of guessing.
+                await self.save_progress()
                 response = await provider.chat_complete(model_messages(compiled), extra_body=tool_options)
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
                 self.event("full_agent_response", {"content": response.content or "",
                     "finish_reason": getattr(response, "finish_reason", None),
-                    "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls]})
+                    "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
+                    "provider_response": copy.deepcopy(getattr(provider, "last_response_record", {}))})
                 if getattr(response, "finish_reason", None) in ("length", "content_filter"):
                     raise ValueError("Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应")
                 if not calls:
                     if self.must_rollover:
                         self.event("full_agent_reply_rejected", {"message": "强制换窗期间的正文回复已否决"})
-                        self.continuation.append({"role": "system", "content":
-                            "刚才的正文回复已被运行时否决，未提交。必须单独调用 new_context 换窗后再继续。"})
+                        self.reject_reply(response, provider, "刚才的正文回复已被运行时否决，未提交。必须单独调用 new_context 换窗后再继续。")
+                        await self.save_progress()
                         continue
                     if self.request.update_variables and not self.patch_state_done:
                         self.event("full_agent_reply_rejected", {"message": "本轮尚未调用 patch_state，正文回复已否决"})
-                        self.continuation.append({"role": "system", "content":
-                            "刚才的正文回复未提交。本轮必须先成功调用一次 patch_state 更新 MVU 变量。"})
+                        self.reject_reply(response, provider, "刚才的正文回复未提交。本轮必须先成功调用一次 patch_state 更新 MVU 变量。")
+                        await self.save_progress()
                         continue
                     text = response.content or ""
                     if not text.strip():
                         raise ValueError("Full Agent 没有返回故事正文，本回合未提交")
                     self.store.set_turn(self.tid, draft=text)
                     self.store.event(self.tid, "text", {"text": text})
+                    self.final_response = self.response_message(response, provider, calls)
                     return text
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                     raise ValueError("模型返回了无效的工具调用序列")
@@ -200,43 +234,85 @@ class FullAgent:
                             "请检查提供商的工具调用协议；Claude 可尝试 Anthropic Messages 接口。") from None
                 window_id = self.state["window"]["id"]
                 assistant_seq = len(self.new_trace) + 1
-                assistant = {"role": "assistant", "content": response.content or "", "tool_calls": [
-                    {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
-                    for c in calls]}
-                assistant.update({k: v for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
-                                  if k in ("reasoning_content", "reasoning_details", "reasoning")})
+                assistant = self.response_message(response, provider, calls)
                 self.append(assistant, window_id)
                 if assistant["content"]:
                     self.event("full_agent_assistant", {"activity_id": f"text-{assistant_seq}",
                         "order": assistant_seq * 10, "content": assistant["content"]})
-                for index, call in enumerate(calls):
-                    activity = {"activity_id": f"call-{assistant_seq}-{index}",
-                                "order": assistant_seq * 10 + index + 1,
-                                "name": call.name, "arguments": call.arguments}
-                    self.event("full_agent_tool_started", activity)
-                    tool_started = time.perf_counter()
-                    try:
-                        if self.must_rollover and (call.name != "new_context" or len(calls) != 1):
-                            raise ValueError("当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
-                        if call.name == "new_context" and len(calls) != 1:
-                            raise ValueError("new_context 必须单独调用；当前批次没有换窗")
-                        result = await self.tools.execute(call.name, call.arguments)
-                    except (ValueError, KeyError, TypeError, jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as error:
-                        result = {"error": self.model_view.text(str(error))}
-                    raw_result = encoded(result)
-                    message = {"role": "tool", "tool_call_id": call.id, "content": raw_result}
-                    self.append(message, window_id)
-                    self.event("full_agent_tool", {**activity, "result": result,
-                                                  "duration_s": time.perf_counter() - tool_started,
-                                                  "message": call.name + (" · 参数/权限错误" if "error" in result else " · 完成")})
-                if self.rolled:
-                    self.continuation = []
-                    self.rolled = False
-                    self.must_rollover = False
-                    self.retain()
-                    self.event("context_rollover", {"window": self.state["window"]["number"],
-                                                   "message": "Agent 已保存 checkpoint 并换新窗口"})
+                # Save the response before executing a batch, then checkpoint each
+                # result. Interrupted batches resume only their unpaired calls.
                 await self.save_progress()
+                await self.execute_tools(assistant, window_id, assistant_seq)
             raise ValueError("Full Agent 达到本回合模型调用上限，草稿未提交；换窗不会重置调用额度")
         finally:
             await provider.close()
+
+    def reject_reply(self, response, provider, correction):
+        message = self.response_message(response, provider, [])
+        message["_full_agent_rejected"] = True
+        self.append(message, self.state["window"]["id"])
+        self.append({"role": "system", "content": correction}, self.state["window"]["id"])
+
+    async def resume_tools(self):
+        records = list(self.new_trace)
+        for seq, item in enumerate(records, 1):
+            message = item["message"]
+            if item["window_id"] != self.state["window"]["id"] or not message.get("tool_calls"):
+                continue
+            returned = set()
+            for following in records[seq:]:
+                part = following["message"]
+                if part["role"] == "assistant":
+                    break
+                if part["role"] == "tool":
+                    returned.add(part["tool_call_id"])
+            if any(call["id"] not in returned for call in message["tool_calls"]):
+                self.context_epoch = message.get("_context_epoch", "")
+                await self.execute_tools(message, item["window_id"], seq, returned)
+
+    async def execute_tools(self, assistant, window_id, assistant_seq, returned=()):
+        calls = assistant["tool_calls"]
+        for index, call in enumerate(calls):
+            if call["id"] in returned:
+                continue
+            name, arguments = call["function"]["name"], call["function"]["arguments"]
+            activity = {"activity_id": f"call-{assistant_seq}-{index}",
+                        "order": assistant_seq * 10 + index + 1, "name": name, "arguments": arguments}
+            self.event("full_agent_tool_started", activity)
+            tool_started = time.perf_counter()
+            try:
+                if self.must_rollover and (name != "new_context" or len(calls) != 1):
+                    raise ValueError("当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
+                if name == "new_context" and len(calls) != 1:
+                    raise ValueError("new_context 必须单独调用；当前批次没有换窗")
+                result = await self.tools.execute(name, arguments)
+            except (ValueError, KeyError, TypeError, jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as error:
+                result = {"error": self.model_view.text(str(error))}
+            self.append({"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}, window_id)
+            self.event("full_agent_tool", {**activity, "result": result,
+                "duration_s": time.perf_counter() - tool_started,
+                "message": name + (" · 参数/权限错误" if "error" in result else " · 完成")})
+            if self.rolled:
+                self.continuation = []
+                self.rolled = False
+                self.must_rollover = False
+                self.retain()
+                self.event("context_rollover", {"window": self.state["window"]["number"],
+                                               "message": "Agent 已保存 checkpoint 并换新窗口"})
+            await self.save_progress()
+
+    def response_message(self, response, provider, calls):
+        message = {"role": "assistant", "content": response.content or "", "tool_calls": [
+            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+            for c in calls]}
+        message.update({k: copy.deepcopy(v) for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
+                        if k in ("reasoning_content", "reasoning_details", "reasoning")})
+        message["_response_origin"] = response_origin(self.settings)
+        message["_response_digest"] = message_digest(message)
+        message["_context_epoch"] = self.context_epoch
+        message["_native_epoch"] = self.native_epoch
+        native = getattr(provider, "last_native_response", None)
+        if native:
+            message["_native_response"] = copy.deepcopy(native)
+            message["_response_origin"] = copy.deepcopy(native["origin"])
+        return message

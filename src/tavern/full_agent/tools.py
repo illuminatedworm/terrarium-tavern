@@ -58,7 +58,8 @@ class StateRead(Arguments):
 
 
 CHECKPOINT_GUIDANCE = (
-    "content replaces the entire checkpoint. Build on <tavern_memory>; preserve valid scene context, "
+    "content replaces the entire checkpoint. Build on the latest <tavern_memory> update or the most recent "
+    "successful write_checkpoint call, whichever is later; failed proposals are not current memory. Preserve valid scene context, "
     "relationships, user constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
     "Mark plans as pending and verify stale sources. Draft changes commit with the turn; review mode requires approval."
 )

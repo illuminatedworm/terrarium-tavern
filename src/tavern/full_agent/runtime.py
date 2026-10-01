@@ -4,6 +4,7 @@ import copy
 import os
 
 from tavern.character.cards import regex_scripts
+from tavern.core.cache_policy import fingerprint
 from tavern.core.models import TurnRequest
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
@@ -173,6 +174,11 @@ class FullAgentRuntime:
                 display = self.dependencies.markup(card, display)
             output = {"id": output_id, "parent": input_id, "role": "assistant", "raw": text,
                       "model": model, "display": display, "snapshot": snapshot, "retrieval_query": agent.retrieval_query}
+            if agent.final_response:
+                agent.new_trace.append({"window_id": agent.state["window"]["id"],
+                    "message": {**agent.final_response, "_full_agent_final": True,
+                        "_history_observations": {user["id"]: fingerprint(user["model"]),
+                                                  output_id: fingerprint(model)}}})
             pending = {"messages": [output] if reused else [user, output], "before": before,
                        "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace}
             if session["policy_effective"] == "preview" and snapshot != before:

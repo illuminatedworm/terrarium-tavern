@@ -9,6 +9,7 @@ from tavern.core.models import TurnRequest
 from tavern.memories.memory import Tracker, completed_rounds
 from tavern.scripting.agent import Writer
 from tavern.scripting.dependencies import Dependencies
+from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.scripting.runtime import ScriptRuntime
 from tavern.storage.store import Conflict, dump, uid
 
@@ -137,6 +138,7 @@ class RoleplayRuntime:
         cfg = settings.for_role("background")
         memory_calls = CallBudget(manual=True)
         document = (snapshot.get("content") or {}).get("document", self.store.session_card(session["id"])["document"])
+        contexts = OperationContexts(self.store, session["id"], tid)
 
         async def generate(messages, *, phase="memory", output_tokens=None):
             request_cfg = cfg.model_copy(update={"reply_tokens": output_tokens or cfg.memory_output_tokens})
@@ -149,6 +151,8 @@ class RoleplayRuntime:
                     ),
                     request_timeout=None,
                 )
+            configure_operation(provider, contexts.new(phase),
+                                lambda kind, payload: self.store.event(tid, kind, payload), phase)
             try:
                 return await complete_with_recall(provider, messages, history=session["messages"],
                     settings=request_cfg, budget=memory_calls.history, phase=phase,
@@ -380,6 +384,7 @@ class RoleplayRuntime:
             req = TurnRequest.model_validate(turn["request"])
             settings = self.store.settings().for_role("foreground").model_copy(deep=True)
             session = self.store.session(turn["session"])
+            contexts = OperationContexts(self.store, session["id"], tid)
             if req.scene_refresh:
                 await self.refresh_scene(tid, req, settings, session)
                 return
@@ -427,7 +432,10 @@ class RoleplayRuntime:
                     from tavern.conversation.context import compile_context
                     from tavern.scripting.agent import make_provider
 
-                    provider = await make_provider(settings)
+                    provider = await make_provider(settings, lambda payload: self.store.event(
+                        tid, "provider_request", {**payload, "purpose": "script"}))
+                    configure_operation(provider, contexts.new("script"),
+                                        lambda kind, payload: self.store.event(tid, kind, payload), "script")
                     try:
                         from tavern.memories.memory import window_history
                         nested_document = (snapshot.get("content") or {}).get("document", document)
@@ -485,6 +493,8 @@ class RoleplayRuntime:
                         ),
                         request_timeout=None,
                     )
+                configure_operation(provider, contexts.new(phase),
+                                    lambda kind, payload: self.store.event(tid, kind, payload), phase)
                 try:
                     result = await complete_with_recall(provider, messages, history=history,
                         settings=cfg, budget=memory_calls.history, phase=phase,
@@ -589,6 +599,7 @@ class RoleplayRuntime:
                         self.store, tid, settings, history, mirror["state"], input_raw, text,
                         self.variable_provider_factory,
                         document=agent.document, persona=session["persona"],
+                        request_context=contexts.new("variables"),
                     )
                 # Never interpret Writer prose as MVU commands. Apply only the independent proposal.
                 processed = await runtime.call("process", text, operations, "")
@@ -631,6 +642,9 @@ class RoleplayRuntime:
                 "before": before,
                 "reason": "Agent / MVU 回合提交",
             }
+            from tavern.conversation.half_context import finalize_record
+            pending["half_agent_record"] = finalize_record(
+                agent.compiled["half_agent_record"], agent.native_response, agent.clean_response, output)
             self.store.set_turn(tid, draft=final_text)
             changed = snapshot != before
             if session["policy_effective"] == "preview" and changed:

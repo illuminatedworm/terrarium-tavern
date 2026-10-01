@@ -86,7 +86,9 @@ class Tracker:
         window = draft.get("context_window")
         old_count = window["covered_count"] if window and settings.chunk_mode != "off" else 0
         rounds = completed_rounds(history)
-        count, _ = plan_window(document, session, history, draft, request.text, settings, tid, retrieval)
+        from tavern.conversation.half_context import load_trace
+        count, _ = plan_window(document, session, history, draft, request.text, settings, tid, retrieval,
+                               replay_records=load_trace(self.store, session["id"], history))
         trimming = count > old_count
         eligible = len(history) - 4
         while eligible > 0 and history[eligible - 1]["role"] != "assistant":

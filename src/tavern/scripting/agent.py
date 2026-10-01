@@ -6,8 +6,10 @@ import json
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import model_messages, prepare_context
 from tavern.conversation.context import compile_context, get_path, search
+from tavern.conversation.half_context import apply_context, attach_continuation, load_trace
 from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.provider import make_provider
+from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.search.retrieval_text import RetrievalParser, split_retrieval
 
 
@@ -39,6 +41,10 @@ class TurnAgent:
                                      "history": [m.get("model", m["raw"]) for m in history]})
         self.lore_handles = {}
         self.history_references = None
+        self.operation_contexts = OperationContexts(store, session["id"], tid)
+        self.native_response = None
+        self.clean_response = ""
+        self.native_responses = {}
 
     def compile(self):
         self.compiled = compile_context(
@@ -55,6 +61,7 @@ class TurnAgent:
             input_message_id=self.input_message_id,
             retrieval=self.retrieval,
             retrieval_protocol=not self.maintenance,
+            replay_records=None if self.maintenance else load_trace(self.store, self.session["id"], self.history),
         )
         if self.maintenance:
             self.compiled["messages"][0:0] = [
@@ -63,6 +70,8 @@ class TurnAgent:
                     "content": self.settings.maintenance_system_prompt,
                 }
             ]
+            self.compiled["trace"].insert(0, {"role": "system", "source": "maintenance_rules",
+                                              "content": self.settings.maintenance_system_prompt})
         else:
             prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
         if self.compiled["estimated_tokens"] > self.settings.context_tokens - self.settings.reply_tokens - 2048:
@@ -218,6 +227,8 @@ class TurnAgent:
         if maintenance:
             self.settings = self.settings.for_role("background")
         self.calls = 0
+        self.native_responses = {}
+        maintenance_record, maintenance_sent = None, []
         allowed = (
             {
                 "read_character",
@@ -248,6 +259,7 @@ class TurnAgent:
                 return None
 
             async def pre_llm_call(self, messages, **kwargs):
+                nonlocal maintenance_record, maintenance_sent
                 owner.calls += 1
                 if owner.calls > (4 if maintenance else 1):
                     from kohakuterrarium.modules.plugin import PluginBlockError
@@ -255,18 +267,42 @@ class TurnAgent:
                     raise PluginBlockError("本轮 Agent 调用次数超限")
                 # A fresh creature owns only this turn. Keep native assistant/tool blocks after its input.
                 marker = next((i for i, m in enumerate(messages) if m.get("role") == "user"), len(messages))
-                continuation = copy.deepcopy(messages[marker + 1 :])
+                continuation = attach_continuation(messages[marker + 1 :], owner.native_responses)
                 try:
                     context = owner.compile()
                     if not maintenance:
                         prepare_context(context, owner.session, owner.history, owner.snapshot, owner.settings)
-                    compiled = model_messages(context) if not maintenance else copy.deepcopy(context["messages"])
-                    compiled += continuation
-                    return owner.model_view.messages(compiled) if maintenance else compiled
+                    if maintenance:
+                        # Project only fresh business text, never opaque blocks from earlier responses.
+                        context["trace"] = owner.model_view.messages(context["trace"])
+                        continuation = owner.model_view.messages(continuation)
+                        apply_context(context, {}, owner.session, owner.history, owner.snapshot, owner.settings,
+                                      input_id=owner.input_message_id, purpose="maintenance",
+                                      previous_record=maintenance_record, continuation=continuation,
+                                      sent=maintenance_sent)
+                        maintenance_record = context["half_agent_record"]
+                        maintenance_sent = context["trace"]
+                        compiled = context["messages"]
+                    else:
+                        compiled = model_messages(context)
+                    provider.request_context.diagnostics = copy.deepcopy(context.get("context_ledger", {}))
+                    provider.request_context.window_id = context.get("half_agent_record", {}).get("window", "")
+                    owner.store.set_turn(owner.tid, preview=json.dumps(context, ensure_ascii=False))
+                    if context.get("context_ledger", {}).get("rebuild_reason"):
+                        owner.store.event(owner.tid, "context_baseline", {
+                            "purpose": "maintenance" if maintenance else "narrative", **context["context_ledger"]})
+                    return compiled
                 except Exception as error:
                     from kohakuterrarium.modules.plugin import PluginBlockError
 
                     raise PluginBlockError(str(error)) from error
+
+            async def post_llm_call(self, messages, response, usage, **kwargs):
+                native = getattr(provider, "last_native_response", None)
+                if native:
+                    owner.native_responses[native["message_sha256"]] = copy.deepcopy(native)
+                if not maintenance:
+                    owner.native_response = copy.deepcopy(native)
 
         owned_provider = provider is None
         if provider is None:
@@ -278,6 +314,9 @@ class TurnAgent:
                     {**payload, "purpose": "maintenance" if maintenance else "narrative"},
                 ),
             )
+        purpose = "maintenance" if maintenance else "narrative"
+        configure_operation(provider, self.operation_contexts.new(purpose),
+                            lambda kind, payload: self.store.event(self.tid, kind, payload), purpose)
         config = AgentConfig(
             name="terrarium-tavern-tracker" if maintenance else "terrarium-tavern-writer",
             system_prompt=self.settings.maintenance_system_prompt if maintenance else self.settings.system_prompt,
@@ -341,6 +380,8 @@ class TurnAgent:
                 self.store.event(self.tid, "maintenance_completed", {"record": result.text})
             if not maintenance:
                 clean, self.retrieval_query, diagnostics = split_retrieval(result.text, self.settings.retrieval.query_chars)
+                self.clean_response = clean
+                self.native_response = copy.deepcopy(getattr(provider, "last_native_response", None))
                 tail = parser.feed("", final=True)
                 if tail:
                     self.store.event(self.tid, "text", {"text": tail})

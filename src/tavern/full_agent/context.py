@@ -5,7 +5,9 @@ import json
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import character_content, macros, wrap_lorebook
+from tavern.core.cache_policy import fingerprint
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
+from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.state import full_state
 
 
@@ -60,6 +62,22 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         if item["window_id"] == window["id"]:
             by_owner.setdefault(item["message_id"], []).append(item["message"])
 
+    records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
+    history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}
+    ledger = ContextLedger(settings, items, tools, document, snapshot, records, input_id,
+                           {mid: fingerprint(text) for mid, text in history_text.items()})
+
+    def replay(message):
+        item = ledger.replay(message)
+        if item is not None:
+            items.append(item)
+
+    def update(source, content, **kwargs):
+        frame = ledger.update(source, content, **kwargs)
+        if frame is not None:
+            items.append(frame)
+        return frame
+
     def anchored(message_id):
         for record in snapshot.get("lore_injections", []):
             if record["anchor_id"] == message_id and not record.get("manually_removed"):
@@ -69,30 +87,45 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     for message in visible:
         anchored(message["id"])
         # Native tool calls/results belong before the final narrative that ended that turn.
-        items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in by_owner.get(message["id"], []))
-        add(message["role"], expand(message.get("model", message["raw"])), "history", message_id=message["id"])
+        records = by_owner.get(message["id"], [])
+        for record in records:
+            replay(record)
+        add(message["role"], history_text[message["id"]], "history", message_id=message["id"])
+        final = next((m for m in records if m.get("_full_agent_final")), None)
+        if final and items and items[-1].get("message_id") == message["id"]:
+            items[-1].update({k: copy.deepcopy(final[k]) for k in (
+                "_native_response", "_response_origin", "_response_digest", "reasoning_content",
+                "reasoning_details", "reasoning", "_context_epoch", "_native_epoch") if k in final})
+            items[-1] = ledger.native_message(items[-1])
     anchored(input_id)
     add("user", user_input, "input", message_id=input_id)
-    if require_state_patch:
-        add("system", "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。", "turn_variable_instruction")
-    items.extend({**copy.deepcopy(m), "source": "agent_tools"} for m in continuation)
-    add("system", expand(card.get("post_history_instructions", "")), "post")
-    add("system", instruction, "turn_instruction")
+    for message in continuation:
+        replay(message)
+    update("turn_variable_instruction",
+           "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
+           value={"required": True, "input_id": input_id} if require_state_patch else False)
+    update("post", expand(card.get("post_history_instructions", "")))
+    update("turn_instruction", instruction)
+    warning = ""
     if checkpoint.get("stale"):
         refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]
-        add("system", "原始剧情已编辑，checkpoint 可能过时。请读取并核对：" + ", ".join(refs), "context_warning")
-    add("system", "<tavern_memory>\nAgent checkpoint（模型维护的交接笔记）：\n"
-        + (checkpoint["text"] or "尚无 checkpoint。") + "\n</tavern_memory>", "checkpoint")
+        warning = "原始剧情已编辑，checkpoint 可能过时。请读取并核对：" + ", ".join(refs)
+    update("context_warning", warning)
+    update("checkpoint", "<tavern_memory>\n当前有效 checkpoint（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
+        + (checkpoint["text"] or "当前 checkpoint 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
+        value=checkpoint["text"])
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
-                      "reasoning_content", "reasoning_details", "reasoning"}
+                      "reasoning_content", "reasoning_details", "reasoning",
+                      "_native_response", "_response_origin", "_response_digest"}
 
     def wire():
         return [{k: v for k, v in m.items() if k in allowed_fields} for m in items]
 
     reasoning_cost = sum(count_text(json.dumps({k: m[k] for k in
         ("reasoning_content", "reasoning_details", "reasoning") if k in m}, ensure_ascii=False), settings)
-        for m in items if any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
+        for m in items if not m.get("_native_response")
+        and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
     active_notes = sum(note.get("status", "active") == "active" for note in state["notes"].values())
     archived_notes = len(state["notes"]) - active_notes
     memory_status = f"长期笔记：有效 {active_notes} 条，已归档 {archived_notes} 条。"
@@ -102,17 +135,15 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
               f"{history_status}；当前用户输入引用 H{len(history)+1}；{visible_status}。\n"
               f"{memory_status}\n"
               f"本回合还可调用模型 {max(0, settings.full_agent_config.max_steps - calls)} 次。")
-    memory_at = next(i for i, item in enumerate(items) if item["source"] == "checkpoint") + 1
-    items.insert(memory_at, {"role": "system", "content": status, "source": "context_status"})
+    update("context_status", status)
     tokens = request_tokens(wire(), settings, tools) + reasoning_cost
     rollover_required = force_rollover or tokens >= settings.context_tokens
     if rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio:
-        budget_item = {"role": "system", "content": "", "source": "context_budget"}
-        items.insert(memory_at + 1, budget_item)
+        budget_item = None
         # Include the notice itself when checking the boundary and estimating its size.
         for _ in range(6):
             rollover_required |= tokens >= settings.context_tokens
-            budget_item["content"] = (
+            content = (
                 f"当前上下文估算 {tokens}/{settings.context_tokens} tokens（含工具定义）；"
                 f"本轮回复额度 {settings.reply_tokens} tokens。\n"
                 + ("当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
@@ -120,10 +151,19 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                    "换窗成功后继续当前用户请求。"
                    if rollover_required else "窗口预算提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。")
             )
+            if budget_item is None:
+                budget_item = update("context_budget", content)
+                if budget_item is None:
+                    break
+            else:
+                budget_item["content"] = content
+                budget_item["_runtime_context"]["value"] = content
             updated = request_tokens(wire(), settings, tools) + reasoning_cost
             if updated == tokens:
                 break
             tokens = updated
+    else:
+        update("context_budget", "")
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
     result = {"messages": messages, "trace": [{**m, "position": i, "estimated_tokens": message_tokens(m, settings)}
@@ -137,4 +177,6 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                                   for source in dict.fromkeys(m["source"] for m in items)},
                                "tool_definitions": request_tokens([], settings, tools) - 3},
             "next_lore_injections": copy.deepcopy(snapshot.get("lore_injections", []))}
+    result["context_ledger"] = ledger.audit()
+    result["context_additions"] = copy.deepcopy(ledger.additions)
     return prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

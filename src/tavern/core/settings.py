@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tavern.core.cache_policy import runtime_cache
+from tavern.core.cache_policy import fingerprint, runtime_cache
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -199,6 +199,11 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                     if new != old:
                         values[field] = new
                         changed_scopes.add(scope)
+        # Upgrade only the exact previous application default. Custom story
+        # instructions remain user-owned; tool descriptions carry the new rule too.
+        if fingerprint(raw["full_agent"].get("system_prompt")) == "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e":
+            raw["full_agent"]["system_prompt"] = FULL_AGENT_PROMPT
+            changed_scopes.add("full_agent")
         for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
                            ("half_agent", "background"), ("shared", "card_editor")):
             profile = raw.setdefault(scope, {}).setdefault(key, {})

@@ -18,7 +18,7 @@ SYSTEM_PROMPT = """你是后台 MVU 变量分析员。根据当前变量、近�
 
 
 async def analyze_variables(store, tid, settings, history, state, user_text, narrative, provider_factory=None,
-                            *, document=None, persona="旅人"):
+                            *, document=None, persona="旅人", request_context=None):
     cfg = settings.for_role("background") if hasattr(settings, "for_role") else settings
     rules = []
     for entry in lore_entries(document or {"name": ""}, "tracker_mvu"):
@@ -50,6 +50,9 @@ async def analyze_variables(store, tid, settings, history, state, user_text, nar
         cfg,
         lambda payload: store.event(tid, "provider_request", {**payload, "purpose": "variables"}),
     )
+    if request_context:
+        from tavern.scripting.request_context import configure_operation
+        configure_operation(provider, request_context, lambda kind, payload: store.event(tid, kind, payload), "variables")
     try:
         result = await asyncio.wait_for(provider.chat_complete(messages), settings.memory_timeout)
         store.event(tid, "usage", {"purpose": "variables", "calls": 1, "usage": result.usage or {}})

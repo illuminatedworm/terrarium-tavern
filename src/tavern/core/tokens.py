@@ -59,6 +59,10 @@ def count_text(text, settings=None):
 
 
 def message_tokens(message, settings=None):
+    native = message.get("_native_response")
+    if native:
+        return (count_text(json.dumps(native["items"], ensure_ascii=False, separators=(",", ":")), settings)
+                + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING)
     content = message.get("content") or ""
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
