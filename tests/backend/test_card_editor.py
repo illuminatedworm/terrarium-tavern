@@ -218,6 +218,7 @@ async def test_cancel_rolls_back_partial_tools(tmp_path):
         await service.cancel(run["id"])
         assert service.edits.get(ws["id"])["document"] == card["document"]
         assert service.edits.run(run["id"])["status"] == "cancelled"
+        assert service.edits.context(ws["id"]) is None
     finally:
         await service.close()
 
@@ -332,6 +333,9 @@ async def test_twelve_call_limit_and_full_event_replay(tmp_path):
         assert final['status'] == 'completed', final['error']
         assert provider.call_count == 12
         assert not provider.schemas[-1]
+        for previous, current in zip(provider.call_log, provider.call_log[1:]):
+            assert current[:len(previous)] == previous
+        assert "本轮最后一次调用" in provider.call_log[-1][-1]["content"]
         for index in range(230):
             editor.edits.event(run['id'], 'diagnostic', {'index': index})
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:

@@ -29,6 +29,8 @@ def initialize_editor_tables(store):
             CREATE TABLE IF NOT EXISTS card_edit_saves(
                 workspace TEXT NOT NULL, operation TEXT NOT NULL, result TEXT NOT NULL,
                 PRIMARY KEY(workspace,operation));
+            CREATE TABLE IF NOT EXISTS card_edit_contexts(
+                workspace TEXT PRIMARY KEY, payload TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS card_edit_events_run ON card_edit_events(run,seq);
             CREATE INDEX IF NOT EXISTS card_edit_versions_workspace ON card_edit_versions(workspace,id);
             CREATE INDEX IF NOT EXISTS card_edits_card ON card_edits(card);
@@ -156,7 +158,7 @@ class EditorStore:
             db.execute("BEGIN IMMEDIATE")
             self.check(db, wid, revision)
             db.execute("DELETE FROM card_edit_events WHERE run IN (SELECT id FROM card_edit_runs WHERE workspace=?)", (wid,))
-            for table in ("card_edit_runs", "card_edit_versions", "card_edit_saves"):
+            for table in ("card_edit_runs", "card_edit_versions", "card_edit_saves", "card_edit_contexts"):
                 db.execute(f"DELETE FROM {table} WHERE workspace=?", (wid,))
             db.execute("DELETE FROM card_edits WHERE id=?", (wid,))
         # Use an editor-owned manifest identity so the source card's cache is never removed.
@@ -168,6 +170,11 @@ class EditorStore:
         if row is None:
             raise KeyError("编辑任务不存在")
         return {**dict(row), "request": json.loads(row["request"])}
+
+    def context(self, wid):
+        with self.store.connection() as db:
+            row = db.execute("SELECT payload FROM card_edit_contexts WHERE workspace=?", (wid,)).fetchone()
+        return json.loads(row[0]) if row else None
 
     def event(self, rid, kind, payload):
         with self.store.connection() as db:
