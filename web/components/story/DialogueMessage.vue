@@ -154,10 +154,11 @@ function forwardAction(
           </button>
         </template>
         <button
-          :disabled="busy || !!editingMessageId"
+          v-if="message.id === session.head"
+          :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
           :class="{ 'icon-action': message.role === 'assistant' }"
           aria-label="编辑"
-          title="编辑回复"
+          title="编辑最新消息"
           @click="emit('edit', message)"
         >
           <svg

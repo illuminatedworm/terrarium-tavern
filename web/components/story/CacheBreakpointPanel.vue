@@ -125,6 +125,10 @@ function save() {
         <p v-if="automatic" class="inspector-note">
           保存后立即定位，再按新增的已完成回复计数；重新生成不计轮次。
         </p>
+        <p class="inspector-note">
+          将断点设在倒数第 1 个 AI
+          回复末尾属于激进策略：最新回复会进入缓存前缀，编辑或重新生成它可能使缓存失效，并触发重新写入。
+        </p>
         <button class="primary" :disabled="disabled || !valid || !changed">保存跟进策略</button>
       </form>
       <div class="cache-plan-state">

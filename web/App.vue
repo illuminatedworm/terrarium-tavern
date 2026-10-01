@@ -1141,6 +1141,14 @@ async function savePendingEdit() {
   });
 }
 function beginMessageEdit(message: any) {
+  if (
+    message.id !== session.value?.head ||
+    busy.value ||
+    switchingVersion.value ||
+    editingMessageId.value ||
+    activeTurn.value?.status === 'awaiting_review'
+  )
+    return;
   editingMessageId.value = message.id;
   editingMessageText.value = message.raw;
 }
@@ -1174,7 +1182,14 @@ async function switchReplyVersion(message: any, offset: number) {
   }
 }
 async function saveMessageEdit(message: any) {
-  if (!editingMessageText.value.trim()) return;
+  if (
+    !editingMessageText.value.trim() ||
+    message.id !== session.value?.head ||
+    busy.value ||
+    switchingVersion.value ||
+    activeTurn.value?.status === 'awaiting_review'
+  )
+    return;
   await guarded(async () => {
     session.value = await viewApi(
       `/sessions/${session.value.id}/messages/${message.id}`,

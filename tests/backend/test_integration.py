@@ -47,6 +47,59 @@ async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_
         await app.state.service.close()
 
 
+@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
+async def test_message_edits_only_accept_current_branch_head(tmp_path, monkeypatch, mode):
+    from tavern.storage.store import Conflict, uid
+
+    app = create_app(tmp_path)
+    store = app.state.store
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+    opening = session["head"]
+    input_id, reply_id = uid(), uid()
+    tid, _ = store.create_turn(session["id"], TurnRequest(text="input", operation_id="setup", expected_revision=0))
+    store.set_turn(tid, status="running")
+    store.commit_turn(tid, {"before": session["snapshot"], "messages": [
+        {"id": input_id, "parent": opening, "role": "user", "raw": "input", "model": "input",
+         "display": "input", "snapshot": session["snapshot"]},
+        {"id": reply_id, "parent": input_id, "role": "assistant", "raw": "reply", "model": "reply",
+         "display": "reply", "snapshot": session["snapshot"]},
+    ]})
+    session = store.session(session["id"])
+    runtime_open = app.state.service.half.runtime.open
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Rejected historical edits must not start formatting")
+
+    monkeypatch.setattr(app.state.service.half.runtime, "open", forbidden)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
+            for mid in (opening, input_id):
+                with pytest.raises(ValueError, match="只能编辑当前分支的最新消息"):
+                    store.edit_message(session["id"], mid, "changed", session["revision"])
+                rejected = await api.put(f"/api/sessions/{session['id']}/messages/{mid}", json={
+                    "text": "changed", "expected_revision": session["revision"]})
+                assert rejected.status_code == 400
+                assert rejected.json()["detail"] == "只能编辑当前分支的最新消息"
+                assert store.session(session["id"]) == session
+            monkeypatch.setattr(app.state.service.half.runtime, "open", runtime_open)
+            accepted = await api.put(f"/api/sessions/{session['id']}/messages/{reply_id}", json={
+                "text": "latest edited", "expected_revision": session["revision"]})
+            assert accepted.status_code == 200, accepted.text
+            edited = accepted.json()
+            assert edited["head"] == reply_id and edited["revision"] == session["revision"] + 1
+            assert [m["raw"] for m in edited["messages"]] == ["opening", "input", "latest edited"]
+            with pytest.raises(Conflict):
+                store.edit_message(session["id"], reply_id, "stale", session["revision"])
+            # A different selected branch has its own latest message.
+            selected = store.update_session(session["id"], edited["revision"], head=opening)
+            edited_opening = store.edit_message(session["id"], opening, "selected latest", selected["revision"])
+            assert edited_opening["head"] == opening
+            assert edited_opening["messages"][-1]["raw"] == "selected latest"
+    finally:
+        await app.state.service.close()
+
+
 async def test_missing_model_fails_before_creating_turn_or_message(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")

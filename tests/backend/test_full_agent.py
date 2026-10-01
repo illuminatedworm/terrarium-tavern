@@ -354,9 +354,11 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert regenerated["snapshot"]["full_agent"]["notes"] == {}
         assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
         switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
-        edited = store.edit_message(first["id"], first["messages"][1]["id"], "我们取消约定。", switched["revision"])
+        with pytest.raises(ValueError, match="只能编辑当前分支的最新消息"):
+            store.edit_message(first["id"], first["messages"][1]["id"], "我们取消约定。", switched["revision"])
+        edited = store.edit_message(first["id"], first["head"], "最新正文已修改。", switched["revision"])
         assert edited["snapshot"]["full_agent"]["checkpoint"]["stale"]
-        assert note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
+        assert not note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
         await service.delete_session(first["id"])
         assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
         with store.connection() as db:

@@ -696,6 +696,8 @@ class Store:
             raise ValueError("消息不能为空")
         session = self.session(sid)
         branch = session["messages"]
+        if mid != session["head"]:
+            raise ValueError("只能编辑当前分支的最新消息")
         from tavern.memories.memory import fingerprint, window_valid
         archive = session["snapshot"].get("memory_archive")
         affected_memory = bool(window_valid(archive, branch) and any(
@@ -706,17 +708,20 @@ class Store:
             raise ValueError("只能编辑当前会话分支中的消息")
         affected = {m["id"] for m in branch[next(i for i, m in enumerate(branch) if m["id"] == mid):]}
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             active = db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')",
                 (sid,),
             ).fetchone()
             if active:
                 raise Conflict("请先完成或取消当前回合")
-            revision = db.execute("SELECT revision FROM sessions WHERE id=?", (sid,)).fetchone()
+            revision = db.execute("SELECT revision,head FROM sessions WHERE id=?", (sid,)).fetchone()
             if revision is None:
                 raise KeyError("会话不存在")
             if revision[0] != expected_revision:
                 raise Conflict("会话已改变，请刷新后重试")
+            if revision["head"] != mid:
+                raise ValueError("只能编辑当前分支的最新消息")
             rows = db.execute(
                 "SELECT id,parent,role,raw,model,display,snapshot FROM messages WHERE session=?", (sid,)
             ).fetchall()

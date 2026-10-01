@@ -233,6 +233,8 @@ class RoleplayRuntime:
 
     async def edit_message(self, sid, mid, text, expected_revision):
         session = self.store.session(sid)
+        if mid != session["head"]:
+            raise ValueError("只能编辑当前分支的最新消息")
         message = next((m for m in session["messages"] if m["id"] == mid), None)
         if message is None:
             raise ValueError("只能编辑当前会话分支中的消息")
