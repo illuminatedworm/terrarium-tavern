@@ -60,15 +60,22 @@ class NoteKey(Arguments):
     key: str = Field(min_length=1, max_length=80, description="Existing note key.")
 
 
-class Patch(Arguments):
-    operations: list[dict] = Field(min_length=1, max_length=100, description=("1-100 JSON Patch objects. Each requires op and path. "
+PATCH_GUIDANCE = ("JSON Patch objects. Each requires op and path. "
         "op is add, remove, replace, move, copy, or test. add/replace/test require value (any JSON value, including null); "
         "move/copy require from (source JSON Pointer); remove needs only op/path. "
         "path/from use slash-separated JSON Pointers, not dot paths: escape ~ as ~0 and / as ~1 within keys. "
         "Array indices are zero-based; add may use a final /- to append. "
         "An empty pointer targets the root. Follow this tool's root rules; existing targets are required for "
-        "remove/replace/test and from, and add requires an existing parent."))
+        "remove/replace/test and from, and add requires an existing parent.")
+
+
+class Patch(Arguments):
+    operations: list[dict] = Field(min_length=1, max_length=100, description=PATCH_GUIDANCE)
     reason: str = Field(min_length=1, max_length=1000, description="Story evidence and purpose of this change.")
+
+
+class StatePatch(Patch):
+    operations: list[dict] = Field(max_length=100, description=PATCH_GUIDANCE + " Empty array means no changes.")
 
 
 class StateRead(Arguments):
@@ -126,9 +133,10 @@ SPECS = {
         "History and older branches remain. Draft changes commit with the turn; review mode requires approval."),
     "read_state": (StateRead, "Read story state, including MVU variables under stat_data, excluding runtime ledgers and MVU internals. An empty path reads all state; "
         "a dot-separated path reads one field. For MVU variables include stat_data in the read path (e.g. stat_data.hp), unlike patch_state paths which are relative to stat_data. Check values and structure before updating."),
-    "patch_state": (Patch, "Call exactly once only when this turn's system message requires an MVU update. "
+    "patch_state": (StatePatch, "Call exactly once only when this turn's system message requires an MVU update. "
         "Apply MVU-validated JSON Patch relative to stat_data; omit the /stat_data prefix from paths. "
-        "Read current values first; give story evidence in reason and align changes with the final narrative. "
+        "Read current values first; follow the latest <mvu_rules> snapshot, give story evidence in reason, "
+        "and align changes with the final narrative. Submit operations=[] when nothing changed. "
         "Use this tool instead of MVU blocks in prose. Draft changes commit with the turn; review mode requires approval."),
     "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, not the library card. "
         "Paths are relative to the original card document: for spec-wrapped cards use /data/description or /data/character_book; for unwrapped cards use /description or /character_book. read_character strips the data wrapper when reading. Read fields with read_character first; follow turn authorization and give a reason. Do not modify internal fingerprints or hashes. "

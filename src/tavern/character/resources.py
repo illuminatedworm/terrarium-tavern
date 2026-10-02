@@ -22,10 +22,16 @@ def prune_card_assets(store, card, manifest):
         for survivor in survivors:
             survivor["resources"] = json.loads(survivor["resources"])
         survivors.extend(json.loads(row[0]) for row in db.execute("SELECT card_data FROM sessions WHERE card_data IS NOT NULL"))
-        survivors.extend(json.loads(row[0]) for row in db.execute("SELECT source FROM card_edits"))
+        for table in ("card_editor_conversations", "card_editor_progress"):
+            for row in db.execute(f"SELECT payload FROM {table}"):
+                value = json.loads(row[0])
+                survivors.extend(c.get("source", {}) for c in value.get("cards", value.get("working", {}).get("cards", [])))
+        survivors.extend(json.loads(row[0]).get("source", {}) for row in db.execute(
+            "SELECT snapshot FROM card_edit_versions WHERE snapshot IS NOT NULL"))
         retained, retained_sources = set(), set()
         for survivor in survivors:
-            for current in (store.card_manifest(survivor), survivor.get("dependencies", {})):
+            current_manifest = store.card_manifest(survivor) if survivor.get("id") or survivor.get("session_id") else {}
+            for current in (current_manifest, survivor.get("dependencies", {})):
                 blobs, scripts = references(survivor, current)
                 retained.update(blobs)
                 retained_sources.update(scripts)

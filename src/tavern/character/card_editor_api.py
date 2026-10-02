@@ -14,12 +14,17 @@ from tavern.storage.store import dump
 
 
 def register_editor_routes(app, editor):
+    from tavern.character.editor_api import register_conversation_routes
+    register_conversation_routes(app, editor)
     @app.get("/api/card-edits")
     async def orphan_edits():
         with editor.store.connection() as db:
-            return [dict(row) for row in db.execute("""SELECT w.id,w.card,w.created,
-                json_extract(w.source,'$.name') AS name FROM card_edits w
-                LEFT JOIN cards c ON c.id=w.card WHERE c.id IS NULL ORDER BY w.created DESC""")]
+            return [dict(row) for row in db.execute("""SELECT w.id,w.created,
+                json_extract(a.value,'$.card') AS card, json_extract(a.value,'$.source.name') AS name
+                FROM card_editor_conversations w JOIN json_each(w.payload,'$.cards') a
+                LEFT JOIN cards c ON c.id=json_extract(a.value,'$.card')
+                WHERE json_array_length(w.payload,'$.cards')=1
+                    AND json_extract(a.value,'$.card') IS NOT NULL AND c.id IS NULL ORDER BY w.created DESC""")]
 
     @app.get("/api/cards/{cid}/edits")
     async def list_edits(cid: str):

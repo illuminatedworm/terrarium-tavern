@@ -37,10 +37,14 @@ class Store:
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1 或 2")
+                if version is None or version[0] not in {"1", "2", "3"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1、2 或 3")
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
+                if version[0] in {"1", "2"}:
+                    backup_path = root / f"before-card-editor-v3-{uuid.uuid4().hex[:12]}.sqlite3"
+                    with closing(sqlite3.connect(backup_path)) as backup_db:
+                        db.backup(backup_db)
                 if version[0] == "1":
                     migrated = validated_settings
                     backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
@@ -101,7 +105,7 @@ class Store:
             db.execute("INSERT OR IGNORE INTO meta VALUES ('settings',?)", (SettingsDocument().model_dump_json(),))
             if migrated is not None:
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
-            db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version','2')")
+            db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','2')")
             if "title" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''")
                 db.execute("""UPDATE sessions SET title=COALESCE(
@@ -1208,16 +1212,18 @@ class Store:
             if db.execute("DELETE FROM personas WHERE id=?", (pid,)).rowcount != 1:
                 raise KeyError("用户角色不存在")
 
-    def save_persona(self, pid, edit):
-        with self.connection() as db:
-            if pid is None:
-                pid = uid()
-                db.execute("INSERT INTO personas VALUES (?,1,?,?)", (pid, edit.name, edit.description))
-            else:
-                result = db.execute(
-                    "UPDATE personas SET name=?,description=?,version=version+1 WHERE id=? AND version=?",
-                    (edit.name, edit.description, pid, edit.expected_version),
-                )
-                if result.rowcount != 1:
-                    raise Conflict("用户角色已被修改，请重新载入")
-        return self.persona(pid)
+    def save_persona(self, pid, edit, *, db=None):
+        if db is None:
+            with self.connection() as connection:
+                return self.save_persona(pid, edit, db=connection)
+        if pid is None:
+            pid = uid()
+            db.execute("INSERT INTO personas VALUES (?,1,?,?)", (pid, edit.name, edit.description))
+        else:
+            result = db.execute(
+                "UPDATE personas SET name=?,description=?,version=version+1 WHERE id=? AND version=?",
+                (edit.name, edit.description, pid, edit.expected_version),
+            )
+            if result.rowcount != 1:
+                raise Conflict("用户角色已被修改，请重新载入")
+        return dict(db.execute("SELECT * FROM personas WHERE id=?", (pid,)).fetchone())

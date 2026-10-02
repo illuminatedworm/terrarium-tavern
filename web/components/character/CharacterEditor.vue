@@ -1,21 +1,22 @@
 <script setup lang="ts">
-import CardAgentEditor from './CardAgentEditor.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
 import LoreFilter from './LoreFilter.vue';
 import { audiences, entryAudience, emptyLoreFilter, filterLore } from '../../lib/loreFilter';
 import FieldHelp from '../common/FieldHelp.vue';
 import { useTimedError } from '../../composables/useTimedError';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
-const props = defineProps<{ card: any; session?: any }>();
+const props = defineProps<{ card: any; session?: any; draftMode?: boolean }>();
 const sendEvent = defineEmits<{
   saved: [card: any];
   sessionSaved: [session: any];
   back: [];
   workspaceSelected: [id: string];
+  openAgent: [id: string];
+  draftSaved: [document: any];
 }>();
 let alive = true;
 const emit: typeof sendEvent = (...args: any[]) => {
@@ -116,7 +117,7 @@ try {
     const restored = JSON.parse(saved);
     document.value = restored.document;
     raw.value = restored.raw;
-    tab.value = restored.tab;
+    tab.value = restored.tab === 'agent' ? 'profile' : restored.tab;
     notice.value = '已恢复这个标签页中的未保存草稿。';
   }
 } catch {
@@ -159,6 +160,11 @@ async function save() {
     if (tab.value === 'raw') document.value = JSON.parse(raw.value);
     const previousKey = draftKey();
     await syncOpeningHashes();
+    if (props.draftMode) {
+      emit('draftSaved', clone(document.value));
+      sessionStorage.removeItem(previousKey);
+      return;
+    }
     if (props.session) {
       const updated = await api(
         `/sessions/${props.session.id}/lorebook`,
@@ -235,39 +241,12 @@ function rememberWorkspace() {
   localStorage.setItem(`tavern-card-edit-active-${workspace.value.card}`, workspace.value.id);
   emit('workspaceSelected', workspace.value.id);
 }
-function selectWorkspace(value: any) {
-  applyWorkspace(value, true);
-  tab.value = 'agent';
-  agentRunning.value = value.runs.some((run: any) => ['queued', 'running'].includes(run.status));
-  if (!agentRunning.value) {
-    try {
-      const pending = JSON.parse(sessionStorage.getItem(draftKey()) || 'null');
-      if (pending && pending.workspace_revision === value.revision) {
-        document.value = pending.document;
-        raw.value = pending.raw;
-        // Return to the form first so unsaved local edits are visible and can be
-        // synchronized before this context makes another model request.
-        tab.value = pending.tab === 'raw' ? 'raw' : 'profile';
-      }
-    } catch {
-      /* Ignore malformed local drafts. */
-    }
-  }
-  rememberWorkspace();
-}
-function applyWorkspace(value: any, allowSwitch = false) {
-  if (!alive || (!allowSwitch && workspace.value && workspace.value.id !== value.id)) return;
-  workspace.value = value;
-  document.value = clone(value.document);
-  raw.value = JSON.stringify(value.document, null, 2);
-  deletedGreetings.value = [];
-}
 async function openAgent() {
   if (busy.value) return;
   await act(async () => {
     if (tab.value === 'raw') document.value = JSON.parse(raw.value);
     if (!agentRunning.value) await syncWorkspace();
-    tab.value = 'agent';
+    emit('openAgent', workspace.value.id);
   });
 }
 async function copyCard() {
@@ -276,72 +255,6 @@ async function copyCard() {
     emit('saved', copied);
   });
 }
-function agentSaved(value: any) {
-  sessionStorage.removeItem(draftKey());
-  card.value = value;
-  sessionStorage.removeItem(draftKey());
-  emit('saved', { ...value, _workspaceId: workspace.value?.id });
-}
-async function discardWorkspace() {
-  const deletedId = workspace.value?.id;
-  const cid = workspace.value?.card || card.value.id;
-  if (deletedId) {
-    sessionStorage.removeItem(`tavern-card-draft-${deletedId}`);
-    sessionStorage.removeItem(`tavern-editor-input-${deletedId}`);
-    const key = `tavern-card-edit-active-${cid}`;
-    if (localStorage.getItem(key) === deletedId) localStorage.removeItem(key);
-  }
-  workspace.value = null;
-  agentRunning.value = false;
-  document.value = clone(card.value.document);
-  raw.value = JSON.stringify(document.value, null, 2);
-  tab.value = 'profile';
-  await act(async () => {
-    const remaining = await api(`/cards/${cid}/edits`);
-    if (!alive) return;
-    if (remaining.length) {
-      const next = await api(`/card-edits/${remaining[0].id}`);
-      if (alive) selectWorkspace(next);
-    } else if (card.value._draftOnly) {
-      emit('saved', null);
-      emit('back');
-    } else {
-      const saved = await api(`/cards/${cid}`);
-      if (!alive) return;
-      card.value = saved;
-      document.value = clone(saved.document);
-      raw.value = JSON.stringify(saved.document, null, 2);
-      notice.value = '编辑对话及其草稿已删除；已保存的角色卡保留。';
-    }
-  });
-}
-onMounted(async () => {
-  if (props.session) return;
-  await act(async () => {
-    const edits = await api(`/cards/${card.value.id}/edits`);
-    if (!alive || !edits.length) return;
-    const remembered = localStorage.getItem(`tavern-card-edit-active-${card.value.id}`);
-    const target =
-      [props.card._workspaceId, remembered].find((id) => edits.some((edit: any) => edit.id === id)) ||
-      edits[0].id;
-    const value = await api(`/card-edits/${target}`);
-    if (!alive) return;
-    const formTab = tab.value;
-    const openDirectly = !!props.card._workspaceId;
-    // Unbound manual form edits must not be copied into a different saved context.
-    const initialForm = !props.card._workspaceId && !remembered && sessionStorage.getItem(draftKey());
-    selectWorkspace(value);
-    if (initialForm && !agentRunning.value) {
-      const pending = JSON.parse(initialForm);
-      if (pending.tab !== 'agent') {
-        document.value = pending.document;
-        raw.value = pending.raw;
-      }
-    }
-    if (!openDirectly && !agentRunning.value) tab.value = formTab;
-    notice.value = '已恢复选中的编辑对话；可新建或切换独立上下文。';
-  });
-});
 async function changeTab(next: string) {
   if (next === 'agent') {
     await openAgent();
@@ -517,468 +430,444 @@ function validateJson(text: string) {
 useTimedError(error);
 </script>
 <template>
-  <section ref="editorRoot" class="editor-page" :class="{ 'agent-mode': tab === 'agent' && workspace }">
-    <CardAgentEditor
-      v-if="tab === 'agent' && workspace"
-      :key="workspace.id"
-      :workspace="workspace"
-      @changed="applyWorkspace"
-      @select-workspace="selectWorkspace"
-      @saved="agentSaved"
-      @discarded="discardWorkspace"
-      @running="
-        (value, id) => {
-          if (workspace?.id === id) agentRunning = value;
-        }
-      "
-      @back="tab = 'profile'"
-    />
-    <template v-else>
-      <div class="editor-header">
-        <div class="character-header-main">
-          <button class="quiet" @click="emit('back')">← 返回</button>
-          <div class="character-heading">
-            <CharacterPortrait
-              :src="session ? sessionPortraitUrl(session) : cardPortraitUrl(card)"
-              :name="data.name"
-              size="detail"
-              fit="contain"
-            />
-            <div>
-              <h1>{{ data.name || '角色编辑器' }}</h1>
-              <p class="muted">保留所有未编辑的扩展字段</p>
-            </div>
+  <section ref="editorRoot" class="editor-page">
+    <div class="editor-header">
+      <div class="character-header-main">
+        <button class="quiet" @click="emit('back')">← 返回</button>
+        <div class="character-heading">
+          <CharacterPortrait
+            :src="session ? sessionPortraitUrl(session) : cardPortraitUrl(card)"
+            :name="data.name"
+            size="detail"
+            fit="contain"
+          />
+          <div>
+            <h1>{{ data.name || '角色编辑器' }}</h1>
+            <p class="muted">保留所有未编辑的扩展字段</p>
           </div>
         </div>
-        <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
-          {{ props.session ? '保存对话世界书' : '保存角色' }}
-        </button>
       </div>
-      <AppNotification :message="error" />
-      <AppNotification :message="notice" />
-      <div class="editor-tabs">
-        <button
-          v-for="t in [
-            { id: 'profile', label: '角色设定' },
-            { id: 'prompts', label: '开场与提示词' },
-            { id: 'lore', label: '世界书 ' + entries.length },
-            { id: 'scripts', label: '脚本与兼容' },
-            { id: 'raw', label: '原始 JSON' },
-            { id: 'agent', label: 'Agent 编辑' },
-          ].filter((t) => !props.session || t.id === 'lore')"
-          :disabled="busy || (agentRunning && t.id !== 'agent')"
-          :class="{ active: tab === t.id }"
-          @click="changeTab(t.id)"
-        >
-          {{ t.label }}
-        </button>
-      </div>
-      <div class="editor-layout">
-        <div class="editor-fields">
-          <template v-if="tab === 'profile'"
-            ><label>角色名称<input v-model="data.name" /></label
-            ><label>角色描述<ExpandableTextarea v-model="data.description" label="角色描述" /></label
-            ><label>性格<ExpandableTextarea v-model="data.personality" label="性格" /></label
-            ><label>场景<ExpandableTextarea v-model="data.scenario" label="场景" /></label
-            ><label>作者备注<ExpandableTextarea v-model="data.creator_notes" label="作者备注" /></label
-            ><label
-              >标签（逗号分隔）<input
-                :value="data.tags?.join(', ')"
-                @change="
-                  data.tags = ($event.target as HTMLInputElement).value
-                    .split(/[,，]/)
-                    .map((x) => x.trim())
-                    .filter(Boolean)
-                " /></label
-          ></template>
-          <template v-else-if="tab === 'prompts'">
-            <p class="muted">
-              开场编号与进入故事时一致。删除后其余开场顺延，保存角色后生效；删除最后一个开场会清空内容。
-            </p>
-            <div>
-              <label>开场 1（默认）<ExpandableTextarea v-model="data.first_mes" label="开场白" /></label
-              ><button class="danger" :disabled="busy" @click="deleteGreeting(0)">删除开场 1</button>
+      <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
+        {{ props.draftMode ? '保存草稿' : props.session ? '保存对话世界书' : '保存角色' }}
+      </button>
+    </div>
+    <AppNotification :message="error" />
+    <AppNotification :message="notice" />
+    <div class="editor-tabs">
+      <button
+        v-for="t in [
+          { id: 'profile', label: '角色设定' },
+          { id: 'prompts', label: '开场与提示词' },
+          { id: 'lore', label: '世界书 ' + entries.length },
+          { id: 'scripts', label: '脚本与兼容' },
+          { id: 'raw', label: '原始 JSON' },
+          { id: 'agent', label: 'Agent 编辑' },
+        ].filter((t) => (!props.session || t.id === 'lore') && (!props.draftMode || t.id !== 'agent'))"
+        :disabled="busy || (agentRunning && t.id !== 'agent')"
+        :class="{ active: tab === t.id }"
+        @click="changeTab(t.id)"
+      >
+        {{ t.label }}
+      </button>
+    </div>
+    <div class="editor-layout">
+      <div class="editor-fields">
+        <template v-if="tab === 'profile'"
+          ><label>角色名称<input v-model="data.name" /></label
+          ><label>角色描述<ExpandableTextarea v-model="data.description" label="角色描述" /></label
+          ><label>性格<ExpandableTextarea v-model="data.personality" label="性格" /></label
+          ><label>场景<ExpandableTextarea v-model="data.scenario" label="场景" /></label
+          ><label>作者备注<ExpandableTextarea v-model="data.creator_notes" label="作者备注" /></label
+          ><label
+            >标签（逗号分隔）<input
+              :value="data.tags?.join(', ')"
+              @change="
+                data.tags = ($event.target as HTMLInputElement).value
+                  .split(/[,，]/)
+                  .map((x) => x.trim())
+                  .filter(Boolean)
+              " /></label
+        ></template>
+        <template v-else-if="tab === 'prompts'">
+          <p class="muted">
+            开场编号与进入故事时一致。删除后其余开场顺延，保存角色后生效；删除最后一个开场会清空内容。
+          </p>
+          <div>
+            <label>开场 1（默认）<ExpandableTextarea v-model="data.first_mes" label="开场白" /></label
+            ><button class="danger" :disabled="busy" @click="deleteGreeting(0)">删除开场 1</button>
+          </div>
+          <details v-for="(_, i) in data.alternate_greetings" :key="i">
+            <summary>开场 {{ i + 2 }}</summary>
+            <ExpandableTextarea v-model="data.alternate_greetings[i]" :label="'开场 ' + (i + 2)" /><button
+              class="danger"
+              :disabled="busy"
+              @click="deleteGreeting(i + 1)"
+            >
+              删除开场 {{ i + 2 }}
+            </button>
+          </details>
+          <div class="toolbar">
+            <button :disabled="busy" @click="addGreeting">＋ 添加候选开场</button
+            ><button v-if="deletedGreetings.length" :disabled="busy" @click="undoDeleteGreeting">
+              撤销删除开场白
+            </button>
+          </div>
+          <label>示例对话<ExpandableTextarea v-model="data.mes_example" label="示例对话" /></label
+          ><label>角色系统提示<ExpandableTextarea v-model="data.system_prompt" label="角色系统提示" /></label
+          ><label
+            >历史后提示<ExpandableTextarea v-model="data.post_history_instructions" label="历史后提示"
+          /></label>
+        </template>
+        <template v-else-if="tab === 'lore'"
+          ><p class="muted">
+            随对话滚动方案下，非常驻条目统一作为 system
+            紧贴用户消息前注入，首次有开场白时放在开场白前；重复命中不移动。位置、插入深度和角色字段只对常驻与
+            ST 方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
+          </p>
+          <div class="toolbar">
+            <button @click="addLore">＋ 添加条目</button
+            ><button @click="loreFile?.click()">导入世界书 JSON</button
+            ><input ref="loreFile" type="file" accept=".json" hidden @change="importLore" />
+          </div>
+          <LoreFilter :filter="loreFilter" :count="filteredLore.length" :total="entries.length" />
+          <section v-for="group in loreGroups" :key="group.id" class="lore-group">
+            <div class="lore-group-heading">
+              <div>
+                <h3>
+                  {{ group.title }} <span>{{ group.items.length }}</span>
+                </h3>
+                <p>{{ group.description }}</p>
+              </div>
             </div>
-            <details v-for="(_, i) in data.alternate_greetings" :key="i">
-              <summary>开场 {{ i + 2 }}</summary>
-              <ExpandableTextarea v-model="data.alternate_greetings[i]" :label="'开场 ' + (i + 2)" /><button
-                class="danger"
-                :disabled="busy"
-                @click="deleteGreeting(i + 1)"
+            <p v-if="!group.items.length" class="empty-small">暂无{{ group.title }}。</p>
+            <div class="lore-entry-grid">
+              <details
+                v-for="item in group.items"
+                :key="item.entry.id ?? item.entry.uid ?? item.index"
+                class="lore-editor"
+                :data-lore-id="String(item.entry.id ?? item.entry.uid ?? item.index)"
+                @click.prevent="openLore(item)"
               >
-                删除开场 {{ i + 2 }}
-              </button>
-            </details>
-            <div class="toolbar">
-              <button :disabled="busy" @click="addGreeting">＋ 添加候选开场</button
-              ><button v-if="deletedGreetings.length" :disabled="busy" @click="undoDeleteGreeting">
-                撤销删除开场白
-              </button>
+                <summary>
+                  {{ item.entry.comment || item.entry.name || '条目 ' + (item.index + 1) }}
+                  <small>{{ audiences[entryAudience(item.entry)] }}</small>
+                  <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
+                </summary>
+              </details>
             </div>
-            <label>示例对话<ExpandableTextarea v-model="data.mes_example" label="示例对话" /></label
-            ><label
-              >角色系统提示<ExpandableTextarea v-model="data.system_prompt" label="角色系统提示" /></label
-            ><label
-              >历史后提示<ExpandableTextarea v-model="data.post_history_instructions" label="历史后提示"
-            /></label>
-          </template>
-          <template v-else-if="tab === 'lore'"
-            ><p class="muted">
-              随对话滚动方案下，非常驻条目统一作为 system
-              紧贴用户消息前注入，首次有开场白时放在开场白前；重复命中不移动。位置、插入深度和角色字段只对常驻与
-              ST 方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
-            </p>
-            <div class="toolbar">
-              <button @click="addLore">＋ 添加条目</button
-              ><button @click="loreFile?.click()">导入世界书 JSON</button
-              ><input ref="loreFile" type="file" accept=".json" hidden @change="importLore" />
-            </div>
-            <LoreFilter :filter="loreFilter" :count="filteredLore.length" :total="entries.length" />
-            <section v-for="group in loreGroups" :key="group.id" class="lore-group">
-              <div class="lore-group-heading">
-                <div>
-                  <h3>
-                    {{ group.title }} <span>{{ group.items.length }}</span>
-                  </h3>
-                  <p>{{ group.description }}</p>
-                </div>
-              </div>
-              <p v-if="!group.items.length" class="empty-small">暂无{{ group.title }}。</p>
-              <div class="lore-entry-grid">
-                <details
-                  v-for="item in group.items"
-                  :key="item.entry.id ?? item.entry.uid ?? item.index"
-                  class="lore-editor"
-                  :data-lore-id="String(item.entry.id ?? item.entry.uid ?? item.index)"
-                  @click.prevent="openLore(item)"
-                >
-                  <summary>
-                    {{ item.entry.comment || item.entry.name || '条目 ' + (item.index + 1) }}
-                    <small>{{ audiences[entryAudience(item.entry)] }}</small>
-                    <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
-                  </summary>
-                </details>
-              </div>
-            </section>
-            <Teleport to="body">
-              <div v-if="loreDialog" class="modal-backdrop lore-modal-backdrop">
-                <section
-                  class="modal wide modal-large lore-entry-modal"
-                  role="dialog"
-                  aria-modal="true"
-                  :aria-label="loreDialog.mode === 'add' ? '添加世界书条目' : '编辑世界书条目'"
-                  @click.stop
-                  @keydown.esc.prevent
-                >
-                  <header class="lore-modal-header">
-                    <div>
-                      <span class="eyebrow">世界书条目</span>
-                      <h2>
-                        {{
-                          loreDialog.mode === 'add'
-                            ? '添加条目'
-                            : loreDialog.entry.comment || loreDialog.entry.name || '编辑条目'
-                        }}
-                      </h2>
-                    </div>
-                  </header>
-                  <div class="modal-scroll lore-modal-form">
-                    <div class="lore-form-grid">
-                      <label
-                        >条目 ID
-                        <FieldHelp tooltip="世界书条目的稳定标识；脚本或外部工具可能依赖它。" /><input
-                          v-model="loreDialog.entry.id" /></label
-                      ><label>条目名称<input v-model="loreDialog.entry.comment" autofocus /></label>
-                    </div>
-                    <div class="lore-checks">
-                      <label class="check"
-                        ><input
-                          type="checkbox"
-                          :checked="loreDialog.entry.enabled !== false && !loreDialog.entry.disable"
-                          @change="
-                            loreDialog.entry.enabled = ($event.target as HTMLInputElement).checked;
-                            loreDialog.entry.disable = !loreDialog.entry.enabled;
-                          "
-                        />启用</label
-                      ><label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.constant" />常驻条目</label
-                      ><label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.caseSensitive" />区分大小写</label
-                      ><label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.matchWholeWords" />全词匹配</label
-                      ><label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.use_regex" />正则触发</label
-                      >
-                    </div>
+          </section>
+          <Teleport to="body">
+            <div v-if="loreDialog" class="modal-backdrop lore-modal-backdrop">
+              <section
+                class="modal wide modal-large lore-entry-modal"
+                role="dialog"
+                aria-modal="true"
+                :aria-label="loreDialog.mode === 'add' ? '添加世界书条目' : '编辑世界书条目'"
+                @click.stop
+                @keydown.esc.prevent
+              >
+                <header class="lore-modal-header">
+                  <div>
+                    <span class="eyebrow">世界书条目</span>
+                    <h2>
+                      {{
+                        loreDialog.mode === 'add'
+                          ? '添加条目'
+                          : loreDialog.entry.comment || loreDialog.entry.name || '编辑条目'
+                      }}
+                    </h2>
+                  </div>
+                </header>
+                <div class="modal-scroll lore-modal-form">
+                  <div class="lore-form-grid">
                     <label
-                      >主触发词（逗号分隔）<input
-                        :value="listValue(loreDialog.entry.keys ?? loreDialog.entry.key)"
-                        @change="setList(loreDialog.entry, 'keys', 'key', $event)" /></label
-                    ><label
-                      >辅助触发词（逗号分隔）
-                      <FieldHelp
-                        tooltip="与主触发词一起参与选择逻辑；是否需要任一、全部或排除，由“辅助词逻辑”决定。" /><input
-                        :value="listValue(loreDialog.entry.secondary_keys ?? loreDialog.entry.keysecondary)"
+                      >条目 ID <FieldHelp tooltip="世界书条目的稳定标识；脚本或外部工具可能依赖它。" /><input
+                        v-model="loreDialog.entry.id" /></label
+                    ><label>条目名称<input v-model="loreDialog.entry.comment" autofocus /></label>
+                  </div>
+                  <div class="lore-checks">
+                    <label class="check"
+                      ><input
+                        type="checkbox"
+                        :checked="loreDialog.entry.enabled !== false && !loreDialog.entry.disable"
                         @change="
-                          setList(loreDialog.entry, 'secondary_keys', 'keysecondary', $event)
-                        " /></label
-                    ><label
-                      >内容<ExpandableTextarea v-model="loreDialog.entry.content" label="世界书内容"
-                    /></label>
-                    <div class="lore-form-grid">
-                      <label
-                        >插入顺序
-                        <FieldHelp tooltip="数值越小通常越早参与排序；相同位置的条目按此值决定先后。" /><input
-                          type="number"
-                          v-model.number="loreDialog.entry.insertion_order" /></label
-                      ><label
-                        >插入位置 <FieldHelp tooltip="滚动方案下仅常驻使用；ST 方案按此位置注入。" /><input
-                          type="number"
-                          :value="positionValue(loreDialog.entry)"
-                          @input="setPosition(loreDialog.entry, $event)" /></label
-                      ><label
-                        >插入深度
-                        <FieldHelp
-                          tooltip="相对最近历史消息向前插入的层数；0 表示放在当前上下文末端附近。" /><input
-                          type="number"
-                          min="0"
-                          v-model.number="loreDialog.entry.depth" /></label
-                      ><label
-                        >扫描深度
-                        <FieldHelp tooltip="从最近多少条历史消息中搜索触发词；0 通常只检查本轮输入。" /><input
-                          type="number"
-                          min="0"
-                          v-model.number="loreDialog.entry.scan_depth" /></label
-                      ><label
-                        >触发概率 %
-                        <FieldHelp
-                          tooltip="关键词命中后仍需通过的概率；关闭“使用概率”时按 100% 处理。" /><input
-                          type="number"
-                          min="0"
-                          max="100"
-                          v-model.number="loreDialog.entry.probability" /></label
-                      ><label
-                        >辅助词逻辑
-                        <FieldHelp
-                          tooltip="0：任一命中；1：并非全部命中；2：全部不命中；3：全部命中。"
-                        /><select v-model.number="loreDialog.entry.selectiveLogic">
-                          <option :value="0">任一命中</option>
-                          <option :value="1">并非全部</option>
-                          <option :value="2">全部不命中</option>
-                          <option :value="3">全部命中</option>
-                        </select></label
-                      ><label
-                        >恢复尺度（轮）
-                        <FieldHelp tooltip="条目离开实际正文请求后才开始计时并逐渐提高再次触发机会。" /><input
-                          type="number"
-                          min="0"
-                          v-model.number="loreDialog.entry.cooldown" /></label
-                      ><label
-                        >延迟轮数
-                        <FieldHelp tooltip="部分角色卡前端用于推迟条目生效；保留并展示该兼容参数。" /><input
-                          type="number"
-                          min="0"
-                          v-model.number="loreDialog.entry.delay" /></label
-                      ><label
-                        >消息角色
-                        <FieldHelp tooltip="条目注入模型上下文时采用的消息角色；数字枚举会原样保留。" /><input
-                          v-model="loreDialog.entry.role"
-                      /></label>
-                    </div>
-                    <div class="lore-checks">
-                      <label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.useProbability" />使用概率</label
-                      ><label class="check"
-                        ><input type="checkbox" v-model="loreDialog.entry.preventRecursion" />阻止递归</label
-                      ><label class="check"
-                        ><input
-                          type="checkbox"
-                          v-model="loreDialog.entry.excludeRecursion"
-                        />不参与递归扫描</label
-                      ><label class="check"
-                        ><input
-                          type="checkbox"
-                          v-model="loreDialog.entry.group_override"
-                        />覆盖同组条目</label
-                      >
-                    </div>
-                    <div class="lore-form-grid">
-                      <label>分组<input v-model="loreDialog.entry.group" /></label
-                      ><label
-                        >分组权重<input type="number" v-model.number="loreDialog.entry.group_weight"
-                      /></label>
-                    </div>
-                    <details class="lore-all-params">
-                      <summary>
-                        全部参数（JSON）
-                        <FieldHelp
-                          tooltip="这里完整展示该条目的原始对象，包括当前表单未单独解释的扩展字段。修改后离开文本框即可应用。"
-                        />
-                      </summary>
-                      <ExpandableTextarea
-                        :model-value="JSON.stringify(loreDialog.entry, null, 2)"
-                        label="世界书全部参数（JSON）"
-                        code
-                        :validate="validateJson"
-                        @change="replaceLoreDialogEntry($event)"
-                      />
-                    </details>
-                    <label class="lore-audience-field"
-                      >条目用途<select
-                        :value="entryAudience(loreDialog.entry)"
-                        @change="setAudience(loreDialog.entry, ($event.target as HTMLSelectElement).value)"
-                      >
-                        <option v-for="(label, key) in audiences" :key="key" :value="key">{{ label }}</option>
-                      </select></label
+                          loreDialog.entry.enabled = ($event.target as HTMLInputElement).checked;
+                          loreDialog.entry.disable = !loreDialog.entry.enabled;
+                        "
+                      />启用</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.constant" />常驻条目</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.caseSensitive" />区分大小写</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.matchWholeWords" />全词匹配</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.use_regex" />正则触发</label
                     >
                   </div>
-                  <footer class="modal-footer lore-modal-footer">
-                    <div class="lore-delete-zone" v-if="loreDialog.mode === 'edit'">
-                      <template v-if="confirmingLoreDelete">
-                        <span>确定删除此条目？</span>
-                        <button class="danger" @click="deleteLore">确认删除</button>
-                        <button @click="confirmingLoreDelete = false">保留条目</button>
-                      </template>
-                      <button v-else class="danger" @click="confirmingLoreDelete = true">删除条目</button>
-                    </div>
-                    <div class="lore-modal-actions">
-                      <button @click="closeLore">取消</button>
-                      <button class="primary" @click="confirmLore">确认</button>
-                    </div>
-                  </footer>
-                </section>
-              </div>
-            </Teleport></template
-          >
-          <template v-else-if="tab === 'scripts'">
-            <label class="check">
-              <input
-                type="checkbox"
-                :checked="card.permission"
-                :disabled="card._draftOnly"
-                @change="permission(($event.target as HTMLInputElement).checked)"
-              />允许此卡在隔离环境中执行脚本
-            </label>
-            <button :disabled="busy || !card.permission || card._draftOnly" @click="dependencies">
-              检查并缓存外部依赖
-            </button>
-            <section class="card-script-group">
-              <h3>
-                正则脚本 <small>{{ regexScripts.length }}</small>
-              </h3>
-              <p class="muted">
-                按匹配表达式处理显示文本或模型输入；状态面板的 HTML、CSS 和 JS 也可能在替换内容中。
-              </p>
-              <p v-if="!regexScripts.length" class="muted">这张卡没有正则脚本。</p>
-              <details v-for="(script, i) in regexScripts" :key="`regex-${i}`" class="card-script-entry">
-                <summary>
-                  {{ script.scriptName || script.name || '正则脚本 ' + (i + 1)
-                  }}<small v-if="script.disabled">未启用</small>
-                </summary>
-                <label>名称<input v-model="script.scriptName" /></label>
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    :checked="!script.disabled"
-                    @change="script.disabled = !($event.target as HTMLInputElement).checked"
-                  />启用</label
-                >
-                <label
-                  >匹配表达式<ExpandableTextarea
-                    v-model="script.findRegex"
-                    :label="`匹配表达式：${script.scriptName || i + 1}`"
-                    code
-                /></label>
-                <label
-                  >替换内容<ExpandableTextarea
-                    v-model="script.replaceString"
-                    :label="`替换内容：${script.scriptName || i + 1}`"
-                    code
-                /></label>
-                <div class="card-script-options">
-                  <label class="check"><input type="checkbox" v-model="script.markdownOnly" />显示阶段</label>
-                  <label class="check"
-                    ><input type="checkbox" v-model="script.promptOnly" />模型输入阶段</label
-                  >
-                  <span
-                    >应用位置：{{
-                      Array.isArray(script.placement) ? script.placement.join(', ') : '默认'
-                    }}</span
+                  <label
+                    >主触发词（逗号分隔）<input
+                      :value="listValue(loreDialog.entry.keys ?? loreDialog.entry.key)"
+                      @change="setList(loreDialog.entry, 'keys', 'key', $event)" /></label
+                  ><label
+                    >辅助触发词（逗号分隔）
+                    <FieldHelp
+                      tooltip="与主触发词一起参与选择逻辑；是否需要任一、全部或排除，由“辅助词逻辑”决定。" /><input
+                      :value="listValue(loreDialog.entry.secondary_keys ?? loreDialog.entry.keysecondary)"
+                      @change="setList(loreDialog.entry, 'secondary_keys', 'keysecondary', $event)" /></label
+                  ><label
+                    >内容<ExpandableTextarea v-model="loreDialog.entry.content" label="世界书内容"
+                  /></label>
+                  <div class="lore-form-grid">
+                    <label
+                      >插入顺序
+                      <FieldHelp tooltip="数值越小通常越早参与排序；相同位置的条目按此值决定先后。" /><input
+                        type="number"
+                        v-model.number="loreDialog.entry.insertion_order" /></label
+                    ><label
+                      >插入位置 <FieldHelp tooltip="滚动方案下仅常驻使用；ST 方案按此位置注入。" /><input
+                        type="number"
+                        :value="positionValue(loreDialog.entry)"
+                        @input="setPosition(loreDialog.entry, $event)" /></label
+                    ><label
+                      >插入深度
+                      <FieldHelp
+                        tooltip="相对最近历史消息向前插入的层数；0 表示放在当前上下文末端附近。" /><input
+                        type="number"
+                        min="0"
+                        v-model.number="loreDialog.entry.depth" /></label
+                    ><label
+                      >扫描深度
+                      <FieldHelp tooltip="从最近多少条历史消息中搜索触发词；0 通常只检查本轮输入。" /><input
+                        type="number"
+                        min="0"
+                        v-model.number="loreDialog.entry.scan_depth" /></label
+                    ><label
+                      >触发概率 %
+                      <FieldHelp tooltip="关键词命中后仍需通过的概率；关闭“使用概率”时按 100% 处理。" /><input
+                        type="number"
+                        min="0"
+                        max="100"
+                        v-model.number="loreDialog.entry.probability" /></label
+                    ><label
+                      >辅助词逻辑
+                      <FieldHelp
+                        tooltip="0：任一命中；1：并非全部命中；2：全部不命中；3：全部命中。"
+                      /><select v-model.number="loreDialog.entry.selectiveLogic">
+                        <option :value="0">任一命中</option>
+                        <option :value="1">并非全部</option>
+                        <option :value="2">全部不命中</option>
+                        <option :value="3">全部命中</option>
+                      </select></label
+                    ><label
+                      >恢复尺度（轮）
+                      <FieldHelp tooltip="条目离开实际正文请求后才开始计时并逐渐提高再次触发机会。" /><input
+                        type="number"
+                        min="0"
+                        v-model.number="loreDialog.entry.cooldown" /></label
+                    ><label
+                      >延迟轮数
+                      <FieldHelp tooltip="部分角色卡前端用于推迟条目生效；保留并展示该兼容参数。" /><input
+                        type="number"
+                        min="0"
+                        v-model.number="loreDialog.entry.delay" /></label
+                    ><label
+                      >消息角色
+                      <FieldHelp tooltip="条目注入模型上下文时采用的消息角色；数字枚举会原样保留。" /><input
+                        v-model="loreDialog.entry.role"
+                    /></label>
+                  </div>
+                  <div class="lore-checks">
+                    <label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.useProbability" />使用概率</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.preventRecursion" />阻止递归</label
+                    ><label class="check"
+                      ><input
+                        type="checkbox"
+                        v-model="loreDialog.entry.excludeRecursion"
+                      />不参与递归扫描</label
+                    ><label class="check"
+                      ><input type="checkbox" v-model="loreDialog.entry.group_override" />覆盖同组条目</label
+                    >
+                  </div>
+                  <div class="lore-form-grid">
+                    <label>分组<input v-model="loreDialog.entry.group" /></label
+                    ><label
+                      >分组权重<input type="number" v-model.number="loreDialog.entry.group_weight"
+                    /></label>
+                  </div>
+                  <details class="lore-all-params">
+                    <summary>
+                      全部参数（JSON）
+                      <FieldHelp
+                        tooltip="这里完整展示该条目的原始对象，包括当前表单未单独解释的扩展字段。修改后离开文本框即可应用。"
+                      />
+                    </summary>
+                    <ExpandableTextarea
+                      :model-value="JSON.stringify(loreDialog.entry, null, 2)"
+                      label="世界书全部参数（JSON）"
+                      code
+                      :validate="validateJson"
+                      @change="replaceLoreDialogEntry($event)"
+                    />
+                  </details>
+                  <label class="lore-audience-field"
+                    >条目用途<select
+                      :value="entryAudience(loreDialog.entry)"
+                      @change="setAudience(loreDialog.entry, ($event.target as HTMLSelectElement).value)"
+                    >
+                      <option v-for="(label, key) in audiences" :key="key" :value="key">{{ label }}</option>
+                    </select></label
                   >
                 </div>
-                <p class="muted">阶段选项只勾一项时限制为该阶段；都不勾或都勾时两个阶段均可执行。</p>
-                <details class="card-script-raw">
-                  <summary>全部参数（JSON）</summary>
-                  <ExpandableTextarea
-                    :model-value="JSON.stringify(script, null, 2)"
-                    :label="`正则脚本全部参数：${script.scriptName || i + 1}`"
-                    code
-                    :validate="validateScriptJson"
-                    @change="replaceScript(script, $event)"
-                  />
-                </details>
-              </details>
-            </section>
-            <section class="card-script-group">
-              <h3>
-                角色脚本 <small>{{ scripts.length }}</small>
-              </h3>
-              <p class="muted">
-                包含 Tavern Helper 的分组脚本与旧版脚本字段；旧版字段若被新版覆盖，仍可在此查看和编辑。
-              </p>
-              <p v-if="!scripts.length" class="muted">这张卡没有角色脚本。</p>
-              <details v-for="(item, i) in scripts" :key="item.key" class="card-script-entry">
-                <summary>
-                  {{ item.script.name || '脚本 ' + (i + 1) }}<small v-if="item.inactive">旧字段未执行</small
-                  ><small v-else-if="item.script.enabled === false">未启用</small>
-                </summary>
-                <p class="muted">{{ item.path }}</p>
-                <label>名称<input v-model="item.script.name" /></label>
-                <label class="check"
-                  ><input
-                    type="checkbox"
-                    :checked="item.script.enabled !== false"
-                    @change="item.script.enabled = ($event.target as HTMLInputElement).checked"
-                  />启用</label
-                >
-                <label
-                  >脚本内容<ExpandableTextarea
-                    v-model="item.script.content"
-                    :label="item.script.name || '脚本 ' + (i + 1)"
-                    code
-                /></label>
-                <details class="card-script-raw">
-                  <summary>全部参数（JSON）</summary>
-                  <ExpandableTextarea
-                    :model-value="JSON.stringify(item.script, null, 2)"
-                    :label="`角色脚本全部参数：${item.script.name || i + 1}`"
-                    code
-                    :validate="validateScriptJson"
-                    @change="replaceScript(item.script, $event)"
-                  />
-                </details>
-              </details>
-            </section>
-            <details class="card-script-diagnostics">
-              <summary>兼容性检查</summary>
-              <pre>{{ JSON.stringify(card.report, null, 2) }}</pre>
-            </details>
-          </template>
-          <template v-else
-            ><p class="muted">用于编辑复杂扩展与未在表单中展示的字段。</p>
-            <ExpandableTextarea v-model="raw" label="原始 JSON" code :validate="validateJson"
-          /></template>
-        </div>
-        <aside v-if="!props.session" class="editor-start">
-          <h3>角色卡管理</h3>
-          <p class="muted">开始故事请到左侧“会话”页点击“开始新故事”，选择角色卡后设置用户和开场。</p>
-          <button :disabled="busy || agentRunning || card._draftOnly" @click="copyCard">
-            复制已保存角色卡
+                <footer class="modal-footer lore-modal-footer">
+                  <div class="lore-delete-zone" v-if="loreDialog.mode === 'edit'">
+                    <template v-if="confirmingLoreDelete">
+                      <span>确定删除此条目？</span>
+                      <button class="danger" @click="deleteLore">确认删除</button>
+                      <button @click="confirmingLoreDelete = false">保留条目</button>
+                    </template>
+                    <button v-else class="danger" @click="confirmingLoreDelete = true">删除条目</button>
+                  </div>
+                  <div class="lore-modal-actions">
+                    <button @click="closeLore">取消</button>
+                    <button class="primary" @click="confirmLore">确认</button>
+                  </div>
+                </footer>
+              </section>
+            </div>
+          </Teleport></template
+        >
+        <template v-else-if="tab === 'scripts'">
+          <label class="check">
+            <input
+              type="checkbox"
+              :checked="card.permission"
+              :disabled="card._draftOnly || props.draftMode"
+              @change="permission(($event.target as HTMLInputElement).checked)"
+            />允许此卡在隔离环境中执行脚本
+          </label>
+          <button
+            :disabled="busy || !card.permission || card._draftOnly || props.draftMode"
+            @click="dependencies"
+          >
+            检查并缓存外部依赖
           </button>
-          <button :disabled="busy || agentRunning" @click="openAgent">Agent 编辑</button>
-          <a v-if="!card._draftOnly" :href="`/api/cards/${card.id}/export`">导出角色卡 ↓</a>
-        </aside>
+          <section class="card-script-group">
+            <h3>
+              正则脚本 <small>{{ regexScripts.length }}</small>
+            </h3>
+            <p class="muted">
+              按匹配表达式处理显示文本或模型输入；状态面板的 HTML、CSS 和 JS 也可能在替换内容中。
+            </p>
+            <p v-if="!regexScripts.length" class="muted">这张卡没有正则脚本。</p>
+            <details v-for="(script, i) in regexScripts" :key="`regex-${i}`" class="card-script-entry">
+              <summary>
+                {{ script.scriptName || script.name || '正则脚本 ' + (i + 1)
+                }}<small v-if="script.disabled">未启用</small>
+              </summary>
+              <label>名称<input v-model="script.scriptName" /></label>
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  :checked="!script.disabled"
+                  @change="script.disabled = !($event.target as HTMLInputElement).checked"
+                />启用</label
+              >
+              <label
+                >匹配表达式<ExpandableTextarea
+                  v-model="script.findRegex"
+                  :label="`匹配表达式：${script.scriptName || i + 1}`"
+                  code
+              /></label>
+              <label
+                >替换内容<ExpandableTextarea
+                  v-model="script.replaceString"
+                  :label="`替换内容：${script.scriptName || i + 1}`"
+                  code
+              /></label>
+              <div class="card-script-options">
+                <label class="check"><input type="checkbox" v-model="script.markdownOnly" />显示阶段</label>
+                <label class="check"><input type="checkbox" v-model="script.promptOnly" />模型输入阶段</label>
+                <span
+                  >应用位置：{{
+                    Array.isArray(script.placement) ? script.placement.join(', ') : '默认'
+                  }}</span
+                >
+              </div>
+              <p class="muted">阶段选项只勾一项时限制为该阶段；都不勾或都勾时两个阶段均可执行。</p>
+              <details class="card-script-raw">
+                <summary>全部参数（JSON）</summary>
+                <ExpandableTextarea
+                  :model-value="JSON.stringify(script, null, 2)"
+                  :label="`正则脚本全部参数：${script.scriptName || i + 1}`"
+                  code
+                  :validate="validateScriptJson"
+                  @change="replaceScript(script, $event)"
+                />
+              </details>
+            </details>
+          </section>
+          <section class="card-script-group">
+            <h3>
+              角色脚本 <small>{{ scripts.length }}</small>
+            </h3>
+            <p class="muted">
+              包含 Tavern Helper 的分组脚本与旧版脚本字段；旧版字段若被新版覆盖，仍可在此查看和编辑。
+            </p>
+            <p v-if="!scripts.length" class="muted">这张卡没有角色脚本。</p>
+            <details v-for="(item, i) in scripts" :key="item.key" class="card-script-entry">
+              <summary>
+                {{ item.script.name || '脚本 ' + (i + 1) }}<small v-if="item.inactive">旧字段未执行</small
+                ><small v-else-if="item.script.enabled === false">未启用</small>
+              </summary>
+              <p class="muted">{{ item.path }}</p>
+              <label>名称<input v-model="item.script.name" /></label>
+              <label class="check"
+                ><input
+                  type="checkbox"
+                  :checked="item.script.enabled !== false"
+                  @change="item.script.enabled = ($event.target as HTMLInputElement).checked"
+                />启用</label
+              >
+              <label
+                >脚本内容<ExpandableTextarea
+                  v-model="item.script.content"
+                  :label="item.script.name || '脚本 ' + (i + 1)"
+                  code
+              /></label>
+              <details class="card-script-raw">
+                <summary>全部参数（JSON）</summary>
+                <ExpandableTextarea
+                  :model-value="JSON.stringify(item.script, null, 2)"
+                  :label="`角色脚本全部参数：${item.script.name || i + 1}`"
+                  code
+                  :validate="validateScriptJson"
+                  @change="replaceScript(item.script, $event)"
+                />
+              </details>
+            </details>
+          </section>
+          <details class="card-script-diagnostics">
+            <summary>兼容性检查</summary>
+            <pre>{{ JSON.stringify(card.report, null, 2) }}</pre>
+          </details>
+        </template>
+        <template v-else
+          ><p class="muted">用于编辑复杂扩展与未在表单中展示的字段。</p>
+          <ExpandableTextarea v-model="raw" label="原始 JSON" code :validate="validateJson"
+        /></template>
       </div>
-    </template>
+      <aside v-if="!props.session && !props.draftMode" class="editor-start">
+        <h3>角色卡管理</h3>
+        <p class="muted">开始故事请到左侧“会话”页点击“开始新故事”，选择角色卡后设置用户和开场。</p>
+        <button :disabled="busy || agentRunning || card._draftOnly" @click="copyCard">
+          复制已保存角色卡
+        </button>
+        <button :disabled="busy || agentRunning" @click="openAgent">Agent 编辑</button>
+        <a v-if="!card._draftOnly" :href="`/api/cards/${card.id}/export`">导出角色卡 ↓</a>
+      </aside>
+    </div>
   </section>
 </template>

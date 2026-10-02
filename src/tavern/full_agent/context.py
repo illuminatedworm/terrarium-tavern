@@ -10,6 +10,7 @@ from tavern.conversation.context import (
     wrap_card_field,
     wrap_lorebook,
 )
+from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.context_ledger import ContextLedger
@@ -33,7 +34,7 @@ def load_trace(store, sid, history):
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
                    trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False,
-                   require_state_patch=False):
+                   require_state_patch=False, variable_rules=None):
     state = full_state(snapshot)
     window = state["window"]
     card = normalize(document)
@@ -107,8 +108,14 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     for message in continuation:
         replay(message)
     update("turn_variable_instruction",
-           "本轮须调用 patch_state 更新 MVU 变量一次，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
+           "本轮须调用 patch_state 更新 MVU 变量一次，无变化提交 []，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
            value={"required": True, "input_id": input_id} if require_state_patch else False)
+    if require_state_patch:
+        # Actual turns supply a durable, frozen snapshot. Read-only previews
+        # collect the same rules without marking them as already injected.
+        rules = (collect_variable_rules(document, session["persona"], snapshot.get("state", {}))
+                 if variable_rules is None else variable_rules)
+        update("mvu_rules", variable_rules_message(rules), value=rules)
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     update("turn_instruction", instruction)
     warning = ""

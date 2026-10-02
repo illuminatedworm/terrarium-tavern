@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
+from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
 from tavern.core.prompts import (
     DEFAULT_MAINTENANCE_PROMPT,
@@ -74,6 +75,7 @@ class Settings(BaseModel):
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor: ModelProfile | None = None
+    card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
     full_agent: ModelProfile | None = None
     full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
     full_agent_system_prompt: str = FULL_AGENT_PROMPT
@@ -252,10 +254,11 @@ class CardEditorCreate(BaseModel):
 
 
 class CardEditorRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=0)
     adapt: bool = False
+    resume_run_id: str | None = None
 
 
 class CardEditorRevision(BaseModel):

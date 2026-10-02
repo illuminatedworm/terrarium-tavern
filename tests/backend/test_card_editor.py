@@ -143,7 +143,9 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert all(len(e["payload"]["result"]) <= 4000 for e in ends)
         assert current["document"]["extensions"]["terrarium"]["workflow"]["greetings"][0]["initialization"]
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
-        assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_opening", "validate_draft", "read_skill"}
+        assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_opening", "validate_draft", "read_skill",
+                         "create_draft", "configure_card", "revert_draft", "test_draft", "write_checkpoint", "new_context", "search_history", "read_history",
+                         "list_personas", "read_persona", "create_persona", "update_persona"}
         saved = service.edits.save(current["id"], current["revision"], "copy", "copy-once")
         assert service.edits.save(current["id"], current["revision"], "copy", "copy-once")["id"] == saved["id"]
         current = service.edits.get(current["id"])
@@ -255,6 +257,14 @@ async def test_editor_api_conflicts_reload_and_session_lore(tmp_path):
             assert ws['document'] == draft
             result = await client.post(f"/api/card-edits/{ws['id']}/save", json={
                 'expected_revision': ws['revision'], 'operation_id': 'save', 'mode': 'overwrite'})
+            # Undoing reload also restores the old base revision, so it must
+            # not silently grant permission to overwrite the externally edited card.
+            assert result.status_code == 409
+            ws = (await client.post(f"/api/card-edits/{ws['id']}/reload", json={'expected_revision': ws['revision']})).json()
+            ws = (await client.put(f"/api/card-edits/{ws['id']}", json={
+                'document': draft, 'expected_revision': ws['revision']})).json()
+            result = await client.post(f"/api/card-edits/{ws['id']}/save", json={
+                'expected_revision': ws['revision'], 'operation_id': 'save-after-review', 'mode': 'overwrite'})
             assert result.status_code == 200, result.text
             assert store.session_card(session['id'])['document'] == card['document']
             changed = copy.deepcopy(card['document'])

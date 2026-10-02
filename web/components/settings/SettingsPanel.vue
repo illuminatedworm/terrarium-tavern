@@ -444,16 +444,42 @@ onMounted(async () => {
             :text-errors="textErrors"
           />
           <ProviderSettings v-else-if="page.key === 'providers'" v-model:providers="draft.shared.providers" />
-          <ModelProfileEditor
-            v-else-if="page.key === 'editor'"
-            :profile="draft.shared.card_editor"
-            :providers="draft.shared.providers"
-            role="card_editor"
-            label="角色卡编辑模型"
-            :effort-options="effortOptions"
-            :flush="editor.flush"
-            @checked="refreshAfterProbe"
-          />
+          <template v-else-if="page.key === 'editor'">
+            <ModelProfileEditor
+              :profile="draft.shared.card_editor"
+              :providers="draft.shared.providers"
+              role="card_editor"
+              label="角色卡编辑模型"
+              :effort-options="effortOptions"
+              :flush="editor.flush"
+              @checked="refreshAfterProbe"
+            />
+            <fieldset>
+              <legend>制卡运行</legend>
+              <label
+                >每次发送或继续的模型请求上限<input
+                  v-model.number="draft.shared.card_editor_config.max_steps"
+                  type="number"
+                  min="2"
+                  max="100"
+              /></label>
+              <label
+                >上下文提醒比例<input
+                  v-model.number="draft.shared.card_editor_config.pressure_ratio"
+                  type="number"
+                  min="0.25"
+                  max="0.9"
+                  step="0.05"
+              /></label>
+              <label
+                >创作进度上限（tokens）<input
+                  v-model.number="draft.shared.card_editor_config.checkpoint_tokens"
+                  type="number"
+                  min="128"
+                  max="16384"
+              /></label>
+            </fieldset>
+          </template>
           <LocalResourceSettings
             v-else-if="page.key === 'local'"
             :settings="draft.shared"

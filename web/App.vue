@@ -25,6 +25,7 @@ import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import CharacterEditor from './components/character/CharacterEditor.vue';
+import CardWorkspace from './components/character/CardWorkspace.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
@@ -44,6 +45,8 @@ import {
 } from './lib/contextPreview';
 
 const orphanDrafts = ref<any[]>([]);
+const cardConversations = ref<any[]>([]);
+const editorConversationId = ref('');
 const cards = ref<any[]>([]),
   sessions = ref<any[]>([]),
   session = ref<any>(null);
@@ -269,7 +272,11 @@ function showEditNotice() {
     '修改的消息已被当前记忆覆盖。现有记忆已保留；如需按修改后的内容更新，请在右侧“场景”中重新整理。';
   editNoticeTimer = setTimeout(clearEditNotice, 5000);
 }
-const sidebarSection = ref(localStorage.getItem('tavern-sidebar-section') === 'cards' ? 'cards' : 'sessions');
+const sidebarSection = ref(
+  ['cards', 'editor'].includes(localStorage.getItem('tavern-sidebar-section') || '')
+    ? localStorage.getItem('tavern-sidebar-section')!
+    : 'sessions',
+);
 const deleteBubble = ref<any>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
@@ -451,6 +458,8 @@ const contextLabels: Record<string, string> = {
   context_status: '窗口与记忆状态',
   context_budget: '窗口预算提示',
   context_warning: '原文编辑提醒',
+  mvu_rules: 'MVU 变量规则',
+  turn_variable_instruction: '本轮变量授权',
   tool_definitions: '工具定义',
   history: '历史',
   author_note: '作者注释',
@@ -575,12 +584,14 @@ async function guarded(fn: () => Promise<any>) {
   }
 }
 async function load() {
-  [cards.value, sessions.value, settings.value, orphanDrafts.value] = await Promise.all([
-    api('/cards'),
-    api('/sessions'),
-    api('/settings'),
-    api('/card-edits'),
-  ]);
+  [cards.value, sessions.value, settings.value, orphanDrafts.value, cardConversations.value] =
+    await Promise.all([
+      api('/cards'),
+      api('/sessions'),
+      api('/settings'),
+      api('/card-edits'),
+      api('/card-editor/conversations'),
+    ]);
 }
 async function refreshContextStats() {
   if (!session.value) return;
@@ -907,10 +918,44 @@ async function importCard(event: Event) {
   (event.target as HTMLInputElement).value = '';
 }
 async function openOrphanDraft(id: string) {
+  openCardAgent(id);
+}
+async function refreshCardConversations() {
+  cardConversations.value = await api('/card-editor/conversations');
+}
+function openCardAgent(id: string) {
+  abandonStoryLoad();
+  editorConversationId.value = id;
+  sidebarSection.value = 'editor';
+  pageMode.value = 'editor';
+  panel.value = '';
+  localStorage.setItem('tavern-active-card-conversation', id);
+  if (window.innerWidth < 760) layout.value.leftCollapsed = true;
+  void refreshCardConversations();
+}
+async function newCardConversation() {
   await guarded(async () => {
-    const workspace = await api(`/card-edits/${id}`);
-    showCard({ ...workspace.source, _draftOnly: true, _workspaceId: id });
+    const value = await api('/card-editor/conversations', {});
+    openCardAgent(value.id);
   });
+}
+async function manageCardAgent() {
+  await guarded(async () => {
+    await refreshCardConversations();
+    const remembered = localStorage.getItem('tavern-active-card-conversation');
+    const chosen = cardConversations.value.find((c) => c.id === remembered) || cardConversations.value[0];
+    if (chosen) openCardAgent(chosen.id);
+    else await newCardConversation();
+  });
+}
+async function cardConversationDeleted() {
+  editorConversationId.value = '';
+  await refreshCardConversations();
+  if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id);
+  else {
+    pageMode.value = '';
+    sidebarSection.value = 'editor';
+  }
 }
 async function copyLibraryCard(card: any) {
   await guarded(async () => {
@@ -1562,7 +1607,8 @@ onMounted(() => {
   guarded(async () => {
     await load();
     const last = localStorage.getItem('tavern-session');
-    if (sessions.value.some((s) => s.id === last)) await openSession(last!);
+    if (sidebarSection.value === 'editor') await manageCardAgent();
+    else if (sessions.value.some((s) => s.id === last)) await openSession(last!);
     const status = await api('/local-models');
     const enabled = [
       ...(activeSettings.value.retrieval?.channels?.includes('embedding') ? ['embedding'] : []),
@@ -1635,6 +1681,14 @@ useTimedError(error);
         >
           角色卡
         </button>
+        <button
+          role="tab"
+          :aria-selected="sidebarSection === 'editor'"
+          :class="{ active: sidebarSection === 'editor' }"
+          @click="manageCardAgent"
+        >
+          制卡
+        </button>
       </div>
       <template v-if="sidebarSection === 'sessions'"
         ><button class="new-story" :disabled="busy" @click="startNewStory">＋ 开始新故事</button>
@@ -1687,7 +1741,7 @@ useTimedError(error);
           <p v-if="!sessions.length" class="empty-small">故事开始后，会留在这里。</p>
         </nav></template
       >
-      <template v-else
+      <template v-else-if="sidebarSection === 'cards'"
         ><button class="new-story import-only" @click="importInput?.click()">↓ 导入角色卡</button
         ><input ref="importInput" type="file" accept=".json,.png,.charx" hidden @change="importCard" />
         <div class="side-label">
@@ -1732,6 +1786,34 @@ useTimedError(error);
           </button>
         </nav></template
       >
+      <template v-if="sidebarSection === 'editor'">
+        <button class="new-story" @click="newCardConversation">＋ 新制卡对话</button>
+        <div class="side-label">
+          制卡对话 <span>{{ cardConversations.length }}</span>
+        </div>
+        <nav class="session-list">
+          <button
+            v-for="conversation in cardConversations"
+            :key="conversation.id"
+            :class="{ active: conversation.id === editorConversationId }"
+            @click="openCardAgent(conversation.id)"
+          >
+            <span
+              >{{ conversation.title
+              }}<small
+                >{{ conversation.card_count }} 张资料 ·
+                {{
+                  conversation.status === 'running'
+                    ? '运行中'
+                    : conversation.resumable
+                      ? '可继续'
+                      : '已保存对话'
+                }}</small
+              ></span
+            >
+          </button>
+        </nav>
+      </template>
       <div class="sidebar-bottom">
         <button @click="pageMode = 'personas'">♙ 用户角色</button
         ><button @click="panel = 'layout'">Aa 阅读排版</button
@@ -1764,11 +1846,21 @@ useTimedError(error);
       <AppNotification :message="editNotice" />
       <AppNotification :message="memoryDiscardNotice" />
 
+      <CardWorkspace
+        v-if="pageMode === 'editor' && editorConversationId"
+        :key="editorConversationId"
+        :conversation-id="editorConversationId"
+        :library="cards"
+        @changed="refreshCardConversations"
+        @saved="load"
+        @deleted="cardConversationDeleted"
+      />
       <CharacterEditor
-        v-if="pageMode === 'card' && selected"
+        v-else-if="pageMode === 'card' && selected"
         :key="selected._editorKey || selected._workspaceId || selected.id"
         :card="selected"
         @saved="cardSaved"
+        @open-agent="openCardAgent"
         @workspace-selected="
           (id) => {
             selected = {

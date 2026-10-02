@@ -485,7 +485,7 @@ def create_app(data_dir=None):
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
                 full_settings,
                 tool_definitions(preview_request, s,
-                                 full_settings.full_agent_config, settings=full_settings),
+                                 full_settings.full_agent_config, settings=full_settings, document=document),
                 trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables,
                 instruction=f"允许修改设定：{allow_content_edit or s['policy_effective'] != 'directed'}。")
             return result, s

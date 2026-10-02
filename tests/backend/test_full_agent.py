@@ -885,7 +885,7 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     sources = [item["source"] for item in compiled["trace"]]
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
-                                          "post", "turn_instruction", "checkpoint", "context_status"]
+                                          "mvu_rules", "post", "turn_instruction", "checkpoint", "context_status"]
 
 
 @pytest.mark.parametrize("window_number, notes, expected", [

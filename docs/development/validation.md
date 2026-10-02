@@ -21,7 +21,7 @@ npm.cmd run dev
 | Full Agent | `test_full_agent.py`、`test_full_agent_tools.py`、`test_full_agent_alignment.py`；浏览器 `browser_full_agent` |
 | 工具过程和事件 | `test_full_agent_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts` |
 | 检索和窗口 | `test_hybrid_retrieval.py`、`test_conversation_lore.py`、`test_tokens.py` |
-| 角色编辑与脚本 | `test_card_editor.py`、`test_card_editor_alignment.py`、`test_runtime.py`；浏览器 `browser_card_editor`、`browser_card_scripts` |
+| 角色编辑与脚本 | `test_card_authoring.py`、`test_card_editor.py`、`test_card_editor_alignment.py`、`test_runtime.py`；浏览器 `browser_card_editor`、`browser_card_scripts` |
 | 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py` |
 | 历史界面 | `storyHistory.test.ts`；浏览器 `browser_history_navigation`、`browser_history_rendering` |
 | 存储与发行 | `test_backup.py`、`test_session_fork.py`、`test_repository_hygiene.py`、`test_release_quality.py` |
@@ -90,3 +90,7 @@ npm.cmd run build
 ZIP、清单和校验值输出到 `releases/`。[verify_release.py](../../tools/verify_release.py)可检验归档并执行干净安装；该过程会下载依赖，代理沿用调用环境中的配置。
 
 截图、原始日志、评估数据和私人回放只写入 `.cache/` 等忽略目录；可公开的脱敏调查归档到 `docs/reports/`。许可文件的版本、范围与未决发行事项见[许可与发行](licensing.md)。
+
+## Card Editor 真实模型评测
+
+`tools/evaluate_card_editor.py` 仅在明确授权后读取现有模型配置，在 `.cache/card-editor-evaluation/` 的隔离数据库中运行合成案例。`--cases core` 覆盖前三类核心场景，`--cases remaining` 覆盖其余场景。所有运行共用 `budget.json`，累计最多 60 次实际 HTTP 请求，达到上限停止并报告未验收范围。报告记录实际调用、用量、耗时和产物，创作语义仍按方案人工核对；不能用模拟工具调用或模型自评代替效果验收。

@@ -403,7 +403,8 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
         request = TurnRequest(operation_id="direct", expected_revision=session["revision"], **payload)
         actual = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
             session["snapshot"], "next", settings,
-            tool_definitions(request, session, settings.full_agent_config, settings=settings),
+            tool_definitions(request, session, settings.full_agent_config, settings=settings,
+                             document=store.session_card(session["id"])["document"]),
             trace=load_trace(store, session["id"], session["messages"]),
             require_state_patch=True, instruction="允许修改设定：True。")
         assert preview["messages"] == actual["messages"]

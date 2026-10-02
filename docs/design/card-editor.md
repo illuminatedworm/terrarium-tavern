@@ -1,69 +1,53 @@
-# 角色卡编辑工作区设计
+# Card Editor 独立创作工作区
 
-Card Editor 是独立于游玩模式的草稿编辑 Agent。它读取角色卡及编辑交互，不读取剧情、分类记忆或当前游玩变量。用户操作见[角色卡编辑指南](../guides/card-editor.md)。
+Card Editor 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-editor.md)，工具详见[协议](../reference/card-editor-tools.md)。
+
+用户明确要求时还可通过四个用户角色工具列出、读取、新增和修改 persona 名称及介绍。普通制卡不自动加载用户角色库。工具声明和系统策略限定明确意图，request_ref 必须指向本任务最新用户消息；助手提议和旧授权不能替代当前要求。
 
 ## 数据所有权
 
-| 对象 | 内容与生命周期 |
-|---|---|
-| 书架角色卡 | 已保存原文、revision、脚本权限和资源引用 |
-| 编辑工作区 | 一份独立草稿、基准卡片版本、聊天、撤销历史与保存操作记录 |
-| 编辑任务 | 单轮模型请求、工具动作、临时修改、状态和事件 |
-| 编辑上下文 | 已完成请求前缀、原生回复与可逆短编号映射 |
+schema 3 的 `card_editor_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
 
-同一张卡可以有多个工作区。新建对话从最新已保存卡片创建；沿用草稿则复制所选工作区上一次完成的草稿和基准版本，建立空聊天。运行中的临时修改不参与复制。切换工作区只改变观察对象，不取消旧任务。
+`card_editor_messages` 保存完整用户输入与最终回复，以会话内 H 编号引用；`card_editor_traces` 保存完整工具交换。`card_edit_contexts` 保存当前请求前缀、可逆编号映射和窗口状态。它们独立于可清理的动作诊断。
 
-覆盖原卡使用卡片 revision 校验。另一个工作区已保存原卡时，旧基准覆盖会冲突；草稿仍可另存。库内保存、复制或删除不修改已有故事的角色资料。
+`card_editor_progress` 保存未提交卡片集合、轮前快照、待执行调用及结果、读取记录、完整上下文和换窗进度。每个调用的修改与结果一起持久化；正式草稿只在完整最终回复和结构校验之后共同提交。
 
-## 单轮执行与提交
+用户角色 P 引用到存储身份的映射保存在会话 state，读版本和待保存修改保存在 progress。未授权任务不自动查询 persona 表。用户角色新增/修改与编辑任务完成在同一事务中提交，复用 Store.save_persona 的版本检查；卡片仍仅提交独立草稿。中断不会产生部分用户角色写入，续接保留读版本与草稿，换窗后修改须重新读取。用户撤销时仅清除待保存修改，原 persona 与已有故事快照不受影响。
 
-1. 从已完成草稿或用户当前表单建立本轮起点，记录用户编辑要求。
-2. 构造卡片概览和最近完成的编辑交互，开放受限工具。
-3. 模型读取完整字段或搜索条目，在临时文档上提交 JSON Patch，并执行静态验证。
-4. 单轮最多 12 次模型调用，最后一次仅生成说明。
-5. 成功时原子保存完整草稿、请求记录和编号映射。失败、取消或服务重启时保留上一个完成版本。
+## 执行与恢复
 
-模型不能直接保存书架卡片。它可以读取概览、完整字段、条目、内置 skill，修改草稿、迁移开场并验证结构；没有 shell、任意文件或网络浏览工具。用户审阅差异后执行覆盖或另存。
+服务层使用项目原生工具循环和共用模型传输。完整响应先落盘，再顺序执行工具并保存配对结果。原要求续接跳过已配对调用；补充要求先给未执行调用补取消结果，再追加用户消息，避免执行旧意图。
 
-SSE 是任务观察通道，断线不取消执行。前端恢复已完成交互和动作事件，按当前工作区身份隔离迟到响应；每个工作区保留自己的未发送输入。
+停止、传输失败、重启或额度耗尽保留进度。用户显式继续开启新的有界批次，默认 24 次模型请求，换窗不重置。丢弃进度不修改完成版本。运行或待续进度期间拒绝人工草稿修改、保存和引用刷新，使用会话 revision 校验。
 
-## 模型视图与连续上下文
+单卡保存另检查其原卡 base_revision，成功后更新该卡基准，不更换 C 引用。覆盖、首次创建和另存分别处理；保存 operation_id 幂等。撤销新记录同时恢复文档与保存基准，避免撤销重新载入后获得覆盖新版原卡的权限。历史旧撤销记录保留可用的原文。
 
-卡片经 `ModelView` 投影后再分页。长身份和不透明路径键映射为 @D 编号，指纹与哈希隐藏；应用 JSON Patch 前恢复真实键和身份。替换父对象、数组重排或插入时保留正确的隐藏字段，未知编号和隐藏字段修改被拒绝。详细约束见[模型数据边界](model-data-boundary.md)。
+## 请求编译与工具边界
 
-每个编辑对话有稳定的会话 UUID，每轮有独立请求操作身份。Responses 路由状态仅在该轮工具续答中复用；Anthropic 原生内容块与 Responses 输出保留顺序、工具 ID、签名和加密推理。
+系统说明和严格 schema 由固定目录维护，动态卡片概览、确认方案、checkpoint 只在变化时追加。工具说明、只读预览和模型请求使用同一注册表。读取结果完整投影后发送；日志摘要长度不影响模型正文。
 
-已发送内容保持顺序，工具结果和变化后的草稿概览追加到末尾。未变化的概览不重发。已完成上下文与草稿一起持久保存，刷新、重启、诊断日志清理及备份恢复均保留它。
+模型用 C 编号定位卡片，H 编号读取编辑历史，用 @D 处理文档内部不透明身份。ModelView 恢复路径和身份、保留隐藏字段；数据库 ID、指纹和密钥不作为模型业务字段。已有读取覆盖修改子树；旧单卡接口为兼容既有调用可补唯一卡片编号。
 
-以下变化使原记录不再适合续答，需要重建基线：模型、提供商或认证改变；固定指令改变；最近交互窗口改变；手工草稿改变；新输入中的字面短编号与旧映射冲突。旧记录缺失时，从可用聊天和草稿建立基线。新建对话不复制旧上下文，删除工作区时同步删除。缓存标记只覆盖固定系统前缀，命中情况见[缓存设计](cache-control.md)。
+新卡先讨论方案再制作，或接受明确的直接制作要求。create_draft 校验方案/确认引用的会话、角色和先后关系，保存原文；确认的语义由 Agent 根据真实用户消息判断。目标模式单独记录，普通文本卡不强制引入项目扩展。
 
-## 工作流适配
+## 长对话
 
-“适配本项目工作流”使用随包提供的 [adapt-card-to-tavern](../../src/tavern/skills/adapt-card-to-tavern/SKILL.md)。普通润色不自动触发适配。适配目标是区分叙事设定、Tracker 的变量规则和确定性初始化；用途字段见[角色卡编辑指南](../guides/card-editor.md#世界书用途与初始化)。
+不按固定运行记录数量删旧上下文。到配置的 70% 比例提醒，达到窗口上限只接受单独 new_context；混合换窗批次不执行。token 估算包括工具定义和原生续答。
 
-混合叙事和变量规则的世界书条目需要拆分：原叙事保留原 ID，新规则记录 `split_from`；未知扩展、schema 和校验回调保留。无法可靠处理的动态脚本保持原状并列入人工检查项。
+换窗保存 checkpoint，保留确认方案、卡片目录、当前任务输入和最近两轮完整用户/最终回复，旧工具交换一起退出。原文仍可通过 history 工具读取。模型或协议变化重建兼容上下文；恢复时维持卡片和文档引用含义。单个已选原文不截断、分页或摘要替代。
 
-默认适配不修改开场、内联 MVU 初始化／更新块或配套的提示词过滤和状态栏正则，也不要求创建 `extensions.terrarium.workflow`。用户明确要求迁移开场时才使用 `set_opening`，由程序维护稳定身份和正文指纹。
+## 本地沙盒
 
-显式迁移只接受 InitVar YAML、JSON Patch 和受限 MVU 数据指令，不执行模型生成的任意 JavaScript。世界书提供默认值，所选开场 InitVar 值覆盖它，再执行独立开场更新。静态验证检查结构和分流规则，不证明动态脚本的语义等价。
+`test_draft` 复用 ScriptRuntime，用临时状态启动一个指定开场，检查初始化、脚本启动及正则样例；浏览器上下文禁止网络，宿主只接受本地日志/事件，不开放额外模型调用。不解析下载新依赖，不修改故事、脚本权限或卡片。缺失模块、超时、执行错误和未测项目分别报告。
 
-## API、保存与删除
+两种模式共用 writer 叙事、tracker_mvu 变量规则与 runtime_init 初始化的分流及静态检查。普通制卡和 MVU 设计不要求目标模式；可选 target_mode 只记录用户的兼容性目标，特殊脚本能力影响方案时才需明确。共用 runtime-guide.md 与适配资料解释执行差异，不为 Full Agent 另设规则迁移流程。普通开场更新保留已有初始化，只有显式初始化参数才进行独立关联操作。
 
-| 入口 | 用途 |
-|---|---|
-| `POST /api/cards/{cid}/copy` | 复制已保存卡片 |
-| `/api/cards/{cid}/edits`、`/api/card-edits/{id}` | 创建、恢复、更新、撤销和保存工作区 |
-| `POST /api/card-edits/{id}/new-context` | 通过 `expected_revision` 校验，从已完成草稿创建空上下文 |
-| `/api/card-edit-runs/{id}` | 观察编辑任务 |
-| `/api/card-edit-runs/{id}/activity?after=序号` | 分页读取动作记录 |
-| `/api/card-edit-runs/{id}/events` | SSE 观察与重连 |
+## API 与迁移
 
-卡片更新使用 `expected_revision`。保存指定 `overwrite/copy` 及 `operation_id`，防止重试重复创建副本。先保存再删除工作区的操作还会核对草稿版本；保存失败、原卡冲突或草稿再次改变时不继续删除。
+主入口 `/api/card-editor/conversations` 提供列表、创建、读取、改名与删除；其下 references、drafts、runs、progress、tools、preview 分别处理引用、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
 
-工作区、聊天、撤销历史与资源引用随 SQLite 备份。运行中的任务阻止备份和清理；未保存草稿不自动清除。已保存工作区的详细诊断事件按日志保留策略清理，但完成的编辑上下文独立保存。删除原卡后，草稿可继续另存副本。只有失去全部引用的资源才可回收。
+旧 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层；多卡操作必须明确目标。旧 new-context 只复制完成的单卡草稿，不复制旧聊天或未提交修改。
 
-## 前端与验证入口
+打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，最后写入 schema 3。旧程序因此在写入前拒绝打开新格式。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
 
-[CardAgentEditor.vue](../../web/components/character/CardAgentEditor.vue) 展示编辑聊天、角色数据树、诊断和差异。动作记录包括开始、完成与失败，预览最多 4000 字符，不将完整模型请求加入动作列表。数据树按需渲染，运行中显示上次完成的草稿。
-
-后端入口为 [card_editor.py](../../src/tavern/character/card_editor.py)、[card_editor_store.py](../../src/tavern/character/card_editor_store.py)、[card_editor_context.py](../../src/tavern/character/card_editor_context.py) 与 [card_editor_api.py](../../src/tavern/character/card_editor_api.py)。重点回归为草稿原子性、并发保存、短编号恢复、工作区隔离和资源引用，见 [test_card_editor.py](../../tests/backend/test_card_editor.py)、[test_card_editor_alignment.py](../../tests/backend/test_card_editor_alignment.py)。
+界面：[CardWorkspace.vue](../../web/components/character/CardWorkspace.vue)。运行和上下文：[editor_run.py](../../src/tavern/character/editor_run.py)、[editor_context.py](../../src/tavern/character/editor_context.py)。回归：[test_card_authoring.py](../../tests/backend/test_card_authoring.py)、[test_card_editor_alignment.py](../../tests/backend/test_card_editor_alignment.py)、[浏览器验收](../../tests/browser/browser_card_authoring.py)。真实模型评测显式运行 tools/evaluate_card_editor.py，使用隔离数据与累计 60 请求计数，报告仅保存到忽略目录。

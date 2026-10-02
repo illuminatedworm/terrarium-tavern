@@ -2,8 +2,8 @@ import json
 
 import httpx
 
-from tavern.scripting.dependencies import Dependencies
 from tavern.core.models import SessionCreate
+from tavern.scripting.dependencies import Dependencies
 from tavern.storage.store import Store
 
 

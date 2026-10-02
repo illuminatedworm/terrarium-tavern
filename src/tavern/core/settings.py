@@ -6,6 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
@@ -129,6 +130,7 @@ class LocalResources(StrictSettings):
 class SharedSettings(StrictSettings):
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
     local_models: LocalResources = Field(default_factory=LocalResources)
     network: Network = Field(default_factory=Network)
     log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)

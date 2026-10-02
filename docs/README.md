@@ -27,6 +27,7 @@
 | Half Agent 分类记忆与来源协议 | [记忆一致性](design/memory-consistency.md) |
 | Full Agent 窗口、笔记与恢复 | [Full Agent 架构](design/full-agent.md) |
 | 编辑草稿、连续上下文与保存 | [角色卡编辑设计](design/card-editor.md) |
+| 制卡工具、引用与续接接口 | [Card Editor 工具协议](reference/card-editor-tools.md) |
 | 缓存断点、传输记录和对象生命周期 | [缓存控制](design/cache-control.md) |
 | 跟进间隔和目标位置的成本取舍 | [缓存成本模型](design/cache-cost.md) |
 | 模型可见数据、短编号与可逆编辑 | [模型数据边界](design/model-data-boundary.md) |

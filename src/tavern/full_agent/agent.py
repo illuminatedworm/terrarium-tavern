@@ -9,6 +9,7 @@ import jsonpointer
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
+from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.full_agent.context import compile_window, load_trace
@@ -45,6 +46,12 @@ class FullAgent:
         self.must_rollover = False
         self.exiting = set()
         self.patch_state_done = False
+        # Keep macro values and rule edits stable across tools, rollovers and
+        # failed-request resumes. The next turn takes a fresh rule snapshot.
+        self.variable_rules = (copy.deepcopy(progress["variable_rules"])
+            if progress is not None and "variable_rules" in progress else
+            collect_variable_rules(document, session["persona"], snapshot["state"])
+            if request.update_variables else None)
         self.resumed = progress is not None
         self.final_response = None
         self.context_epoch = ""
@@ -85,6 +92,7 @@ class FullAgent:
             "continuation": self.continuation, "new_trace": self.new_trace,
             "retrieval_query": self.retrieval_query, "must_rollover": self.must_rollover,
             "patch_state_done": self.patch_state_done,
+            "variable_rules": self.variable_rules,
             "exiting": sorted(self.exiting), "read_sources": self.tools.read_sources,
             "note_reads": [list(key) for key in self.tools.note_reads],
             "request_context": self.request_context.saved(),
@@ -144,7 +152,7 @@ class FullAgent:
                 "\n" + self.settings.regenerate_prompt + "\n" + self.request.regenerate_note
                 if self.request.regenerate_note else ""),
             calls=self.calls, force_rollover=self.must_rollover,
-            require_state_patch=self.request.update_variables)
+            require_state_patch=self.request.update_variables, variable_rules=self.variable_rules)
         self.must_rollover = result["rollover_required"]
         self.context_epoch = result["context_ledger"]["epoch"]
         self.native_epoch = result["context_ledger"]["native_epoch"]

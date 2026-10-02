@@ -154,10 +154,10 @@ class ModelView:
         # New lore IDs are assigned by Runtime. Existing implicit-index entries
         # are left alone unless they were actually changed or newly introduced.
         old_data = document.get("data", document) if document.get("spec") else document
-        old_entries = old_data.get("character_book", {}).get("entries", [])
+        old_entries = (old_data.get("character_book") or {}).get("entries", [])
         old_entries = list(old_entries.values()) if isinstance(old_entries, dict) else old_entries
         new_data = result.get("data", result) if result.get("spec") else result
-        new_entries = new_data.get("character_book", {}).get("entries", [])
+        new_entries = (new_data.get("character_book") or {}).get("entries", [])
         new_entries = list(new_entries.values()) if isinstance(new_entries, dict) else new_entries
         for entry in new_entries:
             if "id" not in entry and not any(entry == old for old in old_entries):

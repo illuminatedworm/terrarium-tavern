@@ -18,12 +18,14 @@
 | `write_note` | `key`、`content`、`kind`，可选 `sources` | 新增或完整替换；覆盖前必须在本回合当前窗口读取现有版本 |
 | `archive_note` | `key` | 从普通搜索中归档，仍可按键读取 |
 | `read_state` | `path=""` | 点分路径，空值读取全部剧情状态；包含 MVU 时使用 `stat_data` 前缀 |
-| `patch_state` | `operations`、`reason` | 本轮授权后提交一次 MVU 补丁；路径相对于 `stat_data` |
+| `patch_state` | `operations`、`reason` | 本轮授权后提交一次 MVU 补丁；路径相对于 `stat_data`，无变化提交 `[]`，成功后不可重复 |
 | `read_character` | `ref` | 读取规范化角色数据的一个顶层字段，如 `description` 或 `character_book` |
 | `revise_content` | `operations`、`reason` | 修改授权的对话级角色卡／世界书草稿 |
 | `set_retrieval_query` | `query` | 保存下一轮自动检索线索，不写入剧情正文 |
 
 查询文本最长 1000 字符；读取引用和笔记键最长 80 字符。笔记键可使用字母、数字、下划线、中文、斜线、连字符、空格和点。checkpoint 和笔记正文还限制为最多 64000 字符，补丁理由最多 1000 字符。正文同时受配置中的 token 上限约束，见[工具与记忆设置](../guides/full-agent.md#工具与记忆设置)。
+
+`patch_state.operations` 接受 0–100 项，`revise_content.operations` 仍为 1–100 项。变量规则由运行时以 `<mvu_rules>` 完整快照按需追加，全部启用的 tracker_mvu 条目均参与，不走叙事检索筛选。遵循最新快照并用 read_state 核对当前值；规则文本不改变本轮权限或正文协议。
 
 历史和笔记工具只按文本检索，不检索旧工具交换。世界书没有独立 `read_lore` 工具；可选的 L 编号仅标识搜索结果和已经在场的资料，不是读取参数。
 

@@ -74,7 +74,7 @@ Content-Type: application/json
 
 数据库 schema 与设置文档当前都为 2；剧情快照中的 `memory_document.version` 为 1，属于独立的数据格式。
 
-打开 schema 1 数据库时，存储层先只读检查版本和配置，再在数据目录生成 `settings-before-v2-*.sqlite3` 备份，随后迁移设置并写入 schema 2。未知数据库版本在执行建表操作前被拒绝。
+打开 schema 1 数据库时，存储层先只读检查版本和配置，再在数据目录生成 `settings-before-v2-*.sqlite3` 备份，随后迁移设置；编辑工作区事务迁移完成后写入 schema 3。schema 1/2 升级前另生成 `before-card-editor-v3-*.sqlite3` 备份，旧编辑对话保持原身份。未知数据库版本在执行建表操作前被拒绝。
 
 迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的 Card Editor 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移范围是设置和数据库格式，不代表任意历史程序版本的对话语义都受支持。
 

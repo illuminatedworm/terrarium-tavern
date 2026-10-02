@@ -168,6 +168,11 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             text, expected = "保留字面量 @D1", "literal_handle_collision"
         run = await editor.run([blocks("responses", "已处理")], text)
         events = editor.service.edits.events(run["id"])
+        if change == "history":
+            # Failed attempts no longer evict complete history after seven rows.
+            assert not any(e["kind"] == "context_baseline" for e in events)
+            assert editor.service.edits.context(editor.workspace["id"])["epoch"] == before["epoch"]
+            return
         assert next(e["payload"]["rebuild_reason"] for e in events if e["kind"] == "context_baseline") == expected
         assert editor.service.edits.context(editor.workspace["id"])["epoch"] != before["epoch"]
         assert "encrypted_content" not in json.dumps(editor.wire(editor.requests[-1]))
@@ -211,7 +216,8 @@ async def test_editor_context_commits_atomically_and_survives_cleanup_backup(tmp
         backup(store, tmp_path / "backup.zip")
         restored = CardEditorService(restore(tmp_path / "backup.zip", tmp_path / "restored"))
         assert restored.edits.context(ws["id"]) == saved
-        restored.edits.delete(ws["id"], 0)
+        restored.edits.discard(ws["id"], 0)
+        restored.edits.delete(ws["id"], 1)
         assert restored.edits.context(ws["id"]) is None
         await restored.close()
     finally:
