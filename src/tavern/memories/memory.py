@@ -59,8 +59,18 @@ class Tracker:
     """
 
     async def maintain(self, turn_agent, provider=None):
-        """Run Tracker tool mode on the shared draft when Runtime authorizes it."""
-        return await turn_agent._run(provider, maintenance=True)
+        """Compatibility adapter; Tracker never uses the Writer compiler."""
+        from tavern.tracker.task import TrackerTask
+        task = TrackerTask(self.store, turn_agent.tid, turn_agent.settings, turn_agent.session,
+            turn_agent.document, turn_agent.history, turn_agent.snapshot, phase="pre",
+            user_input=turn_agent.request.text, content=turn_agent.request.allow_content_edit,
+            provider=provider, history_budget=turn_agent.history_recall_budget,
+            contexts=turn_agent.operation_contexts)
+        await task.run()
+        turn_agent.document = task.document
+        turn_agent.snapshot.clear()
+        turn_agent.snapshot.update(task.snapshot)
+        return task.summary
 
     def __init__(self, store):
         self.store = store

@@ -11,6 +11,7 @@ from tavern.core.prompts import (
     DEFAULT_PROBE_PROMPT,
     DEFAULT_REGENERATE_PROMPT,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_TRACKER_PROMPT,
 )
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import (
@@ -98,8 +99,12 @@ class Settings(BaseModel):
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     api_key: str = Field(default="", exclude=True)
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
+    # Compatibility fields for old flat profiles; production Tracker uses the
+    # unified prompt below. Persisted HalfSettings migrates these fields away.
     memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
     maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
+    tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
+    tracker_max_steps: int = Field(default=8, ge=2, le=100, strict=True)
     preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
     regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
     probe_system_prompt: str = DEFAULT_PROBE_PROMPT

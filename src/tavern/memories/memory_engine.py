@@ -192,7 +192,8 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
         if action == "merge":
             for other in op.get("merge_ids", []):
                 target = by_id.get(other)
-                if other == rid or not target or target.get("manual") or target["status"] == "deleted":
+                if (other == rid or not target or target.get("manual") or target.get("source_stale")
+                        or target["status"] == "deleted"):
                     raise ValueError("合并来源无效或受手工保护")
                 target["status"] = "superseded"
         if old:
@@ -208,7 +209,7 @@ def _messages(memory, original, expanded, start, end, evidence, settings, docume
     beginning = context_start(expanded, start)
     references = References()
     previous = references.previous(memory)
-    instruction = settings.memory_system_prompt
+    instruction = settings.tracker_system_prompt
     if document is not None and persona is not None:
         # Preserve custom prompt macros, evaluated at this batch's boundary,
         # not with a later snapshot that would leak future changes into history.
@@ -226,7 +227,9 @@ def _messages(memory, original, expanded, start, end, evidence, settings, docume
             "evidence": references.evidence(evidence),
             "capacity_tokens": settings.memory_capacity_tokens,
         }, ensure_ascii=False)},
-    ], references)
+    ], references, {"memory": copy.deepcopy(memory), "originals": {m["id"]: m for m in original},
+                    "expanded": {m["id"]: m for m in expanded[beginning:end]}, "evidence": evidence,
+                    "fresh_ids": {m["id"] for m in expanded[start:end]}, "review_ids": None})
 
 
 def plan_batch(history, expanded, start, memory, document, settings, persona=None):
@@ -281,8 +284,9 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
         response = await generate(messages, phase="memory", output_tokens=settings.memory_output_tokens)
         if count_text(response, settings) > settings.memory_output_tokens:
             raise ValueError("记忆模型响应超过整理输出上限")
-        parsed = messages.references.resolve(parse_json(response),
-            on_invalid=lambda p: event("memory_records_discarded", p))
+        parsed = (copy.deepcopy(response.resolved) if hasattr(response, "resolved") else
+                  messages.references.resolve(parse_json(response),
+                      on_invalid=lambda p: event("memory_records_discarded", p)))
         event("memory_batch_completed", {"purpose": "memory", "duration_s": time.perf_counter() - begun,
                                          "covered_count": end})
         beginning = context_start(expanded, start)
@@ -338,7 +342,10 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
                     # when the user has customized the memory instructions.
                     review = MemoryRequest([
                         {"role": "system", "content": messages[0]["content"] + "\n\n" + REVIEW_PROTOCOL},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], refs)
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], refs,
+                        {"memory": copy.deepcopy(memory), "originals": originals, "expanded": supplied,
+                         "evidence": evidence + extra, "fresh_ids": fresh,
+                         "review_ids": {r["id"] for r in targets}})
                     if request_tokens(review, settings, [HISTORY_TOOL]) > settings.memory_input_tokens:
                         event("context_warning", {"purpose": "memory_review",
                                                   "message": "记忆复核估算超出输入预算，仍完整发送"})
@@ -349,7 +356,8 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
                         review_text = await generate(review, phase="memory_review",
                                                      output_tokens=min(2048, settings.memory_output_tokens))
                         _merge_history_sources(supplied, getattr(review_text, "history_sources", {}))
-                        response = refs.resolve(parse_json(review_text))
+                        response = (copy.deepcopy(review_text.resolved) if hasattr(review_text, "resolved")
+                                    else refs.resolve(parse_json(review_text)))
                         if response.get("questions"):
                             raise ValueError("疑难复核不能再次请求核验")
                         memory = apply_operations(memory, response, originals, supplied, evidence + extra,

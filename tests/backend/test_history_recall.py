@@ -16,7 +16,7 @@ from tavern.memories.history_recall import (
     complete_with_recall,
 )
 from tavern.memories.memory_engine import CallBudget, apply_operations, consolidate
-from tavern.scripting.agent import Writer, make_provider
+from tavern.scripting.agent import make_provider
 
 
 def history():
@@ -227,21 +227,19 @@ async def test_provider_request_timeout_is_opt_out_per_call():
 
 
 async def test_maintenance_alias_shares_the_actual_recall_budget(tmp_path):
-    from tavern.core.models import SessionCreate, TurnRequest
+    from tavern.core.models import SessionCreate
     from tavern.storage.store import Store
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"a","first_mes":"hello"}', 'c.json')
     session = store.new_session(SessionCreate(card_id=card["id"]))
-    agent = Writer(store, "test", {}, session, session["messages"], session["snapshot"],
-                   TurnRequest(text="next", operation_id="a", expected_revision=0), None)
-    registered = {tool.tool_name: tool for tool in agent.tools()}
-    for name, args in [("tavern_recall_history", {"query": "hello"}), ("tavern_recall_history", {"turn": 1}),
-                       ("tavern_recall_history", {"query": "not-found"})]:
-        result = await registered[name].execute(args)
-        assert result.success
-    denied = await registered["tavern_recall_history"].execute({"turn": 1})
-    assert "3次上限" in denied.get_text_output()
-    assert agent.history_recall_budget.calls == 3
+    from tavern.tracker.task import TrackerTask
+    agent = TrackerTask(store, "test", store.settings(), session, card["document"], session["messages"],
+                        session["snapshot"], phase="pre")
+    for args in ({"query": "hello"}, {"turn": 1}, {"query": "not-found"}):
+        assert isinstance(agent.execute("tavern_recall_history", args), dict)
+    denied = agent.execute("tavern_recall_history", {"turn": 1})
+    assert "3次上限" in denied["notice"]
+    assert agent.history_budget.calls == 3
 
 
 async def test_manual_runtime_logs_each_model_request_once_and_commits_only_final(tmp_path):
@@ -252,7 +250,7 @@ async def test_manual_runtime_logs_each_model_request_once_and_commits_only_fina
     card = store.import_card('{"name":"艾琳","first_mes":"艾琳借出银戒。"}'.encode(), 'c.json')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = Provider([("", [call(1, {"query": "银戒"})]), ("", [call(2, {"turn": 1, "radius": 0})]),
-                         ("", [call(3, {"query": "承诺"})]), ('{"operations":[],"questions":[]}', [])])
+                         ("", [call(3, {"query": "承诺"})]), ('', [NativeToolCall('write', 'write_memory', '{"operations":[],"questions":[]}')]), ('done', [])])
     service.memory_provider_factory = lambda: provider
     try:
         turn = service.submit(session["id"], TurnRequest(operation_id="rebuild", expected_revision=0, scene_refresh="memory"))
@@ -260,7 +258,7 @@ async def test_manual_runtime_logs_each_model_request_once_and_commits_only_fina
         assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])["error"]
         events = store.events(turn["id"])
         assert [e["payload"]["used"] for e in events if e["kind"] == "memory_history_recall"] == [1, 2, 3]
-        assert len([e for e in events if e["kind"] == "usage"]) == 4
+        assert len([e for e in events if e["kind"] == "usage"]) == 5
         assert len([e for e in events if e["kind"] == "committed"]) == 1
         assert store.session(session["id"])["snapshot"]["memory_archive"]["covered_count"] == 1
     finally:

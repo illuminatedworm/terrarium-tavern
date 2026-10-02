@@ -55,6 +55,12 @@ class Store:
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
                     migrated = validated_settings
+                elif ("tracker_system_prompt" not in raw.get("half_agent", {})
+                      or any(key in raw.get("half_agent", {}) for key in ("memory_system_prompt", "maintenance_system_prompt"))):
+                    backup_path = root / f"settings-before-tracker-{uuid.uuid4().hex[:12]}.sqlite3"
+                    with closing(sqlite3.connect(backup_path)) as backup_db:
+                        db.backup(backup_db)
+                    migrated = validated_settings
                 elif validated_settings.model_dump() != raw:
                     migrated = validated_settings
         (root / "blobs").mkdir(parents=True, exist_ok=True)

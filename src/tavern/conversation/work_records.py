@@ -3,6 +3,8 @@
 import json
 
 LABELS = {
+    "tracker_started": "Tracker 任务开始", "tracker_completed": "Tracker 任务完成",
+    "tracker_tool": "Tracker 工具", "tracker_failed": "Tracker 任务失败",
     "provider_response": "模型原生响应",
     "full_agent_response": "模型响应", "full_agent_assistant": "Agent 中间回复",
     "full_agent_tool_started": "工具调用开始",
@@ -44,7 +46,9 @@ def background_records(events):
             phase = "narrative"
             continue
         purpose = payload.get("purpose", phase if kind == "activity" else "runtime")
-        if kind in ("memory_chunk", "memory_ready", "memory_failed", "memory_window_reset", "memory_retention",
+        if purpose.startswith("tracker_"):
+            pass  # Keep task phase alongside the tool/event's semantic category.
+        elif kind in ("memory_chunk", "memory_ready", "memory_failed", "memory_window_reset", "memory_retention",
                     "memory_tombstone_suppressed"):
             purpose = "memory"
         elif kind in ("state_proposal", "content_proposal", "maintenance_started", "maintenance_completed"):
@@ -67,6 +71,12 @@ def compact_record(event):
     kind = event["kind"]
     label = LABELS.get(kind, kind)
     description = payload.get("message") or payload.get("reason") or ""
+    if kind == "tracker_tool":
+        label = {"write_memory": "文本记忆写入", "revise_content": "对话级角色卡修改",
+                 "patch_state": "MVU 补丁暂存"}.get(payload.get("name"), payload.get("name", label))
+        result = payload.get("result")
+        if isinstance(result, dict):
+            description = result.get("error") or result.get("notice", "")
     if kind == "provider_request":
         description = f"{payload.get('model', '')} · {len(payload.get('messages', []))} 条输入 · {len(payload.get('tools', []))} 个工具"
     if kind == "activity":

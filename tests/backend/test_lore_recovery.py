@@ -4,7 +4,6 @@ import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from kohakuterrarium.llm.base import NativeToolCall
 from kohakuterrarium.testing.llm import ScriptedLLM, ScriptEntry
 
 from tavern.application.api import create_app
@@ -306,37 +305,21 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
 async def test_maintenance_compilation_does_not_consume_narrative_usage(story):
     store, initial = story
 
-    class MaintenanceLLM(ScriptedLLM):
-        native = []
-
-        @property
-        def last_tool_calls(self):
-            return self.native
-
-        async def chat(self, messages, **kwargs):
-            self.call_log.append(messages)
-            if self.call_count == 0:
-                self.native = [NativeToolCall(id="edit", name="revise_content", arguments=json.dumps({
-                    "operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
-                    "reason": "停用条目",
-                }))]
-                self.call_count += 1
-                yield ""
-            else:
-                self.native = []
-                self.call_count += 1
-                yield "维护完成" if self.call_count == 2 else "正文"
-
-    provider = MaintenanceLLM()
+    from tests.support.tracker_model import TrackerModel
+    provider = TrackerModel(("search_lore", {"query": "灯塔"}),
+        ("revise_content", {"operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
+                            "reason": "停用条目"}), "维护完成", "后置检查完成")
+    writer = ScriptedLLM(["正文"])
     service = RoleplayRuntime(store)
-    service.provider_factory = lambda: provider
+    service.provider_factory = lambda: writer
+    service.tracker_provider_factory = lambda: provider
     try:
         turn = await send(service, initial, allow_content_edit=True)
         assert turn["status"] == "committed", turn["error"]
         assert store.session(initial["id"])["snapshot"]["lore"] == {}
-        assert provider.call_count == 3
-        assert any("灯塔设定" in str(m.get("content")) for m in provider.call_log[0])
-        assert all("灯塔设定" not in str(m.get("content")) for m in provider.call_log[-1])
+        assert provider.call_count == 4 and writer.call_count == 1
+        assert any("灯塔设定" in str(m.get("content")) for m in provider.call_log[1])
+        assert all("灯塔设定" not in str(m.get("content")) for m in writer.last_messages)
     finally:
         await service.close()
 

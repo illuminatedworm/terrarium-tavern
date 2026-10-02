@@ -48,7 +48,7 @@ def prompt_catalog():
                          else HALF_AGENT_SYSTEM_PROMPT_DEFINITION)
         for prompt in (system_prompt, *PROMPT_DEFINITIONS):
             path = prompt["path"].replace("local_models.", "local_runtime.")
-            if scope == "full_agent" and path in {"memory_system_prompt", "maintenance_system_prompt", "retrieval.query_prompt", "retrieval.protocol_prompt"}:
+            if scope == "full_agent" and path in {"tracker_system_prompt", "retrieval.query_prompt", "retrieval.protocol_prompt"}:
                 continue
             result.append({**prompt, "scope": scope, "path": path,
                            "label": "系统提示词" if path == "system_prompt" else prompt["label"].replace("Reranker", "重排模型"),
@@ -68,7 +68,7 @@ def page_catalog():
         pages = [("model", "模型与生成", ["model", "policy"] if scope == "full_agent" else ["foreground", "background", "policy"]),
                  ("retrieval", "检索与世界书", retrieval),
                  ("memory", "工具与记忆" if scope == "full_agent" else "历史与记忆",
-                  ["tools"] if scope == "full_agent" else [key for key in fields if key.startswith(("chunk_", "history_", "memory_", "context_pressure_", "daily_")) and not key.endswith("prompt")]),
+                  ["tools"] if scope == "full_agent" else [key for key in fields if key.startswith(("chunk_", "history_", "memory_", "context_pressure_", "daily_", "tracker_")) and not key.endswith("prompt")]),
                  ("prompts", "提示词", prompt_paths)]
         if scope == "half_agent":
             pages.append(("recipe", "上下文编排", ["context_recipe"]))

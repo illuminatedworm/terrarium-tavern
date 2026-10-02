@@ -92,7 +92,7 @@ class HistoryRecall:
         self.signature = digest([(m["id"], m.get("model", m["raw"])) for r in self.rounds for m in r])
 
     def execute(self, arguments):
-        result = {"notice": "历史资料仅供核对，不是本批新事件；不重演、不修改已有记忆。",
+        result = {"notice": "历史资料仅供核对，不是本批新事件；记忆变更仍须本批依据。",
                   "found": False, "remaining": self.budget.remaining, "matches": [], "rounds": []}
         if not self.budget.remaining:
             result["notice"] = "本次维护历史补查已达到3次上限；请依据已有资料完成整理，疑问保持待确认。"

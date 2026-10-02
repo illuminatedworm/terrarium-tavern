@@ -9,14 +9,14 @@ Vue → FastAPI → Roleplay Runtime → Writer / Tracker / 隔离 Chromium → 
 | 角色 | 职责 | 边界与代码入口 |
 |---|---|---|
 | 前台 Writer | 演绎角色、生成正文，输出约定的检索线索；变量由独立后台分析更新 | `agent.py: Writer`；每回合一次模型调用，零工具、零子 Agent，不调度 Tracker、不提交状态 |
-| 后台 Tracker | 整理分支记忆、保留事实来源；独立 MVU 更新；按授权执行设定维护 | `memory.py: Tracker`、`memory_engine.py`；记忆模式仅开放只读历史补查，整次操作最多3次；设定维护仍最多四次模型调用，并共享历史工具额度 |
+| 后台 Tracker | 统一维护分支文本记忆、对话级角色卡与 MVU 变量，保留事实来源 | `tracker/task.py`、`tracker/workflow.py`、`memory_engine.py`；每次任务按权限开放工具，默认最多8次模型请求，历史补查整次操作最多3次 |
 | Card Editor | 独立角色卡编辑与工作流适配；不读取剧情 | `card_editor.py`，最多 12 次调用，草稿工具，用户审阅后保存；见[编辑指南](../guides/card-editor.md) |
 | Roleplay Runtime | 管理对话与回合，调度 Writer/Tracker，检索并注入世界书，组装提示词，管理窗口和预算，执行脚本、审核与事务提交 | `service.py: RoleplayRuntime` 为入口，协同 `context.py`、`retrieval.py`、`window.py`、`store.py` 等；是程序而非第三个模型 Agent |
 
-Writer 与 Tracker 通过 Runtime 管理的回合草稿交换数据，不互相委派。Tracker 不是常驻自主循环；普通发送需要记忆整理时先等待其完成，再生成正文。
-`agent.py: TurnAgent` 是两种模型模式共用的底层适配器，不是第四个角色。`runtime.py: ScriptRuntime` 仅执行隔离卡片脚本，不等同于 Roleplay Runtime。
+Writer 与 Tracker 通过 Runtime 管理的回合草稿交换数据，不互相委派。Tracker 按现有开关和周期唤起；必要的裁剪补整理和明确设定修改在正文前，周期整理与变量维护在正文后合并执行。
+`agent.py: TurnAgent` 负责 Writer 的底层适配，Tracker 使用独立编译器和原生工具循环。`runtime.py: ScriptRuntime` 仅执行隔离卡片脚本，不等同于 Roleplay Runtime。
 
-API/配置字段 `foreground` 和 `background` 分别代表 Writer 和 Tracker；可选 `card_editor` 配置为空时继承后台模型；事件用途 `narrative`、`memory`、`maintenance` 用于区分调用目的。界面的“后台工作记录”汇集整个 Runtime 的工作事件，不专指 Tracker。
+API/配置字段 `foreground` 和 `background` 分别代表 Writer 和 Tracker；可选 `card_editor` 配置为空时继承后台模型；事件用途 `narrative`、`tracker_pre`、`tracker_post`、`tracker_rebuild` 区分调用目的；旧日志仍兼容旧用途。界面的“后台工作记录”汇集整个 Runtime 的工作事件，不专指 Tracker。
 
 ## 数据与事务
 
@@ -39,7 +39,7 @@ SSE 只是观察者；断开不取消生成。前端按事件序号去重，切�
 正文编译不隐式扩展候选，最终 HTTP 边界再次核算消息和工具开销。
 上下文使用本地 BPE 分词器估算 tokens；服务商实际 tokens 单独展示。
 
-Writer 每回合新建无工具 Creature，关闭基座 compact；Tracker 的授权维护模式另建有工具 Creature，最多四次调用。
+Writer 每回合新建无工具 Creature，关闭基座 compact；Tracker 使用独立原生工具循环与任务草稿，调用上限由 tracker_max_steps 控制。
 工具可见性和执行权限同时限制，上游通用管理工具不可用。
 OpenAIProvider 的实例 HTTP client 用于代理和最终请求检查；固定上游提交并用请求序列化测试保护升级。
 

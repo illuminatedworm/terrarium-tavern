@@ -1,13 +1,11 @@
-"""Writer and Tracker tool-mode adapter, governed by Roleplay Runtime."""
+"""Writer's tool-free adapter; legacy maintenance calls delegate to TrackerTask."""
 
 import copy
 import json
 
-from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import model_messages, prepare_context
-from tavern.conversation.context import compile_context, get_path, search
-from tavern.conversation.half_context import apply_context, attach_continuation, load_trace
-from tavern.core.model_view import ModelView, state_for_model
+from tavern.conversation.context import compile_context
+from tavern.conversation.half_context import load_trace
 from tavern.core.provider import make_provider
 from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.search.retrieval_text import RetrievalParser, split_retrieval
@@ -35,12 +33,6 @@ class TurnAgent:
             self.settings.reasoning_effort = request.reasoning_effort
         self.maintenance = False
         self.input_message_id = ""
-        # One mapping belongs to this maintenance operation, including all tool
-        # continuations. Its short handles never replace identities in storage.
-        self.model_view = ModelView({"document": document, "input": request.text,
-                                     "history": [m.get("model", m["raw"]) for m in history]})
-        self.lore_handles = {}
-        self.history_references = None
         self.operation_contexts = OperationContexts(store, session["id"], tid)
         self.native_response = None
         self.clean_response = ""
@@ -60,188 +52,28 @@ class TurnAgent:
             turn_instruction=self.request.regenerate_note,
             input_message_id=self.input_message_id,
             retrieval=self.retrieval,
-            retrieval_protocol=not self.maintenance,
-            replay_records=None if self.maintenance else load_trace(self.store, self.session["id"], self.history),
+            replay_records=load_trace(self.store, self.session["id"], self.history),
         )
-        if self.maintenance:
-            self.compiled["messages"][0:0] = [
-                {
-                    "role": "system",
-                    "content": self.settings.maintenance_system_prompt,
-                }
-            ]
-            self.compiled["trace"].insert(0, {"role": "system", "source": "maintenance_rules",
-                                              "content": self.settings.maintenance_system_prompt})
-        else:
-            prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
+        prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
         if self.compiled["estimated_tokens"] > self.settings.context_tokens - self.settings.reply_tokens - 2048:
             self.store.event(self.tid, "context_warning", {"purpose": "writer",
                                                        "message": "正文请求估算超出模型上下文，仍完整发送"})
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
 
-    def tools(self):
-        from kohakuterrarium import tool
-
-        @tool
-        async def read_character(field: str = "") -> str:
-            """Read a character field, or all character text fields."""
-            data = normalize(self.document)
-            if not field:
-                data = {k: v for k, v in data.items() if k not in ("extensions", "assets", "character_book")}
-            else:
-                data = get_path(data, self.model_view.restore(field))
-            # Do not expose hidden fingerprints even for an explicitly selected
-            # technical field. Parent reads use a reversible, compact JSON view.
-            from tavern.core.model_view import hidden_field
-            if field and hidden_field(field.rsplit(".", 1)[-1]):
-                return "该字段由程序维护，无需模型读取或回写。"
-            return json.dumps(self.model_view.expose(data), ensure_ascii=False)
-
-        def lore_view(entry):
-            handle = next((h for h, eid in self.lore_handles.items() if eid == entry["id"]), None)
-            if handle is None:
-                handle = f"L{len(self.lore_handles) + 1}"
-                self.lore_handles[handle] = entry["id"]
-            # Admission controls, cooldowns, hashes, source IDs and cached
-            # scoring are Runtime bookkeeping. This tool only needs text.
-            text = self.model_view.text(entry.get("content", ""))
-            return {"ref": handle, "name": entry.get("comment") or entry.get("name", ""), "content": text}
-
-        @tool
-        async def search_lore(query: str) -> str:
-            """Search worldbook entries using Chinese-aware text matching; return complete entries and select them for context admission."""
-            query = self.model_view.restore(query)
-            if getattr(self, "retrieval_engine", None):
-                result = await self.retrieval_engine.prepare(self.document, self.history, query, self.snapshot,
-                                                            self.settings, self.session, self.tid)
-                by_id = {entry["id"]: entry for entry in result["entries"]}
-                rows = [by_id[eid] for eid in result["ids"]]
-            else:
-                rows = search(lore_entries(self.document, "writer"), query)
-            rows = [entry for entry in rows if entry["enabled"]]
-            self.requested.update(entry["id"] for entry in rows)
-            return json.dumps(self.model_view.expose([lore_view(e) for e in rows]), ensure_ascii=False)
-
-        @tool
-        async def read_state(path: str = "") -> str:
-            """Read current draft state using a dot-separated path."""
-            return self.model_view.text(json.dumps(
-                get_path(state_for_model(self.snapshot["state"]), self.model_view.restore(path)), ensure_ascii=False))
-
-        @tool
-        async def patch_state(operations: list[dict], reason: str) -> str:
-            """Apply JSON Patch operations to stat_data through MVU; do not repeat them in narrative output."""
-            if not self.request.update_variables:
-                raise ValueError("本轮未勾选更新变量")
-            operations = self.model_view.operations(operations)
-            result = await self.runtime.call("process", "", operations)
-            self.snapshot["state"] = result["state"]
-            self.state_patches.extend(operations)
-            self.store.event(self.tid, "state_proposal", {"operations": operations, "reason": reason})
-            return json.dumps(result["state"], ensure_ascii=False)
-
-        @tool
-        async def search_memory(query: str) -> str:
-            """Search memories visible on the current story branch."""
-            from tavern.memories.memory_records import read_memory
-            visible = [{k: r[k] for k in ("content", "category", "kind", "status", "manual") if k in r}
-                       for r in read_memory(self.snapshot)["records"] if r.get("status") not in ("deleted", "superseded")]
-            return self.model_view.text(json.dumps(search(visible, self.model_view.restore(query)), ensure_ascii=False))
-
-        def recall_history(args):
-            from tavern.memories.history_recall import HistoryRecall
-            from tavern.memories.memory_protocol import References
-            if self.history_references is None:
-                self.history_references = References()
-            recall = HistoryRecall(self.history, self.settings, self.history_recall_budget,
-                document=self.document, persona=self.session["persona"],
-                event=lambda kind, payload: self.store.event(self.tid, kind, {**payload, "purpose": "maintenance"}),
-                references=self.history_references)
-            return self.model_view.text(json.dumps(recall.execute(self.model_view.restore(args)), ensure_ascii=False))
-
-        @tool
-        async def tavern_recall_history(query: str = "", turn: int = 0, radius: int = 1, limit: int = 5) -> str:
-            """只读历史补查：query搜索关键词或turn读取附近原文，二选一；整次维护最多3次，搜索和读取共用额度。"""
-            args = {}
-            if query:
-                args.update(query=query, limit=limit)
-            if turn:
-                args.update(turn=turn, radius=radius)
-            return recall_history(args)
-
-        @tool
-        async def write_memory(content: str, source_ref: str, kind: str = "fact") -> str:
-            """Save branch memory using an H passage ref returned by history recall. Never copy IDs or quotes."""
-            source = (self.history_references.sources if self.history_references else {}).get(source_ref)
-            if source is None:
-                raise ValueError("请引用本次历史补查返回的 H 片段编号")
-            source_message_id = source["message_id"]
-            if source_message_id not in {m["id"] for m in self.history}:
-                raise ValueError("记忆必须引用当前分支已有消息")
-            if kind not in ("fact", "inference"):
-                raise ValueError("记忆类型必须为 fact 或 inference")
-            from tavern.memories.memory_records import Record, install_memory, read_memory, source_hash
-            message = next(m for m in self.history if m["id"] == source_message_id)
-            record = Record(category="episode", content=self.model_view.restore(content), kind=kind,
-                            sources=[{"message_id": source_message_id, "excerpt": source["excerpt"],
-                                      "fingerprint": source_hash(message)}]).model_dump()
-            memory = read_memory(self.snapshot)
-            memory["records"].append(record)
-            install_memory(self.snapshot, memory)
-            self.store.event(self.tid, "memory_proposal", {"record": record})
-            return "已记录该内容及程序回填的原文来源。"
-
-        @tool
-        async def revise_content(operations: list[dict], reason: str) -> str:
-            """Propose JSON Patch edits to the character document. Obeys the session editing policy."""
-            if self.session["policy_effective"] == "directed" and not self.request.allow_content_edit:
-                raise ValueError("用户未授权本轮修改原始设定；只能维护剧情状态")
-            revised = self.model_view.patch(self.document, operations)
-            if not normalize(revised).get("name"):
-                raise ValueError("设定必须保留角色名称")
-            self.document = revised
-            self.snapshot["content"] = {"document": revised, "reason": self.model_view.restore(reason), "turn": self.tid}
-            self.store.event(self.tid, "content_proposal", {"operations": operations, "reason": reason})
-            return "已创建当前分支的设定草稿；回合提交后生效。"
-
-        return [
-            read_character,
-            search_lore,
-            read_state,
-            patch_state,
-            search_memory,
-            tavern_recall_history,
-            write_memory,
-            revise_content,
-        ]
-
     async def _run(self, provider=None, *, maintenance=False):
         from kohakuterrarium import Activity, Terrarium, TextChunk, TurnEnded
         from kohakuterrarium.core.config_types import AgentConfig
         from kohakuterrarium.modules.plugin import BasePlugin
 
-        owner = self
-        self.maintenance = maintenance
-        original_settings = self.settings
         if maintenance:
-            self.settings = self.settings.for_role("background")
+            # Compatibility entry delegates to the dedicated compiler; never
+            # install maintenance instructions into Writer's context.
+            from tavern.memories.memory import Tracker
+            return await Tracker(self.store).maintain(self, provider)
+        owner = self
         self.calls = 0
-        self.native_responses = {}
-        maintenance_record, maintenance_sent = None, []
-        allowed = (
-            {
-                "read_character",
-                "search_lore",
-                "read_state",
-                "search_memory",
-                "tavern_recall_history",
-                "write_memory",
-                "revise_content",
-            }
-            if maintenance
-            else set()
-        )
+        allowed = set()
 
         class ContextPlugin(BasePlugin):
             name = "tavern-context"
@@ -259,38 +91,20 @@ class TurnAgent:
                 return None
 
             async def pre_llm_call(self, messages, **kwargs):
-                nonlocal maintenance_record, maintenance_sent
                 owner.calls += 1
-                if owner.calls > (4 if maintenance else 1):
+                if owner.calls > 1:
                     from kohakuterrarium.modules.plugin import PluginBlockError
 
                     raise PluginBlockError("本轮 Agent 调用次数超限")
-                # A fresh creature owns only this turn. Keep native assistant/tool blocks after its input.
-                marker = next((i for i, m in enumerate(messages) if m.get("role") == "user"), len(messages))
-                continuation = attach_continuation(messages[marker + 1 :], owner.native_responses)
                 try:
                     context = owner.compile()
-                    if not maintenance:
-                        prepare_context(context, owner.session, owner.history, owner.snapshot, owner.settings)
-                    if maintenance:
-                        # Project only fresh business text, never opaque blocks from earlier responses.
-                        context["trace"] = owner.model_view.messages(context["trace"])
-                        continuation = owner.model_view.messages(continuation)
-                        apply_context(context, {}, owner.session, owner.history, owner.snapshot, owner.settings,
-                                      input_id=owner.input_message_id, purpose="maintenance",
-                                      previous_record=maintenance_record, continuation=continuation,
-                                      sent=maintenance_sent)
-                        maintenance_record = context["half_agent_record"]
-                        maintenance_sent = context["trace"]
-                        compiled = context["messages"]
-                    else:
-                        compiled = model_messages(context)
+                    compiled = model_messages(context)
                     provider.request_context.diagnostics = copy.deepcopy(context.get("context_ledger", {}))
                     provider.request_context.window_id = context.get("half_agent_record", {}).get("window", "")
                     owner.store.set_turn(owner.tid, preview=json.dumps(context, ensure_ascii=False))
                     if context.get("context_ledger", {}).get("rebuild_reason"):
                         owner.store.event(owner.tid, "context_baseline", {
-                            "purpose": "maintenance" if maintenance else "narrative", **context["context_ledger"]})
+                            "purpose": "narrative", **context["context_ledger"]})
                     return compiled
                 except Exception as error:
                     from kohakuterrarium.modules.plugin import PluginBlockError
@@ -301,30 +115,29 @@ class TurnAgent:
                 native = getattr(provider, "last_native_response", None)
                 if native:
                     owner.native_responses[native["message_sha256"]] = copy.deepcopy(native)
-                if not maintenance:
-                    owner.native_response = copy.deepcopy(native)
+                owner.native_response = copy.deepcopy(native)
 
         owned_provider = provider is None
         if provider is None:
             provider = await make_provider(
-                self.settings.for_role("background") if maintenance else self.settings,
+                self.settings,
                 lambda payload: self.store.event(
                     self.tid,
                     "provider_request",
-                    {**payload, "purpose": "maintenance" if maintenance else "narrative"},
+                    {**payload, "purpose": "narrative"},
                 ),
             )
-        purpose = "maintenance" if maintenance else "narrative"
+        purpose = "narrative"
         configure_operation(provider, self.operation_contexts.new(purpose),
                             lambda kind, payload: self.store.event(self.tid, kind, payload), purpose)
         config = AgentConfig(
-            name="terrarium-tavern-tracker" if maintenance else "terrarium-tavern-writer",
-            system_prompt=self.settings.maintenance_system_prompt if maintenance else self.settings.system_prompt,
+            name="terrarium-tavern-writer",
+            system_prompt=self.settings.system_prompt,
             tools=[],
             subagents=[],
             include_tools_in_prompt=False,
             include_hints_in_prompt=False,
-            max_iterations=4 if maintenance else 1,
+            max_iterations=1,
             compact={"enabled": False},
             default_plugins=[],
             agent_path=self.store.root.resolve(),
@@ -336,21 +149,20 @@ class TurnAgent:
             creature = await engine.add_creature(
                 config,
                 llm=provider,
-                tools=self.tools() if maintenance else [],
+                tools=[],
                 plugins=[ContextPlugin()],
                 io="headless",
                 session=self.store.root
                 / "runs"
-                / f"{self.tid}{'-maintenance' if maintenance else ''}.kohakutr",
+                / f"{self.tid}.kohakutr",
             )
             self.agent = creature.agent
             async for event in creature.run_stream(self.request.text or "继续剧情"):
                 if isinstance(event, TextChunk):
-                    visible = event.text if maintenance else parser.feed(event.text)
+                    visible = parser.feed(event.text)
                     text += visible
-                    if not maintenance:
-                        self.store.set_turn(self.tid, draft=text)
-                        self.store.event(self.tid, "text", {"text": visible})
+                    self.store.set_turn(self.tid, draft=text)
+                    self.store.event(self.tid, "text", {"text": visible})
                 elif isinstance(event, TurnEnded):
                     result = event.result
                 elif isinstance(event, Activity):
@@ -358,7 +170,7 @@ class TurnAgent:
                         self.tid,
                         "activity",
                         {"kind": event.kind, "message": event.detail, "metadata": event.metadata,
-                         "purpose": "maintenance" if maintenance else "narrative"},
+                         "purpose": "narrative"},
                     )
             if result is None or result.status != "ok":
                 raise ValueError(
@@ -368,32 +180,27 @@ class TurnAgent:
                 self.tid,
                 "usage",
                 {
-                    "purpose": "maintenance" if maintenance else "narrative",
+                    "purpose": "narrative",
                     "calls": self.calls,
                     "usage": getattr(provider, "reported_usage", None) or result.usage or {},
                     "duration_s": result.duration_s,
                 },
             )
-            if not maintenance and not result.text.strip():
+            if not result.text.strip():
                 raise ValueError("模型没有返回正文。请降低思考强度或增大单次输出上限；本轮未提交。")
-            if maintenance:
-                self.store.event(self.tid, "maintenance_completed", {"record": result.text})
-            if not maintenance:
-                clean, self.retrieval_query, diagnostics = split_retrieval(result.text, self.settings.retrieval.query_chars)
-                self.clean_response = clean
-                self.native_response = copy.deepcopy(getattr(provider, "last_native_response", None))
-                tail = parser.feed("", final=True)
-                if tail:
-                    self.store.event(self.tid, "text", {"text": tail})
-                self.store.event(self.tid, "retrieval_text", {"diagnostics": diagnostics})
-                self.store.set_turn(self.tid, draft=clean)
-                return clean
-            return result.text
+            clean, self.retrieval_query, diagnostics = split_retrieval(result.text, self.settings.retrieval.query_chars)
+            self.clean_response = clean
+            self.native_response = copy.deepcopy(getattr(provider, "last_native_response", None))
+            tail = parser.feed("", final=True)
+            if tail:
+                self.store.event(self.tid, "text", {"text": tail})
+            self.store.event(self.tid, "retrieval_text", {"diagnostics": diagnostics})
+            self.store.set_turn(self.tid, draft=clean)
+            return clean
         finally:
             await engine.shutdown()
             if owned_provider:
                 await provider.close()
-            self.settings = original_settings
 
     async def cancel(self):
         if self.agent:
@@ -404,7 +211,7 @@ class Writer(TurnAgent):
     """前台 Writer: one tool-free narrative call, plus retrieval text protocol.
 
     Consumes Runtime-compiled context; never schedules Tracker or commits state.
-    The shared adapter's tool mode is entered only by Tracker.maintain().
+    Tracker uses a separate compiler and native tool loop.
     """
 
     async def run(self, provider=None):

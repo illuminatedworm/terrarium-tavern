@@ -411,7 +411,7 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
     provider = ModelTransport(cfg, cfg.api_key,
                               http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     try:
-        assert await writer._run(provider, maintenance=True) == "先查资料维护完成"
+        assert await writer._run(provider, maintenance=True) == "维护完成"
         assert len(requests) == 2
         body = json.loads(requests[-1].content)
         if api == "anthropic":

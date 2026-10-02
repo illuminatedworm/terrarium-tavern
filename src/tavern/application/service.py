@@ -30,6 +30,7 @@ class RoleplayRuntime:
         self.provider_factory = None  # dependency injection for integration tests
         self.memory_provider_factory = None
         self.variable_provider_factory = None
+        self.tracker_provider_factory = None
         self.tracker = Tracker(store)
         from tavern.search.local_models import LocalModelManager
         from tavern.search.retrieval import RetrievalEngine
@@ -62,7 +63,7 @@ class RoleplayRuntime:
     def submit(self, sid, request):
         if self.store.session(sid).get("agent_mode", "half_agent") != "half_agent":
             raise ValueError("Full Agent 会话须由独立引擎执行")
-        if (self.memory_provider_factory if request.scene_refresh else self.provider_factory) is None:
+        if (self.tracker_provider_factory or self.memory_provider_factory if request.scene_refresh else self.provider_factory) is None:
             import os
 
             settings = self.store.settings().for_role("background" if request.scene_refresh else "foreground")
@@ -125,10 +126,8 @@ class RoleplayRuntime:
         return self.store.turn(tid)
 
     async def refresh_scene(self, tid, req, settings, session):
-        from tavern.memories.history_recall import complete_with_recall
-        from tavern.memories.memory_engine import CallBudget, consolidate, estimate_batches
+        from tavern.memories.memory_engine import CallBudget, estimate_batches
         from tavern.memories.memory_records import install_memory, read_memory
-        from tavern.scripting.agent import make_provider
 
         kind = req.scene_refresh
         self.store.set_turn(tid, status="running")
@@ -140,36 +139,16 @@ class RoleplayRuntime:
         document = (snapshot.get("content") or {}).get("document", self.store.session_card(session["id"])["document"])
         contexts = OperationContexts(self.store, session["id"], tid)
 
-        async def generate(messages, *, phase="memory", output_tokens=None):
-            request_cfg = cfg.model_copy(update={"reply_tokens": output_tokens or cfg.memory_output_tokens})
-            provider = self.memory_provider_factory() if self.memory_provider_factory else None
-            if provider is None:
-                provider = await make_provider(
-                    request_cfg,
-                    lambda payload: self.store.event(
-                        tid, "provider_request", {**payload, "purpose": phase},
-                    ),
-                    request_timeout=None,
-                )
-            configure_operation(provider, contexts.new(phase),
-                                lambda kind, payload: self.store.event(tid, kind, payload), phase)
-            try:
-                return await complete_with_recall(provider, messages, history=session["messages"],
-                    settings=request_cfg, budget=memory_calls.history, phase=phase,
-                    document=document, persona=session["persona"],
-                    event=lambda kind, payload: self.store.event(tid, kind, payload))
-            finally:
-                await provider.close()
-
         # A rebuild replaces automatic records only. User edits and deletions
         # remain explicit constraints, rather than being erased by re-extraction.
         base = {"version": 1, "records": [r for r in read_memory(snapshot)["records"] if r.get("manual")]}
         estimate = await asyncio.to_thread(estimate_batches, session["messages"], base, document, session["persona"], cfg)
         self.store.event(tid, "memory_rebuild_estimate", {"purpose": "memory", "estimated_batches": estimate,
             "message": f"预计至少 {estimate} 批；记忆增长可能增加批次，可随时取消，完成后统一替换。"})
-        rebuilt = await consolidate(session["messages"], cfg, generate, memory=base,
-            document=document, persona=session["persona"], budget=memory_calls,
-            event=lambda kind, payload: self.store.event(tid, kind, payload))
+        snapshot["memory_document"] = base
+        task = await self.run_tracker_task(tid, settings, session, document, session["messages"], snapshot,
+            phase="rebuild", contexts=contexts, memory_start=0, memory_budget=memory_calls)
+        rebuilt = task.snapshot["memory_document"]
         self.store.event(tid, "scene_refresh_ready", {"purpose": kind, "result": rebuilt})
         rounds = completed_rounds(session["messages"])
         from tavern.memories.memory import fingerprint
@@ -379,6 +358,23 @@ class RoleplayRuntime:
             if runtime:
                 await runtime.close()
 
+    async def run_tracker_task(self, tid, settings, session, document, history, snapshot, *, phase,
+                               memory_start=None, memory_budget=None, **options):
+        from tavern.tracker.task import TrackerTask
+        factory = self.tracker_provider_factory
+        if factory is None:
+            factory = (self.memory_provider_factory if memory_start is not None else
+                       self.variable_provider_factory if options.get("variables") else self.provider_factory)
+        provider = factory() if factory else None
+        task = TrackerTask(self.store, tid, settings, session, document, history, snapshot,
+                           phase=phase, memory=memory_start is not None, provider=provider, **options)
+        task.retrieval = self.retrieval
+        try:
+            return await task.run(memory_start=memory_start, memory_budget=memory_budget)
+        finally:
+            if provider is not None:
+                await provider.close()
+
     async def run(self, tid):
         runtime = None
         try:
@@ -479,55 +475,31 @@ class RoleplayRuntime:
             input_raw = req.text
             req.text = await runtime.call("transform", input_raw, rules, 1, "model", 0)
 
-            async def summarize(messages, *, phase="memory", output_tokens=None):
-                from tavern.memories.history_recall import complete_with_recall
-                from tavern.scripting.agent import make_provider
-
-                purpose = phase
-                cfg = settings.for_role("background").model_copy(update={
-                    "reply_tokens": output_tokens or settings.memory_output_tokens})
-                provider = self.memory_provider_factory() if self.memory_provider_factory else None
-                if provider is None:
-                    provider = await make_provider(
-                        cfg,
-                        lambda payload: self.store.event(
-                            tid, "provider_request", {**payload, "purpose": purpose}
-                        ),
-                        request_timeout=None,
-                    )
-                configure_operation(provider, contexts.new(phase),
-                                    lambda kind, payload: self.store.event(tid, kind, payload), phase)
-                try:
-                    result = await complete_with_recall(provider, messages, history=history,
-                        settings=cfg, budget=memory_calls.history, phase=phase,
-                        document=(snapshot.get("content") or {}).get("document", document),
-                        persona=session["persona"], event=lambda kind, payload: self.store.event(tid, kind, payload))
-                    # Per-request usage (including continuations) was logged by
-                    # the loop. None prevents the outer batch from double billing.
-                    return result, None
-                finally:
-                    await provider.close()
-
-            from tavern.memories.memory import window_history
-            retrieval_turn = sum(m["role"] == "user" for m in history) + 1
+            from tavern.memories.history_recall import HistoryBudget
             from tavern.memories.memory_engine import CallBudget
-            memory_calls = CallBudget()
+            from tavern.tracker.task import TaskBudget
+            from tavern.tracker.workflow import before_story
+            history_budget = HistoryBudget()
+            pre_budget = TaskBudget(settings.tracker_max_steps)
+            memory_calls = CallBudget(history=history_budget)
 
-            async def prepare_context(current_document, *, periodic=True):
-                # Cuts can remove query clues when lookback is large. Re-evaluate
-                # only after an actual cut; the cursor advances monotonically.
-                while True:
-                    visible, _ = window_history(history, snapshot, enabled=settings.chunk_mode != "off")
-                    prepared = await self.retrieval.prepare(current_document, visible, req.text, snapshot,
-                        settings, session, tid, turn_number=retrieval_turn)
-                    await self.tracker.prepare(tid, current_document, session, history, snapshot, req,
-                        settings, summarize, retrieval=prepared, periodic=periodic, call_budget=memory_calls)
-                    after, _ = window_history(history, snapshot, enabled=settings.chunk_mode != "off")
-                    if len(after) == len(visible):
-                        return prepared
-                    periodic = False
+            async def run_tracker(phase, current_document, task_history, task_snapshot, **options):
+                return await self.run_tracker_task(tid, settings, session, current_document,
+                    task_history, task_snapshot, phase=phase, contexts=contexts,
+                    history_budget=history_budget,
+                    budget=pre_budget if phase == "pre" else TaskBudget(settings.tracker_max_steps),
+                    memory_budget=memory_calls,
+                    **options)
 
-            prepared = await prepare_context(document)
+            original_document = copy.deepcopy(document)
+            document, prepared = await before_story(self.store, tid, settings, session, history,
+                snapshot, req, document, self.retrieval, run_tracker)
+            # Pre-story card edits must reach scripts too, without reinstalling
+            # scripts or replaying initialization callbacks.
+            from tavern.tracker.workflow import sync_runtime_lore
+            mirror = await runtime.call("snapshot")
+            sync_runtime_lore(mirror, document, original_document)
+            await runtime.call("update", mirror)
             input_id, output_id = reused_user["id"] if reused_user else uid(), uid()
             user_message = reused_user or {
                 "id": input_id,
@@ -541,22 +513,11 @@ class RoleplayRuntime:
             # The compiler owns input insertion; memory tools may cite the pending user input.
             agent = Writer(self.store, tid, document, session, history, snapshot, req, runtime, settings)
             agent.input_message_id = input_id
-            agent.history_recall_budget = memory_calls.history
             agent.retrieval_engine = self.retrieval
             self.agents[tid] = agent
             agent.retrieval = prepared
-            agent.compile()
             provider = self.provider_factory() if self.provider_factory else None
-            if req.allow_content_edit:
-                self.store.event(tid, "maintenance_started", {})
-                await self.tracker.maintain(agent, provider)
-                agent.retrieval = await prepare_context(agent.document, periodic=False)
-                if not reused_user:
-                    for key in ("memory_document", "memory_archive", "context_window", "memory_warning"):
-                        if key in snapshot:
-                            user_message["snapshot"][key] = copy.deepcopy(snapshot[key])
             self.store.event(tid, "retrieval", {k: v for k, v in agent.retrieval.items() if k != "entries"})
-            agent.maintenance = False
             agent.compile()
             self.store.event(tid, "input_ready", {
                 "message": user_message,
@@ -593,35 +554,50 @@ class RoleplayRuntime:
                     host,
                 )
             try:
-                operations = []
-                if req.update_variables:
-                    from tavern.scripting.variables import analyze_variables
-
-                    operations = await analyze_variables(
-                        self.store, tid, settings, history, mirror["state"], input_raw, text,
-                        self.variable_provider_factory,
-                        document=agent.document, persona=session["persona"],
-                        request_context=contexts.new("variables"),
-                    )
-                # Never interpret Writer prose as MVU commands. Apply only the independent proposal.
+                from tavern.tracker.workflow import after_story, merge_script_lore
+                mirror = await runtime.call("snapshot")
+                snapshot["state"], snapshot["scopes"] = mirror["state"], mirror["scopes"]
+                if mirror.get("loreModified"):
+                    if session["policy_effective"] == "directed" and not req.allow_content_edit:
+                        raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
+                    script_document = merge_script_lore(agent.document, mirror["lore"], mirror, include_existing=True)
+                    if script_document != agent.document:
+                        agent.document = script_document
+                        snapshot["content"] = {"document": copy.deepcopy(script_document),
+                                               "reason": "角色脚本修改世界书", "turn": tid}
+                candidate_model = await runtime.call("transform", text, rules, 2, "model", 0)
+                candidate = {"id": output_id, "parent": input_id, "role": "assistant", "raw": text,
+                             "model": candidate_model, "snapshot": copy.deepcopy(snapshot)}
+                task_history = [*history, user_message, candidate]
+                previous_document = copy.deepcopy(agent.document)
+                agent.document, operations = await after_story(self.store, tid, settings, session,
+                    task_history, snapshot, req, agent.document, run_tracker, committed_history=history)
+                # Only the final process call applies the staged patch and emits
+                # message callbacks. Tool attempts never call into MVU.
+                mirror = await runtime.call("snapshot")
+                initial_lore = copy.deepcopy(mirror["lore"])
+                # Post-story setting changes apply to the next task. Current
+                # MVU callbacks still see the rule/worldbook baseline they began
+                # with; merge their actual deltas into Tracker's draft afterward.
                 processed = await runtime.call("process", text, operations, "")
                 if req.update_variables:
                     self.store.event(tid, "variable_update_completed", {
-                        "purpose": "variables", "operations": operations,
+                        "purpose": "tracker_post", "operations": operations,
                     })
             except Exception as error:
-                self.store.event(tid, "variable_update_failed", {"purpose": "variables", "detail": str(error)})
+                self.store.event(tid, "tracker_failed", {"purpose": "tracker_post", "detail": str(error)})
                 raise ValueError(
-                    "后台变量更新失败，本次正文与状态未提交。草稿已保留，可以重试本次发言。"
+                    "后台 Tracker 或变量校验失败，本次正文与状态未提交。草稿已保留，可以重试本次发言。"
                 ) from error
             snapshot["state"], snapshot["scopes"] = processed["state"], processed["scopes"]
             if processed.get("loreModified"):
                 if session["policy_effective"] == "directed" and not req.allow_content_edit:
                     raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
-                revised = copy.deepcopy(agent.document)
-                data = revised.get("data", revised)
-                data.setdefault("character_book", {})["entries"] = processed["lore"]
-                snapshot["content"] = {"document": revised, "reason": "角色脚本修改世界书", "turn": tid}
+                revised = merge_script_lore(agent.document, initial_lore, processed)
+                snapshot["content"] = {"document": revised, "reason": "Tracker / 角色脚本修改世界书", "turn": tid}
+            mirror = await runtime.call("snapshot")
+            sync_runtime_lore(mirror, (snapshot.get("content") or {}).get("document", agent.document), previous_document)
+            await runtime.call("update", mirror)
             snapshot["lore"] = agent.compiled["next_lore"]
             snapshot["lore_injections"] = agent.compiled["next_lore_injections"]
             final_text = processed["text"]
@@ -639,6 +615,14 @@ class RoleplayRuntime:
                 "display": display,
                 "snapshot": copy.deepcopy(snapshot),
             }
+            from tavern.tracker.workflow import finalize_sources
+            finalize_sources(snapshot, [user_message, output], document=agent.document, persona=session["persona"])
+            # Coverage includes the final model text, not a provisional macro view.
+            archive = snapshot.get("memory_archive")
+            if archive and archive["covered_count"] == len(history) + 2:
+                from tavern.memories.memory import fingerprint
+                archive["fingerprint"] = fingerprint([*history, user_message, output])
+            output["snapshot"] = copy.deepcopy(snapshot)
             pending = {
                 "messages": [output] if reused_user else [user_message, output],
                 "before": before,

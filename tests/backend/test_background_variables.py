@@ -10,6 +10,7 @@ from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store
+from tests.support.tracker_model import PatchModel
 
 
 class VariableProvider:
@@ -17,9 +18,19 @@ class VariableProvider:
         self.content = content
         self.messages = None
         self.closed = False
+        self.native = PatchModel(content)
 
-    async def chat_complete(self, messages):
+    @property
+    def last_tool_calls(self):
+        return self.native.last_tool_calls
+
+    async def chat_complete(self, messages, **kwargs):
         self.messages = messages
+        if "extra_body" in kwargs:
+            if self.closed:
+                self.native = PatchModel(self.content)
+                self.closed = False
+            return await self.native.chat_complete(messages, **kwargs)
         return SimpleNamespace(content=self.content, usage={})
 
     async def close(self):
@@ -67,7 +78,7 @@ async def test_variable_turn_is_separate_and_atomic(tmp_path, enabled, result, s
             ))
             await service.tasks[turn['id']]
             assert store.turn(turn['id'])['status'] == 'committed'
-            payload = json.loads(provider.messages[1]['content'])
+            payload = json.loads(next(m['content'] for m in provider.messages if m['role'] == 'user'))
             assert payload['current_variables']['能量'] == 5
             assert len(store.session(session['id'])['messages']) == 3
     finally:
@@ -102,7 +113,7 @@ async def test_cancel_during_analysis_rolls_back(tmp_path):
     started = asyncio.Event()
     provider = VariableProvider()
 
-    async def waiting(messages):
+    async def waiting(messages, **kwargs):
         started.set()
         await asyncio.Event().wait()
 

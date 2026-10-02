@@ -11,6 +11,7 @@ from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Store
 from tests.support.memory_fixtures import memory_output
+from tests.support.tracker_model import MemoryModel, PatchModel, TrackerModel, batch_payload
 
 
 async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_path):
@@ -153,7 +154,7 @@ async def test_real_kt_turn_and_branch_restore(tmp_path):
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["洛伊领你走向观测窗。"])
-    service.variable_provider_factory = lambda: ScriptedLLM(['[{"op":"replace","path":"/能量","value":4}]'])
+    service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/能量","value":4}]')
     try:
         t = service.submit(
             session["id"], TurnRequest(text="走向观测窗", operation_id="a", expected_revision=0, update_variables=True)
@@ -190,7 +191,7 @@ async def test_script_failure_rolls_back(tmp_path):
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["草稿"])
-    service.variable_provider_factory = lambda: ScriptedLLM(['[{"op":"replace","path":"/能量","value":4}]'])
+    service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/能量","value":4}]')
     try:
         t = service.submit(session["id"], TurnRequest(text="继续", operation_id="a", expected_revision=0, update_variables=True))
         await service.tasks[t["id"]]
@@ -310,68 +311,35 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
 
 
 async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
-    from kohakuterrarium.llm.base import NativeToolCall
-
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
-
-    class ToolLLM(ScriptedLLM):
-        def __init__(self):
-            super().__init__([""])
-            self.native = []
-            self.schemas = []
-
-        @property
-        def last_tool_calls(self):
-            return self.native
-
-        async def chat(self, messages, **kwargs):
-            self.call_log.append(messages)
-            self.schemas.append(kwargs.get("tools", []))
-            steps = [
-                [("search_lore", {"query": ""}), ("tavern_recall_history", {"turn": 1, "radius": 0})],
-                [("search_lore", {"query": "灯塔"}),
-                 ("write_memory", {"content": "书店提供毛巾", "source_ref": "H1", "kind": "fact"})],
-            ]
-            if self.call_count < len(steps):
-                self.native = [
-                    NativeToolCall(id=f"call-{self.call_count}-{i}", name=name, arguments=json.dumps(args))
-                    for i, (name, args) in enumerate(steps[self.call_count])
-                ]
-                self.call_count += 1
-                yield ""
-            else:
-                self.native = []
-                self.call_count += 1
-                yield "我们去灯塔。"
-
-    provider = ToolLLM()
+    provider = TrackerModel(
+        [("search_lore", {"query": "*"}), ("tavern_recall_history", {"turn": 1, "radius": 0})],
+        ("search_lore", {"query": "灯塔"}), "维护完成", "后置检查完成")
+    writer = ScriptedLLM(["我们去灯塔。"])
     service = RoleplayRuntime(store)
-    service.provider_factory = lambda: provider
+    service.provider_factory = lambda: writer
+    service.tracker_provider_factory = lambda: provider
     try:
-        turn = service.submit(
-            session["id"],
-            TurnRequest(text="整理设定", operation_id="tools", expected_revision=0, allow_content_edit=True),
-        )
+        turn = service.submit(session["id"], TurnRequest(text="整理设定", operation_id="tools",
+                              expected_revision=0, allow_content_edit=True))
         await service.tasks[turn["id"]]
         final = store.turn(turn["id"])
         assert final["status"] == "committed", final["error"]
-        assert provider.call_count == 4
+        assert provider.call_count == 4 and writer.call_count == 1
         current = store.session(session["id"])
-        assert current["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"] == session["head"]
-        wire = provider.call_log[-2]
-        assert len([m for m in wire if m.get("role") == "tool"]) == 4
+        assert current["snapshot"]["memory_document"]["records"] == []
+        wire = provider.call_log[2]
+        assert len([m for m in wire if m.get("role") == "tool"]) == 3
         assert session["head"] not in json.dumps(wire)
         ids = {m["tool_call_id"] for m in wire if m.get("role") == "tool"}
         calls = {c["id"] for m in wire for c in m.get("tool_calls", [])}
         assert ids == calls
-        names = {tool.name for batch in provider.schemas for tool in (batch or [])}
+        names = {tool["function"]["name"] for tool in provider.requests[0]["extra_body"]["tools"]}
         assert "search_lore" in names
-        assert "read_lore" not in names
-        assert not {"bash", "read", "write", "group_spawn"} & names
-        assert not provider.schemas[-1]
-        assert not any(m.get("role") == "tool" for m in provider.call_log[-1])
+        assert not {"read_lore", "bash", "read", "write", "group_spawn", "write_memory"} & names
+        assert not any(m.get("role") == "tool" for m in writer.last_messages)
     finally:
         await service.close()
 
@@ -498,14 +466,11 @@ async def test_regeneration_reuses_the_committed_chunk_window(tmp_path, invalid_
     s = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["剧情继续。"])
-    class ArchiveModel(ScriptedLLM):
-        async def chat_complete(self, messages, **kwargs):
-            from types import SimpleNamespace
-            self.call_count += 1
-            result = json.loads(memory_output(messages, invalid=invalid_evidence))
-            return SimpleNamespace(content=json.dumps(result), usage={})
+    def proposal(messages):
+        payload = batch_payload(messages)
+        return memory_output([{"role": "system", "content": ""}, {"role": "user", "content": json.dumps(payload)}], invalid=invalid_evidence)
 
-    memory_model = ArchiveModel()
+    memory_model = MemoryModel([proposal])
     service.memory_provider_factory = lambda: memory_model
     try:
         for i in range(4):
@@ -557,7 +522,7 @@ async def test_invalid_model_variable_update_keeps_state_and_can_retry(tmp_path)
     before = store.session(session["id"])
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(['失败草稿'])
-    service.variable_provider_factory = lambda: ScriptedLLM(['[{"op":"add","path":"/unknown","value":1}]'])
+    service.variable_provider_factory = lambda: PatchModel('[{"op":"add","path":"/unknown","value":1}]')
     try:
         failed = service.submit(session["id"], TurnRequest(
             text="继续", operation_id="failed", expected_revision=before["revision"], update_variables=True))
@@ -570,7 +535,7 @@ async def test_invalid_model_variable_update_keeps_state_and_can_retry(tmp_path)
         unchanged = store.session(session["id"])
         assert unchanged["head"] == before["head"] and unchanged["snapshot"] == before["snapshot"]
         service.provider_factory = lambda: ScriptedLLM(["成功回复"])
-        service.variable_provider_factory = lambda: ScriptedLLM(['[{"op":"replace","path":"/hp","value":6}]'])
+        service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/hp","value":6}]')
         retried = service.submit(session["id"], TurnRequest(
             **(failed["request"] | {"operation_id": "retry", "expected_revision": unchanged["revision"]})))
         await service.tasks[retried["id"]]

@@ -32,9 +32,11 @@ def split_passages(text):
 class MemoryRequest(list):
     """Ordinary provider messages with an out-of-band, Runtime-owned reference map."""
 
-    def __init__(self, messages, references):
+    def __init__(self, messages, references, context=None):
         super().__init__(messages)
         self.references = references
+        # Validation inputs stay local; none of this is serialized to the model.
+        self.context = context or {}
 
 
 class References:
@@ -71,7 +73,8 @@ class References:
         for record in memory["records"]:
             if not is_retained_record(record):
                 continue
-            alias = f"R{len(self.records) + 1}"
+            alias = next((key for key, rid in self.records.items() if rid == record["id"]),
+                         f"R{len(self.records) + 1}")
             self.records[alias] = record["id"]
             # Old citations are not newly supplied evidence. Hide persistent
             # IDs, hashes and tombstone internals, while keeping protection and

@@ -72,6 +72,7 @@ export const historyFields: SettingField[] = [
   number('context_pressure_target', '压力裁剪目标比例', 0.05, 0.98, 0.01),
 ];
 export const memoryFields: SettingField[] = [
+  number('tracker_max_steps', 'Tracker 每次任务模型调用上限', 2, 100),
   number('memory_input_tokens', '整理输入上限（tokens）', 2048, 2000000),
   number('memory_output_tokens', '整理输出上限（tokens）', 256, 65536),
   number('memory_evidence_tokens', '辅助资料（0 关闭，其余不限制长度）', 0, 32768),

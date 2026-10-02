@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, dump, uid
+from tests.support.tracker_model import MemoryModel, batch_payload
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ def story(tmp_path):
 
 def output(kind, session, source=None):
     source = source or "S2"
-    return json.dumps({"operations": [{"op": "add", "id": "key", "record": {
+    return json.dumps({"operations": [{"op": "add", "id": "N1", "record": {
         "category": "current", "content": "乙持有钥匙", "sources": [source]}}], "questions": []})
 
 
@@ -55,7 +55,7 @@ async def refresh(app, session, kind):
 @pytest.mark.parametrize("kind", ["memory"])
 async def test_manual_refresh_rebuilds_from_full_history_without_story_generation(story, kind):
     app, before = story
-    provider = ScriptedLLM([output(kind, before)])
+    provider = MemoryModel([output(kind, before)])
     app.state.service.memory_provider_factory = lambda: provider
     try:
         turn = await refresh(app, before, kind)
@@ -71,8 +71,8 @@ async def test_manual_refresh_rebuilds_from_full_history_without_story_generatio
         }
         assert after["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"] == before["messages"][-2]["id"]
         assert after["snapshot"]["memory_document"]["records"][0]["content"] == "乙持有钥匙"
-        assert provider.call_count == 1
-        payload = json.loads(provider.call_log[0][-1]["content"])
+        assert provider.call_count == 2
+        payload = batch_payload(provider.call_log[0])
         assert payload["previous_result"] == {"version": 1, "records": []}
         assert ["".join(p["text"] for p in m["passages"]) for m in payload["messages"]] == [
             m["model"] for m in before["messages"]]
@@ -85,7 +85,7 @@ async def test_manual_refresh_rebuilds_from_full_history_without_story_generatio
 @pytest.mark.parametrize("kind", ["memory"])
 async def test_invalid_critical_source_blocks_refresh(story, kind):
     app, before = story
-    app.state.service.memory_provider_factory = lambda: ScriptedLLM([output(kind, before, "foreign-id")])
+    app.state.service.memory_provider_factory = lambda: MemoryModel([output(kind, before, "foreign-id")])
     try:
         turn = await refresh(app, before, kind)
         assert turn["status"] == "error"
@@ -100,7 +100,7 @@ async def test_refresh_respects_review_policy(story, kind, accept):
     app, before = story
     store, service = app.state.store, app.state.service
     before = store.update_session(before["id"], before["revision"], policy="preview")
-    service.memory_provider_factory = lambda: ScriptedLLM([output(kind, before)])
+    service.memory_provider_factory = lambda: MemoryModel([output(kind, before)])
     try:
         turn = await refresh(app, before, kind)
         assert turn["status"] == "awaiting_review"
@@ -147,7 +147,7 @@ async def test_refresh_can_be_cancelled_and_rejects_duplicate_clicks(story):
 
 async def test_scene_regeneration_endpoint(story):
     app, before = story
-    app.state.service.memory_provider_factory = lambda: ScriptedLLM([output("memory", before)])
+    app.state.service.memory_provider_factory = lambda: MemoryModel([output("memory", before)])
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             url = f"/api/sessions/{before['id']}/scene"

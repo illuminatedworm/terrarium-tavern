@@ -207,7 +207,7 @@ async def test_custom_prompt_macro_and_user_text_use_batch_identity():
         seen.extend(messages)
         return '{"operations":[],"questions":[]}'
     await consolidate([{"id": "m", "role": "assistant", "raw": "{{user}}遇见{{char}}"}],
-        Settings(memory_system_prompt="为{{user}}记录{{char}}的变化"), generate,
+        Settings(tracker_system_prompt="为{{user}}记录{{char}}的变化"), generate,
         memory=empty(), document={"name": "艾琳"}, persona="小舟")
     assert seen[0]["content"].startswith("为小舟记录艾琳的变化\n\n【程序输出契约】")
     assert json.loads(seen[-1]["content"])["messages"][0]["passages"] == [{"ref": "S1", "text": "小舟遇见艾琳"}]
@@ -374,14 +374,14 @@ async def test_record_api_revision_fork_and_edit_preservation(tmp_path):
 
 
 async def test_rebuild_cancel_and_review_are_atomic(tmp_path):
-    from kohakuterrarium.testing.llm import ScriptedLLM
+    from tests.support.tracker_model import MemoryModel
     app = create_app(tmp_path)
     store = app.state.store
     card = store.import_card(b'{"name":"a","first_mes":"hello"}', 'c.json')
     s = store.new_session(SessionCreate(card_id=card["id"]))
     s = store.update_session(s["id"], 0, policy="preview")
-    app.state.service.memory_provider_factory = lambda: ScriptedLLM([json.dumps(proposal(
-        content="她打了招呼", sources=["S1"]))])
+    app.state.service.memory_provider_factory = lambda: MemoryModel([json.dumps(proposal(
+        rid="N1", content="她打了招呼", sources=["S1"]))])
     turn = app.state.service.submit(s["id"], TurnRequest(operation_id=uid(), expected_revision=s["revision"], scene_refresh="memory"))
     await app.state.service.tasks[turn["id"]]
     assert store.turn(turn["id"])["status"] == "awaiting_review"

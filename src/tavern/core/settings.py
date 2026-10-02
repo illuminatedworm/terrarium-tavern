@@ -19,6 +19,7 @@ from tavern.core.prompts import (
     DEFAULT_RERANKER_PROMPT,
     DEFAULT_RETRIEVAL_PROTOCOL,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_TRACKER_PROMPT,
     LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
 )
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
@@ -69,8 +70,8 @@ class HalfSettings(AgentSettings):
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
-    maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
+    tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
+    tracker_max_steps: int = Field(default=8, ge=2, le=100, strict=True)
     lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
     chunk_mode: Literal["messages", "tokens", "off"] = "messages"
@@ -218,11 +219,33 @@ def migrate_model_connections(raw):
     return changed
 
 
+def migrate_tracker_settings(agent):
+    """Fold legacy content policies verbatim into one editable Tracker prompt."""
+    changed = False
+    custom = []
+    for key, title, default in (("memory_system_prompt", "记忆整理时", DEFAULT_MEMORY_PROMPT),
+                                ("maintenance_system_prompt", "设定维护时", DEFAULT_MAINTENANCE_PROMPT)):
+        if key in agent:
+            old = agent.pop(key)
+            changed = True
+            if isinstance(old, str) and old != default:
+                custom.append(f"## {title}\n{old}")
+    if "tracker_system_prompt" not in agent or custom:
+        agent["tracker_system_prompt"] = "\n\n".join([agent.get("tracker_system_prompt", DEFAULT_TRACKER_PROMPT), *custom])
+        changed = True
+    if "tracker_max_steps" not in agent:
+        agent["tracker_max_steps"] = 8
+        changed = True
+    return changed
+
+
 def migrate_settings(raw: dict) -> SettingsDocument:
     raw = deepcopy(raw)
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
+        if migrate_tracker_settings(raw.setdefault("half_agent", {})):
+            changed_scopes.add("half_agent")
         # Only application prompt settings use the human participant terminology.
         # Character documents, persona names, dialogue and user input stay verbatim.
         for scope in ("full_agent", "half_agent"):
@@ -263,6 +286,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             revisions = raw.setdefault("revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")})
             revisions[scope] = revisions.get(scope, 0) + 1
         return SettingsDocument.model_validate(raw)
+    migrate_tracker_settings(raw)
     old = Settings.model_validate(raw)
     if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
         old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL

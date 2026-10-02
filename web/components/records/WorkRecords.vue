@@ -29,6 +29,9 @@ const purposes: Record<string, string> = {
   memory_review: '疑难复核',
   variables: 'MVU 变量',
   maintenance: '设定维护',
+  tracker_pre: 'Tracker · 正文前',
+  tracker_post: 'Tracker · 正文后',
+  tracker_rebuild: 'Tracker · 记忆重建',
   runtime: '回合处理',
 };
 const statuses: Record<string, string> = {

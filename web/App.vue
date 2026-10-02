@@ -114,6 +114,14 @@ const updatingVariables = computed(
         ),
       )?.kind === 'variable_update_started',
 );
+const updatingTracker = computed(
+  () =>
+    busy.value &&
+    [...trace.value]
+      .reverse()
+      .find((event) => ['tracker_started', 'tracker_completed', 'tracker_failed'].includes(event.kind))
+      ?.kind === 'tracker_started',
+);
 const retryNote = ref('');
 watch(
   () => activeTurn.value?.id,
@@ -2002,7 +2010,13 @@ useTimedError(error);
                     <div class="message-meta">
                       <strong>{{ name }}</strong
                       ><span class="badge">{{
-                        updatingVariables ? '正在更新变量' : busy ? '正在书写' : '未提交草稿'
+                        updatingTracker
+                          ? '后台维护中'
+                          : updatingVariables
+                            ? '正在更新变量'
+                            : busy
+                              ? '正在书写'
+                              : '未提交草稿'
                       }}</span>
                     </div>
                     <div class="draft">
@@ -2137,7 +2151,14 @@ useTimedError(error);
                       :disabled="busy || activeTurn?.status === 'awaiting_review'"
                     />
                     本轮更新变量</label
-                  ><label><input v-model="allowEdit" type="checkbox" /> 本轮允许修改设定</label></span
+                  ><label
+                    :title="
+                      session?.agent_mode === 'full_agent'
+                        ? '授权本轮修改对话级设定'
+                        : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 沉淀长期变化'
+                    "
+                    ><input v-model="allowEdit" type="checkbox" /> 本轮允许修改设定</label
+                  ></span
                 ><button v-if="busy" class="send" @click="stop">■ 停止</button
                 ><button
                   v-else

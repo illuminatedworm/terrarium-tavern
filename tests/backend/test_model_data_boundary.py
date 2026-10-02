@@ -8,13 +8,13 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from tavern.character.card_editor import CardEditorService
 from tavern.conversation.context import compile_context, macros
 from tavern.core.model_view import ModelView, state_for_model
-from tavern.core.models import CardEditorRequest, ContextRecipe, SessionCreate, Settings, TurnRequest
+from tavern.core.models import CardEditorRequest, ContextRecipe, SessionCreate, Settings
 from tavern.core.tokens import count_text
 from tavern.memories.memory_evidence import evidence_pool
 from tavern.memories.memory_records import Record
-from tavern.scripting.agent import Writer
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store
+from tavern.tracker.task import TrackerTask
 
 ID = "12345678-90ab-cdef-1234-567890abcdef"
 KEY = "long-storage-key-with-opaque-identity-019876543210"
@@ -153,24 +153,27 @@ async def test_authorized_tools_only_return_short_refs_and_program_fills_sources
     card = store.import_card(json.dumps(doc).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session["snapshot"]["state"] = runtime_state()
-    agent = Writer(store, "test", doc, session, session["messages"], session["snapshot"],
-                   TurnRequest(text="修改设定", operation_id="x", expected_revision=0), None)
-    tools = {t.tool_name: t for t in agent.tools()}
+    from tavern.conversation.scene import archive_history
+    from tavern.memories.memory_engine import plan_batch
+    agent = TrackerTask(store, "test", store.settings(), session, doc, session["messages"],
+                        session["snapshot"], phase="pre", memory=True)
+    _, request, _, _ = plan_batch(agent.history, archive_history(agent.history, doc, session["persona"]),
+                                  0, agent.memory, doc, agent.settings, session["persona"])
+    agent.batch, agent.references = request, request.references
+    agent._new_recall()
     async def invoke(name, args):
-        result = await tools[name].execute(args)
-        assert result.success, result.get_text_output()
-        body = result.get_text_output()
+        body = agent.encoded(agent.execute(name, args))
         assert all(value not in body for value in (ID, HASH, KEY, session["head"]))
         return body
     lore = json.loads(await invoke("search_lore", {"query": "银戒"}))
-    assert "read_lore" not in tools
-    assert set(lore[0]) == {"ref", "name", "content"}
+    assert "read_lore" not in agent.allowed
+    assert set(lore[0]) == {"name", "content"}
     assert len(lore) == 1 and lore[0]["content"] == content
-    assert agent.requested == {ID}
+    assert agent.snapshot == session["snapshot"]
     recalled = json.loads(await invoke("tavern_recall_history", {"turn": 1, "radius": 0}))
     ref = recalled["rounds"][0]["passages"][0]["ref"]
-    await invoke("write_memory", {"content": "已经相遇", "source_ref": ref})
-    record = agent.snapshot["memory_document"]["records"][-1]
+    await invoke("write_memory", {"operations": [{"op": "add", "record": {"category": "episode", "content": "已经相遇", "sources": [ref]}}]})
+    record = agent.memory["records"][-1]
     assert record["sources"][0]["message_id"] == session["head"] and record["sources"][0]["excerpt"] == "旧港相遇。"
     await invoke("search_memory", {"query": "相遇"})
     await invoke("read_state", {})

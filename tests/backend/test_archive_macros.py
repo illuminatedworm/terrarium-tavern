@@ -1,13 +1,13 @@
 import json
 
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.conversation.scene import archive_history
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.memories.memory import fingerprint
 from tavern.storage.store import uid
+from tests.support.tracker_model import MemoryModel, batch_payload
 
 
 def test_rendered_archive_cache_identity_changes_with_persona():
@@ -28,13 +28,13 @@ async def test_manual_refresh_uses_session_identity(kind, tmp_path):
     card = store.import_card(json.dumps({"name": "洛伊", "first_mes": "{{user}}遇见{{char}}。"}).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"], persona="小舟"))
     response = {"operations": [], "questions": []}
-    provider = ScriptedLLM([json.dumps(response)])
+    provider = MemoryModel([json.dumps(response)])
     service.memory_provider_factory = lambda: provider
     try:
         turn = service.submit(session["id"], TurnRequest(operation_id=uid(), expected_revision=0, scene_refresh=kind))
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed"
-        payload = json.loads(provider.call_log[0][-1]["content"])
+        payload = batch_payload(provider.call_log[0])
         assert payload["messages"][0]["passages"] == [{"ref": "S1", "text": "小舟遇见洛伊。"}]
         assert store.session(session["id"])["messages"][0]["raw"] == "{{user}}遇见{{char}}。"
     finally:

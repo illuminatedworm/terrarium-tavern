@@ -392,14 +392,14 @@ onMounted(async () => {
             <template v-else
               ><h4>历史窗口</h4>
               <SettingsFields :value="values" :fields="historyFields" />
-              <h4>记忆整理</h4>
+              <h4>Tracker 与记忆整理</h4>
               <SettingsFields :value="values" :fields="memoryFields"
             /></template>
             <p class="muted">
               {{
                 scope === 'full_agent'
                   ? '模型通过工具查阅资料、保存笔记并主动换窗。'
-                  : '消息退出前必须验证记忆覆盖；失败时保留原窗口。关闭裁剪仍会执行周期整理。'
+                  : '周期记忆在正文后整理，可与本轮变量维护合并。消息退出前仍须补齐记忆覆盖；关闭裁剪仍执行周期整理。'
               }}取消或拒绝审核不会提交本轮变更。
             </p>
           </template>

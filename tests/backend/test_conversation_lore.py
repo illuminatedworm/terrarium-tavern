@@ -250,9 +250,9 @@ def test_exit_request_cannot_reanchor_even_with_direct_mention(cooldown):
 
 
 async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate(tmp_path):
-    from types import SimpleNamespace
-
     from kohakuterrarium.testing.llm import ScriptedLLM
+
+    from tests.support.tracker_model import MemoryModel
 
     store = Store(tmp_path)
     store.save_settings(Settings(history_message_cap=8, chunk_size=2,
@@ -264,14 +264,13 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
     service.provider_factory = lambda: narrative
     archive_calls = []
 
-    class ArchiveProvider:
+    class ArchiveProvider(MemoryModel):
+        def __init__(self):
+            super().__init__([{"operations": [], "questions": []}])
+
         async def chat_complete(self, messages, **kwargs):
             archive_calls.append(messages)
-            result = {"operations": [], "questions": []} if "后台 Tracker" in messages[0]["content"] else {"narrative": "已发生剧情"}
-            return SimpleNamespace(content=json.dumps(result), usage={})
-
-        async def close(self):
-            pass
+            return await super().chat_complete(messages, **kwargs)
 
     service.memory_provider_factory = ArchiveProvider
     try:
@@ -301,7 +300,11 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
         turn = service.submit(current["id"], TurnRequest(mode="regenerate", operation_id="regen", expected_revision=current["revision"]))
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed"
-        assert store.session(current["id"])["snapshot"] == original_snapshot
+        regenerated = store.session(current["id"])["snapshot"]
+        # Regeneration restores the pre-turn archive, never the discarded
+        # candidate's post-story coverage, and does not run a new cycle.
+        for key in ("context_window", "lore", "lore_injections", "state"):
+            assert regenerated.get(key) == original_snapshot.get(key)
         assert len(archive_calls) == count
     finally:
         await service.close()

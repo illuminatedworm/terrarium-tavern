@@ -12,14 +12,14 @@ from tavern.storage.store import Store
 
 def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     store = Store(tmp_path)
-    cfg = Settings(memory_timeout=60, memory_system_prompt='自定义原则')
+    cfg = Settings(memory_timeout=60, tracker_system_prompt='自定义原则')
     store.save_settings(cfg)
     card = store.import_card(b'{"name":"fixture","first_mes":"hello"}', 'card.json')
     session = store.new_session(SessionCreate(card_id=card['id']))
     assert read_memory(session['snapshot']) == {'version': 1, 'records': []}
     reopened = Store(tmp_path)
     assert reopened.settings_document() == store.settings_document()
-    assert reopened.settings().memory_system_prompt == cfg.memory_system_prompt
+    assert reopened.settings().tracker_system_prompt == cfg.tracker_system_prompt
     assert reopened.session(session['id']) == store.session(session['id'])
     with reopened.connection() as db:
         assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '2'
