@@ -287,20 +287,36 @@ def create_app(data_dir=None):
             headers={"Content-Disposition": f'attachment; filename="character.{ext}"'},
         )
 
-    @app.get("/api/cards/{cid}/portrait")
-    async def portrait(cid: str):
-        card = store.card(cid)
+    def portrait_response(card):
+        def image_response(digest, mime):
+            path = store.root / "blobs" / digest
+            if not path.is_file():
+                raise HTTPException(404, "头像文件不存在")
+            return FileResponse(path, media_type=mime)
+
         if card["container"] == "png":
-            return FileResponse(store.root / "blobs" / card["original"], media_type="image/png")
+            return image_response(card["original"], "image/png")
         assets = normalize(card["document"]).get("assets", [])
+        if not isinstance(assets, list):
+            assets = []
         for asset in assets:
-            path = asset.get("uri", "").removeprefix("embeded://")
+            if not isinstance(asset, dict) or not isinstance(asset.get("uri"), str):
+                continue
+            path = asset["uri"].removeprefix("embeded://")
             if asset.get("type") == "icon" and path in card["resources"]:
                 mime = mimetypes.guess_type(path)[0]
                 if mime not in ("image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"):
                     continue
-                return FileResponse(store.root / "blobs" / card["resources"][path], media_type=mime)
+                return image_response(card["resources"][path], mime)
         raise HTTPException(404, "没有头像")
+
+    @app.get("/api/cards/{cid}/portrait")
+    async def portrait(cid: str):
+        return portrait_response(store.card(cid))
+
+    @app.get("/api/sessions/{sid}/portrait")
+    async def session_portrait(sid: str):
+        return portrait_response(store.session_card(sid))
 
     @app.get("/api/sessions")
     async def sessions():

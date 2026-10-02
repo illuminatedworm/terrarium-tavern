@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import StorySetup from './StorySetup.vue';
+import CharacterPortrait from '../character/CharacterPortrait.vue';
+import { cardPortraitUrl } from '../../lib/portraits';
 const props = defineProps<{ cards: any[] }>();
 const emit = defineEmits<{ started: [session: any]; back: [] }>();
 const selectedId = ref(''),
@@ -40,8 +42,8 @@ watch(
         :aria-label="`选择角色卡 ${card.name}`"
         @click="selectedId = card.id"
       >
-        <span class="story-card-mark">{{ card.name.slice(0, 1) }}</span
-        ><span class="story-card-description"
+        <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" size="card" />
+        <span class="story-card-description"
           ><strong>{{ card.name }}</strong>
           <p>{{ description(card) }}</p></span
         ><span aria-hidden="true">→</span>

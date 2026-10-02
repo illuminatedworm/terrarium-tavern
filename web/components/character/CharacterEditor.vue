@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import CardAgentEditor from './CardAgentEditor.vue';
+import CharacterPortrait from './CharacterPortrait.vue';
+import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
 import LoreFilter from './LoreFilter.vue';
 import { audiences, entryAudience, emptyLoreFilter, filterLore } from '../../lib/loreFilter';
 import FieldHelp from '../common/FieldHelp.vue';
@@ -533,10 +535,20 @@ useTimedError(error);
     />
     <template v-else>
       <div class="editor-header">
-        <div>
+        <div class="character-header-main">
           <button class="quiet" @click="emit('back')">← 返回</button>
-          <h1>{{ data.name || '角色编辑器' }}</h1>
-          <p class="muted">保留所有未编辑的扩展字段</p>
+          <div class="character-heading">
+            <CharacterPortrait
+              :src="session ? sessionPortraitUrl(session) : cardPortraitUrl(card)"
+              :name="data.name"
+              size="detail"
+              fit="contain"
+            />
+            <div>
+              <h1>{{ data.name || '角色编辑器' }}</h1>
+              <p class="muted">保留所有未编辑的扩展字段</p>
+            </div>
+          </div>
         </div>
         <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
           {{ props.session ? '保存对话世界书' : '保存角色' }}

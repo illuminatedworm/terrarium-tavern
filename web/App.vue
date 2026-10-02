@@ -25,6 +25,8 @@ import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import CharacterEditor from './components/character/CharacterEditor.vue';
+import CharacterPortrait from './components/character/CharacterPortrait.vue';
+import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
 import StoryLoading from './components/story/StoryLoading.vue';
 import PersonaEditor from './components/settings/PersonaEditor.vue';
@@ -46,6 +48,10 @@ const cards = ref<any[]>([]),
   sessions = ref<any[]>([]),
   session = ref<any>(null);
 const sessionCard = ref<any>(null);
+const sessionPortraits = computed(() =>
+  Object.fromEntries(sessions.value.map((s) => [s.id, sessionPortraitUrl(s)])),
+);
+const storyPortrait = computed(() => sessionPortraitUrl(session.value));
 const editingSessionTitleId = ref('');
 const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
@@ -1656,8 +1662,8 @@ useTimedError(error);
             </div>
             <template v-else
               ><button class="session-open" @click="guarded(() => openSession(s.id))">
-                <span class="session-icon">◇</span
-                ><span
+                <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" />
+                <span
                   >{{ s.title || s.name
                   }}<small
                     >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }}</small
@@ -1694,8 +1700,8 @@ useTimedError(error);
               :class="{ active: selected?.id === card.id && pageMode === 'card' }"
               @click="showCard(card)"
             >
-              <span class="session-icon">◇</span
-              ><span
+              <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" />
+              <span
                 >{{ card.name
                 }}<small>{{ card.report.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
               >
@@ -1936,6 +1942,7 @@ useTimedError(error);
                   :message="message"
                   :session="session"
                   :name="name"
+                  :portrait-src="storyPortrait"
                   :source-highlight="sourceHighlight"
                   :writer-response-cache="writerResponseCache"
                   :cache-eligible="eligibleCacheReplies.has(message.id)"
@@ -2005,7 +2012,7 @@ useTimedError(error);
               </template>
               <template #draft>
                 <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
-                  <div class="avatar">{{ name.slice(0, 1) }}</div>
+                  <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
                   <div class="message-body">
                     <div class="message-meta">
                       <strong>{{ name }}</strong

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import StoryMessage from './StoryMessage.vue';
+import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { computed } from 'vue';
 const props = defineProps<{
   message: any;
   session: any;
   name: string;
+  portraitSrc?: string;
   sourceHighlight?: any;
   regeneratingId?: string | null;
   busy: boolean;
@@ -74,7 +76,8 @@ function forwardAction(
       aria-label="将缓存断点固定在此回复末尾"
       @click="emit('setCacheBreakpoint', message.id)"
     />
-    <div class="avatar">{{ message.role === 'user' ? '你' : name.slice(0, 1) }}</div>
+    <div v-if="message.role === 'user'" class="avatar">你</div>
+    <CharacterPortrait v-else class="avatar" :src="portraitSrc" :name="name" size="message" />
     <div class="message-body">
       <div class="message-meta">
         <strong>{{ message.role === 'user' ? session.persona : name }}</strong>

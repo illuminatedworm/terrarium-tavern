@@ -273,9 +273,6 @@ label select {
   font-size: 10px;
   margin-top: 6px;
 }
-.session-icon {
-  color: var(--text-muted);
-}
 .sidebar-bottom {
   padding-top: 18px;
   border-top: 1px solid var(--border-subtle);
@@ -2067,8 +2064,12 @@ header {
 }
 .session-list .session-open {
   margin: 0;
-  padding-right: 94px;
+  padding-right: 10px;
   background: transparent;
+}
+.session-row:hover .session-open,
+.session-row:focus-within .session-open {
+  padding-right: 94px;
 }
 .session-list .session-open:hover {
   background: transparent;
@@ -2126,9 +2127,6 @@ header {
   opacity: 1;
   color: var(--danger);
   background: var(--danger-surface);
-}
-.message .avatar img {
-  display: none;
 }
 .inline-message-editor textarea {
   min-height: 130px;
@@ -2287,7 +2285,8 @@ header {
 .session-open > span:last-child {
   overflow: hidden;
 }
-.card-side-item > span:last-child {
+.card-side-item > span:last-child,
+.session-open > span:last-child {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -3232,17 +3231,6 @@ select:not([multiple]) {
   padding: 14px 18px;
   width: 100%;
 }
-.story-card-mark {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent-hover);
-  font-size: 20px;
-}
 .story-card-description {
   flex: 1;
   min-width: 0;
@@ -4159,6 +4147,25 @@ main,
 .editor-header h1 {
   overflow-wrap: anywhere;
 }
+.character-header-main {
+  flex: 1;
+  min-width: min(100%, 280px);
+}
+.character-heading {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+.character-heading > div {
+  min-width: 0;
+}
+.character-heading h1 {
+  overflow-wrap: anywhere;
+}
+.story-setup > .character-heading {
+  margin-top: 28px;
+}
 .editor-start > button {
   margin-bottom: 10px;
 }
@@ -4215,6 +4222,9 @@ main,
   border-color: var(--border-strong);
 }
 @media (hover: none), (pointer: coarse) {
+  .session-list .session-open {
+    padding-right: 94px;
+  }
   .session-list .session-delete,
   .session-list .session-rename,
   .session-row.active .session-delete,

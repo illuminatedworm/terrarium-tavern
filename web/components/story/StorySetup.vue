@@ -5,6 +5,8 @@ import { api } from '../../lib/api';
 import StoryProse from './StoryProse.vue';
 import StoryLoading from './StoryLoading.vue';
 import { openingProse } from '../../lib/storyText';
+import CharacterPortrait from '../character/CharacterPortrait.vue';
+import { cardPortraitUrl } from '../../lib/portraits';
 
 const props = defineProps<{ card: any }>();
 const emit = defineEmits<{ started: [session: any]; back: [] }>();
@@ -63,9 +65,14 @@ useTimedError(error);
     <div class="story-steps">
       <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 用户与开场</span>
     </div>
-    <div class="eyebrow">START A NEW STORY</div>
-    <h1>进入 {{ data.name }}</h1>
-    <p class="muted">每次进入都会创建独立会话</p>
+    <div class="character-heading">
+      <CharacterPortrait :src="cardPortraitUrl(card)" :name="data.name" size="detail" fit="contain" />
+      <div>
+        <div class="eyebrow">START A NEW STORY</div>
+        <h1>进入 {{ data.name }}</h1>
+        <p class="muted">每次进入都会创建独立会话</p>
+      </div>
+    </div>
     <AppNotification :message="error" />
     <div class="story-setup-grid">
       <div class="story-setup-options">
