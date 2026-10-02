@@ -210,7 +210,10 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
         await service.close()
 
 
-async def test_preview_matches_first_request_without_consuming_rule_injection(tmp_path):
+@pytest.mark.parametrize("allow_content_edit", [False, True])
+@pytest.mark.parametrize("update_variables", [False, True])
+async def test_preview_matches_first_request_without_consuming_rule_injection(
+        tmp_path, allow_content_edit, update_variables):
     store, service, session = game(tmp_path)
     app = create_app(store.root)
     try:
@@ -218,15 +221,37 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(tm
             url = f"/api/sessions/{session['id']}/preview"
             plain = await client.post(url, json={"text": "Continue"})
             assert plain.status_code == 200 and not frames(plain.json()["messages"])
-            loaded = await client.post(url, json={"text": "Continue", "update_variables": True})
+            assert not any(m["source"] == "turn_instruction" for m in plain.json()["trace"])
+            payload = {"text": "Continue", "update_variables": update_variables,
+                       "allow_content_edit": allow_content_edit}
+            loaded = await client.post(url, json=payload)
             assert loaded.status_code == 200
-            repeated = await client.post(url, json={"text": "Continue", "update_variables": True})
+            instructions = [m["content"] for m in loaded.json()["trace"] if m["source"] == "turn_instruction"]
+            assert instructions == ([f"允许修改设定：{allow_content_edit}。"]
+                                    if update_variables or allow_content_edit else [])
+            repeated = await client.post(url, json=payload)
             assert frames(repeated.json()["messages"]) == frames(loaded.json()["messages"])
         assert load_trace(store, session["id"], session["messages"]) == []
-        model = Model(empty_patch(), "Narrative")
-        result, _ = await turn(service, session, model, update_variables=True)
+        model = Model(*([empty_patch()] if update_variables else []), "Narrative")
+        result, session = await turn(service, session, model,
+                                     update_variables=update_variables, allow_content_edit=allow_content_edit)
         assert result["status"] == "committed", result["error"]
         assert frames(model.requests[0]["messages"]) == frames(loaded.json()["messages"])
+        assert [m["content"] for m in result["preview"]["trace"] if m["source"] == "turn_instruction"] == instructions
+        for request in model.requests:
+            assert [m["content"] for m in request["messages"]
+                    if m.get("content", "").startswith("允许修改设定：")] == instructions
+        tools = {tool["function"]["name"] for tool in model.requests[0]["extra_body"]["tools"]}
+        assert ("revise_content" in tools) == allow_content_edit
+        async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
+            unchecked = await client.post(url, json={"text": "Continue"})
+            assert unchecked.status_code == 200
+            assert not any(m["source"] == "turn_instruction" for m in unchecked.json()["trace"])
+        unchecked_model = Model("Next narrative")
+        result, _ = await turn(service, session, unchecked_model)
+        assert result["status"] == "committed", result["error"]
+        assert not any(m["source"] == "turn_instruction" for m in result["preview"]["trace"])
+        assert not any("允许修改设定" in m.get("content", "") for m in unchecked_model.requests[0]["messages"])
     finally:
         await service.close()
         await app.state.editor.close()

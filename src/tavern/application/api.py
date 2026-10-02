@@ -487,7 +487,7 @@ def create_app(data_dir=None):
                 tool_definitions(preview_request, s,
                                  full_settings.full_agent_config, settings=full_settings, document=document),
                 trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables,
-                instruction=f"允许修改设定：{allow_content_edit or s['policy_effective'] != 'directed'}。")
+                allow_content_edit=allow_content_edit)
             return result, s
         from tavern.conversation.half_context import load_trace as load_half_trace
         result = compile_context(

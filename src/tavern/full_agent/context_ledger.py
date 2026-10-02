@@ -6,10 +6,12 @@ from tavern.core.cache_policy import fingerprint
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
 
-VERSION = 1
+# Older frames combined permission notices and rewrite requirements.
+VERSION = 3
 CLEAR_TEXT = {
     "post": "此前的角色后置要求已撤销。",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
+    "regenerate_instruction": "此前的重生成要求已撤销。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",
     "context_warning": "此前的 checkpoint 过时提醒已解除。",
     "context_budget": "此前的窗口压力提醒已解除。",
@@ -40,7 +42,7 @@ class ContextLedger:
             self.reason = "context_sources_changed"
         elif any(history[key] != observed[key] for key in history.keys() & observed.keys()):
             self.reason = "history_content_changed"
-        self.epoch = (fingerprint([signature, self.origin, window["id"], input_id, history])
+        self.epoch = (fingerprint([VERSION, signature, self.origin, window["id"], input_id, history])
                       if self.reason else previous["epoch"])
         # Changing local instructions or tools requires a new runtime baseline,
         # but does not invalidate an unchanged response from the same provider.

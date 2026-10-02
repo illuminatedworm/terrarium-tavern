@@ -469,6 +469,7 @@ const contextLabels: Record<string, string> = {
   post: '后置指令',
   inject: '脚本注入',
   turn_instruction: '补充要求',
+  regenerate_instruction: '重生成要求',
   'provider-fallback': '兼容提示',
   session_preference: '本轮偏好',
   chat_framing: '请求封装',

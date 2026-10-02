@@ -349,8 +349,12 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert note["sources"][0]["message_id"] == fork["messages"][1]["id"]
         assert not note_view(note, fork["messages"])["stale"]
         assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
-        result, regenerated = await turn(service, first, Model("第二版正文"), mode="regenerate")
+        result, regenerated = await turn(service, first, Model("第二版正文"), mode="regenerate",
+                                         regenerate_note="保留钟楼约定，缩短正文。")
         assert result["status"] == "committed", result["error"]
+        assert not any(m["source"] == "turn_instruction" for m in result["preview"]["trace"])
+        [instruction] = [m for m in result["preview"]["trace"] if m["source"] == "regenerate_instruction"]
+        assert instruction["content"] == store.settings().regenerate_prompt + "\n保留钟楼约定，缩短正文。"
         assert regenerated["snapshot"]["full_agent"]["notes"] == {}
         assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
         switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
@@ -885,7 +889,8 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     sources = [item["source"] for item in compiled["trace"]]
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
-                                          "mvu_rules", "post", "turn_instruction", "checkpoint", "context_status"]
+                                          "mvu_rules", "post", "turn_instruction", "regenerate_instruction",
+                                          "checkpoint", "context_status"]
 
 
 @pytest.mark.parametrize("window_number, notes, expected", [

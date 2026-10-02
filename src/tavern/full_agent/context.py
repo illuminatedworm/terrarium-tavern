@@ -34,11 +34,17 @@ def load_trace(store, sid, history):
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
                    trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False,
-                   require_state_patch=False, variable_rules=None):
+                   require_state_patch=False, variable_rules=None, allow_content_edit=False):
     state = full_state(snapshot)
     window = state["window"]
     card = normalize(document)
     visible = history[window["start"]:]
+    turn_instructions = {
+        "turn_instruction": (
+            f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
+            if require_state_patch or allow_content_edit else ""),
+        "regenerate_instruction": instruction,
+    }
     def expand(value):
         return macros(value, card, session["persona"], snapshot.get("state", {}))
     items = []
@@ -73,7 +79,12 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     ledger = ContextLedger(settings, items, tools, document, snapshot, records, input_id,
                            {mid: fingerprint(text) for mid, text in history_text.items()})
 
-    def replay(message):
+    def replay(message, *, current_turn=False):
+        source = message.get("source")
+        # Permission and rewrite requirements apply only to the current turn.
+        # Do not retain an old block or append a revocation after both switches are off.
+        if source in turn_instructions and (not current_turn or not turn_instructions[source]):
+            return
         item = ledger.replay(message)
         if item is not None:
             items.append(item)
@@ -106,7 +117,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     anchored(input_id)
     add("user", user_input, "input", message_id=input_id)
     for message in continuation:
-        replay(message)
+        replay(message, current_turn=True)
     update("turn_variable_instruction",
            "本轮须调用 patch_state 更新 MVU 变量一次，无变化提交 []，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
            value={"required": True, "input_id": input_id} if require_state_patch else False)
@@ -117,7 +128,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                  if variable_rules is None else variable_rules)
         update("mvu_rules", variable_rules_message(rules), value=rules)
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
-    update("turn_instruction", instruction)
+    for source, content in turn_instructions.items():
+        update(source, content)
     warning = ""
     if checkpoint.get("stale"):
         refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]

@@ -406,8 +406,9 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
             tool_definitions(request, session, settings.full_agent_config, settings=settings,
                              document=store.session_card(session["id"])["document"]),
             trace=load_trace(store, session["id"], session["messages"]),
-            require_state_patch=True, instruction="允许修改设定：True。")
+            require_state_patch=True, allow_content_edit=True)
         assert preview["messages"] == actual["messages"]
+        assert [m["content"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：True。"]
         assert len(checkpoint_frames(preview["messages"])) == 1
         assert "checkpoint" not in [u["source"] for u in preview["context_ledger"]["updates"]]
     finally:
@@ -588,6 +589,28 @@ async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_p
         assert not any(m.get("_native_response") for m in model.requests[0]["messages"])
     finally:
         await service.close()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatch, version):
+    from tavern.full_agent import context_ledger
+    from tavern.full_agent.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
+    snapshot = {"state": {}, "full_agent": new_state()}
+    args = ({"name": "fixture"}, session, [], snapshot, "next", config(), [])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(context_ledger, "VERSION", version)
+        first = compile_window(*args, input_id="u1", allow_content_edit=True)
+    second = compile_window(*args, input_id="u1", continuation=first["context_additions"])
+    assert second["context_ledger"]["rebuild_reason"] == "context_version_changed"
+    assert second["context_ledger"]["epoch"] != first["context_ledger"]["epoch"]
+    assert not any(m["source"] == "turn_instruction" for m in second["trace"])
+    assert not any("允许修改设定" in m["content"] for m in second["messages"])
+    third = compile_window(*args, input_id="u1",
+                           continuation=first["context_additions"] + second["context_additions"])
+    assert third["context_ledger"]["rebuild_reason"] is None
+    assert third["messages"] == second["messages"]
 
 
 def test_history_macro_change_rebuilds_once_and_records_why():
