@@ -16,7 +16,7 @@ import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
 
 const props = defineProps<{ conversationId: string; library: any[] }>();
-const emit = defineEmits<{ changed: []; saved: []; deleted: [] }>();
+const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
 const error = ref(''),
@@ -36,7 +36,8 @@ const composer = ref<HTMLTextAreaElement>(),
   searchInput = ref<HTMLInputElement>(),
   dialogInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>(),
-  shell = ref<HTMLElement>();
+  shell = ref<HTMLElement>(),
+  modalOverlay = ref<HTMLElement>();
 const followingLatest = ref(true);
 const narrow = ref(window.innerWidth <= 1100);
 const onResize = () => {
@@ -45,6 +46,7 @@ const onResize = () => {
 const activities = ref<Record<string, EditorEvent[]>>({});
 let alive = true;
 let stream: EventSource | undefined;
+let modalTrigger: HTMLElement | null = null;
 const base = `/card-editor/conversations/${props.conversationId}`;
 const active = computed(() => workspace.value?.runs.find((r) => ['queued', 'running'].includes(r.status)));
 const locked = computed(() => busy.value || !!active.value || !!workspace.value?.pending);
@@ -192,14 +194,20 @@ async function discard() {
   });
 }
 async function openModal(name: string) {
+  if (!modal.value) modalTrigger = document.activeElement as HTMLElement | null;
   modal.value = name;
   if (name === 'rename') title.value = workspace.value?.title || '';
   await nextTick();
-  (name === 'references' ? searchInput.value : dialogInput.value)?.focus();
+  const target =
+    (name === 'references' ? searchInput.value : dialogInput.value) ||
+    modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
+  target?.focus({ preventScroll: true });
 }
 function closeModal() {
   modal.value = '';
-  void nextTick(() => composer.value?.focus());
+  const trigger = modalTrigger;
+  modalTrigger = null;
+  void nextTick(() => (trigger?.isConnected ? trigger : composer.value)?.focus({ preventScroll: true }));
 }
 function confirmCardAction() {
   const kind = modal.value;
@@ -302,7 +310,7 @@ async function deleteConversation() {
     sessionStorage.removeItem(`tavern-editor-input-${props.conversationId}`);
     if (alive) {
       closeModal();
-      emit('deleted');
+      emit('deleted', props.conversationId);
     }
   });
 }
@@ -558,10 +566,10 @@ onBeforeUnmount(() => {
     </div>
   </section>
   <Teleport to="body"
-    ><div v-if="modal" class="overlay cw-overlay" @keydown.esc="closeModal">
+    ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
         :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'references' ? '引用角色卡' : '制卡对话操作'"
-        :size="['form', 'preview'].includes(modal) ? 'large' : 'medium'"
+        :size="['form', 'preview'].includes(modal) ? 'large' : modal === 'references' ? 'medium' : 'small'"
         @close="closeModal"
       >
         <template v-if="modal === 'references'"
@@ -612,7 +620,7 @@ onBeforeUnmount(() => {
           <p>
             {{
               modal === 'delete'
-                ? '聊天、草稿和撤销记录将删除。已保存的角色卡和故事保留。'
+                ? '聊天、草稿和撤销记录将删除。已保存的角色卡、用户角色和故事保留。'
                 : modal === 'discard'
                   ? '本轮未提交的修改将丢弃，恢复上次完成的草稿。聊天记录保留。'
                   : modal === 'reload'

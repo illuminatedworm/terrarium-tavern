@@ -47,6 +47,7 @@ import {
 const orphanDrafts = ref<any[]>([]);
 const cardConversations = ref<any[]>([]);
 const editorConversationId = ref('');
+const deletingCardConversationId = ref('');
 const cards = ref<any[]>([]),
   sessions = ref<any[]>([]),
   session = ref<any>(null);
@@ -699,7 +700,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
   }
 }
 
-function askDeleteSession(item: any, event: MouseEvent) {
+function askDeleteConversation(item: any, event: MouseEvent, kind: 'session' | 'editor') {
   deleteTrigger = event.currentTarget as HTMLElement;
   const rect = deleteTrigger.getBoundingClientRect(),
     width = 270,
@@ -708,6 +709,7 @@ function askDeleteSession(item: any, event: MouseEvent) {
     left = Math.max(10, Math.min(window.innerWidth - width - 10, rect.right - width));
   deleteBubble.value = {
     item,
+    kind,
     above: !below,
     left,
     arrowLeft: Math.max(12, Math.min(width - 12, rect.left + rect.width / 2 - left)),
@@ -725,7 +727,8 @@ function closeDeleteOnOutside(event: PointerEvent) {
   if (deleteBubble.value && !target.closest('.delete-confirm-popover,.session-delete'))
     closeDeleteBubble(false);
 }
-function closeDeleteOnViewportChange() {
+function closeDeleteOnViewportChange(event?: Event) {
+  if (event?.target instanceof Element && event.target.closest('.delete-confirm-popover')) return;
   if (deleteBubble.value) closeDeleteBubble(false);
 }
 async function deleteCard() {
@@ -948,13 +951,33 @@ async function manageCardAgent() {
     else await newCardConversation();
   });
 }
-async function cardConversationDeleted() {
-  editorConversationId.value = '';
+async function cardConversationDeleted(id: string) {
+  sessionStorage.removeItem(`tavern-editor-input-${id}`);
+  if (localStorage.getItem('tavern-active-card-conversation') === id)
+    localStorage.removeItem('tavern-active-card-conversation');
+  const wasCurrent = editorConversationId.value === id;
+  if (wasCurrent) editorConversationId.value = '';
   await refreshCardConversations();
-  if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id);
-  else {
-    pageMode.value = '';
-    sidebarSection.value = 'editor';
+  // A completed deletion must not navigate away from a view opened meanwhile.
+  if (wasCurrent && !editorConversationId.value && pageMode.value === 'editor') {
+    if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id);
+    else {
+      pageMode.value = '';
+      sidebarSection.value = 'editor';
+    }
+  }
+}
+async function deleteCardConversation(item: any) {
+  if (deletingCardConversationId.value) return;
+  closeDeleteBubble(false);
+  deletingCardConversationId.value = item.id;
+  try {
+    await guarded(async () => {
+      await api(`/card-editor/conversations/${item.id}`, { expected_revision: item.revision }, 'DELETE');
+      await cardConversationDeleted(item.id);
+    });
+  } finally {
+    deletingCardConversationId.value = '';
   }
 }
 async function copyLibraryCard(card: any) {
@@ -1732,7 +1755,7 @@ useTimedError(error);
               ><button
                 class="session-delete"
                 :aria-label="`删除会话 ${s.title || s.name}`"
-                @click.stop="askDeleteSession(s, $event)"
+                @click.stop="askDeleteConversation(s, $event, 'session')"
               >
                 删除
               </button></template
@@ -1791,27 +1814,48 @@ useTimedError(error);
         <div class="side-label">
           制卡对话 <span>{{ cardConversations.length }}</span>
         </div>
-        <nav class="session-list">
-          <button
+        <nav class="session-list" aria-label="制卡对话列表">
+          <div
             v-for="conversation in cardConversations"
             :key="conversation.id"
+            class="session-row"
+            :data-conversation-id="conversation.id"
             :class="{ active: conversation.id === editorConversationId }"
-            @click="openCardAgent(conversation.id)"
           >
-            <span
-              >{{ conversation.title
-              }}<small
-                >{{ conversation.card_count }} 张资料 ·
-                {{
-                  conversation.status === 'running'
-                    ? '运行中'
-                    : conversation.resumable
-                      ? '可继续'
-                      : '已保存对话'
-                }}</small
-              ></span
+            <button class="session-open" @click="openCardAgent(conversation.id)">
+              <span
+                >{{ conversation.title
+                }}<small
+                  >{{ conversation.card_count }} 张资料 ·
+                  {{
+                    ['queued', 'running'].includes(conversation.status)
+                      ? '运行中'
+                      : conversation.resumable
+                        ? '可继续'
+                        : '已保存对话'
+                  }}</small
+                ></span
+              >
+            </button>
+            <button
+              class="session-delete"
+              :aria-label="`删除制卡对话 ${conversation.title}`"
+              :disabled="
+                !!deletingCardConversationId ||
+                ['queued', 'running'].includes(conversation.status) ||
+                conversation.resumable
+              "
+              :title="
+                ['queued', 'running'].includes(conversation.status) || conversation.resumable
+                  ? '请先停止任务并处理未完成进度'
+                  : '删除制卡对话'
+              "
+              @click.stop="askDeleteConversation(conversation, $event, 'editor')"
             >
-          </button>
+              删除
+            </button>
+          </div>
+          <p v-if="!cardConversations.length" class="empty-small">从上方新建制卡对话。</p>
         </nav>
       </template>
       <div class="sidebar-bottom">
@@ -2532,11 +2576,26 @@ useTimedError(error);
         @keydown.esc.prevent="closeDeleteBubble()"
       >
         <div class="popover-arrow"></div>
-        <h3 id="delete-confirm-title">删除“{{ deleteBubble.item.name }}”？</h3>
-        <p>剧情分支、会话记忆、检索线索和运行记录都会彻底清除，且无法恢复。</p>
+        <h3 id="delete-confirm-title">删除“{{ deleteBubble.item.title || deleteBubble.item.name }}”？</h3>
+        <p>
+          {{
+            deleteBubble.kind === 'editor'
+              ? '聊天、草稿和撤销记录将删除。已保存的角色卡、用户角色和故事保留。'
+              : '剧情分支、会话记忆、检索线索和运行记录都会彻底清除，且无法恢复。'
+          }}
+        </p>
         <div>
           <button @click="closeDeleteBubble()">取消</button
-          ><button class="danger" @click="deleteSession(deleteBubble.item)">彻底删除</button>
+          ><button
+            class="danger"
+            @click="
+              deleteBubble.kind === 'editor'
+                ? deleteCardConversation(deleteBubble.item)
+                : deleteSession(deleteBubble.item)
+            "
+          >
+            彻底删除
+          </button>
         </div>
       </section></Teleport
     >
