@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from uuid import UUID, uuid5
 
 from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.scripting.sent_breakpoints import SentBreakpoints
 
 
 def response_origin(settings, key=None):
@@ -23,6 +24,7 @@ class ProviderRequestContext:
     device_id: str
     routing: dict = field(default_factory=dict)
     diagnostics: dict = field(default_factory=dict)
+    sent_breakpoints: SentBreakpoints | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
         self.session_id = str(UUID(self.session_id))
@@ -101,7 +103,8 @@ class OperationContexts:
         if purpose != "narrative":
             sid = uuid5(sid, "half_agent:" + purpose)
         return ProviderRequestContext(str(sid), f"{self.turn_id}:{purpose}:{number}",
-                                      window_id, self.store.device_id())
+                                      window_id, self.store.device_id(),
+                                      sent_breakpoints=self.store.cache_breakpoint_history(self.session_id, purpose))
 
 
 def configure_operation(provider, context, event, purpose):

@@ -35,6 +35,7 @@ from tavern.scripting.protocols import (
 )
 from tavern.scripting.reasoning import anthropic_thinking, gemini_effort, gemini_thinking
 from tavern.scripting.request_context import identity_headers, response_origin
+from tavern.scripting.sent_breakpoints import APIS, FIELD, SentBreakpoints, marked_boundaries
 
 
 class ModelTransport(BaseLLMProvider):
@@ -52,6 +53,7 @@ class ModelTransport(BaseLLMProvider):
         self.last_response_record = {}
         self.response_capture = None
         self._response_headers = {}
+        self._sent_breakpoints = SentBreakpoints()
         if request_context:
             request_context.bind(response_origin(settings, key))
 
@@ -94,6 +96,7 @@ class ModelTransport(BaseLLMProvider):
         clone._last_tool_calls, clone._last_usage, clone._last_assistant_extra_fields, clone.usage_history = [], {}, {}, []
         clone.last_native_response, clone.last_response_record, clone._response_headers = None, {}, {}
         clone.request_context = copy.deepcopy(self.request_context)
+        clone._sent_breakpoints = copy.deepcopy(self._sent_breakpoints)
         if clone.request_context:
             clone.request_context.bind(response_origin(clone.settings, clone.key))
         return clone
@@ -101,9 +104,25 @@ class ModelTransport(BaseLLMProvider):
     async def close(self):
         await self._client.close()
 
+    def _breakpoint_history(self):
+        return (self.request_context.sent_breakpoints
+                if self.request_context and self.request_context.sent_breakpoints is not None
+                else self._sent_breakpoints)
+
+    def _breakpoint_identity(self):
+        origin = response_origin(self.settings, self.key)
+        if not self.request_context or self.request_context.sent_breakpoints is None:
+            origin["scope"] = (self.request_context.session_id if self.request_context
+                               else self.settings.cache_scope)
+        return fingerprint(origin)
+
+    def _retains_breakpoints(self, selected):
+        return self.settings.api_mode in APIS and selected.get("field") == FIELD
+
     def _request(self, messages, *, tools=None, **kwargs):
         selected = preset(self.settings)
-        enabled = self.settings.cache.mode == "runtime" and any(m.get("_cache_breakpoint") for m in messages)
+        enabled = self.settings.cache.mode == "runtime" and (
+            any(m.get("_cache_breakpoint") for m in messages) or self._retains_breakpoints(selected))
         marker = selected if enabled and selected["kind"] == "block" else None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
         return self._body(messages, tools, False, marker,
@@ -207,6 +226,8 @@ class ModelTransport(BaseLLMProvider):
         body.update(copy.deepcopy(params))
         if self.request_context:
             self.request_context.apply(body, cfg)
+        if api in APIS and marker and marker.get("field") == FIELD:
+            self._breakpoint_history().restore(body, api, self._breakpoint_identity())
         return body
 
     async def _prepare(self, messages, tools, stream, kwargs, *, fallback=None):
@@ -237,7 +258,8 @@ class ModelTransport(BaseLLMProvider):
         diagnostic["retention"] = effective_retention(cfg)[1]
         if cfg.cache.mode == "runtime":
             reason = fallback or DISABLED.get(self.capability_key)
-            if not reason and planned is None and selected["kind"] != "implicit":
+            if (not reason and planned is None and selected["kind"] != "implicit"
+                    and not self._retains_breakpoints(selected)):
                 reason = "没有可用的固定前缀断点"
             if not reason and selected["kind"] == "unknown":
                 reason = "模型没有已匹配的缓存参数，请手动配置"
@@ -277,6 +299,10 @@ class ModelTransport(BaseLLMProvider):
                 body["extra_body"] = {"google": {"cached_content": resource["name"]}}
             diagnostic["resource"] = resource["name"]
         diagnostic["parameters"] = ({marker["field"]: marker["value"], **params} if marker else params)
+        if api in APIS and marker and marker.get("field") == FIELD:
+            diagnostic["sent_breakpoints"] = marked_boundaries(body, api)
+            if planned is None and not diagnostic["sent_breakpoints"]:
+                return await self._prepare(messages, tools, stream, kwargs, fallback="没有可用的固定前缀断点")
         diagnostic["prefix_sha256"] = fingerprint(messages[:planned + 1]) if planned is not None else None
         return body, diagnostic, resource
 
@@ -316,8 +342,27 @@ class ModelTransport(BaseLLMProvider):
         for attempt in range(2):
             body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
             request = self.http.build_request("POST", url, headers=headers, json=body)
+            history, identity = self._breakpoint_history(), self._breakpoint_identity()
+            sent = False
+
+            def remember_sent():
+                nonlocal sent
+                if not sent:
+                    history.remember(identity, diagnostic.get("sent_breakpoints", []))
+                    sent = True
+
+            async def trace(name, info):
+                # HTTPcore confirms body transmission even if reading the
+                # response later times out, fails, or is cancelled.
+                if name in ("http11.send_request_body.complete", "http2.send_request_body.complete"):
+                    remember_sent()
+
+            request.extensions["trace"] = trace
             self._capture(messages, tools, body, diagnostic, url, request)
             response = await self.http.send(request, stream=stream)
+            # Custom transports may not expose HTTPcore tracing. Receiving a
+            # response still proves dispatch, regardless of status or parsing.
+            remember_sent()
             if response.status_code < 400:
                 self._response_headers = {k: response.headers[k] for k in ("request-id", "x-request-id")
                                           if k in response.headers}

@@ -135,6 +135,10 @@ class Store:
             db.execute("""CREATE TABLE IF NOT EXISTS full_agent_progress (
                 turn TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
                 payload TEXT NOT NULL)""")
+            db.execute("""CREATE TABLE IF NOT EXISTS sent_cache_breakpoints (
+                owner TEXT NOT NULL, scope TEXT NOT NULL, identity TEXT NOT NULL,
+                prefix TEXT NOT NULL, value TEXT NOT NULL,
+                PRIMARY KEY(owner, scope, identity, prefix))""")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
 
@@ -159,6 +163,23 @@ class Store:
             db.execute("INSERT OR IGNORE INTO meta(key,value) VALUES ('provider_device_id',?)",
                        (secrets.token_hex(32),))
             return db.execute("SELECT value FROM meta WHERE key='provider_device_id'").fetchone()[0]
+
+    def cache_breakpoint_history(self, owner, scope="narrative"):
+        """Durable send facts, independent of story commits and log retention."""
+        from tavern.scripting.sent_breakpoints import SentBreakpoints
+
+        def load(identity):
+            with self.connection() as db:
+                return {row["prefix"]: json.loads(row["value"]) for row in db.execute(
+                    "SELECT prefix,value FROM sent_cache_breakpoints WHERE owner=? AND scope=? AND identity=?",
+                    (owner, scope, identity))}
+
+        def save(identity, entries):
+            with self.connection() as db:
+                db.executemany("INSERT OR REPLACE INTO sent_cache_breakpoints VALUES (?,?,?,?,?)",
+                               [(owner, scope, identity, prefix, dump(value)) for prefix, value in entries.items()])
+
+        return SentBreakpoints(load, save)
 
     def recover(self):
         from tavern.character.card_editor_store import recover_editor_runs
@@ -507,6 +528,10 @@ class Store:
             from tavern.conversation.cache_breakpoint import reset_follow
             follow = reset_follow(copies, json.loads(source["cache_breakpoint_follow"]))
             db.execute("UPDATE sessions SET cache_breakpoint_follow=? WHERE id=?", (dump(follow), new_sid))
+            # Prefix hashes need no message-ID remapping. Only matching content
+            # boundaries will be replayed in the fork's actual request.
+            db.execute("INSERT INTO sent_cache_breakpoints SELECT ?,scope,identity,prefix,value "
+                       "FROM sent_cache_breakpoints WHERE owner=?", (new_sid, sid))
             for original, cloned_id in ids.items():
                 for row in db.execute("SELECT seq,window_id,payload FROM full_agent_trace WHERE message_id=?",
                                       (original,)).fetchall():
@@ -610,6 +635,7 @@ class Store:
             db.execute("DELETE FROM full_agent_trace WHERE session=?", (sid,))
             db.execute("DELETE FROM messages WHERE session=?", (sid,))
             db.execute("DELETE FROM sessions WHERE id=?", (sid,))
+            db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (sid,))
             from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
             prune_orphan_retrieval(db)
         if card:

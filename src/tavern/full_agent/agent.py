@@ -52,7 +52,8 @@ class FullAgent:
         saved_context = (progress or {}).get("request_context", {})
         self.request_context = ProviderRequestContext(
             session["id"], saved_context.get("turn_id", request.resume_turn_id or tid),
-            self.state["window"]["id"], store.device_id(), routing=copy.deepcopy(saved_context.get("routing", {})))
+            self.state["window"]["id"], store.device_id(), routing=copy.deepcopy(saved_context.get("routing", {})),
+            sent_breakpoints=store.cache_breakpoint_history(session["id"]))
         if progress:
             self.continuation = copy.deepcopy(progress["continuation"])
             self.new_trace = copy.deepcopy(progress["new_trace"])

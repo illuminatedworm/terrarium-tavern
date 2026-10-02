@@ -241,7 +241,8 @@ class CardEditorService:
             self.edits.event(rid, "started", {})
             provider = self.provider_factory() if self.provider_factory else await make_provider(
                 cfg, lambda payload: self.edits.event(rid, "provider_request", payload))
-            request_context = ProviderRequestContext(workspace["id"], rid, context.epoch, self.store.device_id())
+            request_context = ProviderRequestContext(workspace["id"], rid, context.epoch, self.store.device_id(),
+                sent_breakpoints=self.store.cache_breakpoint_history(workspace["id"], "card_editor"))
             request_context.diagnostics = {"rebuild_reason": context.reason}
             configure_operation(provider, request_context,
                                 lambda kind, payload: self.edits.event(rid, kind, payload), "card_editor")

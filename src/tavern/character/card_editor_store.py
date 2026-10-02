@@ -161,6 +161,7 @@ class EditorStore:
             for table in ("card_edit_runs", "card_edit_versions", "card_edit_saves", "card_edit_contexts"):
                 db.execute(f"DELETE FROM {table} WHERE workspace=?", (wid,))
             db.execute("DELETE FROM card_edits WHERE id=?", (wid,))
+            db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (wid,))
         # Use an editor-owned manifest identity so the source card's cache is never removed.
         self.store.prune_card_assets({**source, "id": wid}, source.get("dependencies", {}))
 
