@@ -2,15 +2,11 @@
 
 **让设定在需要时进入故事，让记忆随故事逐步积累。**
 
-![开发阶段](https://img.shields.io/badge/%E9%98%B6%E6%AE%B5-%E5%AE%9E%E9%AA%8C%E6%80%A7-f59e0b)
-![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)
+实验阶段 · Windows 10/11 · Python 3.12 · Vue 3 · TypeScript 5.8
 
-Terrarium Tavern 是基于 [Kohaku Terrarium](https://github.com/Kohaku-Lab/KohakuTerrarium) 的本地角色扮演应用。本项目类似 Silly Tavern 且兼容其部分生态，围绕长篇互动叙事组织角色卡、世界书、对话分支和剧情记忆，探索如何在有限上下文中维持设定与故事的连续性。
+Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的本地角色扮演应用。本项目类似 Silly Tavern 且兼容其部分生态，围绕长篇互动叙事组织角色卡、世界书、对话分支和剧情记忆，探索如何在有限上下文中维持设定与故事的连续性。
 
-项目目前处于实验阶段，面向 Windows 本机使用。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过兼容 OpenAI 的 API 接入，不同功能部分可以使用不同模型。
+项目目前处于实验阶段，面向 Windows 本机使用。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过 Chat Completions、Responses、Anthropic Messages 或 Gemini 接入，不同功能部分可以使用不同模型。
 
 ## 许可
 
@@ -24,14 +20,14 @@ Kohaku Terrarium 部分继续适用其原有的 [KohakuTerrarium License 1.0](LI
 
 ### 两种独立运行模式
 
-创建故事时可选择 **Half Agent**（原有模式）或 **Full Agent**（新模式）。旧会话默认 Half Agent，剧情分支继承原模式。
+创建故事时可选择 **Half Agent** 或 **Full Agent**。旧会话默认 Half Agent，剧情分支继承原模式。
 
 | 模式 | 写作与记忆 | 上下文管理 |
 |---|---|---|
 | Half Agent | Writer 写正文，Tracker 整理分类记忆、分析变量 | 运行时规划窗口与周期维护 |
 | Full Agent | 一个 Agent 通过工具检索、维护笔记、更新变量并生成正文 | 当前窗口 + checkpoint + 可搜索原始历史 + 模型主动换窗 |
 
-Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 query 调用同一索引。记忆采用随窗口携带的交接笔记与按需读取的自由笔记，不运行后台分类记忆整理。详见 [Full Agent 架构、工具与消息边界](docs/design/full-agent.md)。
+Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 query 调用同一索引。记忆采用随窗口携带的交接笔记与按需读取的自由笔记，不运行后台分类记忆整理。操作见 [Full Agent 使用指南](docs/guides/full-agent.md)，机制见 [Full Agent 架构](docs/design/full-agent.md)。
 
 ### 在对话中途注入世界书
 
@@ -80,10 +76,10 @@ Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 qu
 
 安装脚本会安装锁定依赖、构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
-安装依赖和下载资源时，视网络环境可能需要代理。安装脚本通过 `-Proxy` 参数指定代理服务的完整 HTTP(S) 地址（含协议与端口）：
+安装依赖和下载资源时，视网络环境可能需要代理。安装脚本默认直连，可通过 `-Proxy` 指定完整 HTTP(S) 代理地址（含协议与端口）：
 
 ```powershell
-.\setup.ps1 -Proxy '<你的代理服务地址>'
+.\setup.ps1 -Proxy '<代理服务地址>'
 ```
 
 不需要代理时，可显式使用 `setup.ps1 -Proxy ''`。
@@ -102,7 +98,7 @@ Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 qu
 
 1. **配置模型**：在“设置 → 通用 → 提供商”添加连接，再分别配置 full agent 或 half agent 的模型。两种模式参数独立；half agent 内的正文生成和后台整理也分别选择模型。普通参数自动保存，提示词点击绿色勾保存；详见[设置说明](docs/guides/settings.md)。后台历史补查等功能需要模型支持工具调用。
 2. **导入角色卡**：可以先试用 `samples/雾港来信.json`；`samples/星航状态卡.json` 用于体验 HTML/MVU，**使用前需启用该卡的脚本权限**。
-3. **开始故事**：选择角色卡、运行模式、用户身份和开场。Full Agent 需要支持原生工具调用的模型，可单独配置，否则沿用 Writer 的连接与预算。需要更新变量或修改设定时，按界面提示明确授权。
+3. **开始故事**：选择角色卡、运行模式、用户身份和开场。Full Agent 需要支持原生工具调用的模型，并独立配置连接、模型与预算。需要更新变量或修改设定时，按界面提示明确授权。
 4. **查看与调整**：通过上下文预览查看注入内容，通过后台记录了解整理过程；可编辑记忆、重新生成回复，或从选定进度创建独立分支。
 
 数据默认位于 `data/`，其中包含游玩剧情、角色资源和模型配置。
@@ -125,11 +121,12 @@ Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 qu
 
 ## 文档与开发
 
-- [文档导航](docs/README.md)
-- [架构与职责](docs/design/architecture.md) · [上下文生命周期](docs/design/context-lifecycle.md)
-- [世界书检索](docs/guides/retrieval.md) · [积累式记忆](docs/design/memory-consistency.md)
-- [角色卡编辑](docs/guides/card-editor.md) · [项目目录](docs/development/structure.md)
-- [验证与发行](docs/development/validation.md) · [开发工作流](docs/design/agent-workflow.md)
+[文档导航](docs/README.md)按使用、设计、接口和开发维护组织完整资料。
+
+- 配置与操作：[设置](docs/guides/settings.md) · [Full Agent](docs/guides/full-agent.md) · [Half Agent 窗口与记忆](docs/guides/history-maintenance-settings.md)
+- 资料与历史：[角色卡编辑](docs/guides/card-editor.md) · [世界书检索](docs/guides/retrieval.md) · [历史与分支](docs/guides/story-history.md)
+- 缓存与用量：[提示缓存](docs/guides/prompt-cache.md) · [Token 计数](docs/guides/token-counting.md)
+- 开发：[架构](docs/design/architecture.md) · [项目目录](docs/development/structure.md) · [验证与发行](docs/development/validation.md)
 
 常用开发命令：
 
@@ -146,12 +143,12 @@ npm.cmd test
 
 ## 致谢
 
-- [Kohaku Terrarium](https://github.com/Kohaku-Lab/KohakuTerrarium)：提供 agent 运行基座，是本项目的重要基础。
-- [SillyTavern](https://github.com/SillyTavern/SillyTavern)：角色卡、世界书和互动叙事工作流的重要灵感来源。
-- [MagVarUpdate](https://github.com/MagicalAstrogy/MagVarUpdate)：提供 MVU 变量更新核心。
-- [Tavern Helper](https://github.com/n0vi028/JS-Slash-Runner)：为角色卡脚本接口适配提供参考。
+- Kohaku Terrarium：提供 agent 运行基座，是本项目的重要基础。
+- SillyTavern：角色卡、世界书和互动叙事工作流的重要灵感来源。
+- MagVarUpdate：提供 MVU 变量更新核心。
+- Tavern Helper：为角色卡脚本接口适配提供参考。
 - 角色卡规范、Vue、FastAPI、tiktoken 等项目及其贡献者。
 
 Powered by **KohakuTerrarium**。Copyright 2024–2026 Shih-Ying Yeh (KohakuBlueLeaf) and contributors。
 
-第三方组件的来源、固定版本与许可说明见 [LICENSE/THIRD_PARTY_NOTICES.md](LICENSE/THIRD_PARTY_NOTICES.md)。
+致谢项目及其他第三方组件的来源、固定版本与许可说明见 [LICENSE/THIRD_PARTY_NOTICES.md](LICENSE/THIRD_PARTY_NOTICES.md)。

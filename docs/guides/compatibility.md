@@ -1,6 +1,6 @@
 # 兼容矩阵（0.1）
 
-“可导入”只表示数据可解析。运行支持以表中具体行为与测试为准；尚未对大量社区角色卡做覆盖率统计。
+“可导入”表示数据可解析。下表说明导入、显示和脚本宿主的能力；Full Agent 不支持 HTML 交互生成或脚本再发模型请求，详见[模式边界](../design/full-agent.md#权限与执行边界)。社区卡兼容性需要按具体行为验证。
 
 | 能力 | 实现与边界 |
 |---|---|
@@ -20,11 +20,11 @@
 | 消息读取 | 楼层号、负索引、latest、简单范围；返回角色、正文、变量和 ID |
 | 消息写入 | 回合脚本镜像；界面写入仅支持当前楼层，历史操作需先切换分支 |
 | 世界书写入 | 受设定修改策略控制，保存为当前分支的内容草稿 |
-| generate / generateRaw | 当前模型、文本、取消、流式通知、覆盖和有序内容块；不加载 ST 预设 |
+| generate / generateRaw | Half Agent 支持当前模型、文本、取消、流式通知、覆盖和有序内容块；不加载 ST 预设 |
 | 外部模块 | 下载和哈希缓存，离线 esbuild 打包静态可解析的浏览器模块 |
 | 中途 system | 所有端点原位发送；能力检查仅诊断，不支持时显示实际错误 |
 
-## 明确不等同于 ST 的部分
+## 运行环境限制
 
 - 不提供完整 ST DOM、内部模块、完整 `SillyTavern.getContext()` 或通用 STscript。
 - `global`、`character`、`preset` 等兼容变量目前是**会话分支内的命名空间**，不会跨角色或跨会话共享，避免分支外副作用。
@@ -34,26 +34,11 @@
 - generateRaw 支持单独的角色描述、性格、场景、世界书、示例、历史与用户输入占位符；复杂 ST 预设脚本不在其支持范围内。
 - 消息 HTML 中的原生 ES module script 尚不能直接内联；应将模块放在角色脚本中，或由卡作者适配。
 - 下载清单不会绕过访问控制或自动完成网站登录。任意动态 URL、CDN 特殊加载器和 ST 相对导入可能需要适配。
-- 不宣称支持所有 MVU/Zod 第三方扩展。当前直接复用的上游核心行为与本应用宿主适配需分别验证。
+- MVU/Zod 第三方扩展按具体接口适配，固定核心与本应用宿主流程分别验证。
 
-## 模型思考档位
+模型接口、思考强度及缓存参数见[模型接入参考](../reference/model-api.md)。
 
-界面中的思考强度是共用选项，实际字段按接口协议发送；默认表示省略思考控制参数，让服务商采用模型默认行为。
-
-| 接口 | 发送方式 |
-|---|---|
-| Chat Completions | 文字 `reasoning_effort` 或 `reasoning.effort`；在模型配置的“更多参数”选择格式，中转的实际支持以其协议为准 |
-| Responses | 文字 `reasoning.effort` |
-| Anthropic Messages | 支持 adaptive 的 Claude 使用 `thinking.type=adaptive` 和文字 `output_config.effort`；不生成 `budget_tokens` |
-| Gemini 原生 | Gemini 3 使用文字 `generationConfig.thinkingConfig.thinkingLevel`；Gemini 2.5 使用其原生 `thinkingBudget` 协议 |
-
-Claude Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos 模型使用 adaptive。Opus 4.5 可以单独发送 effort，但不因此启用旧式 extended thinking。Sonnet/Haiku 4.5 等已知旧模型不支持文字档位，选择非默认档位时在请求前提示；未知中转别名直接发送标准 effort，由服务商校验。应用和 Claude SDK 都不会替旧模型把文字档位换算成思考预算。
-
-共用选项不是各模型能力的承诺：Claude 的 minimal 映射到 low；不支持 xhigh、但支持 max 的 adaptive 模型映射到 max，Opus 4.5 的 xhigh 映射到 high。Gemini 3 的 xhigh 映射到 HIGH，Pro 的 minimal 映射到 LOW。Opus/Sonnet 5.5、Gemini 3 和 Gemini 2.5 Pro 不支持完全关闭思考，选择 none 会在请求前提示。新 Claude 不支持的采样控制不会发送；不支持强制工具选择的模型使用 auto 并只暴露目标工具，Full Agent 仍由运行时校验换窗要求。
-
-协议参考：[Claude thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort)、[OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Gemini ThinkingConfig](https://ai.google.dev/api/generate-content#ThinkingConfig)、[Gemini 的 OpenAI 兼容映射](https://ai.google.dev/gemini-api/docs/openai)。
-
-## 测试样本
+## 可复现样本
 
 - `samples/雾港来信.json`：原创文本卡、中文世界书、角色提示词与未知扩展。
 - `samples/星航状态卡.json`：原创美化卡、按钮生成、InitVar、能量变量与修正回调。
@@ -62,11 +47,11 @@ Claude Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos �
 
 这些样本验证了具体闭环，不代表社区卡总体兼容率。遇到未支持接口时应提供兼容报告和可复现卡片片段。
 
-## 已验证的 MVU-Zod 补强
+## MVU 与 Schema 适配
 
 支持 StageDog registerMvuSchema 依赖链、getAllVariables、klona、errorCatched，以及带 transform 的界面 Schema 导出。原卡导入 MVU artifact 时使用宿主已有的固定核心，避免启动第二份 ST 框架。远程辅助模块仍按卡缓存和记录哈希；支持范围由隔离夹具回归检查，不代表所有第三方扩展均兼容。
 
-## 本版行为说明
+## 剧情修改与世界书行为
 
-关键词不再代表无条件强触发，单字/泛词以及重排拒绝的条目不会经递归复活。
-中途条目与剧情共同计入窗口。手动编辑原文只更新文本和失效相关记忆，不自动重演后续变量；需从较早进度重生成或显式修改变量。
+关键词命中须通过准入过滤；单字／泛词及重排拒绝的条目不能经递归重新进入。
+中途条目与剧情共同计入窗口。编辑原文会使相关记忆来源过时，不自动重演后续变量；需从较早进度重生成或显式修改变量，见[历史操作](story-history.md)。

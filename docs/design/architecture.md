@@ -1,63 +1,72 @@
-# 架构与一致性
+# 应用架构与职责
 
-应用有 Half Agent 与 Full Agent 两种独立游玩模式。本文的 Writer / Tracker / Roleplay Runtime 对应 **Half Agent**。Full Agent 通过 `application/modes.py` 路由到独立引擎，只共享底层检索、存储与卡片 IO，不调用前后台编排；详见 [Full Agent 架构](full-agent.md)。
+应用提供 Half Agent 和 Full Agent 两种游玩模式，另有独立的角色卡编辑工作区。本文说明共享层与 Half Agent 的职责；Full Agent 的模型循环见[独立设计](full-agent.md)，Card Editor 见[编辑工作区](card-editor.md)。
 
-Vue → FastAPI → Roleplay Runtime → Writer / Tracker / 隔离 Chromium → SQLite。
+```mermaid
+flowchart TD
+    UI[Vue 界面] --> API[FastAPI 与模式路由]
+    API --> HALF[Half Agent Runtime]
+    API --> FULL[Full Agent Runtime]
+    API --> EDIT[Card Editor]
+    HALF --> WRITER[Writer 正文]
+    HALF --> TRACKER[Tracker 维护]
+    HALF --> SHARED[共享存储、检索、传输与脚本能力]
+    FULL --> SHARED
+    EDIT --> SHARED
+```
 
 ## 正式角色与职责
 
-| 角色 | 职责 | 边界与代码入口 |
+| 角色 | 职责 | 代码入口与边界 |
 |---|---|---|
-| 前台 Writer | 演绎角色、生成正文，输出约定的检索线索；变量由独立后台分析更新 | `agent.py: Writer`；每回合一次模型调用，零工具、零子 Agent，不调度 Tracker、不提交状态 |
-| 后台 Tracker | 统一维护分支文本记忆、对话级角色卡与 MVU 变量，保留事实来源 | `tracker/task.py`、`tracker/workflow.py`、`memory_engine.py`；每次任务按权限开放工具，默认最多8次模型请求，历史补查整次操作最多3次 |
-| Card Editor | 独立角色卡编辑与工作流适配；不读取剧情 | `card_editor.py`，最多 12 次调用，草稿工具，用户审阅后保存；见[编辑指南](../guides/card-editor.md) |
-| Roleplay Runtime | 管理对话与回合，调度 Writer/Tracker，检索并注入世界书，组装提示词，管理窗口和预算，执行脚本、审核与事务提交 | `service.py: RoleplayRuntime` 为入口，协同 `context.py`、`retrieval.py`、`window.py`、`store.py` 等；是程序而非第三个模型 Agent |
+| Writer | 演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；常规正文一次生成，零工具，不调度 Tracker 或提交状态 |
+| Tracker | 分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
+| Card Editor | 独立编辑和适配角色卡草稿 | [character/card_editor.py](../../src/tavern/character/card_editor.py)；不读取剧情，用户审阅后保存书架卡片 |
+| Half Agent Runtime | 回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
+| 模式路由 | 将故事操作交给对应引擎 | [application/modes.py](../../src/tavern/application/modes.py)；Full Agent 不调用 Writer／Tracker 编排 |
 
-Writer 与 Tracker 通过 Runtime 管理的回合草稿交换数据，不互相委派。Tracker 按现有开关和周期唤起；必要的裁剪补整理和明确设定修改在正文前，周期整理与变量维护在正文后合并执行。
-`agent.py: TurnAgent` 负责 Writer 的底层适配，Tracker 使用独立编译器和原生工具循环。`runtime.py: ScriptRuntime` 仅执行隔离卡片脚本，不等同于 Roleplay Runtime。
+Writer 和 Tracker 通过 Runtime 管理的回合草稿交换数据，不直接委派。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
 
-API/配置字段 `foreground` 和 `background` 分别代表 Writer 和 Tracker；可选 `card_editor` 配置为空时继承后台模型；事件用途 `narrative`、`tracker_pre`、`tracker_post`、`tracker_rebuild` 区分调用目的；旧日志仍兼容旧用途。界面的“后台工作记录”汇集整个 Runtime 的工作事件，不专指 Tracker。
+`scripting/agent.py` 的 `TurnAgent` 适配 Writer 与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本，不能与 `RoleplayRuntime` 混淆。
 
-## 数据与事务
+## 数据所有权与事务
 
-消息有父节点，快照保存状态、记忆、世界书注入、脚本变量和设定草稿。
-只有完成所有正文处理和回调后才提交。消息、快照、会话 head/revision 与提交事件共用事务。
-operation_id 保证会话内幂等，expected_revision 检查乐观并发，运行和待审核回合互斥。
-SSE 只是观察者；断开不取消生成。前端按事件序号去重，切换会话使旧请求失效。
+SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，快照保存状态、记忆、世界书注入、脚本变量与对话设定草稿。完成正文处理与回调后，消息、快照、会话 head/revision 和提交事件在同一事务中生效。
 
-书架角色卡以 revision 校验保存。每个对话在创建时保存自有角色资料与依赖；库内保存和删除不改变旧对话。独立编辑草稿也保护其资源引用。
-分支复制消息前缀及回合快照，重映射来源和锚点；源对话删除不影响新分支。
-编辑原文保留记忆并标注来源已修改，失效检索线索和窗口；只有手动重建才重新核对旧记忆，也不自动重演后续变量。修订变量应使用变量界面或从较早进度重生成。
+| 机制 | 约束 |
+|---|---|
+| `operation_id` | 会话内幂等；相同操作及内容返回原结果，不重复执行 |
+| `expected_revision` | 乐观并发检查，拒绝覆盖已变化的会话 |
+| 回合互斥 | 一个会话只允许一个运行或待审核回合 |
+| SSE | 观察执行，不控制生命周期；断开不取消生成 |
+| 前端请求归属 | 按事件序号去重，切换会话后忽略旧请求响应 |
 
-数据库采用 schema 2；打开前先检查格式。schema 1 在备份后迁移独立设置，其他不支持的版本拒绝打开且不执行 DDL。持久设置按 full_agent、half_agent、shared 分区，运行时配置仅为操作快照；详见[设置说明](../guides/settings.md)。
-完整快照仍是恢复策略；剧情分支随用户保存数量增长，不被日志清理当成旧版本删除。
+书架角色卡保存使用 revision。创建故事时复制角色资料、脚本权限和依赖清单，书架后续保存或删除不改变旧故事。编辑草稿和副本共同保护引用资源。
 
-## 上下文职责
+独立分支复制可见消息前缀和快照，重映射记忆来源及世界书锚点；删除源会话不影响分支。编辑原文保留已有记忆并标记来源变化，同时使相关线索和窗口失效；它不自动重演变量。操作语义见[工作流](agent-workflow.md#操作边界)。
 
-检索器产生候选、准入和递归结果。窗口规划与编译使用同一份候选清单。
-窗口条数只计剧情与当前输入，中途世界书占用token容量并随交流退出；Runtime 先调度 Tracker 完成真实剧情来源覆盖。
-正文编译不隐式扩展候选，最终 HTTP 边界再次核算消息和工具开销。
-上下文使用本地 BPE 分词器估算 tokens；服务商实际 tokens 单独展示。
+## 设置与恢复
 
-Writer 每回合新建无工具 Creature，关闭基座 compact；Tracker 使用独立原生工具循环与任务草稿，调用上限由 tracker_max_steps 控制。
-工具可见性和执行权限同时限制，上游通用管理工具不可用。
-OpenAIProvider 的实例 HTTP client 用于代理和最终请求检查；固定上游提交并用请求序列化测试保护升级。
+设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent 和 Card Editor 各有明确模型配置。界面“后台工作记录”汇集 Runtime 事件，不只包含 Tracker 请求。
 
-模型业务输入遵循[数据边界](model-data-boundary.md)：机械身份和哈希由程序处理，必要引用使用短编号。`model_view.py` 负责授权维护/Card Editor 的可逆视图，以及剔除状态中的初始化账本、schema、重复展示缓存与内部元数据；原始快照和 MVU 校验数据保持完整。
+数据库为 schema 2，打开前检查格式；schema 1 先备份再迁移，未知版本不执行建表。设置字段及迁移见[设置 API](../reference/settings-api.md)。
 
-## 隔离与维护
+剧情快照持续保留，恢复和回复版本切换使用对应快照。详细诊断可以清理，但剧情、分支及恢复所需记录不作为旧日志删除。存储策略见[安装与维护](../guides/maintenance.md#清理与资源保留)。
 
-角色 HTML 运行在无 allow-same-origin 的 sandbox iframe，桥检查来源窗口和随机通道。
-服务端脚本 realm 阻止网络，不接触 API 密钥；每回合重新建立，持久数据须通过变量 API 保存。
-外部依赖先下载、哈希缓存和离线打包，运行阶段不任意联网。同一角色卡的新对话可复用卡级缓存及旧对话中已落盘的依赖；解析完成后回填卡级清单，避免再次下载相同资源。每个对话仍保留自己的依赖清单。
+## 上下文与模型传输
 
-服务只监听 loopback，校验 Host/Origin，不是多人公网服务。
-密钥保存在后端本地配置，设置响应不返回密钥；备份也应按私有数据保管。
-详细日志默认 14 天/512 MiB，当前和可恢复回合受保护；索引默认 256 MiB，可重建。
-窗口、日志、索引和模型权重是不同生命周期，不能用同一清理规则。
+检索器输出最终候选、准入证据和递归结果。Half Agent 窗口规划与编译消费同一清单，编译器不自行增加候选。中途世界书占 token 容量，不占剧情条数；退出原文前由 Tracker 校验整理覆盖。
 
-## 分类记忆
+Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 使用独立工具上下文。通用管理工具不进入模型白名单。最终 HTTP 请求统一检查协议和内容占用，本地超量估算遵循[文本完整性](text-integrity.md)。
 
-周期、裁剪前与手动整理共用来源校验及受限复核引擎；分类条目是新的内容来源，Writer只接收其自然语言投影。记忆预算与后台MVU输出预算分开；手工条目及删除标记不会被自动覆盖。详见[记忆设计](memory-consistency.md)。
+模型业务输入使用[数据边界](model-data-boundary.md)定义的自然语言投影和短引用。持久身份、指纹、schema 与初始化账本留在运行时；原始快照仍保存完整数据。
 
-`memory_protocol.py` 将模型请求与存储记录隔离：剧情片段用 S/H、已有记忆用 R、参考资料用 E 的请求内短编号。模型只选编号，Runtime 回填真实消息ID、原文摘录、指纹及设定版本，并生成新增条目的永久ID。每批与复核独立建表，历史工具只登记实际返回片段；所有恢复后的引用仍经过原来的分支与来源校验，不增加请求、不改变快照格式。
+两种模式共用 [模型传输](../reference/model-api.md)，分别管理原生回复和动态上下文记录。固定依赖版本和最终请求序列化测试共同保护升级。
+
+## 脚本与资源隔离
+
+角色 HTML 运行于不含 `allow-same-origin` 的 sandbox iframe，桥接检查来源窗口和随机通道。服务端脚本 realm 阻止网络，不接触 API 密钥，每回合重新建立；持久数据必须通过变量 API 保存。
+
+外部依赖先下载、哈希缓存和离线打包。卡级缓存及已落盘的旧会话依赖可以复用，解析后回填卡级清单；每个故事仍有自己的依赖清单。运行阶段不任意联网，兼容范围见[矩阵](../guides/compatibility.md)。
+
+服务只监听 loopback，并校验 Host/Origin。密钥保存在后端本地配置，设置响应不返回密钥原文；备份包含密钥，应按私有数据保管。窗口、日志、索引和模型权重有不同生命周期。
