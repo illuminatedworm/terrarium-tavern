@@ -14,6 +14,7 @@ from tavern.character.cards import normalize, parse_card
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
+from tavern.full_agent.recovery import resume_progress
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
 
 
@@ -967,8 +968,9 @@ class Store(MessageAdapters):
                 row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?",
                                  (request.resume_turn_id,)).fetchone()
                 if row:
-                    db.execute("INSERT INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, row["payload"]))
-                    trace = json.loads(row["payload"])["new_trace"]
+                    progress = resume_progress(json.loads(row["payload"]))
+                    db.execute("INSERT INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, dump(progress)))
+                    trace = progress["new_trace"]
                     for index, item in enumerate(trace):
                         message = item["message"]
                         if (message["role"] != "assistant" or message.get("_full_agent_final")

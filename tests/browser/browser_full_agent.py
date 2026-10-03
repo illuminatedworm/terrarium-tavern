@@ -24,6 +24,7 @@ async def main():
         store.save_settings(settings)
         app.state.service.full.provider_factory = lambda: Model(
             ("read_history", {"ref": "H2"}),
+            ("read_history", {"reason": "核对编辑后的H2内容"}),
             ("write_note", {"key": "约定/钟楼", "content": "玩家答应明天见面", "kind": "fact", "sources": ["H2"]}),
             ("new_context", {"content": "约定明天钟楼见面，继续当前对话。", "keep_recent": 0}),
             "她点头应下，钟声从远处传来。",
@@ -66,7 +67,8 @@ async def main():
                 await expect(page.locator(".message.assistant").nth(1)).to_contain_text("她点头应下")
                 assert "工作过程" not in await page.locator(".message.assistant").nth(1).inner_text()
                 activity = page.locator(".agent-message-activity")
-                await expect(activity.locator(".activity-name")).to_have_text(["read_history", "write_note", "new_context"])
+                await expect(activity.locator(".activity-name")).to_have_text([
+                    "read_history", "read_history", "write_note", "new_context"])
                 assert await activity.locator("details[open]").count() == 0
                 assert await page.evaluate("""() => {
                     const activity = document.querySelector('.agent-message-activity');
@@ -75,14 +77,56 @@ async def main():
                     return !!(user.compareDocumentPosition(activity) & Node.DOCUMENT_POSITION_FOLLOWING)
                         && !!(activity.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING);
                 }""")
-                read_call = activity.locator('.agent-activity').filter(has=page.locator('.activity-name', has_text='read_history'))
+                read_call = activity.locator('.agent-activity').filter(
+                    has=page.locator('.activity-name', has_text='read_history')).first
                 await read_call.locator('summary').click()
                 await expect(read_call.get_by_role('region', name='调用参数')).to_contain_text('H2')
                 await expect(read_call.get_by_role('region', name='工具返回')).to_contain_text('我答应明天在钟楼见面')
                 await read_call.locator('summary').press('Enter')
                 await expect(read_call).not_to_have_attribute('open', '')
+                # Error state must share the disclosure layout, including at
+                # high DPI and equivalent 200% browser zoom, without the global
+                # error banner's horizontal flex layout squeezing its header.
+                saved_browser_state = await page.context.storage_state()
+                for width, height, scale, label in [
+                    (2560, 1440, 1, '2560'), (1920, 1080, 1, '1920'),
+                    (360, 792, 3, 'mobile'), (960, 540, 2, 'zoom200'),
+                ]:
+                    context = await browser.new_context(viewport={'width': width, 'height': height},
+                        device_scale_factor=scale, storage_state=saved_browser_state)
+                    try:
+                        detail_page = await context.new_page()
+                        await detail_page.goto(address)
+                        calls = detail_page.locator('.agent-activity').filter(
+                            has=detail_page.locator('.activity-name', has_text='read_history'))
+                        for call in [calls.first, calls.last]:
+                            await call.locator('summary').click()
+                            await expect(call.get_by_role('region', name='调用参数')).to_contain_text('H2')
+                        await expect(calls.last.get_by_role('region', name='工具返回')).to_contain_text('Field required')
+                        layout = await calls.evaluate_all("""elements => elements.map(el => {
+                            const properties = ['display', 'padding', 'margin', 'borderWidth', 'borderRadius',
+                                'font', 'gap', 'whiteSpace', 'overflowWrap', 'maxHeight'];
+                            const style = node => Object.fromEntries(properties.map(k => [k, getComputedStyle(node)[k]]));
+                            const header = el.querySelector('summary'), details = el.querySelector('.activity-details');
+                            const a = header.getBoundingClientRect(), b = details.getBoundingClientRect();
+                            return {root:style(el), header:style(header), details:style(details),
+                                heading:style(el.querySelector('h3')), text:style(el.querySelector('pre')),
+                                headerHeight:a.height, width:el.getBoundingClientRect().width,
+                                vertical:b.top >= a.bottom - 1};
+                        })""")
+                        assert len(layout) == 2 and all(item['vertical'] for item in layout), (label, layout)
+                        assert layout[0] == layout[1], (label, layout)
+                        assert await detail_page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                        await calls.last.scroll_into_view_if_needed()
+                        await detail_page.screenshot(path=str(output / f'tool-error-{label}.png'))
+                        if label == '1920':
+                            await calls.first.screenshot(path=str(output / 'tool-normal-reference.png'))
+                            await calls.last.screenshot(path=str(output / 'tool-error-detail.png'))
+                    finally:
+                        await context.close()
                 await page.reload()
-                await expect(page.locator('.activity-name')).to_have_text(['read_history', 'write_note', 'new_context'])
+                await expect(page.locator('.activity-name')).to_have_text([
+                    'read_history', 'read_history', 'write_note', 'new_context'])
                 assert await page.locator('.agent-message-activity details[open]').count() == 0
                 await page.get_by_role('button', name='Agent 工作记录', exact=True).click()
                 await expect(page.locator('.work-toolbar h2')).to_contain_text('Debug')
@@ -164,7 +208,8 @@ async def main():
                 await page.get_by_role('button', name='◫ 上下文', exact=True).click()
                 await expect(page.get_by_role('heading', name='上下文预览')).to_be_visible()
                 history = page.locator('.context-group.context-history')
-                await expect(history).to_have_count(1)
+                # Runtime updates can separate history groups; preserve their
+                # chronological message order when checking native tool pairs.
                 entries = history.locator('.context-entry')
                 await expect(entries.locator('.badge')).to_have_text(['user', 'assistant', 'tool', 'assistant'])
                 await entries.nth(1).locator('summary').click()

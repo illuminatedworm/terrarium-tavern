@@ -73,7 +73,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <details class="agent-activity" :class="item.status" :data-activity-id="item.id" @toggle="toggle">
+  <details
+    class="agent-activity"
+    :class="`activity-${item.status}`"
+    :data-activity-id="item.id"
+    @toggle="toggle"
+  >
     <summary>
       <span class="activity-title">{{ title }}</span>
       <code v-if="item.name" class="activity-name">{{ item.name }}</code>
@@ -107,6 +112,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .agent-activity {
+  container-type: inline-size;
   margin: 8px 0 12px 52px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -161,11 +167,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   color: var(--text-muted);
 }
-.running .activity-status {
+.activity-running .activity-status {
   color: var(--accent);
 }
-.error .activity-status,
-.interrupted .activity-status {
+.agent-activity.activity-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-subtle));
+  background: var(--danger-surface);
+}
+.activity-error .activity-status {
+  color: var(--danger);
+}
+.activity-interrupted .activity-status {
   color: var(--text-primary);
 }
 .activity-details {
@@ -189,6 +201,11 @@ onBeforeUnmount(() => {
 .activity-part button {
   margin-top: 8px;
   font-size: 12px;
+}
+@container (max-width: 380px) {
+  .activity-name {
+    display: none;
+  }
 }
 @media (max-width: 620px) {
   .agent-activity {
