@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
@@ -74,6 +74,20 @@ class ContextRecipe(BaseModel):
         ]
     )
 
+class PreferencePreset(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=80)
+    content: str = Field(min_length=1)
+
+    @field_validator("id", "name", "content")
+    @classmethod
+    def nonempty(cls, value):
+        if not value.strip():
+            raise ValueError("常用偏好的标识、名称和内容不能为空")
+        return value
+
+
 class Settings(BaseModel):
     """Operation-local runtime configuration (persist SettingsDocument instead)."""
     _full_runtime: Any = PrivateAttr(default=None)
@@ -88,6 +102,7 @@ class Settings(BaseModel):
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor: ModelProfile | None = None
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
+    preference_presets: list[PreferencePreset] = Field(default_factory=list)
     full_agent: ModelProfile | None = None
     full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
     full_agent_system_prompt: str = FULL_AGENT_PROMPT

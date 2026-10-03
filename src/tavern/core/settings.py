@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
-from tavern.core.models import ContextRecipe, Settings
+from tavern.core.models import ContextRecipe, PreferencePreset, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
     DEFAULT_MAINTENANCE_PROMPT,
@@ -131,11 +131,19 @@ class SharedSettings(StrictSettings):
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
+    preference_presets: list[PreferencePreset] = Field(default_factory=list)
     local_models: LocalResources = Field(default_factory=LocalResources)
     network: Network = Field(default_factory=Network)
     log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)
     log_max_mib: int = Field(default=512, ge=1, le=16384, strict=True)
     retrieval_cache_max_mib: int = Field(default=256, ge=1, le=16384, strict=True)
+
+    @model_validator(mode="after")
+    def unique_presets(self):
+        ids = [preset.id for preset in self.preference_presets]
+        if len(ids) != len(set(ids)):
+            raise ValueError("常用偏好标识不能重复")
+        return self
 
 
 class SettingsDocument(StrictSettings):

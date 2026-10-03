@@ -74,7 +74,9 @@ def page_catalog():
             pages.append(("recipe", "上下文编排", ["context_recipe"]))
         for key, label, paths in pages:
             result.append({"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths})
-    for key, label, paths in [("providers", "提供商", ["providers"]), ("editor", "角色卡编辑", ["card_editor"]),
+    for key, label, paths in [("providers", "提供商", ["providers"]),
+                              ("preference_presets", "常用偏好", ["preference_presets"]),
+                              ("editor", "角色卡编辑", ["card_editor"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"])]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})

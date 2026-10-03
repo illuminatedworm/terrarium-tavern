@@ -22,6 +22,7 @@ import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
 import SettingsPanel from './components/settings/SettingsPanel.vue';
+import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
 import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
@@ -95,6 +96,14 @@ const preview = ref<any>(null),
   savingRecipe = ref(false);
 const previewMessagesBusy = ref(false);
 const settingsPanel = ref<InstanceType<typeof SettingsPanel>>();
+const settingsInitialPage = ref('');
+watch(panel, (value) => {
+  if (value !== 'settings') settingsInitialPage.value = '';
+});
+function managePreferencePresets() {
+  settingsInitialPage.value = 'shared.preference_presets';
+  panel.value = 'settings';
+}
 const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
 const activeModel = computed(() =>
   isFullAgent.value ? activeSettings.value.model : activeSettings.value.foreground,
@@ -2559,6 +2568,14 @@ useTimedError(error);
               placeholder="例如：多用对话推进，节奏放缓，给我留下行动空间。"
             />
           </label>
+          <PreferencePresetPicker
+            :key="session.id"
+            v-model="session.turn_preference"
+            :revision="session.revision"
+            :presets="settings.shared?.preference_presets || []"
+            @saved="settings = $event"
+            @manage="managePreferencePresets"
+          />
           <p class="inspector-note">仅补充当前对话的系统提示，保存后持续生效；清空可取消。</p>
           <PolicySelect v-model="session.policy" :inherited-policy="activeSettings.policy" compact />
           <p class="inspector-note">
@@ -2649,6 +2666,7 @@ useTimedError(error);
             v-if="panel === 'settings'"
             ref="settingsPanel"
             :initial-mode="session?.agent_mode"
+            :initial-page="settingsInitialPage"
             :effort-options="effortOptions"
             @updated="settings = $event"
             @close="panel = ''"

@@ -30,6 +30,11 @@ export interface Provider {
   has_api_key?: boolean;
   use_proxy: boolean;
 }
+export interface PreferencePreset {
+  id: string;
+  name: string;
+  content: string;
+}
 export interface SettingsPage {
   id: string;
   scope: SettingsScope;
@@ -48,7 +53,11 @@ export interface SettingsDocument {
   version: 2;
   full_agent: SettingsObject & { model: ModelProfile };
   half_agent: SettingsObject & { foreground: ModelProfile; background: ModelProfile };
-  shared: SettingsObject & { providers: Provider[]; card_editor: ModelProfile };
+  shared: SettingsObject & {
+    providers: Provider[];
+    card_editor: ModelProfile;
+    preference_presets: PreferencePreset[];
+  };
   revisions: Record<SettingsScope, number>;
   pages: SettingsPage[];
   prompt_definitions: PromptDefinition[];

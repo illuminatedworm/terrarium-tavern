@@ -28,7 +28,12 @@ import StorageSettings from './StorageSettings.vue';
 import SavedText from './SavedText.vue';
 import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
-const props = defineProps<{ initialMode?: string; effortOptions: Array<{ value: string; label: string }> }>();
+import PreferencePresetSettings from './PreferencePresetSettings.vue';
+const props = defineProps<{
+  initialMode?: string;
+  initialPage?: string;
+  effortOptions: Array<{ value: string; label: string }>;
+}>();
 const emit = defineEmits<{ updated: [settings: SettingsDocument]; close: [] }>();
 const editor = useSettingsEditor((settings) => emit('updated', settings));
 const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
@@ -152,6 +157,14 @@ async function saveRecipeText(path: string) {
     /* Keep the error and text draft. */
   }
 }
+async function savePresets() {
+  try {
+    await editor.flush();
+    await editor.saveValue('shared', 'preference_presets');
+  } catch {
+    /* Keep the error and draft. */
+  }
+}
 const searchable = computed(() => {
   if (!draft.value) return [];
   const entries: Array<{ page: SettingsPage; label: string; path: string }> = [];
@@ -214,7 +227,7 @@ function selectSearch(result: { page: SettingsPage; label: string; path: string 
 }
 onMounted(async () => {
   await editor.initialize();
-  const previous = localStorage.getItem('tavern-settings-page');
+  const previous = props.initialPage || localStorage.getItem('tavern-settings-page');
   pageId.value = draft.value?.pages.some((p) => p.id === previous)
     ? previous!
     : `${props.initialMode === 'half_agent' ? 'half_agent' : 'full_agent'}.model`;
@@ -487,6 +500,15 @@ onMounted(async () => {
           />
           <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
+          <PreferencePresetSettings
+            v-else-if="page.key === 'preference_presets'"
+            :presets="editor.draftValue('shared', 'preference_presets')"
+            :dirty="textDirty.includes('shared.preference_presets')"
+            :saving="textBusy !== ''"
+            :error="textErrors['shared.preference_presets']"
+            @update:presets="editor.editValue('shared', 'preference_presets', $event)"
+            @save="savePresets"
+          />
         </section>
         <div v-if="error" class="settings-error" role="alert">
           <span>{{ error }}</span

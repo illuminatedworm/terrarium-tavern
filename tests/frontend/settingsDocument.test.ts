@@ -63,4 +63,19 @@ describe('settings acknowledgements', () => {
     expect(rebased.full_agent.model.model).toBe('new full');
     expect(rebased.half_agent.foreground.model).toBe('other-window writer');
   });
+  it('keeps a preset list edited while an earlier collection save is in flight', () => {
+    const saved = fixture();
+    saved.shared.preference_presets = [{ id: 'slow', name: '放缓节奏', content: '多用对白。' }];
+    const sent = [{ id: 'slow', name: '对白优先', content: '多用对白。' }];
+    const draft = clone(saved);
+    draft.shared.preference_presets = [{ ...sent[0], content: '保留行动空间。' }];
+    const response = clone(saved);
+    response.shared.preference_presets = clone(sent);
+    response.revisions.shared = 1;
+    const rebased = rebaseSettings(saved, draft, response, 'shared', { preference_presets: sent });
+    expect(rebased.shared.preference_presets).toEqual(draft.shared.preference_presets);
+    expect(difference(response.shared, rebased.shared)).toEqual({
+      preference_presets: draft.shared.preference_presets,
+    });
+  });
 });

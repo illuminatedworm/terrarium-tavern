@@ -44,6 +44,8 @@ Content-Type: application/json
 
 字段路径使用点分形式，例如 `model.reply_tokens`，不是 JSON Pointer。提供商引用、预算关联及字段类型在整个文档上统一校验，失败时不写入部分配置。`capability` 和 `capability_key` 由连接检查维护，客户端不能通过普通设置写入伪造其值。旧扁平 `PUT /api/settings` 不受支持。
 
+常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`；三者不能仅包含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表，设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只作为可复用内容，不自动关联或更新会话的 `turn_preference`。
+
 ## 消息适配
 
 模型配置的 `message_adapter` 字典整体写入，例如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`；省略类型使用程序默认值。只允许覆盖类型目录中 `configurable=true` 的项。

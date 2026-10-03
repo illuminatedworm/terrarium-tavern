@@ -21,7 +21,8 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   const error = ref('');
   const busy = ref(false);
   const textBusy = ref('');
-  const textDrafts = ref<Record<string, string>>({});
+  // Text and editable collections share manual-save, leave-guard, and undo behavior.
+  const textDrafts = ref<SettingsObject>({});
   const textErrors = ref<Record<string, string>>({});
   const token = ref('');
   const secretChanged = ref(false);
@@ -43,7 +44,8 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     Object.keys(textDrafts.value).filter((key) => {
       const [scope, ...path] = key.split('.');
       return (
-        saved.value && textDrafts.value[key] !== getPath(saved.value[scope as SettingsScope], path.join('.'))
+        saved.value &&
+        !equal(textDrafts.value[key], getPath(saved.value[scope as SettingsScope], path.join('.')))
       );
     }),
   );
@@ -136,21 +138,30 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   watch(draft, () => schedule(), { deep: true, flush: 'sync' });
 
   function textValue(scope: SettingsScope, path: string) {
-    return textDrafts.value[`${scope}.${path}`] ?? getPath(saved.value?.[scope] || {}, path) ?? '';
+    return draftValue(scope, path) ?? '';
+  }
+  function draftValue(scope: SettingsScope, path: string) {
+    return textDrafts.value[`${scope}.${path}`] ?? getPath(saved.value?.[scope] || {}, path);
   }
   function editText(scope: SettingsScope, path: string, value: string) {
+    editValue(scope, path, value);
+  }
+  function editValue(scope: SettingsScope, path: string, value: unknown) {
     textDrafts.value[`${scope}.${path}`] = value;
     delete textErrors.value[`${scope}.${path}`];
   }
   async function saveText(scope: SettingsScope, path: string) {
+    await saveValue(scope, path);
+  }
+  async function saveValue(scope: SettingsScope, path: string) {
     const key = `${scope}.${path}`;
-    const value = textValue(scope, path);
-    if (textBusy.value || value === getPath(saved.value?.[scope] || {}, path)) return;
+    const value = clone(draftValue(scope, path));
+    if (textBusy.value || equal(value, getPath(saved.value?.[scope] || {}, path))) return;
     textBusy.value = key;
     delete textErrors.value[key];
     try {
       await enqueue(() => commit(scope, { [path]: value }, true));
-      if (textDrafts.value[key] === value) delete textDrafts.value[key];
+      if (equal(textDrafts.value[key], value)) delete textDrafts.value[key];
     } catch (e) {
       textErrors.value[key] = String(e);
     } finally {
@@ -259,8 +270,11 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     schedule,
     textErrors,
     textValue,
+    draftValue,
     editText,
+    editValue,
     saveText,
+    saveValue,
     discard,
     pageChanged,
     undo,
