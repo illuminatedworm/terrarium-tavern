@@ -50,7 +50,7 @@ export const fullFields: SettingField[] = [
   { path: 'tools.auto_retrieval', label: '每轮自动检索世界书', type: 'checkbox' },
   number('tools.max_steps', '每回合模型调用上限', 2, 100),
   number('tools.pressure_ratio', '窗口压力提醒阈值', 0.25, 0.9, 0.05),
-  number('tools.checkpoint_tokens', '交接笔记上限（tokens）', 128, 16384),
+  number('tools.handoff_tokens', '交接笔记上限（tokens）', 128, 16384),
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
 ];
 export const historyFields: SettingField[] = [

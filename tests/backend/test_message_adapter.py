@@ -50,7 +50,7 @@ def test_full_agent_default_application_messages_remain_system_for_every_protoco
     rows = runtime_messages([{"role": "system", "message_type": name, "content": name} for name in types]
         + [{"role": "user", "content": "Continue"}, {"role": "assistant", "content": "Reply"},
            {"role": "tool", "content": "Result"},
-           {"role": "system", "message_type": "checkpoint", "content": "Updated memory"}], "full_agent")
+           {"role": "system", "message_type": "handoff", "content": "Updated memory"}], "full_agent")
     projected, _, _ = adapt_messages(rows, settings)
     assert all(row["role"] == "system" for row in projected if row["message_type"] in types)
     assert [row["role"] for row in projected if row["message_type"] in ("user", "assistant", "tool")] == ["user", "assistant", "tool"]

@@ -6,7 +6,7 @@ import uuid
 
 def new_state():
     return {"version": 1, "window": {"id": uuid.uuid4().hex, "number": 1, "start": 0},
-            "checkpoint": {"text": "", "revision": 0, "stale": False}, "notes": {}}
+            "handoff": {"text": "", "revision": 0, "stale": False}, "notes": {}}
 
 
 def full_state(snapshot):
@@ -29,12 +29,12 @@ def note_view(note, history):
         "sources": sources, "stale": bool(stale)}
 
 
-def rollover(state, history, checkpoint, keep_recent):
+def rollover(state, history, handoff, keep_recent):
     """Retain whole user/assistant exchanges; never leave a dangling tool block."""
     start = max(state["window"]["start"], len(history) - keep_recent)
     if 0 < start < len(history) and history[start]["role"] == "assistant":
         start -= 1
-    state["checkpoint"] = {"text": checkpoint, "revision": state["checkpoint"]["revision"] + 1,
+    state["handoff"] = {"text": handoff, "revision": state["handoff"]["revision"] + 1,
                            "stale": False}
     state["window"] = {"id": uuid.uuid4().hex, "number": state["window"]["number"] + 1, "start": start}
 
@@ -42,7 +42,7 @@ def rollover(state, history, checkpoint, keep_recent):
 def mark_edited(snapshot, message_id, history):
     state = snapshot.get("full_agent")
     if state and any(m["id"] == message_id for m in history):
-        state["checkpoint"]["stale"] = bool(state["checkpoint"]["text"])
+        state["handoff"]["stale"] = bool(state["handoff"]["text"])
         state.setdefault("edited_sources", [])
         if message_id not in state["edited_sources"]:
             state["edited_sources"].append(message_id)

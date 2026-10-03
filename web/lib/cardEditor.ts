@@ -25,7 +25,7 @@ export interface EditorConversation {
   title: string;
   revision: number;
   cards: EditorCard[];
-  state: { checkpoint?: string; window?: number };
+  state: { handoff?: string; window?: number };
   messages: { ref: string; role: string; content: string; run: string }[];
   runs: EditorRun[];
   pending: { run: string; cards: EditorCard[]; state: Record<string, any>; calls: number } | null;

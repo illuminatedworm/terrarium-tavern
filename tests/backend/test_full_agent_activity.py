@@ -68,13 +68,13 @@ async def test_dialogue_activity_follows_selected_versions_and_fork_identity(tmp
     try:
         _, first = await turn(service, session, Model(("read_history", {"ref": "H2"}), "第一版"))
         fork = store.fork_session(first["id"], first["head"], first["revision"])
-        _, second = await turn(service, first, Model(("write_checkpoint", {"content": "新的交接"}), "第二版"), mode="regenerate")
+        _, second = await turn(service, first, Model(("write_handoff", {"content": "新的交接"}), "第二版"), mode="regenerate")
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             async def fetch(sid, mid):
                 return await client.post(f"/api/sessions/{sid}/full-agent/activity", json={"message_ids": [mid]})
             assert (await fetch(first["id"], first["head"])).status_code == 404
             current = (await fetch(second["id"], second["head"])).json()["messages"][second["head"]]
-            assert [item["name"] for item in current if item["kind"] == "tool"] == ["write_checkpoint"]
+            assert [item["name"] for item in current if item["kind"] == "tool"] == ["write_handoff"]
             inherited = (await fetch(fork["id"], fork["head"])).json()["messages"][fork["head"]]
             assert [item["name"] for item in inherited if item["kind"] == "tool"] == ["read_history"]
             assert (await fetch(fork["id"], first["head"])).status_code == 404

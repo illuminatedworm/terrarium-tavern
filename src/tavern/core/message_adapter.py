@@ -47,7 +47,7 @@ TYPES = {item.id: item for item in (
     MessageType("author_note", "作者注", "author_note", True, True),
     MessageType("post", "角色后置要求", "card_post_history_instructions", True, True),
     MessageType("memory", "分类记忆", "tavern_memory", True, True),
-    MessageType("checkpoint", "交接记忆", "tavern_memory", True, True),
+    MessageType("handoff", "交接笔记", "tavern_memory", True, True),
     MessageType("state", "剧情状态", "tavern_state", True, True),
     MessageType("mvu_rules", "MVU 规则快照", "mvu_rules", True, True),
     MessageType("tracker_mvu_rules", "Tracker MVU 规则", "mvu_rules", scopes=("background",)),
@@ -63,7 +63,7 @@ TYPES = {item.id: item for item in (
         ("tracker_task_update", "Tracker 任务更新"), ("last_call_notice", "最后调用提醒"))],
     *[MessageType("editor_" + name, label, "tavern_editor_" + name, True, True,
                   scopes=("card_editor",)) for name, label in (
-        ("overview", "草稿概览"), ("briefs", "确认资料"), ("checkpoint", "创作进度"),
+        ("overview", "草稿概览"), ("briefs", "确认资料"), ("handoff", "交接笔记"),
         ("persona_changes", "待保存用户角色"), ("adapt", "适配要求"), ("pressure", "窗口压力"),
         ("final_ref", "已保存回复引用"))],
 )}
@@ -72,7 +72,7 @@ SCOPES = {
        "session_preference", "post", "custom", "turn_instruction", "card_system_prompt", "card_description",
        "card_personality", "card_scenario", "card_mes_example")},
     **{name: ("foreground",) for name in ("retrieval_protocol", "author_note", "memory", "state")},
-    **{name: ("full_agent",) for name in ("checkpoint", "mvu_rules", "regenerate_instruction",
+    **{name: ("full_agent",) for name in ("handoff", "mvu_rules", "regenerate_instruction",
        "turn_variable_instruction", "context_warning", "context_status", "context_budget")},
     "reply_correction": ("full_agent", "card_editor"), "required_tool_notice": ("background",),
     "tracker_task_update": ("background",), "last_call_notice": ("full_agent", "card_editor"),
@@ -131,7 +131,7 @@ def default_rule(name, api, lane="foreground"):
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"
     base = name.split(":")[1] if name.startswith("compat:") else name
-    wrapped = {"author_note", "post", "memory", "checkpoint", "state", "mvu_rules", "lore_injected"}
+    wrapped = {"author_note", "post", "memory", "handoff", "state", "mvu_rules", "lore_injected"}
     wrap = bool(definition.tag) and (not definition.configurable or base in wrapped
                                     or api in ("anthropic", "gemini") and definition.role in ("system", "developer"))
     return {"role": role, "wrap": wrap}
@@ -184,7 +184,7 @@ def canonical_content(message, definition):
     if "runtime_content" in message:
         return message["runtime_content"]
     base = definition.id.split(":")[1] if definition.id.startswith("compat:") else definition.id
-    compiled = {"persona", "lore_constant", "lore_injected", "author_note", "post", "memory", "checkpoint",
+    compiled = {"persona", "lore_constant", "lore_injected", "author_note", "post", "memory", "handoff",
                 "state", "mvu_rules", "tracker_mvu_rules", "variable_mvu_rules"}
     return (unwrapped(message.get("content", ""), definition.tag)
             if base.startswith("card_") or base in compiled else message.get("content", ""))

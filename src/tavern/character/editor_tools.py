@@ -86,8 +86,8 @@ class Skill(Arguments):
     resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. runtime-guide.md covers MVU and script compatibility; mode-specific references only explain execution differences.")
 
 
-class Checkpoint(Arguments):
-    content: str = Field(min_length=1, description="Complete replacement progress note: preserve decisions, pending work and useful C/H references. Does not replace the separately retained approved proposal.")
+class Handoff(Arguments):
+    content: str = Field(min_length=1, description="Complete replacement handoff note: preserve decisions, pending work and useful C/H references. Does not replace the separately retained approved proposal.")
 
 
 class HistorySearch(Arguments):
@@ -116,8 +116,8 @@ SPECS = {
     "validate_draft": (Card, "Check structure, authoring completeness and static compatibility separately. Reports warnings and untested runtime behavior; a valid document is not proof of script or narrative correctness."),
     "test_draft": (Probe, "Run local deterministic checks on one opening: initialization, script startup and regex transformations. Uses isolated temporary state and only embedded/cached resources; reports failed/blocked/untested checks. Never calls a model or writes a story."),
     "read_skill": (Skill, "Read complete bundled card-authoring or runtime adaptation documentation. Only listed resources are accessible."),
-    "write_checkpoint": (Checkpoint, "Replace the working progress note, preserving useful earlier decisions and unresolved work. Approved proposal originals are retained independently. A failed update does not replace the old note."),
-    "new_context": (Checkpoint, "Save the complete progress note and switch context windows. Call alone. Retains approved proposals, card directory, current user inputs and two recent user/final-answer exchanges; old tools leave together and remain readable from history. Continue the task after switching; the call allowance does not reset."),
+    "write_handoff": (Handoff, "Replace the handoff note, preserving useful earlier decisions and unresolved work. Approved proposal originals are retained independently. A failed update does not replace the old note."),
+    "new_context": (Handoff, "Save the complete handoff note and switch context windows. Call alone. Retains approved proposals, card directory, current user inputs and two recent user/final-answer exchanges; old tools leave together and remain readable from history. Continue the task after switching; the call allowance does not reset."),
     "search_history": (HistorySearch, "Search this authoring conversation only; returns H handles and labeled previews. Includes user requests and final replies, not gameplay."),
     "read_history": (HistoryRead, "Read a full authoring message and its durable tool exchanges. Use it to verify approved constraints or recover results that left the active context."),
     **PERSONA_SPECS,
@@ -324,16 +324,16 @@ class EditorTools(PersonaTools):
         folder = "adapt-card-to-tavern" if args.resource in {"SKILL.md", "references/workflow.md"} else "card-authoring"
         return {"resource": args.resource, "text": (root / folder / args.resource).read_text(encoding="utf-8")}
 
-    async def write_checkpoint(self, args):
-        if not args.content.strip() or count_text(args.content, self.owner.cfg) > self.owner.cfg.card_editor_config.checkpoint_tokens:
-            raise ValueError("checkpoint 必须非空且不超过配置 token 上限")
-        self.owner.working["state"]["checkpoint"] = self.view.restore(args.content)
+    async def write_handoff(self, args):
+        if not args.content.strip() or count_text(args.content, self.owner.cfg) > self.owner.cfg.card_editor_config.handoff_tokens:
+            raise ValueError("handoff 必须非空且不超过配置 token 上限")
+        self.owner.working["state"]["handoff"] = self.view.restore(args.content)
         return {"accepted": True, "content": args.content}
 
     async def new_context(self, args):
-        await self.write_checkpoint(args)
+        await self.write_handoff(args)
         self.owner.rolled = True
-        return {"accepted": True, "message": "进度已保存，继续本轮任务"}
+        return {"accepted": True, "message": "交接笔记已保存，继续本轮任务"}
 
     async def search_history(self, args):
         terms = args.query.casefold().split()

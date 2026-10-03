@@ -1,4 +1,4 @@
-"""User-visible checkpoint/notes and explicit recovery from a full window."""
+"""User-visible handoff/notes and explicit recovery from a full window."""
 import copy
 from typing import Literal
 
@@ -9,11 +9,11 @@ from tavern.core.models import TurnRequest
 from tavern.core.tokens import count_text
 from tavern.full_agent.activity import compact, message_items, part_page, turn_items
 from tavern.full_agent.state import full_state, note_view, rollover
-from tavern.full_agent.tools import RESULT_FIELDS, SPECS, Checkpoint, result_field, tool_definitions
+from tavern.full_agent.tools import RESULT_FIELDS, SPECS, Handoff, result_field, tool_definitions
 from tavern.storage.store import Conflict, dump
 
 
-class ContextEdit(Checkpoint):
+class ContextEdit(Handoff):
     expected_revision: int = Field(ge=0)
     new_window: bool = False
     keep_recent: int = Field(default=0, ge=0, le=12)
@@ -118,7 +118,7 @@ def register_full_agent_routes(app, store):
         session = require_full(store, sid)
         state = full_state(session["snapshot"])
         return {"window": {k: v for k, v in state["window"].items() if k != "id"},
-                "checkpoint": state["checkpoint"],
+                "handoff": state["handoff"],
                 "notes": [note_view(n, session["messages"]) for n in state["notes"].values()],
                 "history_messages": len(session["messages"])}
 
@@ -128,14 +128,14 @@ def register_full_agent_routes(app, store):
         if not session["head"]:
             raise ValueError("空白故事还没有可保存交接笔记的剧情节点；请先发送一条消息")
         settings = store.settings().for_role("full_agent")
-        if not edit.content.strip() or count_text(edit.content, settings) > settings.full_agent_config.checkpoint_tokens:
-            raise ValueError("checkpoint 不能为空且不能超过配置的 token 上限")
+        if not edit.content.strip() or count_text(edit.content, settings) > settings.full_agent_config.handoff_tokens:
+            raise ValueError("handoff 不能为空且不能超过配置的 token 上限")
         snapshot = copy.deepcopy(session["snapshot"])
         state = full_state(snapshot)
         if edit.new_window:
             rollover(state, session["messages"], edit.content, edit.keep_recent)
         else:
-            state["checkpoint"] = {"text": edit.content, "revision": state["checkpoint"]["revision"] + 1,
+            state["handoff"] = {"text": edit.content, "revision": state["handoff"]["revision"] + 1,
                                    "stale": False}
         state.pop("edited_sources", None)
         with store.connection() as db:

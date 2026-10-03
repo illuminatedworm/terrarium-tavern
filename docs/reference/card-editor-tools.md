@@ -25,7 +25,7 @@
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`；检查本地初始化、正则和脚本启动，返回实际结果、日志和未测范围 |
 | `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md；适配共用 SKILL.md 和 references/workflow.md |
-| `write_checkpoint` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
+| `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
 | `search_history` | `query`、`limit=5`（1–20）；`*` 列出最近记录，返回 H 引用与定位摘要 |
 | `read_history` | `ref`；完整读取消息及关联工具交换，不把原生 reasoning 或协议 ID 作为业务正文返回 |

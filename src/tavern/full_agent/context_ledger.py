@@ -13,7 +13,7 @@ CLEAR_TEXT = {
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
     "regenerate_instruction": "此前的重生成要求已撤销。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",
-    "context_warning": "此前的 checkpoint 过时提醒已解除。",
+    "context_warning": "此前的 handoff 过时提醒已解除。",
     "context_budget": "此前的窗口压力提醒已解除。",
 }
 
@@ -88,7 +88,7 @@ class ContextLedger:
         if message.get("role") != "tool":
             return
         call = self.calls.get(message.get("tool_call_id"))
-        if not call or call["name"] != "write_checkpoint":
+        if not call or call["name"] != "write_handoff":
             return
         try:
             result, args = json.loads(message.get("content", "")), json.loads(call["arguments"])
@@ -97,7 +97,7 @@ class ContextLedger:
         # A proposal in tool arguments is not an effective memory until the
         # matching tool result confirms that the local draft accepted it.
         if isinstance(result, dict) and result.get("saved_to_draft") and "error" not in result:
-            self.seen["checkpoint"] = args["content"]
+            self.seen["handoff"] = args["content"]
 
     def update(self, source, content, *, value=None):
         value = content if value is None else value

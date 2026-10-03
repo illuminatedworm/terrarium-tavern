@@ -72,7 +72,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
-    checkpoint = state["checkpoint"]
+    handoff = state["handoff"]
 
     by_owner = {}
     for item in trace:
@@ -136,13 +136,13 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     for source, content in turn_instructions.items():
         update(source, content)
     warning = ""
-    if checkpoint.get("stale"):
+    if handoff.get("stale"):
         refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]
-        warning = "原始剧情已编辑，checkpoint 可能过时。请读取并核对：" + ", ".join(refs)
+        warning = "原始剧情已编辑，handoff 可能过时。请读取并核对：" + ", ".join(refs)
     update("context_warning", warning)
-    update("checkpoint", "<tavern_memory>\n当前有效 checkpoint（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
-        + (checkpoint["text"] or "当前 checkpoint 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
-        value=checkpoint["text"])
+    update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
+        + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
+        value=handoff["text"])
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
                       "reasoning_content", "reasoning_details", "reasoning",

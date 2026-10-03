@@ -104,25 +104,25 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert not patch["available"]
             authorized = (await client.get(url, params={"update_variables": "true"})).json()["tools"]
             assert next(t for t in authorized if t["name"] == "patch_state")["available"]
-            response = await client.put(url, json={"expected_revision": 0, "disabled_tools": ["write_checkpoint"]})
+            response = await client.put(url, json={"expected_revision": 0, "disabled_tools": ["write_handoff"]})
             assert response.status_code == 200
             session = response.json()
-            assert Store(store.root).session(session["id"])["disabled_tools"] == ["write_checkpoint"]
+            assert Store(store.root).session(session["id"])["disabled_tools"] == ["write_handoff"]
             assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": []})).status_code == 409
             assert (await client.put(url, json={"expected_revision": 1, "disabled_tools": ["unknown"]})).status_code == 400
             preview = (await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})).json()
-            assert "write_checkpoint" not in {t["function"]["name"] for t in preview["tools"]}
-            model = Model(("write_checkpoint", {"content": "禁止写入"}), "正文")
+            assert "write_handoff" not in {t["function"]["name"] for t in preview["tools"]}
+            model = Model(("write_handoff", {"content": "禁止写入"}), "正文")
             result, session = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
-            assert not session["snapshot"]["full_agent"]["checkpoint"]["text"]
-            assert "write_checkpoint" not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
+            assert not session["snapshot"]["full_agent"]["handoff"]["text"]
+            assert "write_handoff" not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
             assert "error" in json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
             fork = store.fork_session(session["id"], session["head"], session["revision"])
-            assert fork["disabled_tools"] == ["write_checkpoint"]
+            assert fork["disabled_tools"] == ["write_handoff"]
             result, session = await turn(service, session, Model("重生成"), mode="regenerate")
             assert result["status"] == "committed"
-            assert session["disabled_tools"] == ["write_checkpoint"]
+            assert session["disabled_tools"] == ["write_handoff"]
             response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": list(SPECS)})
             session = response.json()
             no_tools = Model("不使用工具的正文")

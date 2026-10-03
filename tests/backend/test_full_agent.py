@@ -128,7 +128,7 @@ async def turn(service, session, model, **kwargs):
     return service.store.turn(result["id"]), service.store.session(session["id"])
 
 
-async def test_tools_checkpoint_rollover_recovery_and_no_tracker(story):
+async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
     store, session = story
     service = runtime(store)
     model = Model(
@@ -170,7 +170,7 @@ async def test_failure_and_cancellation_never_commit_draft_memory(story):
     service = runtime(store)
     try:
         result, current = await turn(service, session, Model(
-            ("write_checkpoint", {"content": "不应该提交的交接笔记"}), RuntimeError("model disconnected")))
+            ("write_handoff", {"content": "不应该提交的交接笔记"}), RuntimeError("model disconnected")))
         assert result["status"] == "error"
         assert current["revision"] == 0 and current["snapshot"] == session["snapshot"]
         with store.connection() as db:
@@ -341,7 +341,7 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         result, first = await turn(service, session, Model(
             ("read_history", {"ref": "H2"}),
             ("write_note", {"key": "见面", "content": "钟楼见面", "kind": "fact", "sources": ["H2"]}),
-            ("write_checkpoint", {"content": "约定已达成"}), "第一版正文"))
+            ("write_handoff", {"content": "约定已达成"}), "第一版正文"))
         assert result["status"] == "committed", result["error"]
         fork = store.fork_session(first["id"], first["head"], first["revision"])
         assert fork["agent_mode"] == "full_agent"
@@ -359,7 +359,7 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
         switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
         edited = store.edit_message(first["id"], first["head"], "最新正文已修改。", switched["revision"])
-        assert edited["snapshot"]["full_agent"]["checkpoint"]["stale"]
+        assert edited["snapshot"]["full_agent"]["handoff"]["stale"]
         assert not note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
         edited_input = store.edit_message(first["id"], first["messages"][1]["id"], "我们取消约定。", edited["revision"])
         assert edited_input["head"] == first["head"]
@@ -421,7 +421,7 @@ async def test_retrieval_lane_agent_priority_and_no_overlap():
 
 
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
-async def test_native_wire_and_atomic_checkpoint_on_invalid_arguments(story, monkeypatch, api_mode):
+async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkeypatch, api_mode):
     for variable in ("ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY", "all_proxy", "https_proxy", "http_proxy"):
         monkeypatch.delenv(variable, raising=False)  # Only local MockTransport is used.
     store, session = story
@@ -437,7 +437,7 @@ async def test_native_wire_and_atomic_checkpoint_on_invalid_arguments(story, mon
         if api_mode == "responses":
             if len(calls) == 1:
                 output = [{"type": "function_call", "id": "fc_x", "call_id": "x", "name": "new_context",
-                           "arguments": '{"content":"checkpoint", "keep_recent":99}', "status": "completed"}]
+                           "arguments": '{"content":"handoff", "keep_recent":99}', "status": "completed"}]
             else:
                 output = [{"type": "message", "id": "msg_x", "role": "assistant", "status": "completed",
                            "content": [{"type": "output_text", "text": "正文", "annotations": []}]}]
@@ -446,7 +446,7 @@ async def test_native_wire_and_atomic_checkpoint_on_invalid_arguments(story, mon
                 "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}})
         if len(calls) == 1:
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "x", "type": "function",
-                "function": {"name": "new_context", "arguments": '{"content":"checkpoint", "keep_recent":99}'}}]}
+                "function": {"name": "new_context", "arguments": '{"content":"handoff", "keep_recent":99}'}}]}
             finish = "tool_calls"
         else:
             message, finish = {"role": "assistant", "content": "正文"}, "stop"
@@ -464,7 +464,7 @@ async def test_native_wire_and_atomic_checkpoint_on_invalid_arguments(story, mon
         else:
             assert any(m.get("tool_call_id") == "x" and "error" in m["content"] for m in calls[1]["messages"])
         assert current["snapshot"]["full_agent"]["window"]["number"] == 1
-        assert not current["snapshot"]["full_agent"]["checkpoint"]["text"]
+        assert not current["snapshot"]["full_agent"]["handoff"]["text"]
     finally:
         await service.close()
 
@@ -495,7 +495,7 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             trace = requested.json()["trace"]
             input_index = next(i for i, item in enumerate(trace) if item["source"] == "input")
             assert trace[input_index + 1]["source"] == "turn_variable_instruction"
-            assert [item["source"] for item in trace][-2:] == ["checkpoint", "context_status"]
+            assert [item["source"] for item in trace][-2:] == ["handoff", "context_status"]
             assert {tool["function"]["name"] for tool in requested.json()["tools"]} == {
                 tool["function"]["name"] for tool in preview.json()["tools"]}
             exported = await client.post(f"/api/sessions/{session['id']}/messages-preview", json={"text": "继续"})
@@ -587,7 +587,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
     service.memory_provider_factory = service.variable_provider_factory = forbidden
     model = Model(("read_state", {}),
                   ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}], "reason": "本轮变化"}),
-                  ("write_checkpoint", {"content": "目前能量为4"}), "洛伊带你来到观测窗。")
+                  ("write_handoff", {"content": "目前能量为4"}), "洛伊带你来到观测窗。")
     try:
         session = await service.initialize_session(session["id"])
         result, pending = await turn(service, session, model, update_variables=True)
@@ -775,7 +775,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
         result, base = await turn(service, session, Model(
             ("write_note", {"key": "线索", "content": "旧线索", "kind": "hypothesis"}),
             ("write_note", {"key": "待办", "content": "旧待办", "kind": "plan"}),
-            ("write_checkpoint", {"content": "旧交接"}), "前一回合"))
+            ("write_handoff", {"content": "旧交接"}), "前一回合"))
         assert result["status"] == "committed", result["error"]
         baseline = copy.deepcopy(base["snapshot"]["full_agent"])
         current = base
@@ -785,14 +785,14 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
                 ("read_note", {"ref": "线索"}),
                 ("write_note", {"key": "线索", "content": f"旧线索，加候选{index}", "kind": "hypothesis"}),
                 ("archive_note", {"key": "待办"}),
-                ("write_checkpoint", {"content": f"旧交接，加候选{index}"}), f"正文候选{index}")
+                ("write_handoff", {"content": f"旧交接，加候选{index}"}), f"正文候选{index}")
             result, current = await turn(service, current, model, mode="send" if index == 0 else "regenerate")
             assert result["status"] == "committed", result["error"]
             versions.append(current)
             state = current["snapshot"]["full_agent"]
             assert state["notes"]["线索"]["revision"] == 2
             assert state["notes"]["待办"]["revision"] == 2
-            assert state["checkpoint"]["revision"] == 2
+            assert state["handoff"]["revision"] == 2
             assert current["messages"][-2]["snapshot"]["full_agent"] == baseline
             read_result = json.loads(next(m["content"] for m in reversed(model.requests[1]["messages"])
                                           if m["role"] == "tool"))
@@ -835,11 +835,11 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
 
     store, session = story
     settings = store.settings()
-    settings.full_agent_config.checkpoint_tokens = 1536
+    settings.full_agent_config.handoff_tokens = 1536
     settings.full_agent_config.note_tokens = 3072
     store.save_settings(settings)
     service = runtime(store)
-    model = Model(("write_checkpoint", {"content": "约定仍待兑现"}), "她点头。")
+    model = Model(("write_handoff", {"content": "约定仍待兑现"}), "她点头。")
     try:
         result, _ = await turn(service, session, model, update_variables=False, allow_content_edit=False)
         assert result["status"] == "committed", result["error"]
@@ -896,7 +896,7 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
                                           "mvu_rules", "post", "turn_instruction", "regenerate_instruction",
-                                          "checkpoint", "context_status"]
+                                          "handoff", "context_status"]
 
 
 @pytest.mark.parametrize("window_number, notes, expected", [
@@ -938,7 +938,7 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
     warning = compile_current()
     assert not warning["rollover_required"]
     sources = [m["source"] for m in warning["trace"]]
-    assert sources.index("context_budget") == sources.index("checkpoint") + 2
+    assert sources.index("context_budget") == sources.index("handoff") + 2
     assert "当前仍可正常调用工具和回复" in warning["trace"][sources.index("context_budget")]["content"]
     settings.reply_tokens = settings.context_tokens
     near_full = compile_current()
@@ -1023,7 +1023,7 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
     service = runtime(store)
     model = Model(
         "这条正文必须被否决",
-        ("write_checkpoint", {"content": "这个操作也必须被否决"}),
+        ("write_handoff", {"content": "这个操作也必须被否决"}),
         ("new_context", {"content": "换窗参数错误", "keep_recent": 99}),
         ("new_context", {"content": "新交接保留必要经历", "keep_recent": 0}),
         "换窗后继续回应玩家。",
@@ -1032,7 +1032,7 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert current["messages"][-1]["raw"] == "换窗后继续回应玩家。"
-        assert current["snapshot"]["full_agent"]["checkpoint"]["text"] == "新交接保留必要经历"
+        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "新交接保留必要经历"
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
         for request in model.requests[:4]:
             assert request["extra_body"]["tool_choice"]["function"]["name"] == "new_context"

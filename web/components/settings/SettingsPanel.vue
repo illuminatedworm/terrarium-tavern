@@ -473,7 +473,7 @@ onMounted(async () => {
               /></label>
               <label
                 >创作进度上限（tokens）<input
-                  v-model.number="draft.shared.card_editor_config.checkpoint_tokens"
+                  v-model.number="draft.shared.card_editor_config.handoff_tokens"
                   type="number"
                   min="128"
                   max="16384"

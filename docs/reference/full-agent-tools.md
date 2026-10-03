@@ -11,7 +11,7 @@
 | `search_read_lore` | `query` | 使用世界书索引和准入规则，直接返回完整正文；已在上下文的条目省略正文 |
 | `search_history` | `query`，`limit=5` | 当前分支剧情的字面检索；limit 为 1–10，`*` 列出最近记录，结果提供 H 引用 |
 | `read_history` | `ref` | 读取一个有效 H 引用的完整原文，包含可用的当前用户输入 |
-| `write_checkpoint` | `content` | 替换整个交接笔记，正文不能纯空白 |
+| `write_handoff` | `content` | 替换整个交接笔记，正文不能纯空白 |
 | `new_context` | `content`，`keep_recent=2` | 替换交接笔记并换窗，必须单独调用 |
 | `search_notes` | `query`，`limit=5` | 搜索当前分支的有效笔记；`*` 列出笔记，limit 为 1–10 |
 | `read_note` | `ref` | 按完整笔记键读取有效或归档笔记 |
@@ -23,7 +23,7 @@
 | `revise_content` | `operations`、`reason` | 修改授权的对话级角色卡／世界书草稿 |
 | `set_retrieval_query` | `query` | 保存下一轮自动检索线索，不写入剧情正文 |
 
-查询文本最长 1000 字符；读取引用和笔记键最长 80 字符。笔记键可使用字母、数字、下划线、中文、斜线、连字符、空格和点。checkpoint 和笔记正文还限制为最多 64000 字符，补丁理由最多 1000 字符。正文同时受配置中的 token 上限约束，见[工具与记忆设置](../guides/full-agent.md#工具与记忆设置)。
+查询文本最长 1000 字符；读取引用和笔记键最长 80 字符。笔记键可使用字母、数字、下划线、中文、斜线、连字符、空格和点。handoff 和笔记正文还限制为最多 64000 字符，补丁理由最多 1000 字符。正文同时受配置中的 token 上限约束，见[工具与记忆设置](../guides/full-agent.md#工具与记忆设置)。
 
 `patch_state.operations` 接受 0–100 项，`revise_content.operations` 仍为 1–100 项。变量规则由运行时以 `<mvu_rules>` 完整快照按需追加，全部启用的 tracker_mvu 条目均参与，不走叙事检索筛选。遵循最新快照并用 read_state 核对当前值；规则文本不改变本轮权限或正文协议。
 
@@ -50,7 +50,7 @@
 
 H7 只用于说明格式，实际调用必须使用当前分支返回的引用。如果 `物品/戒指` 已存在，先调用 `read_note` 读取该键，再提交包含仍有效信息的完整新版。搜索摘要、旧版内容及换窗前的读取不满足覆盖条件。覆盖归档笔记会重新激活该键。
 
-checkpoint 的有效版本取最新运行时记忆更新与成功 `write_checkpoint` 结果中较晚者。失败调用中的新内容不构成当前记忆。
+handoff 的有效版本取最新运行时记忆更新与成功 `write_handoff` 结果中较晚者。失败调用中的新内容不构成当前记忆。
 
 ## 换窗参数
 
@@ -103,7 +103,7 @@ checkpoint 的有效版本取最新运行时记忆更新与成功 `write_checkpo
 | 会话 API | 用途 |
 |---|---|
 | `GET/PUT /api/sessions/{sid}/full-agent/tools` | 读取工具定义及保存开关、返回字段；写入带 `expected_revision` |
-| `GET /api/sessions/{sid}/full-agent` | 读取 checkpoint、笔记与窗口概况 |
-| `PUT /api/sessions/{sid}/full-agent/context` | 人工保存 checkpoint；`new_window=true` 时换窗，`keep_recent` 默认 0 |
+| `GET /api/sessions/{sid}/full-agent` | 读取 handoff、笔记与窗口概况 |
+| `PUT /api/sessions/{sid}/full-agent/context` | 人工保存 handoff；`new_window=true` 时换窗，`keep_recent` 默认 0 |
 
-人工编辑需要已有剧情节点，正文非空且符合 checkpoint token 上限；写入携带 `expected_revision`，运行或待审核回合期间拒绝修改。活动记录接口与完整类型见 [full_agent/api.py](../../src/tavern/full_agent/api.py)，回归入口见 [test_full_agent_tools.py](../../tests/backend/test_full_agent_tools.py)。
+人工编辑需要已有剧情节点，正文非空且符合 handoff token 上限；写入携带 `expected_revision`，运行或待审核回合期间拒绝修改。活动记录接口与完整类型见 [full_agent/api.py](../../src/tavern/full_agent/api.py)，回归入口见 [test_full_agent_tools.py](../../tests/backend/test_full_agent_tools.py)。

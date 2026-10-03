@@ -308,7 +308,7 @@ class FullAgent:
                 self.must_rollover = False
                 self.retain()
                 self.event("context_rollover", {"window": self.state["window"]["number"],
-                                               "message": "Agent 已保存 checkpoint 并换新窗口"})
+                                               "message": "Agent 已保存 handoff 并换新窗口"})
             await self.save_progress()
 
     def response_message(self, response, provider, calls):

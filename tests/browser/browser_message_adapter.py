@@ -76,13 +76,13 @@ async def main():
                         await page.locator(".inspector-tabs").get_by_role("button", name="会话设置", exact=True).click()
                         await page.get_by_role("region", name="会话设置", exact=True).get_by_role("button", name="消息适配", exact=True).click()
                         adapter = page.get_by_role("region", name="当前对话消息适配")
-                        name = "剧情状态" if mode == "half_agent" else "交接记忆"
+                        name = "剧情状态" if mode == "half_agent" else "交接笔记"
                         await adapter.get_by_label(name + "发送角色", exact=True).select_option("user")
                         await adapter.get_by_label(name + "标签包裹", exact=True).uncheck()
                         await adapter.get_by_role("button", name="保存消息适配", exact=True).click()
                         await expect(adapter.get_by_role("status")).to_have_text("已保存，下一次模型调用立即生效。")
                         lane = "foreground" if mode == "half_agent" else "full_agent"
-                        kind = "state" if mode == "half_agent" else "checkpoint"
+                        kind = "state" if mode == "half_agent" else "handoff"
                         assert store.message_adapter("story", session["id"], lane)["config"]["mappings"]["chat_completions"][kind] == {"role": "user", "wrap": False}
                         assert store.session(session["id"])["revision"] == 0
                         await adapter.get_by_role("button", name="重新载入", exact=True).click()

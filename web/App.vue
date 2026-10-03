@@ -461,7 +461,7 @@ const contextLabels: Record<string, string> = {
   persona: '用户',
   examples: '示例',
   memory: '记忆',
-  checkpoint: '交接笔记',
+  handoff: '交接笔记',
   agent_tools: '当前窗口工具记录',
   context_status: '窗口与记忆状态',
   context_budget: '窗口预算提示',

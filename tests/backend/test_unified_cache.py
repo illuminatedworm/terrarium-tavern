@@ -79,7 +79,7 @@ def compiled(mode, cfg):
     trace = [{"role": "system", "content": "stable ledger data " * 3000, "source": "character"}]
     trace.extend({"role": m["role"], "content": m["raw"], "source": "history", "message_id": m["id"]} for m in history)
     trace.extend([{"role": "user", "content": "latest", "source": "input"},
-                  {"role": "system", "content": "dynamic checkpoint", "source": "checkpoint"}])
+                  {"role": "system", "content": "dynamic handoff", "source": "handoff"}])
     context = {"messages": [{k: m[k] for k in ("role", "content")} for m in trace], "trace": trace}
     snapshot = {"state": {}, "full_agent": {"window": {"start": 0, "id": "w1"}}}
     return prepare_context(context, session, history, snapshot, cfg), session, history, snapshot
@@ -113,8 +113,8 @@ async def test_two_round_boundary_reaches_final_wire_for_all_modes(api, mode):
     elif api == "anthropic":
         marked = [b for m in wire["messages"] for b in m["content"] if "cache_control" in b]
         assert len(marked) == 1 and marked[0]["text"] == "Answer 1"
-        assert "dynamic checkpoint" in wire["messages"][-1]["content"][0]["text"]
-        assert "dynamic checkpoint" not in str(wire["system"])
+        assert "dynamic handoff" in wire["messages"][-1]["content"][0]["text"]
+        assert "dynamic handoff" not in str(wire["system"])
     else:
         inputs = wire["input" if api == "responses" else "messages"]
         marked = [b for m in inputs if isinstance(m.get("content"), list) for b in m["content"] if "prompt_cache_breakpoint" in b]
@@ -521,7 +521,7 @@ async def test_claude_requested_rollover_tool_preserves_permission_boundary(mode
             assert len(body["tools"]) == 2
         return httpx.Response(200, json=reply("anthropic"))
     async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "user", "content": "save checkpoint"}], extra_body={
+        await p.chat_complete([{"role": "user", "content": "save handoff"}], extra_body={
             "tools": tools, "tool_choice": {"type": "function", "function": {"name": "new_context"}}})
 
 

@@ -41,11 +41,11 @@ class CharacterRead(Read):
     ref: str = Field(min_length=1, max_length=80, description="Exact existing top-level field of normalized character data, e.g. description or character_book. No data prefix, dotted paths, or JSON Pointers; read the whole field to inspect nested values.")
 
 
-class Checkpoint(Arguments):
-    content: str = Field(min_length=1, max_length=64000, description="Complete updated checkpoint text; must contain non-whitespace text.")
+class Handoff(Arguments):
+    content: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text; must contain non-whitespace text.")
 
 
-class NewContext(Checkpoint):
+class NewContext(Handoff):
     keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain (0-12; default 2), normally up to 6 user/assistant exchanges. Expanded to complete exchanges; current user input is retained separately.")
 
 
@@ -82,9 +82,9 @@ class StateRead(Arguments):
     path: str = Field(default="", max_length=200, description="Dot-separated state path, including stat_data for MVU variables (e.g. stat_data.hp); array elements use zero-based numeric segments (e.g. stat_data.items.0.name). Empty reads the entire story state; missing paths return null. Literal dots in keys cannot be escaped with this path syntax.")
 
 
-CHECKPOINT_GUIDANCE = (
-    "content replaces the entire checkpoint. Build on the latest <tavern_memory> update or the most recent "
-    "successful write_checkpoint call, whichever is later; failed proposals are not current memory. Preserve valid scene context, "
+HANDOFF_GUIDANCE = (
+    "content replaces the entire handoff. Build on the latest <tavern_memory> update or the most recent "
+    "successful write_handoff call, whichever is later; failed proposals are not current memory. Preserve valid scene context, "
     "relationships, user constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
     "Mark plans as pending and verify stale sources. Draft changes commit with the turn; review mode requires approval."
 )
@@ -113,11 +113,11 @@ SPECS = {
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
     "read_history": (HistoryRead, "Read original dialogue by H reference, including the current user input. " + REFERENCE_GUIDANCE),
-    "write_checkpoint": (Checkpoint, "Update the checkpoint in the current window. " + CHECKPOINT_GUIDANCE),
-    "new_context": (NewContext, "Save a checkpoint and switch windows. " + CHECKPOINT_GUIDANCE
+    "write_handoff": (Handoff, "Update the handoff in the current window. " + HANDOFF_GUIDANCE),
+    "new_context": (NewContext, "Save a handoff and switch windows. " + HANDOFF_GUIDANCE
         + " Call this tool alone. The current user input stays; keep_recent counts dialogue messages, "
         "expanded to complete exchanges. Old tool exchanges leave the window, so include needed results or references "
-        "in the checkpoint. Forced rollover accepts only this tool. Continue the turn after switching; "
+        "in the handoff. Forced rollover accepts only this tool. Continue the turn after switching; "
         "the model-call budget does not reset."),
     "search_notes": (Search, "Search active notes in this branch by literal text terms in content or keys. "
         "Use short text fragments; query=* lists notes. Notes are not automatically injected. "
@@ -157,8 +157,8 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     if not catalog and session["policy_effective"] == "directed" and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
-        "write_checkpoint": f" content limit: {config.checkpoint_tokens} tokens.",
-        "new_context": f" content limit: {config.checkpoint_tokens} tokens.",
+        "write_handoff": f" content limit: {config.handoff_tokens} tokens.",
+        "new_context": f" content limit: {config.handoff_tokens} tokens.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
     }
     if document is not None:
@@ -260,13 +260,13 @@ class AgentTools:
             if row.get("source"):
                 self.read_sources[args.ref] = row["source"]
             return result
-        if name in ("write_checkpoint", "new_context"):
-            self.cap_text(args.content, owner.settings.full_agent_config.checkpoint_tokens, "checkpoint")
+        if name in ("write_handoff", "new_context"):
+            self.cap_text(args.content, owner.settings.full_agent_config.handoff_tokens, "handoff")
             if name == "new_context":
                 rollover(state, owner.history, args.content, args.keep_recent)
                 owner.rolled = True
             else:
-                state["checkpoint"] = {"text": args.content, "revision": state["checkpoint"]["revision"] + 1, "stale": False}
+                state["handoff"] = {"text": args.content, "revision": state["handoff"]["revision"] + 1, "stale": False}
             state.pop("edited_sources", None)
             return {"saved_to_draft": True, "window": state["window"]["number"],
                     "notice": "正文完成后与本回合统一提交。"}

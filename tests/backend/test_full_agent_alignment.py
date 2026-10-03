@@ -199,24 +199,24 @@ def strip_local(messages):
     return [{k: v for k, v in m.items() if not k.startswith("_")} for m in messages]
 
 
-def checkpoint_frames(messages):
+def handoff_frames(messages):
     return [m for m in messages if m.get("content", "").startswith("<tavern_memory>\n")]
 
 
-def set_checkpoint(store, session, text):
+def set_handoff(store, session, text):
     snapshot = copy.deepcopy(session["snapshot"])
-    memory = snapshot["full_agent"]["checkpoint"]
+    memory = snapshot["full_agent"]["handoff"]
     memory.update(text=text, revision=memory["revision"] + 1, stale=False)
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
     return store.session(session["id"])
 
 
-async def test_runtime_frames_append_and_checkpoint_tool_does_not_duplicate_memory(tmp_path):
+async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(tmp_path):
     store, service, session = game(tmp_path)
-    session = set_checkpoint(store, session, "MEMORY_A")
-    model = Model(("read_state", {}), ("write_checkpoint", {"content": "MEMORY_B"}),
-                  ("write_checkpoint", {"content": "MEMORY_B"}), "narrative")
+    session = set_handoff(store, session, "MEMORY_A")
+    model = Model(("read_state", {}), ("write_handoff", {"content": "MEMORY_B"}),
+                  ("write_handoff", {"content": "MEMORY_B"}), "narrative")
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
@@ -224,23 +224,23 @@ async def test_runtime_frames_append_and_checkpoint_tool_does_not_duplicate_memo
         for first, second in zip(requests, requests[1:]):
             assert first == second[:len(first)]
         for messages in requests:
-            assert len(checkpoint_frames(messages)) == 1
-            assert "MEMORY_A" in checkpoint_frames(messages)[0]["content"]
+            assert len(handoff_frames(messages)) == 1
+            assert "MEMORY_A" in handoff_frames(messages)[0]["content"]
             assert sum("<tavern_context_status>" in m.get("content", "") for m in messages) == 1
             assert not any("还可调用模型" in m.get("content", "") for m in messages)
         assert "MEMORY_B" in json.dumps(requests[-1])
-        assert current["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_B"
+        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_B"
         baseline_epoch = result["preview"]["context_ledger"]["epoch"]
         for status_count in (2, 3):
             next_model = Model("next narrative")
             result, current = await turn(service, current, next_model)
             assert result["status"] == "committed", result["error"]
             assert result["preview"]["context_ledger"]["epoch"] == baseline_epoch
-            assert len(checkpoint_frames(next_model.requests[0]["messages"])) == 1
+            assert len(handoff_frames(next_model.requests[0]["messages"])) == 1
             assert sum("<tavern_context_status>" in m.get("content", "")
                        for m in next_model.requests[0]["messages"]) == status_count
         assert len([r for r in load_trace(store, current["id"], current["messages"])
-                    if r["message"].get("source") == "checkpoint"]) == 1
+                    if r["message"].get("source") == "handoff"]) == 1
     finally:
         await service.close()
 
@@ -298,36 +298,36 @@ async def test_last_call_notice_does_not_leak_into_next_turn_or_resume(tmp_path,
 
 async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tmp_path):
     store, service, session = game(tmp_path)
-    session = set_checkpoint(store, session, "MEMORY_A")
+    session = set_handoff(store, session, "MEMORY_A")
     try:
         _, session = await turn(service, session, Model("first"))
         expected = ["MEMORY_A"]
         for value in ("MEMORY_A", "MEMORY_B", "MEMORY_A", ""):
-            previous = session["snapshot"]["full_agent"]["checkpoint"]["text"]
-            session = set_checkpoint(store, session, value)
+            previous = session["snapshot"]["full_agent"]["handoff"]["text"]
+            session = set_handoff(store, session, value)
             model = Model("continue")
             result, session = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
             if previous != value:
                 expected.append(value)
-            frames = [m for m in result["preview"]["trace"] if m.get("source") == "checkpoint"]
+            frames = [m for m in result["preview"]["trace"] if m.get("source") == "handoff"]
             assert [m["_runtime_context"]["value"] for m in frames] == expected
-            assert len(checkpoint_frames(model.requests[0]["messages"])) == len(expected)
-        assert "当前 checkpoint 为空" in frames[-1]["content"]
+            assert len(handoff_frames(model.requests[0]["messages"])) == len(expected)
+        assert "当前 handoff 为空" in frames[-1]["content"]
     finally:
         await service.close()
 
 
 async def test_failed_memory_write_and_explicit_repeated_reads_keep_tool_pairs(tmp_path):
     store, service, session = game(tmp_path)
-    session = set_checkpoint(store, session, "MEMORY_A")
-    model = Model(("write_checkpoint", {"content": ""}), ("read_state", {}), ("read_state", {}), "done")
+    session = set_handoff(store, session, "MEMORY_A")
+    model = Model(("write_handoff", {"content": ""}), ("read_state", {}), ("read_state", {}), "done")
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        assert current["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_A"
+        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
         messages = model.requests[-1]["messages"]
-        assert len(checkpoint_frames(messages)) == 1
+        assert len(handoff_frames(messages)) == 1
         results = [m for m in messages if m["role"] == "tool"]
         assert len(results) == 3 and "error" in json.loads(results[0]["content"])
         assert results[1]["content"] == results[2]["content"]
@@ -342,7 +342,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
             self.requests.append(copy.deepcopy(messages))
-            self.last_tool_calls = [SimpleNamespace(id=f"call-{index}", name="write_checkpoint",
+            self.last_tool_calls = [SimpleNamespace(id=f"call-{index}", name="write_handoff",
                 arguments=json.dumps({"content": value})) for index, value in enumerate(("MEMORY_A", "MEMORY_B"))]
             return SimpleNamespace(content="", usage={}, finish_reason="stop")
 
@@ -364,7 +364,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
         assert failed["status"] == "error"
         assert executed == ["MEMORY_A"]
         progress = store.full_agent_progress(failed["id"])
-        assert progress["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_A"
+        assert progress["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
     finally:
         await service.close()
     store = Store(store.root)
@@ -379,7 +379,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
         assert result["status"] == "committed", result["error"]
         assert executed == ["MEMORY_A", "MEMORY_B"]
         assert len(model.requests) == 1
-        assert store.session(session["id"])["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_B"
+        assert store.session(session["id"])["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_B"
     finally:
         await service.close()
 
@@ -451,7 +451,7 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
     from tavern.full_agent.tools import tool_definitions
 
     store, service, session = game(tmp_path)
-    session = set_checkpoint(store, session, "MEMORY_A")
+    session = set_handoff(store, session, "MEMORY_A")
     try:
         _, session = await turn(service, session, Model("first"), allow_content_edit=True)
         app = create_app(store.root)
@@ -471,8 +471,8 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
         assert preview["messages"] == actual["messages"]
         assert [m["content"] for m in actual["runtime_trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：True。"]
         assert [m["sdk_role"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["system"]
-        assert len(checkpoint_frames(preview["messages"])) == 1
-        assert "checkpoint" not in [u["source"] for u in preview["context_ledger"]["updates"]]
+        assert len(handoff_frames(preview["messages"])) == 1
+        assert "handoff" not in [u["source"] for u in preview["context_ledger"]["updates"]]
     finally:
         await service.close()
 
@@ -495,7 +495,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
         return transport(settings, route, request_context, capture)
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
-    session = set_checkpoint(store, session, "MEMORY_A")
+    session = set_handoff(store, session, "MEMORY_A")
     try:
         epochs = []
         for api, model in [("anthropic", "claude-opus-5-5"), ("anthropic", "claude-sonnet-4-6"),
@@ -515,8 +515,8 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             session = store.session(session["id"])
             audit = result["preview"]["context_ledger"]
             epochs.append(audit["epoch"])
-            assert len(checkpoint_frames(result["preview"]["messages"])) == 1
-            assert session["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_A"
+            assert len(handoff_frames(result["preview"]["messages"])) == 1
+            assert session["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
             assert "MODEL_PRIVATE_SIGNATURE" not in requests[-1].content.decode()
             if len(epochs) > 1:
                 assert audit["rebuild_reason"] == "provider_or_model_changed"
@@ -529,15 +529,15 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
 
 async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_memory(tmp_path):
     store, service, session = game(tmp_path)
-    session = set_checkpoint(store, session, "MEMORY_A")
+    session = set_handoff(store, session, "MEMORY_A")
     try:
         _, session = await turn(service, session, Model("first"))
         model = Model(("new_context", {"content": "MEMORY_B", "keep_recent": 0}), "after rollover")
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         messages = model.requests[-1]["messages"]
-        assert len(checkpoint_frames(messages)) == 1
-        assert "MEMORY_B" in checkpoint_frames(messages)[0]["content"]
+        assert len(handoff_frames(messages)) == 1
+        assert "MEMORY_B" in handoff_frames(messages)[0]["content"]
         assert "MEMORY_A" not in json.dumps(messages)
         edited = store.edit_message(session["id"], session["head"], "edited narrative", session["revision"])
         model = Model("continue")
@@ -546,7 +546,7 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
         assert result["preview"]["context_ledger"]["rebuild_reason"]
         assert "edited narrative" in json.dumps(model.requests[0]["messages"])
         assert "after rollover" not in json.dumps(model.requests[0]["messages"])
-        assert len(checkpoint_frames(model.requests[0]["messages"])) == 1
+        assert len(handoff_frames(model.requests[0]["messages"])) == 1
     finally:
         await service.close()
 
@@ -587,7 +587,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         if len(requests) == 2:
             raise httpx.ReadTimeout("synthetic timeout", request=request)
         items = ([{"type": "reasoning", "id": "rs_memory", "summary": [], "encrypted_content": "opaque-memory"},
-                  {"type": "function_call", "id": "fc_memory", "call_id": "call_memory", "name": "write_checkpoint",
+                  {"type": "function_call", "id": "fc_memory", "call_id": "call_memory", "name": "write_handoff",
                    "arguments": '{"content":"MEMORY_B"}'}] if len(requests) == 1 else None)
         return httpx.Response(200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"})
 
@@ -615,7 +615,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         assert len(requests) == 3
         assert requests[2].headers["session-id"] == requests[0].headers["session-id"]
         assert requests[2].headers["x-codex-turn-state"] == "persisted-route"
-        state = store.session(session["id"])["snapshot"]["full_agent"]["checkpoint"]
+        state = store.session(session["id"])["snapshot"]["full_agent"]["handoff"]
         assert state["text"] == "MEMORY_B" and state["revision"] == 1
         body = json.loads(requests[2].content)
         assert any(i.get("encrypted_content") == "opaque-memory" for i in body["input"])
@@ -630,7 +630,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
 async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        _, session = await turn(service, session, Model(("write_checkpoint", {"content": "MEMORY_B"}), "old narrative"))
+        _, session = await turn(service, session, Model(("write_handoff", {"content": "MEMORY_B"}), "old narrative"))
         with store.connection() as db:
             rows = db.execute("SELECT seq,payload FROM full_agent_trace WHERE message_id=?", (session["head"],)).fetchall()
             for row in rows:

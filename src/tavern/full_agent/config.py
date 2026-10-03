@@ -29,5 +29,5 @@ class FullAgentConfig(BaseModel):
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
     auto_retrieval: bool = True
     pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
-    checkpoint_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
+    handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
     note_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)

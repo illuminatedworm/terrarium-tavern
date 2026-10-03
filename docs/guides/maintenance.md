@@ -74,7 +74,7 @@
 | 启动提示未构建 | 在项目根目录执行 `npm.cmd run build` |
 | 端口占用 | 停止旧服务，或使用 `start.ps1 -Port 8001` |
 | Half Agent 记忆失败 | 核对 Tracker 模型、密钥、代理及预算；修复后手动整理，见[窗口与记忆](history-maintenance-settings.md) |
-| Full Agent 无法继续 | 检查工具开关、调用额度和 checkpoint，见[失败恢复](full-agent.md#失败恢复与排查) |
+| Full Agent 无法继续 | 检查工具开关、调用额度和 handoff，见[失败恢复](full-agent.md#失败恢复与排查) |
 | 预计输入很大 | 区分本地估算与上次实际用量，检查[内容占比](token-counting.md) |
 | 世界书未注入或本地模型不可用 | 按[检索排查顺序](retrieval.md#排查未命中与误注入)检查，不以补满候选数量作为目标 |
 | 详细事件已过期 | 查看紧凑记录；剧情和恢复所需状态仍保留 |

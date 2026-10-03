@@ -144,7 +144,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert current["document"]["extensions"]["terrarium"]["workflow"]["greetings"][0]["initialization"]
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
         assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_opening", "validate_draft", "read_skill",
-                         "create_draft", "configure_card", "revert_draft", "test_draft", "write_checkpoint", "new_context", "search_history", "read_history",
+                         "create_draft", "configure_card", "revert_draft", "test_draft", "write_handoff", "new_context", "search_history", "read_history",
                          "list_personas", "read_persona", "create_persona", "update_persona"}
         saved = service.edits.save(current["id"], current["revision"], "copy", "copy-once")
         assert service.edits.save(current["id"], current["revision"], "copy", "copy-once")["id"] == saved["id"]

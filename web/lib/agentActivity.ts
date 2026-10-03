@@ -95,7 +95,7 @@ export const toolLabels: Record<string, string> = {
   read_lore: '读取世界书',
   search_history: '搜索历史',
   read_history: '读取历史',
-  write_checkpoint: '更新交接笔记',
+  write_handoff: '更新交接笔记',
   new_context: '切换工作窗口',
   search_notes: '搜索笔记',
   read_note: '读取笔记',

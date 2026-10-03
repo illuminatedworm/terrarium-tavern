@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 
 const props = defineProps<{ session: any; disabled?: boolean }>();
 const emit = defineEmits<{ saved: [session: any] }>();
-const checkpoint = ref('');
+const handoff = ref('');
 const records = ref<any>(null);
 const saving = ref(false);
 const error = ref('');
@@ -16,7 +16,7 @@ watch(
   () => [props.session.id, props.session.revision],
   async () => {
     const sid = props.session.id;
-    checkpoint.value = props.session.snapshot.full_agent?.checkpoint?.text || '';
+    handoff.value = props.session.snapshot.full_agent?.handoff?.text || '';
     records.value = null;
     error.value = '';
     try {
@@ -37,7 +37,7 @@ async function save(newWindow: boolean) {
       `/sessions/${sid}/full-agent/context`,
       {
         expected_revision: props.session.revision,
-        content: checkpoint.value,
+        content: handoff.value,
         new_window: newWindow,
         keep_recent: 0,
       },
@@ -60,18 +60,18 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
       自行维护交接笔记、查询历史并换窗。
     </p>
     <label
-      >交接笔记（checkpoint）
+      >交接笔记（handoff）
       <textarea
-        v-model="checkpoint"
+        v-model="handoff"
         rows="7"
         :disabled="disabled || saving"
         placeholder="当前场景、用户约束、未决线索与下一步…"
       />
     </label>
-    <p v-if="records?.checkpoint?.stale" role="status">原始剧情已编辑，这份交接笔记需要核对。</p>
-    <div class="checkpoint-actions">
-      <button :disabled="disabled || saving || !checkpoint.trim()" @click="save(false)">保存交接笔记</button>
-      <button :disabled="disabled || saving || !checkpoint.trim()" @click="save(true)">保存并换新窗口</button>
+    <p v-if="records?.handoff?.stale" role="status">原始剧情已编辑，这份交接笔记需要核对。</p>
+    <div class="handoff-actions">
+      <button :disabled="disabled || saving || !handoff.trim()" @click="save(false)">保存交接笔记</button>
+      <button :disabled="disabled || saving || !handoff.trim()" @click="save(true)">保存并换新窗口</button>
     </div>
     <p class="inspector-note">
       手动换窗后仅携带交接笔记与基础设定。全部原文和工具记录仍可搜索，下一条发言会进入新窗口。
@@ -93,7 +93,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
 </template>
 
 <style scoped>
-.checkpoint-actions {
+.handoff-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;

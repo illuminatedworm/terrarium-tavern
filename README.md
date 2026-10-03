@@ -25,7 +25,7 @@ Kohaku Terrarium 部分继续适用其原有的 [KohakuTerrarium License 1.0](LI
 | 模式 | 写作与记忆 | 上下文管理 |
 |---|---|---|
 | Half Agent | Writer 写正文，Tracker 整理分类记忆、分析变量 | 运行时规划窗口与周期维护 |
-| Full Agent | 一个 Agent 通过工具检索、维护笔记、更新变量并生成正文 | 当前窗口 + checkpoint + 可搜索原始历史 + 模型主动换窗 |
+| Full Agent | 一个 Agent 通过工具检索、维护笔记、更新变量并生成正文 | 当前窗口 + handoff + 可搜索原始历史 + 模型主动换窗 |
 
 Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 query 调用同一索引。记忆采用随窗口携带的交接笔记与按需读取的自由笔记，不运行后台分类记忆整理。操作见 [Full Agent 使用指南](docs/guides/full-agent.md)，机制见 [Full Agent 架构](docs/design/full-agent.md)。
 
