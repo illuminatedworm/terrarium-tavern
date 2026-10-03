@@ -6,7 +6,7 @@
 
 上下文配方控制文本块的顺序、角色、深度、预算提示阈值和条件。新会话复制全局配方，已有会话及分支独立保存。深度留空按列表顺序，0 放在末尾，正整数从最后一条剧情消息向前定位。
 
-运行时补充检索协议、当前对话偏好和常驻世界书，默认跟在应用系统提示词之后。角色字段分别使用 `<card_system_prompt>`、`<card_description>`、`<card_personality>`、`<card_scenario>`、`<card_mes_example>` 和 `<card_post_history_instructions>` 包裹。世界书统一使用 `<lorebook>`，记忆投影使用 `<tavern_memory>`。
+运行时补充检索协议、当前对话偏好和常驻世界书，默认跟在应用系统提示词之后。角色字段分别使用 `<card_system_prompt>`、`<card_description>`、`<card_personality>`、`<card_scenario>`、`<card_mes_example>` 和 `<card_post_history_instructions>` 包裹。世界书统一使用 `<lorebook>`，记忆投影使用 `<tavern_memory>`，剧情状态使用 `<tavern_state>`，作者注使用 `<author_note>`。作者注、角色后置要求和状态的动态更新说明与撤销消息也包在各自标签内。
 
 应用系统提示词本身不加资料标签，开场白及备选开场作为普通剧情。新配方将角色系统提示、描述、性格和场景拆成独立块；仍使用合并块的配方可在编辑器拆分，保留角色、深度及条件。
 

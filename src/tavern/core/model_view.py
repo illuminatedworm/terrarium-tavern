@@ -114,6 +114,10 @@ class ModelView:
                 continue  # Opaque provider blocks and their canonical text must agree exactly.
             if isinstance(row.get("content"), str):
                 row["content"] = self.text(row["content"])
+            if isinstance(row.get("runtime_content"), str):
+                row["runtime_content"] = self.text(row["runtime_content"])
+            if row.get("runtime_parts"):
+                row["runtime_parts"] = [self.text(part) for part in row["runtime_parts"]]
             for call in row.get("tool_calls", []):
                 call["function"]["arguments"] = self.text(call["function"]["arguments"])
         return rows

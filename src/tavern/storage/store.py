@@ -14,6 +14,7 @@ from tavern.character.cards import normalize, parse_card
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
+from tavern.storage.message_adapters import MessageAdapters, recipe_types
 
 
 def uid():
@@ -28,7 +29,7 @@ class Conflict(ValueError):
     pass
 
 
-class Store:
+class Store(MessageAdapters):
     def __init__(self, root: Path):
         self.root = root
         self.path = root / "tavern.sqlite3"
@@ -146,6 +147,7 @@ class Store:
                 PRIMARY KEY(owner, scope, identity, prefix))""")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
+        self.initialize_message_adapters()
 
     @contextmanager
     def connection(self):
@@ -444,7 +446,8 @@ class Store:
             )
             db.execute("UPDATE sessions SET agent_mode=?,lore_injection_mode=? WHERE id=?",
                        (options.agent_mode, "conversation" if options.agent_mode == "full_agent"
-                        else self.settings().lore_injection_mode, sid))
+                         else self.settings().lore_injection_mode, sid))
+            self.create_message_adapter(db, "story", sid, options.agent_mode)
         return self.session(sid)
 
     def fork_session(self, sid, head, expected_revision):
@@ -527,6 +530,7 @@ class Store:
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
+            self.copy_message_adapter(db, "story", sid, new_sid)
             db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             db.execute("UPDATE sessions SET tool_result_options=? WHERE id=?",
                        (source["tool_result_options"], new_sid))
@@ -571,7 +575,7 @@ class Store:
                 )
             ]
             result = dict(row)
-            result["recipe"] = ContextRecipe.model_validate_json(result["recipe"]).model_dump()
+            result["recipe"] = recipe_types(ContextRecipe.model_validate_json(result["recipe"]).model_dump())
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = [name for name in json.loads(result["disabled_tools"]) if name != "read_lore"]
             result["tool_result_options"] = json.loads(result["tool_result_options"])

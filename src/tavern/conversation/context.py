@@ -6,6 +6,7 @@ import json
 import re
 
 from tavern.character.cards import lore_entries, normalize
+from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
 from tavern.core.tokens import REPLY_PRIMING, count_text, counting_info, message_tokens
@@ -365,7 +366,8 @@ def compile_context(
         "examples": wrap_card_field("mes_example", card.get("mes_example", "")),
         "post": wrap_card_field("post_history_instructions", card.get("post_history_instructions", "")),
         "memory": "\n".join(part for part in (story_summary, render_memory(snapshot, history)) if part),
-        "state": "当前剧情状态：\n" + json.dumps(state_for_model(state), ensure_ascii=False),
+        "state": ("<tavern_state>\n当前剧情状态：\n" + json.dumps(state_for_model(state), ensure_ascii=False)
+                  + "\n</tavern_state>"),
         "input": user_input,
         "lore_before": "",
         "lore_after": "",
@@ -431,6 +433,8 @@ def compile_context(
             source_lore_ids.pop(source, None)
     if sources["persona"]:
         sources["persona"] = "<user_character>\n" + sources["persona"] + "\n</user_character>"
+    if sources["author_note"]:
+        sources["author_note"] = "<author_note>\n" + sources["author_note"] + "\n</author_note>"
     for key, field in (
         ("char_description", "description"),
         ("char_personality", "personality"),
@@ -618,6 +622,10 @@ def compile_context(
     for message in messages:
         if message["source"] in input_sources:
             message.setdefault("message_id", input_message_id)
+    recipe_types = {block.id: block.message_type for block in recipe.blocks if block.message_type}
+    for message in messages:
+        if message["source"] in recipe_types and message.get("context_source") != "history":
+            message["message_type"] = recipe_types[message["source"]]
     # Insert after every recipe/compatibility reordering so no block separates an
     # injection from its real dialogue anchor. Frozen content is never re-expanded.
     actual_records = []
@@ -706,6 +714,14 @@ def compile_context(
     if enforce_budget and total > available:
         diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})
     lore_by_id = {entry["id"]: entry for entry in entries}
+    for message in messages:
+        source = message.get("context_source", message["source"])
+        if source in ("lore_before", "lore_after") or source.startswith("outlet:"):
+            message["runtime_parts"] = [expand(lore_by_id[eid]["content"]) for eid in message.get("lore_ids", [])
+                                        if eid in lore_by_id]
+            if not message["runtime_parts"]:
+                message["runtime_content"] = message["content"]
+    messages = runtime_messages(messages, getattr(settings, "_adapter_lane", "foreground"))
     injected_ids = set()
     for message in messages:
         ids = message.get("lore_ids", [])
@@ -757,4 +773,6 @@ def compile_context(
     if replay_records is not None:
         from tavern.conversation.half_context import apply_context
         apply_context(result, replay_records, session, history, snapshot, settings, input_id=input_message_id)
+    else:
+        project_context(result, settings)
     return result

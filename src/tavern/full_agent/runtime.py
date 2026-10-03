@@ -95,7 +95,9 @@ class FullAgentRuntime:
             turn = self.store.turn(tid)
             request = TurnRequest.model_validate(turn["request"])
             session = self.store.session(turn["session"])
-            settings = self.store.settings().for_role("full_agent").model_copy(deep=True)
+            from tavern.core.message_adapter import bind_adapter
+            settings = bind_adapter(self.store.settings().for_role("full_agent").model_copy(deep=True),
+                                    self.store, "story", session["id"])
             if request.reasoning_effort is not None:
                 settings.reasoning_effort = request.reasoning_effort
             history, reused = session["messages"], None

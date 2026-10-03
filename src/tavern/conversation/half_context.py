@@ -3,21 +3,34 @@ import copy
 import json
 
 from tavern.core.cache_policy import fingerprint
+from tavern.core.message_adapter import project_context, type_definition, unwrapped
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.scripting.native_response import message_digest, native_items
 from tavern.scripting.request_context import response_origin
 from tavern.search.retrieval_text import split_retrieval
 
-VERSION = 1
+# Rebuild saved frames whose update/revocation notices preceded their field tags.
+VERSION = 3
 DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction"}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
           "state": "剧情状态", "turn_instruction": "本轮额外要求"}
+FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",
            "context_window_changed": "可见历史窗口或分支变化", "context_sources_changed": "请求策略变化",
            "context_prefix_changed": "已有内容或注入位置变化"}
 WIRE_FIELDS = {"role", "content", "tool_calls", "tool_call_id", "name", "_native_response",
                "reasoning", "reasoning_details", "reasoning_content"}
+
+
+def frame_content(source, notice, content=None):
+    tag = FRAME_TAGS.get(source)
+    if tag is None:
+        return notice if content is None else notice + "\n" + content
+    opening, closing = f"<{tag}>\n", f"\n</{tag}>"
+    if content and content.startswith(opening) and content.endswith(closing):
+        content = content[len(opening):-len(closing)]
+    return opening + notice + ("\n" + content if content else "") + closing
 
 
 def load_trace(store, sid, history):
@@ -78,7 +91,7 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     Comparing the entire remaining sequence catches moved depth/position blocks,
     worldbook removal, macro edits and arbitrary compatibility overrides alike.
     """
-    rows = copy.deepcopy(context["trace"])
+    rows = copy.deepcopy(context.get("runtime_trace", context["trace"]))
     sources = {b["id"]: b["source"] for b in session.get("recipe", {}).get("blocks", [])}
     for row in rows:
         row.setdefault("context_source", sources.get(row["source"], row["source"]))
@@ -99,7 +112,7 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     origin = response_origin(settings)
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
                           snapshot.get("context_window", {}) if settings.chunk_mode != "off" else {}])
-    layout = [(b["id"], b["source"], b.get("depth")) for b in session.get("recipe", {}).get("blocks", [])]
+    layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", "")) for b in session.get("recipe", {}).get("blocks", [])]
     policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout])
     current_base = [descriptor(m) for m in base]
     reason = None
@@ -172,20 +185,31 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
         key = fingerprint([*stem, occurrences[stem]])
         label = f"{LABELS[source]}（{row['source']}/{row['role']}/{occurrences[stem]}）"
         value = [row["content"], input_id if source == "turn_instruction" else None]
-        current[key] = {"key": key, "source": source, "value": value, "role": row["role"], "label": label}
+        current[key] = {"key": key, "source": source, "value": value, "role": row["role"], "label": label,
+                        "message_type": row.get("message_type")}
         if key in seen and seen[key]["value"] == value:
             continue
+        notice = (f"[当前{label}；取代此前同来源版本。"
+                  + ("仅适用于本轮。" if source == "turn_instruction" else "") + "]")
         frame = {**row, "anchor_id": input_id, "_half_frame": current[key], "epoch": epoch,
-                 "content": (f"[当前{label}；取代此前同来源版本。"
-                             + ("仅适用于本轮。" if source == "turn_instruction" else "")
-                             + "]\n" + row["content"])}
+                 "content": frame_content(source, notice, row["content"])}
+        if row.get("message_type"):
+            tag = type_definition(row["message_type"]).tag
+            frame["runtime_content"] = notice + "\n" + row.get("runtime_content", unwrapped(row["content"], tag))
+            frame["runtime_phase"] = "body"
         updates.append(frame)
     for key, previous_value in seen.items():
         if key not in current and previous_value["value"] is not None:
             source = previous_value["source"]
+            if source == "state":
+                continue
             updates.append({"role": previous_value["role"], "source": source, "anchor_id": input_id,
-                "content": f"[此前{previous_value['label']}已撤销；旧版本不再作为当前要求或状态。]",
+                "content": frame_content(source,
+                    f"[此前{previous_value['label']}已撤销；旧版本不再作为当前要求或状态。]"),
                 "epoch": epoch, "_half_frame": {**previous_value, "value": None}})
+            if previous_value.get("message_type"):
+                updates[-1]["message_type"] = previous_value["message_type"]
+                updates[-1]["runtime_phase"] = "body"
     if previous_record and not reason:
         items = copy.deepcopy(list(sent))
     old_count = previous.get("continuation_count", 0) if previous_record and not reason else 0
@@ -219,7 +243,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     context["half_agent_record"] = {"version": VERSION, "origin": origin, "window": window, "policy": policy,
         "epoch": epoch, "native_epoch": native_epoch, "base": current_base, "input_id": input_id,
         "frames": updates, "retired_native": sorted(retired & visible_ids), "continuation_count": len(continuation)}
-    return context
+    context["runtime_trace"] = items
+    return project_context(context, settings)
 
 
 def attach_continuation(messages, responses):

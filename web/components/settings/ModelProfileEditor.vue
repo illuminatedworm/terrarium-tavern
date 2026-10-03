@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import CacheSettingsEditor from './CacheSettingsEditor.vue';
+import MessageAdapterEditor from './MessageAdapterEditor.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
 import { useModelCatalog } from '../../lib/modelCatalog';
 const props = defineProps<{
@@ -175,6 +176,16 @@ async function action(check: boolean) {
       <p class="muted">
         采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
       </p>
+    </details>
+    <details class="settings-advanced">
+      <summary>消息适配：发送角色与标签包裹</summary>
+      <p class="muted">这里只影响新建的游玩或制卡对话。已有对话在自己的消息适配设置中修改。</p>
+      <MessageAdapterEditor
+        :model-value="profile.message_adapter"
+        :api-mode="profile.api_mode"
+        :lane="role"
+        @update:model-value="profile.message_adapter = $event"
+      />
     </details>
   </section>
 </template>

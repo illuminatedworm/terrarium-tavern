@@ -4,10 +4,12 @@ import { computed, ref } from 'vue';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { sources } from '../../lib/recipeSources';
 import { splitCharacterBlock } from '../../lib/recipeBlocks';
+import MessageTypeSelect from './MessageTypeSelect.vue';
 type Block = {
   id: string;
   source: string;
   role: string;
+  message_type?: string;
   enabled: boolean;
   content: string;
   depth: number | null;
@@ -237,7 +239,7 @@ useTimedError(error);
         拆分角色设定为独立块
       </button>
       <label
-        >注入内容来源<select v-model="selected.block.source">
+        >注入内容来源<select v-model="selected.block.source" @change="selected.block.message_type = ''">
           <option v-for="source in sources" :key="source.value" :value="source.value">
             {{ source.label }}
           </option>
@@ -254,16 +256,7 @@ useTimedError(error);
           >块标识<input v-model="selected.block.id" aria-label="块标识" /><small
             >用于上下文追踪和位置锚点，需保持唯一。</small
           ></label
-        ><label
-          >消息角色<select v-model="selected.block.role" aria-label="消息角色" :disabled="history">
-            <option value="system">system · 系统指令</option>
-            <option value="developer">developer · 开发者指令</option>
-            <option value="user">user · 用户发言</option>
-            <option value="assistant">assistant · AI 发言</option></select
-          ><small>{{
-            history ? '历史消息保留各自角色。' : '决定模型如何理解这个块；输入通常用 user。'
-          }}</small></label
-        >
+        ><MessageTypeSelect v-model="selected.block.message_type" :disabled="history" />
       </div>
       <div class="recipe-checks">
         <label><input v-model="selected.block.enabled" type="checkbox" />启用内容块</label

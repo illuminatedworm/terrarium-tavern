@@ -6,6 +6,7 @@ import json
 from tavern.conversation.cache_breakpoint import model_messages, prepare_context
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_context import load_trace
+from tavern.core.message_adapter import provider_messages
 from tavern.core.provider import make_provider
 from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.search.retrieval_text import RetrievalParser, split_retrieval
@@ -105,7 +106,7 @@ class TurnAgent:
                     if context.get("context_ledger", {}).get("rebuild_reason"):
                         owner.store.event(owner.tid, "context_baseline", {
                             "purpose": "narrative", **context["context_ledger"]})
-                    return compiled
+                    return provider_messages(provider, compiled, owner.settings)
                 except Exception as error:
                     from kohakuterrarium.modules.plugin import PluginBlockError
 

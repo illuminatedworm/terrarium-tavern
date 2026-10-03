@@ -31,7 +31,7 @@ def test_preference_is_optional_required_system_supplement_even_with_custom_orde
         'rules', 'retrieval_protocol', 'session_preference']
     preference = next(m for m in compiled['trace'] if m['source'] == 'session_preference')
     assert preference['role'] == 'system' and preference['required']
-    assert preference['content'].endswith('节奏放缓，多用对话推进。')
+    assert preference['content'].endswith('节奏放缓，多用对话推进。\n</tavern_preference>')
     assert store.settings().system_prompt == Settings().system_prompt
     other = store.new_session(SessionCreate(card_id=session['card']))
     assert other['turn_preference'] == ''

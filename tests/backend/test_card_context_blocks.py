@@ -71,6 +71,10 @@ def test_individual_blocks_and_dynamic_sources_obey_exact_saved_order():
                           generate={"overrides": {"chat_history": {"author_note": "作者注"}}})
     assert [m["source"] for m in out["trace"]] == [b.id if b.source != "history" else "history"
                                                  for b in recipe.blocks]
+    note = next(m["content"] for m in out["trace"] if m["source"] == "note")
+    assert note == "<author_note>\n作者注\n</author_note>"
+    status = next(m["content"] for m in out["trace"] if m["source"] == "status")
+    assert status.startswith("<tavern_state>\n") and status.endswith("\n</tavern_state>")
 
 
 def test_depth_positions_use_custom_input_ids_and_preserve_lore_anchor():
@@ -112,15 +116,23 @@ def test_full_agent_tags_card_fields_and_keeps_greeting_plain_without_mutating_s
     history = [{"id": "opening", "parent": None, "role": "assistant", "raw": "备选开场", "model": "备选开场"}]
     original = copy.deepcopy(history)
     settings = Settings()
-    snapshot = {"state": {}}
+    document = card()
+    document["post_history_instructions"] = "{{getvar::stat_data.post}}"
+    snapshot = {"state": {"stat_data": {"post": "post_history_instructions: 旅人"}}}
     full_state(snapshot)
-    out = compile_window(card(), session(), history, snapshot, "继续", settings, [])
+    out = compile_window(document, session(), history, snapshot, "继续", settings, [])
     text = "\n".join(m["content"] for m in out["messages"])
     for field, tag in CARD_FIELDS.items():
         assert text.count(f"<{tag}>\n{field}: 旅人\n</{tag}>") == 1
     assert next(m["content"] for m in out["trace"] if m.get("message_id") == "opening") == "备选开场"
     assert history == original
     assert next(m["content"] for m in out["trace"] if m["source"] == "rules") == settings.full_agent_system_prompt
+    snapshot["state"]["stat_data"]["post"] = ""
+    updated = compile_window(document, session(), history, snapshot, "继续", settings, [],
+                             continuation=out["context_additions"])
+    assert updated["context_ledger"]["rebuild_reason"] is None
+    empty_post = [m["content"] for m in updated["trace"] if m["source"] == "post"][-1]
+    assert empty_post == "<card_post_history_instructions>\n\n</card_post_history_instructions>"
 
 
 def test_tracker_card_references_are_tagged_without_changing_citation_excerpts():

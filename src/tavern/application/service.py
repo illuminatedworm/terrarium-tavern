@@ -381,7 +381,9 @@ class RoleplayRuntime:
         try:
             turn = self.store.turn(tid)
             req = TurnRequest.model_validate(turn["request"])
-            settings = self.store.settings().for_role("foreground").model_copy(deep=True)
+            from tavern.core.message_adapter import bind_adapter
+            settings = bind_adapter(self.store.settings().for_role("foreground").model_copy(deep=True),
+                                    self.store, "story", turn["session"])
             session = self.store.session(turn["session"])
             contexts = OperationContexts(self.store, session["id"], tid)
             if req.scene_refresh:
@@ -452,7 +454,9 @@ class RoleplayRuntime:
                             generate=args,
                             retrieval=prepared,
                         )
-                        result = await provider.chat_complete(context["messages"])
+                        from tavern.conversation.cache_breakpoint import model_messages
+                        from tavern.core.message_adapter import provider_messages
+                        result = await provider.chat_complete(provider_messages(provider, model_messages(context), settings))
                         return result.content
                     finally:
                         await provider.close()

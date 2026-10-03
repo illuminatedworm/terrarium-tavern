@@ -6,10 +6,10 @@ from tavern.core.cache_policy import fingerprint
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
 
-# Older frames combined permission notices and rewrite requirements.
-VERSION = 3
+# Rebuild older frames whose post-instruction revocations had no field tags.
+VERSION = 5
 CLEAR_TEXT = {
-    "post": "此前的角色后置要求已撤销。",
+    "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
     "regenerate_instruction": "此前的重生成要求已撤销。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",

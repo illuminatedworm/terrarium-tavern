@@ -4,6 +4,7 @@ import json
 
 from tavern.character.editor_config import SYSTEM
 from tavern.core.cache_policy import fingerprint
+from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.tokens import count_text, request_tokens
 from tavern.scripting.native_response import portable
@@ -23,7 +24,7 @@ class EditorContext:
         history = owner.edits.messages(owner.wid)
         seed = {"documents": [c["document"] for c in owner.working["cards"]], "history": [m["content"] for m in history]}
         self.reason = None
-        if not saved or saved.get("version") != 2:
+        if not saved or saved.get("version") != 3:
             self.reason = "initial_context" if not saved else "context_version_changed"
         elif saved["origin"] != self.origin:
             self.reason = "provider_or_model_changed"
@@ -35,7 +36,7 @@ class EditorContext:
                  for m in history if m["ref"] not in saved["seen"]):
             self.reason = "literal_handle_collision"
         self.view = ModelView(seed if self.reason else None)
-        if saved and saved.get("version") == 2 and self.reason != "literal_handle_collision":
+        if saved and saved.get("version") in (2, 3) and self.reason != "literal_handle_collision":
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
             self.view.reverse = copy.deepcopy(saved["view"]["reverse"])
             self.view.reserved = set(saved["view"]["reserved"])
@@ -52,7 +53,7 @@ class EditorContext:
             self.frames, self.seen = copy.deepcopy(saved["frames"]), list(saved["seen"])
             self.epoch = saved["epoch"]
         else:
-            self.messages = [{"role": "system", "content": SYSTEM, "_cache_static": True}]
+            self.messages = [{"role": "system", "message_type": "root_system", "runtime_phase": "header", "content": SYSTEM, "_cache_static": True}]
             floor = owner.working["state"].get("history_floor", 0)
             for message in history:
                 if message["seq"] >= floor or message["ref"] in owner.current_refs:
@@ -74,7 +75,7 @@ class EditorContext:
 
     def update(self, key, value, prefix):
         if self.frames.get(key) != value:
-            self.messages.append({"role": "system", "_cache_static": False,
+            self.messages.append({"role": "system", "message_type": "editor_" + key, "runtime_phase": "body", "_cache_static": False,
                                   "content": self.view.text(prefix + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)))})
             self.frames[key] = copy.deepcopy(value)
 
@@ -98,10 +99,10 @@ class EditorContext:
                         "上下文压力（含工具）；forced=true 时只能单独调用 new_context，完成后继续：")
         elif self.frames.get("pressure"):
             self.update("pressure", None, "此前窗口压力提醒已解除：")
-        return copy.deepcopy(self.messages)
+        return runtime_messages(self.messages, "card_editor")
 
     def tokens(self):
-        return request_tokens(self.messages, self.owner.cfg, self.owner.definitions) + sum(
+        return request_tokens(adapt_messages(runtime_messages(self.messages, "card_editor"), self.owner.cfg)[0], self.owner.cfg, self.owner.definitions) + sum(
             count_text(json.dumps({k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m}), self.owner.cfg)
             for m in self.messages if not m.get("_native_response") and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
 
@@ -112,7 +113,7 @@ class EditorContext:
         kept = [m for m in history if m["run"] in keep_runs or m["ref"] in self.owner.current_refs]
         self.owner.working["state"]["history_floor"] = min((m["seq"] for m in kept), default=0)
         self.owner.working["state"]["window"] = self.owner.working["state"].get("window", 0) + 1
-        self.messages = [{"role": "system", "content": SYSTEM, "_cache_static": True}]
+        self.messages = [{"role": "system", "message_type": "root_system", "runtime_phase": "header", "content": SYSTEM, "_cache_static": True}]
         self.frames = {}
         self.seen = [m["ref"] for m in history]
         for message in kept:
@@ -121,7 +122,7 @@ class EditorContext:
         self.must_rollover = False
 
     def saved(self):
-        return {"version": 2, "origin": self.origin, "policy": self.policy, "epoch": self.epoch,
+        return {"version": 3, "origin": self.origin, "policy": self.policy, "epoch": self.epoch,
                 "document": signature(self.owner.working), "messages": copy.deepcopy(self.messages),
                 "frames": copy.deepcopy(self.frames), "seen": list(self.seen),
                 "view": {"forward": dict(self.view.forward), "reverse": dict(self.view.reverse), "reserved": sorted(self.view.reserved)}}

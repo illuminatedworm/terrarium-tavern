@@ -85,18 +85,25 @@ async def test_variable_turn_is_separate_and_atomic(tmp_path, enabled, result, s
         await service.close()
 
 
-async def test_recent_context_and_provider_cleanup():
+@pytest.mark.parametrize("with_rules", [False, True])
+async def test_recent_context_and_provider_cleanup(with_rules):
     events = []
     store = SimpleNamespace(event=lambda *args: events.append(args))
     settings = SimpleNamespace(memory_timeout=10)
     provider = VariableProvider('[]')
+    document = {"name": "测试", "character_book": {"entries": [{"id": "rule", "content": "变量规则 {{user}}",
+        "extensions": {"terrarium": {"audience": "tracker_mvu"}}}]}} if with_rules else None
     operations = await analyze_variables(
         store, 'turn', settings,
         [{'role': 'assistant', 'raw': str(i)} for i in range(12)],
-        {'stat_data': {'hp': 2}}, 'input', 'new prose', lambda: provider,
+        {'stat_data': {'hp': 2}}, 'input', 'new prose', lambda: provider, document=document,
     )
     assert operations == []
-    payload = json.loads(provider.messages[1]['content'])
+    payload = json.loads(next(m['content'] for m in provider.messages if m['role'] == 'user'))
+    rules = [m['content'] for m in provider.messages if m['content'].startswith('<mvu_rules>\n')]
+    assert len(rules) == int(with_rules)
+    if with_rules:
+        assert '变量规则 旅人' in rules[0] and rules[0].endswith('\n</mvu_rules>')
     assert [m['content'] for m in payload['recent_history']] == [str(i) for i in range(6, 12)]
     assert payload['current_turn'] == {'user': 'input', 'assistant': 'new prose'}
     assert provider.closed

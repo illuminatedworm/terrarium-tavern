@@ -15,6 +15,7 @@ import jsonpointer
 
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.context import get_path, search
+from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
 from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.provider import make_provider
 from tavern.core.tokens import request_tokens
@@ -99,7 +100,7 @@ class TrackerTask:
             result.update(self.view.expose(fields))
             self.write_result["content"] = json.dumps(result, ensure_ascii=False)
         else:
-            self.thread.append({"role": "system", "content": self.encoded({"tracker_task_update": fields})})
+            self.thread.append({"role": "system", "message_type": "tracker_task_update", "runtime_phase": "body", "content": self.encoded({"tracker_task_update": fields})})
 
     async def start(self):
         if self.provider is None:
@@ -156,6 +157,7 @@ class TrackerTask:
             initial.pop("previous_result", None)
             initial["memory_batch"] = self.view.expose(payload)
             self.thread[-1]["content"] = json.dumps(initial, ensure_ascii=False)
+            self.thread[-1]["runtime_content"] = self.thread[-1]["content"]
         elif self.write_result is not None:
             self.runtime_update({"next_memory_task": payload})
         else:
@@ -195,12 +197,13 @@ class TrackerTask:
         while True:
             self.budget.reserve()
             self.total_calls += 1
-            tokens = request_tokens(self.thread, self.settings, self.definitions)
+            typed = runtime_messages(self.thread, "background")
+            tokens = request_tokens(adapt_messages(typed, self.settings)[0], self.settings, self.definitions)
             if tokens + self.output_tokens > self.settings.context_tokens:
                 self.event("context_warning", {"message": "Tracker 请求估算超出上下文，仍完整发送"})
             begun = time.perf_counter()
             self.sent_count = len(self.thread)
-            response = await asyncio.wait_for(self.provider.chat_complete(self.thread, max_tokens=self.output_tokens, extra_body={
+            response = await asyncio.wait_for(self.provider.chat_complete(provider_messages(self.provider, typed, self.settings), max_tokens=self.output_tokens, extra_body={
                 "tools": self.definitions, "tool_choice": "auto", "parallel_tool_calls": False}),
                 self.settings.memory_timeout)
             self.event("usage", {"calls": 1, "usage": response.usage or {},
@@ -224,7 +227,7 @@ class TrackerTask:
                 if self.variables_enabled and self.patch is None:
                     missing.append("patch_state")
                 if missing:
-                    self.thread.append({"role": "system", "content": "必要任务尚未完成，请调用：" + ", ".join(missing)})
+                    self.thread.append({"role": "system", "message_type": "required_tool_notice", "runtime_phase": "body", "content": "必要任务尚未完成，请调用：" + ", ".join(missing)})
                     continue
                 self.summary, self.completed = response.content or "", True
                 return

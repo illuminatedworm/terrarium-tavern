@@ -87,6 +87,11 @@ def sse(api, payload):
 def test_dynamic_sources_retain_prefix_and_compare_current_versions():
     story = Story()
     first = story.compile()
+    for source, tag in (("author_note", "author_note"), ("post", "card_post_history_instructions"),
+                        ("state", "tavern_state")):
+        content = next(m["content"] for m in first["trace"] if m["source"] == source)
+        assert content.startswith(f"<{tag}>\n[当前") and content.endswith(f"\n</{tag}>")
+        assert content.count(f"<{tag}>") == content.count(f"</{tag}>") == 1
     story.commit(first)
     second = story.compile()
     assert second["context_ledger"]["rebuild_reason"] is None
@@ -98,6 +103,8 @@ def test_dynamic_sources_retain_prefix_and_compare_current_versions():
         current = story.compile()
         assert current["context_ledger"]["rebuild_reason"] is None
         assert current["context_ledger"]["updates"] == [{"source": "author_note", "cleared": not bool(note)}]
+        content = [m["content"] for m in current["trace"] if m["source"] == "author_note"][-1]
+        assert content.startswith("<author_note>\n") and content.endswith("\n</author_note>")
         story.commit(current)
     unchanged = story.compile()
     assert unchanged["context_ledger"]["updates"] == []
@@ -105,9 +112,16 @@ def test_dynamic_sources_retain_prefix_and_compare_current_versions():
     changed = story.compile()
     assert changed["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
     assert sum("角色后置要求" in m["content"] for m in changed["messages"]) == 1
+    story.commit(changed)
+    story.document["post_history_instructions"] = ""
+    cleared = story.compile()
+    assert cleared["context_ledger"]["updates"] == [{"source": "post", "cleared": True}]
+    content = [m["content"] for m in cleared["trace"] if m["source"] == "post"][-1]
+    assert content.startswith("<card_post_history_instructions>\n[此前")
+    assert content.endswith("\n</card_post_history_instructions>")
 
 
-@pytest.mark.parametrize("change", ["history", "fixed", "depth", "order", "window"])
+@pytest.mark.parametrize("change", ["history", "fixed", "depth", "order", "window", "format"])
 def test_rebuild_preserves_compiler_positions_and_drops_obsolete_frames(change):
     story = Story()
     first = story.compile()
@@ -121,11 +135,17 @@ def test_rebuild_preserves_compiler_positions_and_drops_obsolete_frames(change):
         options["generate"] = {"injects": [{"role": "system", "content": "深度规则", "depth": 2}]}
     elif change == "order":
         options["generate"] = {"ordered_prompts": ["chat_history", "character", "user_input"]}
+    elif change == "format":
+        for record in story.records.values():
+            record["version"] = 1
+            for frame in record["frames"]:
+                frame["content"] = "OLD_UNTAGGED_FRAME"
     else:
         from tavern.memories.memory import fingerprint as history_hash
         story.snapshot["context_window"] = {"covered_count": 1, "fingerprint": history_hash(story.history[:1])}
     current = story.compile(**options)
     assert current["context_ledger"]["rebuild_reason"]
+    assert all("OLD_UNTAGGED_FRAME" not in m["content"] for m in current["messages"])
     assert sum("当前剧情状态：" in m["content"] for m in current["messages"]) <= 1
     if change == "depth":
         positioned = next(i for i, m in enumerate(current["trace"]) if m["source"] == "inject")
@@ -172,7 +192,7 @@ def test_inflight_tool_updates_append_after_results_without_rewriting_old_prefix
                            previous_record=previous, sent=sent, continuation=continuation)
     assert second["messages"][:len(prefix)] == prefix
     assert second["messages"][len(prefix):len(prefix) + 2] == continuation
-    assert second["messages"][-1]["content"].endswith('{"stat_data": {"hp": 8}}')
+    assert second["messages"][-1]["content"].endswith('{"stat_data": {"hp": 8}}\n</tavern_state>')
 
 
 def test_memory_macro_conditions_and_turn_scoping_are_independent():

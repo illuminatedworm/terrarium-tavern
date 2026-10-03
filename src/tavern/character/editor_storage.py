@@ -79,7 +79,8 @@ class Conversations:
         wid, now = uid(), time.time()
         with self.store.connection() as db:
             db.execute("INSERT INTO card_editor_conversations VALUES (?,0,?,?,?,?,1)",
-                       (wid, title, dump({"cards": [], "state": {}}), now, now))
+                        (wid, title, dump({"cards": [], "state": {}}), now, now))
+            self.store.create_message_adapter(db, "editor", wid, "card_editor")
         return self.conversation(wid)
 
     def conversations(self, cid=None):
@@ -341,6 +342,7 @@ class Conversations:
                 raise Conflict("角色卡已改变或删除，请刷新后创建编辑草稿")
             db.execute("INSERT INTO card_editor_conversations VALUES (?,0,'',?,?,?,2)",
                        (wid, dump({"cards": [item], "state": {}}), now, now))
+            self.store.create_message_adapter(db, "editor", wid, "card_editor")
         return self.get(wid)
 
     def list(self, cid):
@@ -370,4 +372,5 @@ class Conversations:
                 raise Conflict("旧接口只支持单卡草稿；请从制卡入口创建对话并明确引用")
             db.execute("INSERT INTO card_editor_conversations VALUES (?,0,'',?,?,?,?)", (new_id,
                 dump({"cards": workspace["cards"], "state": {}}), now, now, workspace["next_ref"]))
+            self.store.copy_message_adapter(db, "editor", wid, new_id)
         return self.get(new_id)

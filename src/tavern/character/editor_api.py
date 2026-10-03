@@ -131,15 +131,18 @@ def register_conversation_routes(app, editor):
     @app.post(base + "/{wid}/preview")
     async def preview(wid: str, payload: Preview):
         workspace = editor.edits.conversation(wid)
+        from tavern.core.message_adapter import bind_adapter
         owner = SimpleNamespace(store=editor.store, edits=editor.edits, wid=wid, rid="preview", legacy=False,
             working=copy.deepcopy({"cards": workspace["cards"], "state": workspace["state"]}),
-            cfg=editor.store.settings().for_role("card_editor"), definitions=tool_definitions(),
+            cfg=bind_adapter(editor.store.settings().for_role("card_editor"), editor.store, "editor", wid), definitions=tool_definitions(),
             current_refs=[], pending_calls=None, request={}, reads={})
         owner.context = EditorContext(editor.edits.context(wid), owner)
         owner.tools = EditorTools(owner)
         if payload.text:
             owner.context.messages.append({"role": "user", "content": owner.context.view.text(payload.text)})
         messages = owner.context.prepare()
-        return {"messages": messages, "tools": owner.definitions, "estimated_tokens": owner.context.tokens(),
+        from tavern.core.message_adapter import WIRE_FIELDS, adapt_messages, adapter_snapshot
+        messages = [{k: v for k, v in message.items() if k in WIRE_FIELDS} for message in adapt_messages(messages, owner.cfg)[0]]
+        return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": owner.definitions, "estimated_tokens": owner.context.tokens(),
                 "context_limit": owner.cfg.context_tokens, "preview_only": True,
                 "note": "只读预览；尚未执行模型和工具，不包含后续工具读取结果。"}

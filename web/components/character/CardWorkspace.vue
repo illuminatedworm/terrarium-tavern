@@ -14,6 +14,7 @@ import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
 import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
+import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 
 const props = defineProps<{ conversationId: string; library: any[] }>();
 const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
@@ -436,6 +437,7 @@ onBeforeUnmount(() => {
             @keydown.enter.exact.prevent="!$event.isComposing && send(!!workspace?.pending)"
           />
           <div class="cw-composer-actions">
+            <button type="button" @click="openModal('adapter')">消息适配</button>
             <button type="button" :disabled="busy" @click="showPreview">工具与上下文</button>
             <button v-if="active" type="button" @click="stop">停止</button>
             <button v-else class="primary" :disabled="busy || (!input.trim() && !workspace?.pending)">
@@ -569,7 +571,13 @@ onBeforeUnmount(() => {
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
         :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'references' ? '引用角色卡' : '制卡对话操作'"
-        :size="['form', 'preview'].includes(modal) ? 'large' : modal === 'references' ? 'medium' : 'small'"
+        :size="
+          ['form', 'preview', 'adapter'].includes(modal)
+            ? 'large'
+            : modal === 'references'
+              ? 'medium'
+              : 'small'
+        "
         @close="closeModal"
       >
         <template v-if="modal === 'references'"
@@ -590,6 +598,7 @@ onBeforeUnmount(() => {
           @draft-saved="saveForm"
           @back="closeModal"
         />
+        <ConversationMessageAdapter v-else-if="modal === 'adapter'" :endpoint="base + '/message-adapter'" />
         <template v-else-if="modal === 'preview'"
           ><h2>工具与上下文</h2>
           <p>{{ jsonPreview?.note }}</p>

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
+from tavern.core.message_adapter import MessageAdapterConfig, infer_type, type_definition
 from tavern.core.prompts import (
     DEFAULT_MAINTENANCE_PROMPT,
     DEFAULT_MEMORY_PROMPT,
@@ -33,6 +34,7 @@ class ContextBlock(BaseModel):
     id: str
     source: str
     role: Literal["system", "developer", "user", "assistant"] = "system"
+    message_type: str = ""
     enabled: bool = True
     content: str = ""
     depth: int | None = Field(default=None, ge=0)
@@ -40,6 +42,14 @@ class ContextBlock(BaseModel):
     budget: int | None = Field(default=None, ge=1)
     required: bool = False
     condition: str = ""
+
+    @model_validator(mode="after")
+    def known_message_type(self):
+        if not self.message_type and self.source != "history":
+            self.message_type = infer_type({"context_source": self.source, "role": self.role})
+        if self.message_type:
+            type_definition(self.message_type)
+        return self
 
 
 class ContextRecipe(BaseModel):
@@ -69,6 +79,8 @@ class Settings(BaseModel):
     _full_runtime: Any = PrivateAttr(default=None)
     _settings_source: Any = PrivateAttr(default=None)
     _settings_mode: str = PrivateAttr(default="half_agent")
+    _adapter_loader: Any = PrivateAttr(default=None)
+    _adapter_lane: str = PrivateAttr(default="foreground")
     runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
@@ -91,10 +103,13 @@ class Settings(BaseModel):
         if profile is None:
             return self.model_copy(deep=True)
         provider = next(p for p in self.providers if p.id == profile.provider_id)
-        return self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
+        result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
             "cache": profile.cache.model_copy(deep=True),
+            "message_adapter": profile.message_adapter.model_copy(deep=True),
             "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path), "api_key": provider.api_key,
             "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
+        result._adapter_lane = "full_agent" if self.runtime_mode == "full_agent" and role in ("foreground", "background") else role
+        return result
 
     base_url: str = "https://api.openai.com/v1"
     model: str = ""
@@ -119,6 +134,7 @@ class Settings(BaseModel):
     proxy: str = ""
     use_proxy: bool = True
     api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
+    message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     api_path: str | None = None
     cache: CacheSettings = Field(default_factory=CacheSettings)
     cache_scope: str = ""

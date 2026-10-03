@@ -24,6 +24,7 @@ import SettingsPanel from './components/settings/SettingsPanel.vue';
 import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
+import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
 import CharacterEditor from './components/character/CharacterEditor.vue';
 import CardWorkspace from './components/character/CardWorkspace.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
@@ -2533,6 +2534,7 @@ useTimedError(error);
           </template>
         </section>
         <section v-show="inspectorTab === 'options'" class="inspector-options" aria-label="会话设置">
+          <button @click="panel = 'message-adapter'">消息适配</button>
           <div class="inspector-options-heading">
             <h2>会话设置</h2>
             <div class="inspector-save">
@@ -2626,7 +2628,7 @@ useTimedError(error);
         <AppModal
           :label="panel === 'settings' ? '设置' : '酒馆面板'"
           :size="
-            ['settings', 'context', 'card', 'trace', 'recipe'].includes(panel)
+            ['settings', 'context', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
               ? 'large'
               : ['delete-card', 'fork'].includes(panel)
                 ? 'small'
@@ -2662,6 +2664,11 @@ useTimedError(error);
               </button>
             </div></template
           >
+          <ConversationMessageAdapter
+            v-else-if="panel === 'message-adapter'"
+            :key="session.id"
+            :endpoint="`/sessions/${session.id}/message-adapter`"
+          />
           <RecipeEditor
             v-else-if="panel === 'recipe'"
             :recipe="session.recipe"

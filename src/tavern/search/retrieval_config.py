@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tavern.core.cache_policy import CacheSettings
+from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
     DEFAULT_QUERY_PROMPT,
@@ -44,6 +45,7 @@ class ModelProfile(BaseModel):
     provider_id: str = "default"
     model: str = ""
     api_mode: ApiMode = "chat_completions"
+    message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     api_path: str = Field(default="", max_length=256)
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     context_tokens: int = Field(32768, ge=2048, le=2000000)

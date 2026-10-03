@@ -105,6 +105,9 @@ async def test_independent_context_and_task_permissions(story):
 async def test_memory_and_variables_share_native_loop(story):
     model = TrackerModel(memory_write, ("patch_state", {"operations": [], "reason": "No change"}), "done")
     work = task(story, model, memory=True, variables=True)
+    work.document["data"]["character_book"]["entries"].append({
+        "id": "rule", "content": "MVU_HP_RULE {{user}}",
+        "extensions": {"terrarium": {"audience": "tracker_mvu"}}})
     await work.run(memory_start=0, memory_budget=CallBudget())
     assert len(model.requests) == 3
     assert work.patch == []
@@ -112,6 +115,8 @@ async def test_memory_and_variables_share_native_loop(story):
     record = work.snapshot["memory_document"]["records"][0]
     assert record["sources"][0]["message_id"] == story[2]["head"]
     first = model.requests[0]["messages"]
+    [rules] = [m["content"] for m in first if m["content"].startswith("<mvu_rules>\n")]
+    assert "MVU_HP_RULE " + work.persona in rules and rules.endswith("\n</mvu_rules>")
     assert model.requests[1]["messages"][:len(first)] == first
     assert model.requests[1]["messages"][-1]["role"] == "tool"
     assert json.loads(model.requests[1]["messages"][-1]["content"])["memory_complete"]

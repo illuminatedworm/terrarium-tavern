@@ -9,6 +9,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from tavern.core.message_adapter import MessageAdapterConfig, catalog
 from tavern.core.models import SessionCreate, Settings, TurnRequest
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.tools import AgentTools
@@ -169,7 +170,7 @@ async def test_explicit_cache_key_wins_and_half_agent_gets_no_identity():
         await plain.close()
 
 
-def game(tmp_path, api="anthropic"):
+def game(tmp_path, api="anthropic", *, native_adapter=False):
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     document = store.settings_document()
@@ -178,6 +179,11 @@ def game(tmp_path, api="anthropic"):
     document.full_agent.model.reasoning_effort = "high"
     document.full_agent.model.cache.retention = "1h" if api == "anthropic" else "default"
     document.full_agent.model.api_mode = api
+    if native_adapter and api in ("anthropic", "gemini"):
+        # Native replay tests opt into a supported mapping instead of changing production defaults.
+        document.full_agent.model.message_adapter = MessageAdapterConfig.model_validate({"mappings": {api: {
+            item["id"]: {**item["defaults"][api], "role": "user"}
+            for item in catalog("full_agent") if item["configurable"]}}})
     document.half_agent.foreground.api_mode = api
     document.half_agent.background.api_mode = api
     document.shared.card_editor.api_mode = api
@@ -327,7 +333,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
 async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_path, monkeypatch, api):
     import tavern.full_agent.agent as agent_module
 
-    store, service, session = game(tmp_path, api)
+    store, service, session = game(tmp_path, api, native_adapter=True)
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
     requests, responses = [], []
     tool_items = native_blocks(api)
@@ -408,7 +414,8 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
             trace=load_trace(store, session["id"], session["messages"]),
             require_state_patch=True, allow_content_edit=True)
         assert preview["messages"] == actual["messages"]
-        assert [m["content"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：True。"]
+        assert [m["content"] for m in actual["runtime_trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：True。"]
+        assert [m["sdk_role"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["system"]
         assert len(checkpoint_frames(preview["messages"])) == 1
         assert "checkpoint" not in [u["source"] for u in preview["context_ledger"]["updates"]]
     finally:
@@ -418,7 +425,7 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
 async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old_thinking(tmp_path, monkeypatch):
     import tavern.full_agent.agent as agent_module
 
-    store, service, session = game(tmp_path)
+    store, service, session = game(tmp_path, native_adapter=True)
     requests = []
 
     async def factory(settings, capture=None, *, request_context=None):
@@ -591,7 +598,7 @@ async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_p
         await service.close()
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatch, version):
     from tavern.full_agent import context_ledger
     from tavern.full_agent.state import new_state
@@ -666,7 +673,7 @@ async def test_explicit_identity_overrides_survive_cloud_mode(api):
 async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(tmp_path, monkeypatch, api):
     import tavern.full_agent.agent as agent_module
 
-    store, service, session = game(tmp_path, api)
+    store, service, session = game(tmp_path, api, native_adapter=True)
     requests, original = [], native_blocks(api)
 
     def route(request):

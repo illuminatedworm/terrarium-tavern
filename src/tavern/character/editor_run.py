@@ -9,6 +9,7 @@ from kohakuterrarium.llm.base import ToolSchema
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_tools import EditorTools, tool_definitions
+from tavern.core.message_adapter import provider_messages, runtime_messages
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation
 from tavern.storage.store import dump
@@ -19,7 +20,8 @@ class EditorRun:
         self.service, self.store, self.edits, self.rid = service, service.store, service.edits, rid
         run = self.edits.run(rid)
         self.wid, self.request = run["workspace"], run["request"]
-        self.cfg = self.store.settings().for_role("card_editor")
+        from tavern.core.message_adapter import bind_adapter
+        self.cfg = bind_adapter(self.store.settings().for_role("card_editor"), self.store, "editor", self.wid)
         with self.store.connection() as db:
             workspace = self.edits.load(db, self.wid)
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
@@ -180,8 +182,8 @@ class EditorRun:
             definitions = self.definitions
             if self.legacy and self.calls == maximum:
                 definitions = []
-                self.context.messages.append({"role": "system", "content": "本轮最后一次调用：只汇报结果和未完成项。"})
-                messages = copy.deepcopy(self.context.messages)
+                self.context.messages.append({"role": "system", "message_type": "last_call_notice", "runtime_phase": "body", "content": "本轮最后一次调用：只汇报结果和未完成项。"})
+                messages = runtime_messages(self.context.messages, "card_editor")
             schemas = [ToolSchema(name=d["function"]["name"], description=d["function"]["description"], parameters=d["function"]["parameters"]) for d in definitions]
             self.save()
             self.event("model_call", {"call": self.calls, "model": self.cfg.model})
@@ -189,7 +191,7 @@ class EditorRun:
             options = {"parallel_tool_calls": False}
             if self.context.must_rollover:
                 options["tool_choice"] = {"type": "function", "function": {"name": "new_context"}}
-            async for chunk in provider.chat(messages, tools=schemas, extra_body=options):
+            async for chunk in provider.chat(provider_messages(provider, messages, self.cfg), tools=schemas, extra_body=options):
                 if chunk:
                     text += chunk
                     self.event("text", {"text": chunk})
@@ -206,7 +208,7 @@ class EditorRun:
             assistant = self.response(provider, text, calls)
             if not calls:
                 if self.context.must_rollover:
-                    self.context.messages.extend([assistant, {"role": "system", "content": "回复未提交，当前必须先单独调用 new_context 换窗。"}])
+                    self.context.messages.extend([assistant, {"role": "system", "message_type": "reply_correction", "runtime_phase": "body", "content": "回复未提交，当前必须先单独调用 new_context 换窗。"}])
                     continue
                 if not text.strip():
                     raise ValueError("模型没有返回完整说明，本轮进度保留")

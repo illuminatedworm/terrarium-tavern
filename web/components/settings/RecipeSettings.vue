@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { sources } from '../../lib/recipeSources';
 import { splitCharacterBlock } from '../../lib/recipeBlocks';
+import MessageTypeSelect from './MessageTypeSelect.vue';
 import type { SettingsObject } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import SavedText from './SavedText.vue';
@@ -27,16 +28,6 @@ const path = computed(() => `context_recipe.blocks.${index.value}.content`);
 const fields: SettingField[] = [
   { path: 'source', label: '内容来源', options: sources.map((s) => ({ value: s.value, label: s.label })) },
   { path: 'id', label: '块标识', type: 'text' },
-  {
-    path: 'role',
-    label: '消息角色',
-    options: [
-      { value: 'system', label: '系统指令' },
-      { value: 'developer', label: '开发者指令' },
-      { value: 'user', label: '用户发言' },
-      { value: 'assistant', label: '模型回复' },
-    ],
-  },
   { path: 'priority', label: '优先级' },
   { path: 'depth', label: '注入深度', optional: true, min: 0 },
   { path: 'budget', label: '超长提示阈值（tokens）', optional: true, min: 1 },
@@ -105,6 +96,7 @@ function splitCharacter() {
       <p class="muted">{{ sources.find((s) => s.value === block.source)?.description }}</p>
       <button v-if="block.source === 'character'" @click="splitCharacter">拆分角色设定为独立块</button>
       <SettingsFields :value="block" :fields="fields" />
+      <MessageTypeSelect v-model="block.message_type" :disabled="block.source === 'history'" />
       <SavedText
         v-if="block.source === 'custom' || !sources.some((s) => s.value === block.source)"
         :key="block.id"

@@ -10,6 +10,7 @@ from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.conversation.variable_rules import collect_variable_rules
+from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.full_agent.context import compile_window, load_trace
@@ -200,7 +201,7 @@ class FullAgent:
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
-                response = await provider.chat_complete(model_messages(compiled), extra_body=tool_options)
+                response = await provider.chat_complete(provider_messages(provider, model_messages(compiled), self.settings), extra_body=tool_options)
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
@@ -260,7 +261,7 @@ class FullAgent:
         message = self.response_message(response, provider, [])
         message["_full_agent_rejected"] = True
         self.append(message, self.state["window"]["id"])
-        self.append({"role": "system", "content": correction}, self.state["window"]["id"])
+        self.append({"role": "system", "content": correction, "message_type": "reply_correction", "runtime_phase": "body"}, self.state["window"]["id"])
 
     async def resume_tools(self):
         records = list(self.new_trace)

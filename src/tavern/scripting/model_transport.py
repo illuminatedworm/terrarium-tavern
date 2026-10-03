@@ -15,6 +15,7 @@ from tavern.core.cache_policy import (
     preset,
     retention_request,
 )
+from tavern.core.message_adapter import adapt_messages, adapter_snapshot
 from tavern.core.tokens import counting_info, request_tokens
 from tavern.scripting.cloud_cache import (
     DISABLED,
@@ -120,6 +121,7 @@ class ModelTransport(BaseLLMProvider):
         return self.settings.api_mode in APIS and selected.get("field") == FIELD
 
     def _request(self, messages, *, tools=None, **kwargs):
+        messages, _, _ = adapt_messages(messages, self.settings)
         selected = preset(self.settings)
         enabled = self.settings.cache.mode == "runtime" and (
             any(m.get("_cache_breakpoint") for m in messages) or self._retains_breakpoints(selected))
@@ -267,8 +269,11 @@ class ModelTransport(BaseLLMProvider):
                 if api not in ("gemini", "chat_completions"):
                     reason = "当前协议不支持 Gemini 缓存对象引用"
                 else:
-                    resource, reason = await gemini_object(self, messages, tools,
-                        (kwargs.get("extra_body") or {}).get("tool_choice", "auto"))
+                    try:
+                        resource, reason = await gemini_object(self, messages, tools,
+                            (kwargs.get("extra_body") or {}).get("tool_choice", "auto"))
+                    except ValueError:
+                        resource, reason = None, "当前消息映射不能用于原生缓存对象；按所选消息角色发送普通请求"
             if reason:
                 diagnostic.update(status="fallback", reason=reason)
             else:
@@ -289,7 +294,7 @@ class ModelTransport(BaseLLMProvider):
                 # Google-compatible Chat can reference an object created through the native endpoint.
                 suffix = copy.deepcopy(messages[planned + 1:])
                 for message in suffix:
-                    if message["role"] in ("system", "developer"):
+                    if message["role"] in ("system", "developer") and not message.get("_adapter_typed"):
                         message["role"] = "user"
                         message["content"] = "<tavern_runtime_context>\n" + str(message.get("content", "")) + "\n</tavern_runtime_context>"
                 body["messages"] = openai_messages(suffix)
@@ -332,6 +337,8 @@ class ModelTransport(BaseLLMProvider):
 
     async def _send(self, messages, tools, stream, kwargs):
         cfg, api = self.settings, self.settings.api_mode
+        snapshot = adapter_snapshot(cfg)
+        messages, _, adapter_warnings = adapt_messages(messages, cfg, snapshot)
         url = endpoint(cfg.base_url, api, cfg.model, stream=stream, api_path=cfg.api_path)
         headers = ({"x-api-key": self.key, "anthropic-version": "2023-06-01"} if api == "anthropic" else
                    self.gemini_headers if api == "gemini" else {"Authorization": "Bearer " + self.key})
@@ -341,6 +348,7 @@ class ModelTransport(BaseLLMProvider):
         fallback = None
         for attempt in range(2):
             body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
+            diagnostic.update(adapter_revision=snapshot["revision"], adapter_warnings=adapter_warnings)
             request = self.http.build_request("POST", url, headers=headers, json=body)
             history, identity = self._breakpoint_history(), self._breakpoint_identity()
             sent = False

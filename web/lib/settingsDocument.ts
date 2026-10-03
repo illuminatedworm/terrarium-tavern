@@ -1,4 +1,5 @@
 import type { CacheSettings } from './cachePolicy';
+import type { MessageAdapterConfig } from './messageAdapter';
 export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
 export type SettingsObject = Record<string, any>;
 export interface ModelProfile {
@@ -16,6 +17,7 @@ export interface ModelProfile {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   cache: CacheSettings;
+  message_adapter?: MessageAdapterConfig;
   reasoning_format: string;
   capability: string;
   capability_key: string;
@@ -74,7 +76,8 @@ export function difference(before: SettingsObject, after: SettingsObject, prefix
       value &&
       typeof value === 'object' &&
       !Array.isArray(value) &&
-      !(prefix.endsWith('cache') && (key === 'value' || key === 'request'))
+      !(prefix.endsWith('cache') && (key === 'value' || key === 'request')) &&
+      key !== 'message_adapter'
     ) {
       Object.assign(result, difference(before?.[key] || {}, value, path));
     } else result[path] = clone(value);

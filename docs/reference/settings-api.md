@@ -44,6 +44,16 @@ Content-Type: application/json
 
 字段路径使用点分形式，例如 `model.reply_tokens`，不是 JSON Pointer。提供商引用、预算关联及字段类型在整个文档上统一校验，失败时不写入部分配置。`capability` 和 `capability_key` 由连接检查维护，客户端不能通过普通设置写入伪造其值。旧扁平 `PUT /api/settings` 不受支持。
 
+## 消息适配
+
+模型配置的 `message_adapter` 字典整体写入，例如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`；省略类型使用程序默认值。只允许覆盖类型目录中 `configurable=true` 的项。
+
+`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_editor`。
+
+对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`；制卡使用 `GET/PUT /api/card-editor/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整的新值。这个修订号独立于剧情／草稿修订号，运行中也可保存。下一次模型调用读取新值，同次调用的重试保持原快照。
+
+全局 adapter 默认值只在创建对话时复制，分支复制父对话当前设置；全局修改不影响已有对话。持久化保存在 `message_adapter_configs`，随对话删除和备份管理。
+
 ## 页级撤回
 
 1. `POST /api/settings/edit-sessions` 返回 `id` 和当前 `settings`，服务器同时保存基线快照。

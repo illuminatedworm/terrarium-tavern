@@ -130,7 +130,7 @@ def prepare_context(context, session, history, snapshot, settings):
 
 
 def model_messages(context):
-    messages = copy.deepcopy(context["messages"])
+    messages = copy.deepcopy(context.get("runtime_messages", context["messages"]))
     cache = context.get("cache", {})
     for i, message in enumerate(messages):
         message["_cache_static"] = context["trace"][i].get("cache_static", False)

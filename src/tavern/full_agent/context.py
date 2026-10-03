@@ -12,6 +12,7 @@ from tavern.conversation.context import (
 )
 from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
+from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.state import full_state
@@ -144,7 +145,9 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                       "_native_response", "_response_origin", "_response_digest"}
 
     def wire():
-        return [{k: v for k, v in m.items() if k in allowed_fields} for m in items]
+        typed = runtime_messages(items, getattr(settings, "_adapter_lane", "full_agent"))
+        adapted, _, _ = adapt_messages(typed, settings, managed=True)
+        return [{k: v for k, v in m.items() if k in allowed_fields} for m in adapted]
 
     reasoning_cost = sum(count_text(json.dumps({k: m[k] for k in
         ("reasoning_content", "reasoning_details", "reasoning") if k in m}, ensure_ascii=False), settings)
@@ -203,4 +206,5 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             "next_lore_injections": copy.deepcopy(snapshot.get("lore_injections", []))}
     result["context_ledger"] = ledger.audit()
     result["context_additions"] = copy.deepcopy(ledger.additions)
+    project_context(result, settings, tools=tools, reasoning_cost=reasoning_cost, managed=True)
     return prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

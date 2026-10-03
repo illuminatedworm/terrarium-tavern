@@ -124,6 +124,8 @@ def create_app(data_dir=None):
 
     from tavern.application.settings_api import register_settings_routes
     register_settings_routes(app, store)
+    from tavern.application.message_adapter_api import register_message_adapter_routes
+    register_message_adapter_routes(app, store)
 
     from tavern.application.provider_models import register_model_routes
     register_model_routes(app, store)
@@ -477,9 +479,10 @@ def create_app(data_dir=None):
         c = store.session_card(sid)
         document = (s["snapshot"].get("content") or {}).get("document", c["document"])
         if s["agent_mode"] == "full_agent":
+            from tavern.core.message_adapter import bind_adapter
             from tavern.full_agent.context import compile_window, load_trace
             from tavern.full_agent.tools import tool_definitions
-            full_settings = store.settings().for_role("full_agent")
+            full_settings = bind_adapter(store.settings().for_role("full_agent"), store, "story", sid)
             preview_request = TurnRequest(operation_id="preview", expected_revision=s["revision"],
                                           update_variables=update_variables, allow_content_edit=allow_content_edit)
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
@@ -490,13 +493,15 @@ def create_app(data_dir=None):
                 allow_content_edit=allow_content_edit)
             return result, s
         from tavern.conversation.half_context import load_trace as load_half_trace
+        from tavern.core.message_adapter import bind_adapter
+        writer_settings = bind_adapter(store.settings().for_role("foreground"), store, "story", sid)
         result = compile_context(
-            document, s, s["messages"], s["snapshot"], text, store.settings().for_role("foreground"), "preview",
+            document, s, s["messages"], s["snapshot"], text, writer_settings, "preview",
             replay_records=load_half_trace(store, sid, s["messages"]),
             read_only=True,
         )
         from tavern.conversation.cache_breakpoint import prepare_context
-        prepare_context(result, s, s["messages"], s["snapshot"], store.settings().for_role("foreground"))
+        prepare_context(result, s, s["messages"], s["snapshot"], writer_settings)
         return result, s
 
     @app.post("/api/sessions/{sid}/preview")
