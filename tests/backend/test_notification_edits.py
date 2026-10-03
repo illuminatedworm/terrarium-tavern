@@ -4,7 +4,7 @@ import pytest
 
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.memories.memory import fingerprint
-from tavern.storage.store import Conflict, Store
+from tavern.storage.store import Conflict, Store, uid
 from tests.support.memory_fixtures import memory_snapshot
 
 
@@ -31,18 +31,32 @@ def test_pending_edit_persists_and_can_retry(tmp_path, status):
 
 
 @pytest.mark.parametrize("coverage", ["valid", "invalid", "missing"])
-def test_edit_notice_requires_verified_memory_coverage(tmp_path, coverage):
+@pytest.mark.parametrize("role", ["assistant", "user"])
+def test_edit_notice_requires_verified_memory_coverage(tmp_path, coverage, role):
     store, session = setup_session(tmp_path)
     mid = session["messages"][0]["id"]
+    if role == "user":
+        mid, reply = uid(), uid()
+        tid, _ = store.create_turn(session["id"], TurnRequest(text="hello", operation_id="round", expected_revision=0))
+        store.set_turn(tid, status="running")
+        store.commit_turn(tid, {"before": session["snapshot"], "messages": [
+            {"id": mid, "parent": session["head"], "role": "user", "raw": "hello", "model": "hello",
+             "display": "hello", "snapshot": session["snapshot"]},
+            {"id": reply, "parent": mid, "role": "assistant", "raw": "reply", "model": "reply",
+             "display": "reply", "snapshot": session["snapshot"]},
+        ]})
+        session = store.session(session["id"])
     snapshot = session["snapshot"]
     snapshot.update(memory_snapshot("当前记忆文本"))
     snapshot["memory"] = [{"content": "当前记忆条目", "source": mid, "kind": "fact", "excerpt": "hello"}]
     if coverage != "missing":
-        snapshot["memory_archive"] = {"covered_count": 1, "fingerprint": fingerprint(session["messages"]) if coverage == "valid" else "stale"}
+        snapshot["memory_archive"] = {"covered_count": len(session["messages"]), "fingerprint": fingerprint(session["messages"]) if coverage == "valid" else "stale"}
     with store.connection() as db:
-        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), mid))
+        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
     edited = store.edit_message(session["id"], mid, "changed", session["revision"])
     assert edited["edit_affected_memory"] is (coverage == "valid")
+    assert edited["head"] == session["head"]
+    assert next(message for message in edited["messages"] if message["id"] == mid)["raw"] == "changed"
     assert edited["snapshot"]["memory_document"]["records"][0]["content"] == "当前记忆文本"
     assert edited["snapshot"]["memory"] == snapshot["memory"]
     if coverage == "valid":

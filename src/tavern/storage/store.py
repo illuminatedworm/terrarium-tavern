@@ -11,6 +11,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card
+from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 
@@ -738,8 +739,8 @@ class Store:
             raise ValueError("消息不能为空")
         session = self.session(sid)
         branch = session["messages"]
-        if mid != session["head"]:
-            raise ValueError("只能编辑当前分支的最新消息")
+        if mid not in editable_message_ids(branch, session["head"]):
+            raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
         from tavern.memories.memory import fingerprint, window_valid
         archive = session["snapshot"].get("memory_archive")
         affected_memory = bool(window_valid(archive, branch) and any(
@@ -762,11 +763,11 @@ class Store:
                 raise KeyError("会话不存在")
             if revision[0] != expected_revision:
                 raise Conflict("会话已改变，请刷新后重试")
-            if revision["head"] != mid:
-                raise ValueError("只能编辑当前分支的最新消息")
             rows = db.execute(
                 "SELECT id,parent,role,raw,model,display,snapshot FROM messages WHERE session=?", (sid,)
             ).fetchall()
+            if mid not in editable_message_ids(rows, revision["head"]):
+                raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
             messages = {row["id"]: dict(row) for row in rows}
             original_messages = copy.deepcopy(messages)
             result = db.execute(

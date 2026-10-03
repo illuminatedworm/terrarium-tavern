@@ -5,6 +5,7 @@ import copy
 import shutil
 
 from tavern.character.cards import regex_scripts
+from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import TurnRequest
 from tavern.memories.memory import Tracker, completed_rounds
 from tavern.scripting.agent import Writer
@@ -212,8 +213,8 @@ class RoleplayRuntime:
 
     async def edit_message(self, sid, mid, text, expected_revision):
         session = self.store.session(sid)
-        if mid != session["head"]:
-            raise ValueError("只能编辑当前分支的最新消息")
+        if mid not in editable_message_ids(session["messages"], session["head"]):
+            raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
         message = next((m for m in session["messages"] if m["id"] == mid), None)
         if message is None:
             raise ValueError("只能编辑当前会话分支中的消息")

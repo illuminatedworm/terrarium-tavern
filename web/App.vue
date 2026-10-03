@@ -416,6 +416,12 @@ const latestReply = computed(() =>
     ? session.value.messages.at(-1)
     : null,
 );
+const editableMessageIds = computed(() => {
+  const ids = new Set<string>(session.value?.head ? [session.value.head] : []);
+  const user = session.value?.messages.at(-2);
+  if (user?.role === 'user' && user.id === latestReply.value?.parent) ids.add(user.id);
+  return ids;
+});
 const mvuPanel = computed(() => {
   const m = session.value?.messages
     .slice()
@@ -1279,7 +1285,7 @@ async function savePendingEdit() {
 }
 function beginMessageEdit(message: any) {
   if (
-    message.id !== session.value?.head ||
+    !editableMessageIds.value.has(message.id) ||
     busy.value ||
     switchingVersion.value ||
     editingMessageId.value ||
@@ -1321,7 +1327,7 @@ async function switchReplyVersion(message: any, offset: number) {
 async function saveMessageEdit(message: any) {
   if (
     !editingMessageText.value.trim() ||
-    message.id !== session.value?.head ||
+    !editableMessageIds.value.has(message.id) ||
     busy.value ||
     switchingVersion.value ||
     activeTurn.value?.status === 'awaiting_review'
@@ -2090,6 +2096,7 @@ useTimedError(error);
                   :regenerating-id="regeneratingId"
                   :busy="busy"
                   :switching-version="switchingVersion"
+                  :editable="editableMessageIds.has(message.id)"
                   :editing-message-id="editingMessageId"
                   v-model:editing-message-text="editingMessageText"
                   :reviewing="activeTurn?.status === 'awaiting_review'"
@@ -2138,8 +2145,22 @@ useTimedError(error);
                           :breaks="true"
                         />
                         <div v-if="retryableTurn" class="message-actions">
-                          <button :disabled="busy || !!editingMessageId" @click="beginPendingEdit">
-                            编辑
+                          <button
+                            class="icon-action"
+                            :disabled="busy || !!editingMessageId"
+                            aria-label="编辑"
+                            title="编辑最新消息"
+                            @click="beginPendingEdit"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                              <path
+                                d="m12.5 3.5 4 4M3 17l1-4L14 3a2.1 2.1 0 0 1 3 3L7 16l-4 1Z"
+                                stroke="currentColor"
+                                stroke-width="1.4"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                              />
+                            </svg>
                           </button>
                         </div>
                       </template>

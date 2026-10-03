@@ -49,7 +49,7 @@ async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_
 
 
 @pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_message_edits_only_accept_current_branch_head(tmp_path, monkeypatch, mode):
+async def test_message_edits_only_accept_last_round_on_current_branch(tmp_path, monkeypatch, mode):
     from tavern.storage.store import Conflict, uid
 
     app = create_app(tmp_path)
@@ -57,16 +57,17 @@ async def test_message_edits_only_accept_current_branch_head(tmp_path, monkeypat
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
     opening = session["head"]
-    input_id, reply_id = uid(), uid()
-    tid, _ = store.create_turn(session["id"], TurnRequest(text="input", operation_id="setup", expected_revision=0))
-    store.set_turn(tid, status="running")
-    store.commit_turn(tid, {"before": session["snapshot"], "messages": [
-        {"id": input_id, "parent": opening, "role": "user", "raw": "input", "model": "input",
-         "display": "input", "snapshot": session["snapshot"]},
-        {"id": reply_id, "parent": input_id, "role": "assistant", "raw": "reply", "model": "reply",
-         "display": "reply", "snapshot": session["snapshot"]},
-    ]})
-    session = store.session(session["id"])
+    previous_input, previous_reply, input_id, reply_id = (uid() for _ in range(4))
+    for index, (user, reply) in enumerate(((previous_input, previous_reply), (input_id, reply_id))):
+        tid, _ = store.create_turn(session["id"], TurnRequest(text="input", operation_id=f"setup-{index}", expected_revision=session["revision"]))
+        store.set_turn(tid, status="running")
+        store.commit_turn(tid, {"before": session["snapshot"], "messages": [
+            {"id": user, "parent": session["head"], "role": "user", "raw": "input", "model": "input",
+             "display": "input", "snapshot": session["snapshot"]},
+            {"id": reply, "parent": user, "role": "assistant", "raw": "reply", "model": "reply",
+             "display": "reply", "snapshot": session["snapshot"]},
+        ]})
+        session = store.session(session["id"])
     runtime_open = app.state.service.half.runtime.open
 
     async def forbidden(*args, **kwargs):
@@ -75,25 +76,46 @@ async def test_message_edits_only_accept_current_branch_head(tmp_path, monkeypat
     monkeypatch.setattr(app.state.service.half.runtime, "open", forbidden)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
-            for mid in (opening, input_id):
-                with pytest.raises(ValueError, match="只能编辑当前分支的最新消息"):
+            for mid in (opening, previous_input, previous_reply):
+                with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
                     store.edit_message(session["id"], mid, "changed", session["revision"])
                 rejected = await api.put(f"/api/sessions/{session['id']}/messages/{mid}", json={
                     "text": "changed", "expected_revision": session["revision"]})
                 assert rejected.status_code == 400
-                assert rejected.json()["detail"] == "只能编辑当前分支的最新消息"
+                assert rejected.json()["detail"] == "只能编辑当前分支最后一轮的用户消息或 AI 回复"
                 assert store.session(session["id"]) == session
             monkeypatch.setattr(app.state.service.half.runtime, "open", runtime_open)
+            accepted_input = await api.put(f"/api/sessions/{session['id']}/messages/{input_id}", json={
+                "text": "latest input edited", "expected_revision": session["revision"]})
+            assert accepted_input.status_code == 200, accepted_input.text
+            edited_input = accepted_input.json()
+            assert edited_input["head"] == reply_id and edited_input["revision"] == session["revision"] + 1
+            assert edited_input["messages"][-1]["raw"] == "reply"
+            assert edited_input["messages"][-1]["snapshot"]["state"] == session["snapshot"]["state"]
             accepted = await api.put(f"/api/sessions/{session['id']}/messages/{reply_id}", json={
-                "text": "latest edited", "expected_revision": session["revision"]})
+                "text": "latest edited", "expected_revision": edited_input["revision"]})
             assert accepted.status_code == 200, accepted.text
             edited = accepted.json()
-            assert edited["head"] == reply_id and edited["revision"] == session["revision"] + 1
-            assert [m["raw"] for m in edited["messages"]] == ["opening", "input", "latest edited"]
-            with pytest.raises(Conflict):
-                store.edit_message(session["id"], reply_id, "stale", session["revision"])
-            # A different selected branch has its own latest message.
-            selected = store.update_session(session["id"], edited["revision"], head=opening)
+            assert edited["head"] == reply_id and edited["revision"] == session["revision"] + 2
+            assert [m["raw"] for m in edited["messages"]] == ["opening", "input", "reply", "latest input edited", "latest edited"]
+            for mid in (input_id, reply_id):
+                with pytest.raises(Conflict):
+                    store.edit_message(session["id"], mid, "stale", session["revision"])
+            active_id, _ = store.create_turn(session["id"], TurnRequest(
+                text="next", operation_id="active", expected_revision=edited["revision"]))
+            for status in ("running", "awaiting_review"):
+                store.set_turn(active_id, status=status)
+                for mid in (input_id, reply_id):
+                    with pytest.raises(Conflict):
+                        store.edit_message(session["id"], mid, "busy", edited["revision"])
+            store.set_turn(active_id, status="cancelled")
+            # Selecting an earlier branch changes which exchange can be edited.
+            selected = store.update_session(session["id"], edited["revision"], head=previous_reply)
+            with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
+                store.edit_message(session["id"], input_id, "off branch", selected["revision"])
+            selected = store.edit_message(session["id"], previous_input, "selected input", selected["revision"])
+            assert selected["head"] == previous_reply and selected["messages"][-2]["raw"] == "selected input"
+            selected = store.update_session(session["id"], selected["revision"], head=opening)
             edited_opening = store.edit_message(session["id"], opening, "selected latest", selected["revision"])
             assert edited_opening["head"] == opening
             assert edited_opening["messages"][-1]["raw"] == "selected latest"
