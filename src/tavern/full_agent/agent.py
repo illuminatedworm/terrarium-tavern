@@ -13,6 +13,7 @@ from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
+from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.state import full_state
@@ -296,6 +297,8 @@ class FullAgent:
                 if name == "new_context" and len(calls) != 1:
                     raise ValueError("new_context 必须单独调用；当前批次没有换窗")
                 result = await self.tools.execute(name, arguments)
+            except ToolArgumentError as error:
+                result = self.model_view.expose(error.result)
             except (ValueError, KeyError, TypeError, jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as error:
                 result = {"error": self.model_view.text(str(error))}
             self.append({"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}, window_id)

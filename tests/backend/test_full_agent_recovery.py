@@ -86,6 +86,9 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         assert failed["status"] == "error", failed["error"]
         saved = store.full_agent_progress(failed["id"])
         assert "BAD_ARGUMENT" in requests[1].content.decode()  # same-turn correction still sees the error
+        assert "expected_parameters" in requests[1].content.decode()
+        assert "缺少必填参数 ref" in requests[1].content.decode()
+        assert "errors.pydantic.dev" not in requests[1].content.decode()
         assert saved["snapshot"]["full_agent"]["handoff"]["revision"] == 1
         assert any(i["status"] == "error" for i in turn_items(store, session["id"], failed["id"]))
     finally:

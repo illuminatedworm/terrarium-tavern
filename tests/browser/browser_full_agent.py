@@ -102,7 +102,7 @@ async def main():
                         for call in [calls.first, calls.last]:
                             await call.locator('summary').click()
                             await expect(call.get_by_role('region', name='调用参数')).to_contain_text('H2')
-                        await expect(calls.last.get_by_role('region', name='工具返回')).to_contain_text('Field required')
+                        await expect(calls.last.get_by_role('region', name='工具返回')).to_contain_text('缺少必填参数 ref')
                         layout = await calls.evaluate_all("""elements => elements.map(el => {
                             const properties = ['display', 'padding', 'margin', 'borderWidth', 'borderRadius',
                                 'font', 'gap', 'whiteSpace', 'overflowWrap', 'maxHeight'];

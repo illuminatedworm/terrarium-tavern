@@ -3,12 +3,13 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tavern.character.cards import normalize
 from tavern.conversation.context import get_path
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
+from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
 from tavern.full_agent.state import note_view, rollover, source_hash
 
@@ -241,7 +242,11 @@ class AgentTools:
                 raise ValueError("本轮未要求更新 MVU 变量，不允许调用 patch_state")
             if owner.patch_state_done:
                 raise ValueError("本轮已完成一次 patch_state，不允许重复更新")
-        args = SPECS[name][0].model_validate_json(arguments)
+        model = SPECS[name][0]
+        try:
+            args = model.model_validate_json(arguments)
+        except ValidationError as error:
+            raise ToolArgumentError(name, model, error) from None
         state = owner.state
         if name == "search_read_lore":
             return await owner.retrieve(args.query, source="agent",

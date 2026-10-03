@@ -15,6 +15,71 @@ from tests.backend.test_full_agent import Model, runtime, turn
 story = test_full_agent.story
 
 
+@pytest.mark.parametrize("name,arguments,expected", [
+    ("read_history", {"reason": "PRIVATE_INPUT_48c2515daf9742308a8b50777d39dd75"},
+     ["缺少必填参数 ref", "不接受参数 reason"]),
+    ("read_history", {"ref": "H2", "48c2515daf9742308a8b50777d39dd75": "PRIVATE_INPUT"},
+     ["不接受参数 @D", "请删除"]),
+    ("write_handoff", {"content": "不得写入的草稿", "reason": "多余说明"}, ["不接受参数 reason"]),
+    ("read_history", {"ref": 35}, ["参数 ref 必须是字符串"]),
+    ("read_history", [], ["参数必须是对象"]),
+    ("new_context", {"content": "不得换窗", "keep_recent": 99}, ["参数 keep_recent 必须小于或等于 12"]),
+    ("search_history", {"query": "*", "limit": "2"}, ["参数 limit 必须是整数"]),
+    ("search_history", {"query": "*", "limit": 0}, ["参数 limit 必须大于或等于 1"]),
+    ("search_history", {"query": ""}, ["参数 query 至少需要 1 个字符"]),
+    ("write_note", {"key": "test", "content": "未接受", "kind": "wrong"},
+     ["参数 kind 必须取允许值", "fact", "hypothesis", "plan"]),
+    ("write_note", {"key": "test", "content": "未接受", "kind": "fact", "sources": [35]},
+     ["参数 sources[0] 必须是字符串"]),
+    ("write_note", {"key": "test", "content": "未接受", "kind": "fact", "sources": ["H2"] * 21},
+     ["参数 sources 最多允许 20 项"]),
+])
+async def test_argument_errors_explain_repairs_without_executing_or_echoing_input(story, name, arguments, expected):
+    store, session = story
+    service = runtime(store)
+    model = Model((name, arguments), "继续正文")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        feedback = json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
+        assert feedback["error"].startswith(f"{name} 参数错误，工具未执行：")
+        assert all(text in feedback["error"] for text in expected)
+        schema = feedback["expected_parameters"]
+        original = SPECS[name][0].model_json_schema()
+        assert set(schema["properties"]) == set(original["properties"])
+        assert schema.get("required", []) == original.get("required", [])
+        assert schema["additionalProperties"] is False
+        encoded = json.dumps(feedback, ensure_ascii=False)
+        assert all(text not in encoded for text in (
+            "errors.pydantic.dev", "validation error", "input_value", "input_type",
+            "PRIVATE_INPUT", "48c2515daf9742308a8b50777d39dd75", '"title"'))
+        for key in ("handoff", "notes", "window"):
+            assert current["snapshot"]["full_agent"][key] == session["snapshot"]["full_agent"][key]
+        event = next(e for e in store.events(result["id"]) if e["kind"] == "full_agent_tool")
+        assert event["payload"]["result"] == feedback
+    finally:
+        await service.close()
+
+
+async def test_read_history_can_correct_missing_ref_after_actionable_feedback(story):
+    store, session = story
+    service = runtime(store)
+    model = Model(("read_history", {"reason": "核对H2内容"}), ("read_history", {"ref": "H2"}), "核对后继续正文")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        returned = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert "缺少必填参数 ref" in returned[0]["error"]
+        assert returned[0]["expected_parameters"]["required"] == ["ref"]
+        assert set(returned[0]["expected_parameters"]["properties"]) == {"ref"}
+        assert returned[0]["expected_parameters"]["properties"]["ref"]["type"] == "string"
+        assert "error" not in returned[1] and returned[1]["ref"] == "H2"
+        assert returned[1]["text"] == "我答应明天在钟楼见面。"
+        assert current["messages"][-1]["raw"] == "核对后继续正文"
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize("lore_name", ["search_lore", "search_read_lore"])
 async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story, lore_name):
     store, session = story
