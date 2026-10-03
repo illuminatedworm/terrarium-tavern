@@ -99,10 +99,8 @@ def native_messages(messages, api, marker=None):
         consecutive_tools = role == "tool" and previous_role == "tool"
         previous_role = role
         typed = message.get("_adapter_typed", False)
-        if typed and role == "developer":
-            raise ValueError("当前原生协议不支持 developer 消息；请调整对话中的消息适配映射。")
-        fixed = role in ("system", "developer") and (
-            leading and message.get("runtime_phase") == "header" if typed else message.get("_cache_static", leading))
+        fixed = (role == "system" and leading and message.get("runtime_phase") == "header" if typed else
+                 role in ("system", "developer") and message.get("_cache_static", leading))
         if role not in ("system", "developer") or not fixed:
             leading = False
         if fixed:
@@ -114,9 +112,7 @@ def native_messages(messages, api, marker=None):
             if message.get("_cache_breakpoint"):
                 prefix_count = len(body)
             continue
-        if role in ("system", "developer"):
-            if typed:
-                raise ValueError("当前原生协议无法表示中途 system 消息；请调整对话中的消息适配映射。")
+        if role in ("system", "developer") and not typed:
             role = "user"
             content = "<tavern_runtime_context>\n" + content + "\n</tavern_runtime_context>"
         details = message.get("reasoning_details") or []
@@ -177,7 +173,7 @@ def native_messages(messages, api, marker=None):
             if marker and message.get("_cache_breakpoint") and parts:
                 parts[-1][marker["field"]] = copy.deepcopy(marker["value"])
             if parts:
-                body.append({"role": "model" if role == "assistant" else "user", "parts": parts})
+                body.append({"role": "model" if role == "assistant" else role, "parts": parts})
         if message.get("_cache_breakpoint"):
             prefix_count = len(body)
     # This rule is fixed and precedes all dynamic context on every request.

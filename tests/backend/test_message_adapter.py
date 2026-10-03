@@ -133,14 +133,46 @@ def test_fixed_types_and_unknown_types_cannot_be_overridden():
             MessageAdapterConfig.model_validate(config(**{name: {"role": "user", "wrap": False}}))
 
 
-async def test_native_protocol_reports_unrepresentable_mapping_without_downgrading():
-    settings = Settings(api_mode="anthropic", model="fixture", message_adapter={"mappings": {"anthropic": {
-        "state": {"role": "system", "wrap": False}}}})
-    provider = ModelTransport(settings, "local-fixture")
+@pytest.mark.parametrize("api", ["anthropic", "gemini"])
+@pytest.mark.parametrize("role", ["system", "developer"])
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_native_protocol_sends_selected_roles_and_leaves_validation_to_server(api, role, accepted):
+    settings = Settings(api_mode=api, model="fixture", base_url="https://fixture.test", use_proxy=False,
+        message_adapter={"mappings": {api: {"state": {"role": role, "wrap": False}}}})
+    original = state_messages()
+    before = copy.deepcopy(original)
+    requests = []
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        if not accepted:
+            return httpx.Response(400, json={"error": {"message": "fixture rejects selected role"}})
+        payload = ({"model": "fixture", "stop_reason": "end_turn", "content": [{"type": "text", "text": "done"}]}
+            if api == "anthropic" else {"modelVersion": "fixture", "candidates": [{"finishReason": "STOP",
+                "content": {"role": "model", "parts": [{"text": "done"}]}}]})
+        return httpx.Response(200, json=payload)
+
+    provider = ModelTransport(settings, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     try:
-        with pytest.raises(ValueError, match="中途 system"):
-            provider._request(state_messages())
-        assert settings.message_adapter.mappings["anthropic"]["state"].role == "system"
+        if accepted:
+            assert (await provider.chat_complete(original)).content == "done"
+        else:
+            with pytest.raises(httpx.HTTPStatusError) as error:
+                await provider.chat_complete(original)
+            assert error.value.response.status_code == 400
+            assert error.value.response.json()["error"]["message"] == "fixture rejects selected role"
+        assert len(requests) == 1
+        rows = requests[0]["messages" if api == "anthropic" else "contents"]
+        content_key = "content" if api == "anthropic" else "parts"
+        assert [row["role"] for row in rows] == (["user", role] if role == "system" else [role, "user", role])
+        expected_parts = [{"type": "text", "text": "V2"}] if api == "anthropic" else [{"text": "V2"}]
+        assert rows[-1][content_key] == expected_parts
+        if role == "developer":
+            assert "V1" in json.dumps(rows[0])
+        else:
+            assert "V1" in json.dumps(requests[0]["system" if api == "anthropic" else "systemInstruction"])
+        assert original == before
+        assert settings.message_adapter.mappings[api]["state"].role == role
     finally:
         await provider.close()
 
