@@ -4,6 +4,7 @@ import { useTimedError } from './composables/useTimedError';
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from './lib/api';
 import { cacheRetention } from './lib/cachePolicy';
+import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
@@ -71,6 +72,7 @@ const dialogue = ref<{
   releaseAnchor: () => void;
 }>();
 const readingMessageId = ref('');
+const messageIntervals = computed(() => historyMessageIntervals(session.value?.messages || []));
 const eligibleCacheReplies = computed(() => {
   const messages = session.value?.messages || [];
   const roles = new Map(messages.map((message: any) => [message.id, message.role]));
@@ -2084,6 +2086,7 @@ useTimedError(error);
               <template #message="{ message }">
                 <DialogueMessage
                   :message="message"
+                  :interval="messageIntervals.get(message.id)"
                   :session="session"
                   :name="name"
                   :portrait-src="storyPortrait"

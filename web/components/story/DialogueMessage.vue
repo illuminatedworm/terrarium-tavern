@@ -4,6 +4,7 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { computed } from 'vue';
 const props = defineProps<{
   message: any;
+  interval?: string;
   session: any;
   name: string;
   portraitSrc?: string;
@@ -232,27 +233,32 @@ function forwardAction(
           </svg>
         </button>
       </div>
-      <time
-        v-if="sentAt"
-        class="message-time"
-        :datetime="sentAt.toISOString()"
-        :title="sentAt.toLocaleString()"
-        >{{
+      <div v-if="sentAt" class="message-time">
+        <span
+          v-if="interval"
+          class="message-interval"
+          title="距上一条消息"
+          :aria-label="`距上一条消息 ${interval}`"
+          >{{ interval }}</span
+        >
+        <time :datetime="sentAt.toISOString()" :title="sentAt.toLocaleString()">{{
           sentAt.toLocaleTimeString('zh-CN', {
             hour12: false,
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit',
           })
-        }}</time
-      >
+        }}</time>
+      </div>
     </div>
   </article>
 </template>
 
 <style scoped>
 .message-time {
-  display: block;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   margin-top: 8px;
   text-align: right;
   color: var(--text-muted);

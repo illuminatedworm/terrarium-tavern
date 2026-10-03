@@ -1,7 +1,14 @@
 export const DIRECT_MESSAGE_LIMIT = 120;
 export const DIRECT_TEXT_LIMIT = 200_000;
 
-export type HistoryMessage = { id: string; parent?: string; role: string; display?: string; raw?: string };
+export type HistoryMessage = {
+  id: string;
+  parent?: string;
+  role: string;
+  display?: string;
+  raw?: string;
+  created?: number;
+};
 export type HistoryRound = {
   id: string;
   user?: HistoryMessage;
@@ -15,6 +22,26 @@ export function needsVirtualHistory(messages: HistoryMessage[]) {
     messages.reduce((total, message) => total + (message.display || message.raw || '').length, 0) >
       DIRECT_TEXT_LIMIT
   );
+}
+
+export function historyMessageIntervals(messages: HistoryMessage[]) {
+  const intervals = new Map<string, string>();
+  for (let index = 1; index < messages.length; index++) {
+    const current = messages[index].created;
+    const previous = messages[index - 1].created;
+    if (
+      typeof current !== 'number' ||
+      typeof previous !== 'number' ||
+      !Number.isFinite(current) ||
+      !Number.isFinite(previous)
+    )
+      continue;
+    const elapsed = current - previous;
+    if (elapsed < 0 || elapsed > 24 * 60 * 60) continue;
+    const seconds = Math.floor(elapsed);
+    intervals.set(messages[index].id, `+${Math.floor(seconds / 60)}分${seconds % 60}秒`);
+  }
+  return intervals;
 }
 
 export function historyRounds(messages: HistoryMessage[]): HistoryRound[] {

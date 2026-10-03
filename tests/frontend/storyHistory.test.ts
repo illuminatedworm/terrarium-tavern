@@ -3,6 +3,7 @@ import {
   DIRECT_MESSAGE_LIMIT,
   DIRECT_TEXT_LIMIT,
   HistoryHeights,
+  historyMessageIntervals,
   historyRounds,
   historySummary,
   needsVirtualHistory,
@@ -10,6 +11,42 @@ import {
 
 const messages = (count: number) =>
   Array.from({ length: count }, (_, index) => ({ id: String(index), role: 'user', raw: '正文' }));
+
+it.each([
+  [0, '+0分0秒'],
+  [1.9, '+0分1秒'],
+  [61, '+1分1秒'],
+  [3661, '+61分1秒'],
+  [86400, '+1440分0秒'],
+  [86400.1, undefined],
+  [-1, undefined],
+])('formats a %s second message gap with the 24-hour cutoff', (elapsed, expected) => {
+  const base = 1_790_000_000;
+  const intervals = historyMessageIntervals([
+    { id: 'first', role: 'user', created: base },
+    { id: 'reply', role: 'assistant', created: base + Number(elapsed) },
+  ]);
+  expect(intervals.has('first')).toBe(false);
+  expect(intervals.get('reply')).toBe(expected);
+});
+
+it('uses the immediately preceding message and hides gaps when either timestamp is unavailable', () => {
+  const history = [
+    { id: 'greeting', role: 'assistant', created: 100 },
+    { id: 'user', role: 'user', created: 165 },
+    { id: 'reply', role: 'assistant', created: 310 },
+    { id: 'missing', role: 'user' },
+    { id: 'after-missing', role: 'assistant', created: 500 },
+    { id: 'invalid', role: 'user', created: NaN },
+    { id: 'after-invalid', role: 'assistant', created: 600 },
+    { id: 'infinite', role: 'user', created: Infinity },
+  ];
+  expect([...historyMessageIntervals(history)]).toEqual([
+    ['user', '+1分5秒'],
+    ['reply', '+2分25秒'],
+  ]);
+  expect(historyMessageIntervals([]).size).toBe(0);
+});
 
 it('uses direct rendering at both limits and virtualizes only beyond either limit', () => {
   expect(needsVirtualHistory(messages(DIRECT_MESSAGE_LIMIT))).toBe(false);
