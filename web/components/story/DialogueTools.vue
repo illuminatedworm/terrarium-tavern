@@ -393,6 +393,7 @@ onBeforeUnmount(() => {
   transition: opacity 150ms;
 }
 .message-jumps {
+  right: max(39px, calc(var(--dialogue-right-gutter) - 64px));
   top: 50%;
   transform: translateY(-50%);
   border-radius: 12px;

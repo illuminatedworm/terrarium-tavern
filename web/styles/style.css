@@ -507,6 +507,7 @@ header {
   color: var(--text-muted);
 }
 .story {
+  --reading-content-width: calc(var(--reading-width, 1120px) - 120px);
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -608,6 +609,7 @@ header {
   opacity: 1;
 }
 .dialogue-viewport {
+  --dialogue-right-gutter: max(88px, calc((100% - var(--reading-content-width)) / 2));
   position: relative;
   display: flex;
   flex: 1;
@@ -618,11 +620,11 @@ header {
   scroll-behavior: auto;
   scrollbar-width: none;
   scrollbar-gutter: auto;
-  padding-right: max(88px, calc((100% - 850px) / 2));
+  padding-right: var(--dialogue-right-gutter);
 }
 @media (max-width: 620px) {
-  .dialogue-viewport > .messages {
-    padding-right: 76px;
+  .dialogue-viewport {
+    --dialogue-right-gutter: 76px;
   }
 }
 .dialogue-viewport > .messages::-webkit-scrollbar {
@@ -1750,7 +1752,7 @@ header {
 }
 .composer-inner {
   width: calc(100% - 80px);
-  max-width: calc(var(--reading-width, 1120px) - 120px);
+  max-width: var(--reading-content-width);
   margin: 0 auto;
 }
 .compose-box textarea {
