@@ -75,7 +75,7 @@ SCOPES = {
     **{name: ("full_agent",) for name in ("checkpoint", "mvu_rules", "regenerate_instruction",
        "turn_variable_instruction", "context_warning", "context_status", "context_budget")},
     "reply_correction": ("full_agent", "card_editor"), "required_tool_notice": ("background",),
-    "tracker_task_update": ("background",), "last_call_notice": ("card_editor",),
+    "tracker_task_update": ("background",), "last_call_notice": ("full_agent", "card_editor"),
 }
 TYPES = {name: replace(item, scopes=SCOPES.get(name, item.scopes)) for name, item in TYPES.items()}
 SOURCES = {"rules": "root_system", "system": "root_system", "input": "user", "history": None,

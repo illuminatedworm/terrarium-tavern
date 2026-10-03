@@ -386,6 +386,8 @@ async def test_budget_step_limit_and_invalid_tools_roll_back(story):
                       ("new_context", {"content": "不能重置本回合调用额度"}))
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and "上限" in result["error"]
+        assert "最后一次模型请求" not in str(model.requests[0]["messages"])
+        assert "最后一次模型请求" in str(model.requests[1]["messages"])
         assert "不允许" in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert current["revision"] == 0
         assert current["snapshot"] == session["snapshot"]
@@ -911,7 +913,8 @@ def test_explicit_window_and_memory_inventory(story, window_number, notes, expec
                             snapshot, "继续", store.settings(), [])
     status = next(m["content"] for m in result["trace"] if m["source"] == "context_status")
     assert expected in status
-    assert f"当前第 {window_number} 个，总计 {window_number} 个" in status
+    assert f"当前第 {window_number} 个" in status
+    assert "总计" not in status and "还可调用模型" not in status
     assert "无需搜索" not in status and "尚未换窗" not in status
     assert "不可自动注入的归档内容" not in str(result["messages"])
     assert [m["position"] for m in result["trace"]] == list(range(len(result["messages"])))
@@ -942,11 +945,69 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
     assert near_full["estimated_tokens"] + settings.reply_tokens > settings.context_tokens
     assert not near_full["rollover_required"]
     assert near_full["available_tokens"] == settings.context_tokens
-    settings.context_tokens = base
+    settings.context_tokens = base + 1  # The notice itself crosses the window boundary.
     full = compile_current()
     assert full["rollover_required"]
+    notice = next(m for m in full["trace"] if m["source"] == "context_budget")
+    assert notice["_runtime_context"]["value"]["level"] == "rollover"
     assert any(m.get("content") == "场景" for m in full["messages"])  # No local truncation.
     assert full["estimated_tokens"] > full["available_tokens"]
+
+
+def test_pressure_notice_changes_only_with_actionable_state(story):
+    store, session = story
+    settings = store.settings().for_role("full_agent")
+    settings.context_tokens = 20000
+    settings.reply_tokens = 128
+    document = {"name": "向导", "description": "背景。" * 1000}
+    snapshot = copy.deepcopy(session["snapshot"])
+    args = (document, session, [], snapshot, "继续", settings, [])
+    probe = compile_window(*args, input_id="current-input")
+    settings.context_tokens = int(probe["estimated_tokens"] / .72)
+    continuation = []
+
+    def compile_current():
+        result = compile_window(*args, input_id="current-input", continuation=continuation, calls=1)
+        continuation.extend(result["context_additions"])
+        return result
+
+    def read_result(call_id, text):
+        continuation.extend([
+            {"role": "assistant", "content": "", "tool_calls": [{"id": call_id, "type": "function",
+                "function": {"name": "read_state", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": call_id, "content": json.dumps({"text": text}, ensure_ascii=False)},
+        ])
+
+    pressure = compile_current()
+    assert not pressure["rollover_required"]
+    read_result("short-read", "读取状态")
+    continued = compile_current()
+    assert continued["estimated_tokens"] > pressure["estimated_tokens"]
+    assert pressure["messages"] == continued["messages"][:len(pressure["messages"])]
+    assert not continued["context_additions"]
+
+    complete_text = "完整资料。" * 2000 + "必须保留的结尾"
+    read_result("long-read", complete_text)
+    overflow = compile_current()
+    assert overflow["rollover_required"]
+    assert continued["messages"] == overflow["messages"][:len(continued["messages"])]
+    notices = [m for m in overflow["trace"] if m["source"] == "context_budget"]
+    assert len(notices) == 2 and "强制换窗" in notices[-1]["content"]
+    assert complete_text in next(m["content"] for m in overflow["messages"]
+                                 if m.get("tool_call_id") == "long-read")
+
+    settings.context_tokens = overflow["estimated_tokens"] * 3
+    cleared = compile_current()
+    assert not cleared["rollover_required"]
+    assert [m["content"] for m in cleared["context_additions"]] == ["此前的窗口压力提醒已解除。"]
+    assert compile_current()["messages"] == cleared["messages"]
+
+    settings.context_tokens = int(cleared["estimated_tokens"] / .72)
+    pressure_again = compile_current()
+    assert not pressure_again["rollover_required"]
+    assert len(pressure_again["context_additions"]) == 1
+    assert "窗口预算提醒" in pressure_again["context_additions"][0]["content"]
+    assert compile_current()["messages"] == pressure_again["messages"]
 
 
 async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):

@@ -45,6 +45,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
             if require_state_patch or allow_content_edit else ""),
         "regenerate_instruction": instruction,
+        "last_call_notice": (
+            "这是本回合最后一次模型请求。遵守当前强制换窗及必要工具要求，能完成时直接回复故事正文；"
+            "继续调用工具后将达到上限，草稿不会提交。"
+            if calls == settings.full_agent_config.max_steps - 1 else ""),
     }
     def expand(value):
         return macros(value, card, session["persona"], snapshot.get("state", {}))
@@ -82,8 +86,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     def replay(message, *, current_turn=False):
         source = message.get("source")
-        # Permission and rewrite requirements apply only to the current turn.
-        # Do not retain an old block or append a revocation after both switches are off.
+        # Turn requirements and last-call notices must not leak into later turns
+        # or a resume whose fresh request budget makes the notice obsolete.
         if source in turn_instructions and (not current_turn or not turn_instructions[source]):
             return
         item = ledger.replay(message)
@@ -158,20 +162,22 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     memory_status = f"长期笔记：有效 {active_notes} 条，已归档 {archived_notes} 条。"
     history_status = f"原始历史 H1–H{len(history)}" if history else "尚无原始历史"
     visible_status = f"当前保留 H{window['start']+1} 起的正文" if visible else "当前窗口没有已完成的历史正文"
-    status = (f"上下文窗口：当前第 {window['number']} 个，总计 {window['number']} 个。\n"
+    status = (f"上下文窗口：当前第 {window['number']} 个。\n"
               f"{history_status}；当前用户输入引用 H{len(history)+1}；{visible_status}。\n"
-              f"{memory_status}\n"
-              f"本回合还可调用模型 {max(0, settings.full_agent_config.max_steps - calls)} 次。")
+              f"{memory_status}")
     update("context_status", status)
     tokens = request_tokens(wire(), settings, tools) + reasoning_cost
     rollover_required = force_rollover or tokens >= settings.context_tokens
     if rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio:
         budget_item = None
-        # Include the notice itself when checking the boundary and estimating its size.
+        # Compare actionable pressure states, not the changing token estimate.
+        # Include a new notice itself when checking whether it forces rollover.
         for _ in range(6):
             rollover_required |= tokens >= settings.context_tokens
+            value = {"level": "rollover" if rollover_required else "pressure",
+                     "context_tokens": settings.context_tokens, "reply_tokens": settings.reply_tokens}
             content = (
-                f"当前上下文估算 {tokens}/{settings.context_tokens} tokens（含工具定义）；"
+                f"本次提醒时上下文估算 {tokens}/{settings.context_tokens} tokens（含工具定义）；"
                 f"本轮回复额度 {settings.reply_tokens} tokens。\n"
                 + ("当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
                    "必须单独调用 new_context 保存完整交接笔记并换窗；运行时否决其他一切工具调用和正文回复。"
@@ -179,12 +185,12 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                    if rollover_required else "窗口预算提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。")
             )
             if budget_item is None:
-                budget_item = update("context_budget", content)
+                budget_item = update("context_budget", content, value=value)
                 if budget_item is None:
                     break
             else:
                 budget_item["content"] = content
-                budget_item["_runtime_context"]["value"] = content
+                budget_item["_runtime_context"]["value"] = value
             updated = request_tokens(wire(), settings, tools) + reasoning_cost
             if updated == tokens:
                 break

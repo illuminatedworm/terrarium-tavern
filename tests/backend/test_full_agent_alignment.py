@@ -226,17 +226,72 @@ async def test_runtime_frames_append_and_checkpoint_tool_does_not_duplicate_memo
         for messages in requests:
             assert len(checkpoint_frames(messages)) == 1
             assert "MEMORY_A" in checkpoint_frames(messages)[0]["content"]
+            assert sum("<tavern_context_status>" in m.get("content", "") for m in messages) == 1
+            assert not any("还可调用模型" in m.get("content", "") for m in messages)
         assert "MEMORY_B" in json.dumps(requests[-1])
         assert current["snapshot"]["full_agent"]["checkpoint"]["text"] == "MEMORY_B"
         baseline_epoch = result["preview"]["context_ledger"]["epoch"]
-        for _ in range(2):
+        for status_count in (2, 3):
             next_model = Model("next narrative")
             result, current = await turn(service, current, next_model)
             assert result["status"] == "committed", result["error"]
             assert result["preview"]["context_ledger"]["epoch"] == baseline_epoch
             assert len(checkpoint_frames(next_model.requests[0]["messages"])) == 1
+            assert sum("<tavern_context_status>" in m.get("content", "")
+                       for m in next_model.requests[0]["messages"]) == status_count
         assert len([r for r in load_trace(store, current["id"], current["messages"])
                     if r["message"].get("source") == "checkpoint"]) == 1
+    finally:
+        await service.close()
+
+
+async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
+    store, service, session = game(tmp_path)
+    model = Model(("read_state", {}),
+                  ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
+                  ("archive_note", {"key": "plan"}),
+                  ("new_context", {"content": "已归档计划，继续当前故事", "keep_recent": 0}),
+                  ("read_state", {}), "narrative")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        notices = [[m["content"] for m in request["messages"]
+                    if "<tavern_context_status>" in m.get("content", "")] for request in model.requests]
+        assert [len(items) for items in notices] == [1, 1, 2, 3, 1, 1]
+        assert "有效 1 条，已归档 0 条" in notices[2][-1]
+        assert "有效 0 条，已归档 1 条" in notices[3][-1]
+        assert "当前第 2 个" in notices[4][0]
+        assert current["snapshot"]["full_agent"]["notes"]["plan"]["status"] == "archived"
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("fail_last_request", [False, True])
+async def test_last_call_notice_does_not_leak_into_next_turn_or_resume(tmp_path, fail_last_request):
+    store, service, session = game(tmp_path)
+    document = store.settings_document()
+    document.full_agent.tools.max_steps = 3
+    store.save_settings(document)
+    model = Model(("read_state", {}), ("read_state", {}),
+                  RuntimeError("last request disconnected") if fail_last_request else "narrative")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == ("error" if fail_last_request else "committed"), result["error"]
+        assert [sum("<tavern_last_call_notice>" in m.get("content", "") for m in request["messages"])
+                for request in model.requests] == [0, 0, 1]
+        next_model = Model("next narrative")
+        if fail_last_request:
+            assert current["revision"] == 0
+            service.full.provider_factory = lambda: next_model
+            resumed = service.submit(current["id"], TurnRequest(
+                text=result["request"]["text"], operation_id="resume-last-call", expected_revision=0,
+                resume_turn_id=result["id"]))
+            await service.tasks[resumed["id"]]
+            following = store.turn(resumed["id"])
+        else:
+            following, _ = await turn(service, current, next_model)
+        assert following["status"] == "committed", following["error"]
+        assert not any("最后一次模型请求" in m.get("content", "") for m in next_model.requests[0]["messages"])
     finally:
         await service.close()
 
@@ -598,7 +653,7 @@ async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_p
         await service.close()
 
 
-@pytest.mark.parametrize("version", [1, 2, 3])
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
 def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatch, version):
     from tavern.full_agent import context_ledger
     from tavern.full_agent.state import new_state
@@ -618,6 +673,37 @@ def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatc
                            continuation=first["context_additions"] + second["context_additions"])
     assert third["context_ledger"]["rebuild_reason"] is None
     assert third["messages"] == second["messages"]
+
+
+def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch):
+    from tavern.full_agent import context_ledger
+    from tavern.full_agent.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
+    snapshot = {"state": {}, "full_agent": new_state()}
+    args = ({"name": "fixture"}, session, [], snapshot, "next", config(), [])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(context_ledger, "VERSION", 5)
+        first = compile_window(*args, input_id="u1")
+    records = first["context_additions"]
+    old_status = next(m for m in records if m.get("source") == "context_status")
+    for remaining in (24, 23, 22):
+        notice = copy.deepcopy(old_status)
+        notice["content"] = f"本回合还可调用模型 {remaining} 次。"
+        notice["_runtime_context"]["value"] = notice["content"]
+        records.append(notice)
+    records.extend([
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
+            "function": {"name": "read_state", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "read", "content": "原有完整工具结果"},
+    ])
+    rebuilt = compile_window(*args, input_id="u1", continuation=records)
+    assert rebuilt["context_ledger"]["rebuild_reason"] == "context_version_changed"
+    assert not any("还可调用模型" in m.get("content", "") for m in rebuilt["messages"])
+    assert sum(m["source"] == "context_status" for m in rebuilt["trace"]) == 1
+    assert [m["content"] for m in rebuilt["messages"] if m["role"] == "tool"] == ["原有完整工具结果"]
+    again = compile_window(*args, input_id="u1", continuation=records + rebuilt["context_additions"])
+    assert again["messages"] == rebuilt["messages"]
 
 
 def test_history_macro_change_rebuilds_once_and_records_why():
