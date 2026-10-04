@@ -22,6 +22,7 @@ import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
 import SettingsPanel from './components/settings/SettingsPanel.vue';
+import { defaultReadingLayout } from './lib/dataTransfer';
 import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
 import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
@@ -315,13 +316,7 @@ const effortOptions = [
   { value: 'xhigh', label: '最高' },
 ];
 const layout = ref({
-  fontSize: 18,
-  lineHeight: 1.9,
-  readingWidth: 1120,
-  fontFamily: 'sans',
-  leftCollapsed: window.innerWidth < 760,
-  rightCollapsed: window.innerWidth < 760,
-  rightWidth: 380,
+  ...defaultReadingLayout(window.innerWidth),
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
 });
 watch(layout, (value) => localStorage.setItem('tavern-layout', JSON.stringify(value)), { deep: true });
@@ -612,6 +607,14 @@ async function load() {
       api('/card-edits'),
       api('/card-editor/conversations'),
     ]);
+}
+async function afterDataImport(result: {
+  settings_restored: boolean;
+  browser_preferences: { layout?: Record<string, unknown> };
+}) {
+  if (result.settings_restored && result.browser_preferences.layout)
+    Object.assign(layout.value, result.browser_preferences.layout);
+  await guarded(load);
 }
 async function refreshContextStats() {
   if (!session.value) return;
@@ -2669,6 +2672,11 @@ useTimedError(error);
             :initial-page="settingsInitialPage"
             :effort-options="effortOptions"
             @updated="settings = $event"
+            @imported="afterDataImport"
+            @open-session="
+              panel = '';
+              openSession($event);
+            "
             @close="panel = ''"
           />
           <template v-else-if="panel === 'delete-card'"

@@ -25,6 +25,8 @@ import ModelProfileEditor from './ModelProfileEditor.vue';
 import ProviderSettings from './ProviderSettings.vue';
 import LocalResourceSettings from './LocalResourceSettings.vue';
 import StorageSettings from './StorageSettings.vue';
+import DataTransferSettings from './DataTransferSettings.vue';
+import type { TransferResult } from '../../lib/dataTransfer';
 import SavedText from './SavedText.vue';
 import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
@@ -34,7 +36,13 @@ const props = defineProps<{
   initialPage?: string;
   effortOptions: Array<{ value: string; label: string }>;
 }>();
-const emit = defineEmits<{ updated: [settings: SettingsDocument]; close: [] }>();
+const emit = defineEmits<{
+  updated: [settings: SettingsDocument];
+  close: [];
+  imported: [result: TransferResult];
+  openSession: [id: string];
+}>();
+const transferBusy = ref(false);
 const editor = useSettingsEditor((settings) => emit('updated', settings));
 const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
 const pageId = ref('');
@@ -121,6 +129,7 @@ function trap(event: KeyboardEvent) {
   }
 }
 function navigate(id: string) {
+  if (transferBusy.value) return;
   guard(() => {
     pageId.value = id;
     query.value = '';
@@ -129,6 +138,7 @@ function navigate(id: string) {
   });
 }
 async function requestClose() {
+  if (transferBusy.value) return;
   try {
     await editor.flush();
   } catch {
@@ -148,6 +158,10 @@ async function refreshAfterProbe() {
   } catch (e) {
     error.value = String(e);
   }
+}
+async function afterImport(result: TransferResult) {
+  if (result.settings_restored) await editor.initialize();
+  emit('imported', result);
 }
 async function saveRecipeText(path: string) {
   try {
@@ -205,6 +219,7 @@ const searchable = computed(() => {
     : [];
 });
 function selectSearch(result: { page: SettingsPage; label: string; path: string }) {
+  if (transferBusy.value) return;
   guard(() => {
     pageId.value = result.page.id;
     promptPath.value = result.path;
@@ -238,7 +253,13 @@ onMounted(async () => {
     <header class="settings-header">
       <h2>设置</h2>
       <div class="settings-search">
-        <input v-model="query" type="search" placeholder="搜索设置…" aria-label="搜索设置" />
+        <input
+          v-model="query"
+          type="search"
+          placeholder="搜索设置…"
+          aria-label="搜索设置"
+          :disabled="transferBusy"
+        />
         <div v-if="query" class="settings-search-results">
           <button v-for="(result, i) in searchable" :key="i" @click="selectSearch(result)">
             <span>{{ result.label }}</span
@@ -259,6 +280,7 @@ onMounted(async () => {
           <button
             v-for="item in draft.pages.filter((p) => p.scope === group.scope)"
             :key="item.id"
+            :disabled="transferBusy"
             :class="{ active: pageId === item.id }"
             :aria-current="pageId === item.id ? 'page' : undefined"
             :aria-label="group.label + ' ' + item.label"
@@ -273,6 +295,7 @@ onMounted(async () => {
           <button
             v-for="group in groups"
             :key="group.scope"
+            :disabled="transferBusy"
             :class="{ active: scope === group.scope }"
             @click="navigate(group.scope + '.' + (group.scope === 'shared' ? 'providers' : 'model'))"
           >
@@ -281,6 +304,7 @@ onMounted(async () => {
         </div>
         <select
           :value="pageId"
+          :disabled="transferBusy"
           aria-label="设置页面"
           @change="navigate(($event.target as HTMLSelectElement).value)"
         >
@@ -296,12 +320,22 @@ onMounted(async () => {
       <div class="settings-detail" @change="changed">
         <div class="settings-detail-heading">
           <h3>{{ groupLabel(scope) }} · {{ page?.label }}</h3>
-          <button v-if="page" :disabled="busy || !editor.pageChanged(page)" @click="editor.undo(page)">
+          <button
+            v-if="page && page.key !== 'data_transfer'"
+            :disabled="busy || !editor.pageChanged(page)"
+            @click="editor.undo(page)"
+          >
             撤回本页修改
           </button>
         </div>
         <p class="settings-scope-note">
-          {{ scope === 'shared' ? '这些资源由两种模式共用。' : '参数独立保存，成功保存后用于下一轮。' }}
+          {{
+            page?.key === 'data_transfer'
+              ? '备份个人数据，或导入后继续故事。'
+              : scope === 'shared'
+                ? '这些资源由两种模式共用。'
+                : '参数独立保存，成功保存后用于下一轮。'
+          }}
         </p>
         <section
           v-if="page"
@@ -500,6 +534,13 @@ onMounted(async () => {
           />
           <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
+          <DataTransferSettings
+            v-else-if="page.key === 'data_transfer'"
+            :flush="editor.flush"
+            @busy="transferBusy = $event"
+            @imported="afterImport"
+            @open-session="emit('openSession', $event)"
+          />
           <PreferencePresetSettings
             v-else-if="page.key === 'preference_presets'"
             :presets="editor.draftValue('shared', 'preference_presets')"

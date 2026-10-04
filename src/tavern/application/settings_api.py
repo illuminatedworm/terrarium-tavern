@@ -78,7 +78,8 @@ def page_catalog():
                               ("preference_presets", "常用偏好", ["preference_presets"]),
                               ("editor", "角色卡编辑", ["card_editor"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network"]),
-                              ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"])]:
+                              ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
+                              ("data_transfer", "数据导入导出", [])]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
     return result
 

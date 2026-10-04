@@ -124,6 +124,8 @@ def create_app(data_dir=None):
 
     from tavern.application.settings_api import register_settings_routes
     register_settings_routes(app, store)
+    from tavern.application.transfer_api import register_transfer_routes
+    register_transfer_routes(app, store)
     from tavern.application.message_adapter_api import register_message_adapter_routes
     register_message_adapter_routes(app, store)
 

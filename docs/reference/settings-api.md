@@ -46,6 +46,23 @@ Content-Type: application/json
 
 常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`；三者不能仅包含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表，设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只作为可复用内容，不自动关联或更新会话的 `turn_preference`。
 
+## 个人数据包
+
+全局设置页面标识为 `shared.data_transfer`，不参与普通字段写入和页级撤回。
+
+| 接口 | 请求与响应 |
+|---|---|
+| `GET /api/data-transfer` | 返回可导出的用户角色、角色卡和对话简表 |
+| `POST /api/data-transfer/export` | JSON：`settings`、`include_api_keys`、`personas`、`cards`、`sessions`、`browser_preferences`；三组条目为 ID 数组，响应为 ZIP 附件 |
+| `POST /api/data-transfer/preview` | multipart `file`；返回类别和条目预览、`sha256`、`settings_revisions` |
+| `POST /api/data-transfer/import` | multipart `file` 与 JSON 字符串 `options`；包含预览的 `sha256`、`restore_settings`，恢复设置时还需 `settings_revisions` |
+
+导入响应包含新 ID 数组 `personas`、`cards`、`sessions`，以及 `settings_restored`、`browser_preferences`。客户端收到结果后重新读取资源列表；恢复设置时重新建立设置编辑会话，并应用返回的浏览器偏好。
+
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
+
+导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及角色卡编辑对话/草稿；完整目录迁移使用 CLI 完整备份。
+
 ## 消息适配
 
 模型配置的 `message_adapter` 字典整体写入，例如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`；省略类型使用程序默认值。只允许覆盖类型目录中 `configurable=true` 的项。
