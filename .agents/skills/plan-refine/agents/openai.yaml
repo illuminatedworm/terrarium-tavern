@@ -1,0 +1,6 @@
+interface:
+  display_name: "计划二审"
+  short_description: "审查已有计划的隐含决定，按需补充客观验收与原型比较，形成第二版计划"
+  default_prompt: "使用 $plan-refine 审查刚才的 plan，必要时向我提问，然后输出完整第二版；先不实施。"
+policy:
+  allow_implicit_invocation: false
