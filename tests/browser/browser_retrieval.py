@@ -42,7 +42,7 @@ async def main():
                 await dialog.get_by_role('button',name='通用 提供商',exact=True).click()
                 await dialog.get_by_role('button',name='添加提供商',exact=True).click()
                 await dialog.get_by_label('名称',exact=True).last.fill('备用 API')
-                await dialog.get_by_label('接口地址',exact=True).last.fill('http://127.0.0.1:9999/v1')
+                await dialog.get_by_label('主域名',exact=True).last.fill('http://127.0.0.1:9999')
                 await dialog.get_by_role('button',name='通用 本地模型',exact=True).click()
                 await expect(dialog.get_by_role('heading',name='本地检索模型',exact=True)).to_be_visible()
                 await expect(dialog.get_by_text('尚未下载',exact=True)).to_have_count(2)
@@ -55,6 +55,16 @@ async def main():
                     await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
                     response = await page.request.get(f'http://127.0.0.1:{port}/api/settings')
                     assert (await response.json())['shared']['local_models']['embedding' if model_type == 'Embedding' else 'reranker']['model'] == prefix + '4B'
+                    quantization = dialog.get_by_role('combobox',name='量化',exact=True).nth(index)
+                    await expect(quantization).to_have_value('none')
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await quantization.select_option('int8')
+                    await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
+                    response = await page.request.get(f'http://127.0.0.1:{port}/api/settings')
+                    assert (await response.json())['shared']['local_models']['embedding' if model_type == 'Embedding' else 'reranker']['quantization'] == 'int8'
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await quantization.select_option('none')
+                    await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')
                     async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
                         await model.select_option(prefix + '0.6B')
                     await expect(dialog.locator('.settings-save-status')).to_contain_text('已保存')

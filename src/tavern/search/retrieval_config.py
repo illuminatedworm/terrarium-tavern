@@ -128,6 +128,7 @@ class LocalModel(BaseModel):
     model: str
     revision: str = "main"
     device: str = "cuda:0"
+    quantization: Literal["none", "int8"] = "none"
     batch_size: int = Field(8, ge=1, le=128)
     dimensions: int = Field(1024, ge=32, le=2560)
 

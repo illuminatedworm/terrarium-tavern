@@ -116,6 +116,15 @@ useTimedError(error);
         </option>
       </select></label
     >
+    <label
+      >量化<select v-model="settings.local_models[purpose].quantization">
+        <option value="none">不量化（BF16）</option>
+        <option value="int8">INT8（LLM.int8()）</option>
+      </select></label
+    >
+    <p v-if="settings.local_models[purpose].quantization === 'int8'" class="muted">
+      INT8 复用原始模型文件，预热时量化；切换量化方式后需重新预热。4B 建议从批量大小 1 开始。
+    </p>
     <label>版本<input v-model="settings.local_models[purpose].revision" /></label>
     <label>设备<input v-model="settings.local_models[purpose].device" placeholder="cuda:0" /></label>
     <label
