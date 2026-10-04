@@ -121,6 +121,109 @@ def test_dynamic_sources_retain_prefix_and_compare_current_versions():
     assert content.endswith("\n</card_post_history_instructions>")
 
 
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+@pytest.mark.parametrize("removal", ["disabled", "condition"])
+async def test_state_block_revokes_once_and_reopening_appends_even_the_same_value(api, removal):
+    story = Story(api)
+    block = next(b for b in story.session["recipe"]["blocks"] if b["source"] == "state")
+    if removal == "condition":
+        block["condition"] = "stat_data.hp"
+    provider = ModelTransport(story.cfg, "fixture-secret")
+
+    def request_rows(context):
+        body = provider._request(context["messages"])
+        return body["messages" if api == "anthropic" else "input"]
+
+    try:
+        first = story.compile()
+        prefix = request_rows(first)
+        story.commit(first)
+        # A hidden state change must not leave the previously sent value current.
+        story.snapshot["state"]["stat_data"]["hp"] = 0
+        if removal == "disabled":
+            block["enabled"] = False
+        closed = story.compile()
+        assert closed["context_ledger"]["rebuild_reason"] is None
+        assert closed["context_ledger"]["updates"] == [{"source": "state", "cleared": True}]
+        frames = [m["content"] for m in closed["trace"] if m["source"] == "state"]
+        assert len(frames) == 2
+        assert frames[-1].startswith("<tavern_state>\n[此前剧情状态")
+        assert frames[-1].endswith("已撤销；旧版本不再作为当前要求或状态。]\n</tavern_state>")
+        rows = request_rows(closed)
+        assert rows[:len(prefix)] == prefix
+        assert "已撤销" in json.dumps(rows[-1], ensure_ascii=False)
+        assert json.dumps(rows, ensure_ascii=False).count("已撤销") == 1
+        story.commit(closed)
+
+        for _ in range(2):
+            still_closed = story.compile()
+            assert still_closed["context_ledger"]["updates"] == []
+            later = request_rows(still_closed)
+            assert later[:len(rows)] == rows
+            assert json.dumps(later, ensure_ascii=False).count("已撤销") == 1
+            rows = later
+            story.commit(still_closed)
+
+        # Restoring the old value still needs a new frame after its revocation.
+        story.snapshot["state"]["stat_data"]["hp"] = 3
+        block["enabled"] = True
+        reopened = story.compile()
+        assert reopened["context_ledger"]["rebuild_reason"] is None
+        assert reopened["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
+        later = request_rows(reopened)
+        assert later[:len(rows)] == rows
+        assert json.dumps({"stat_data": {"hp": 3}}) in reopened["messages"][-1]["content"]
+        assert "当前剧情状态" in json.dumps(later[-1], ensure_ascii=False)
+        assert "已撤销" not in json.dumps(later[-1], ensure_ascii=False)
+        story.commit(reopened)
+        assert story.compile()["context_ledger"]["updates"] == []
+    finally:
+        await provider.close()
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
+@pytest.mark.parametrize("empty_state", [{}, {"stat_data": {}}])
+async def test_empty_state_replaces_prior_values_and_restoring_appends_once(api, empty_state):
+    story = Story(api)
+    original = copy.deepcopy(story.snapshot["state"])
+    provider = ModelTransport(story.cfg, "fixture-secret")
+
+    def request_rows(context):
+        body = provider._request(context["messages"])
+        return body["messages" if api == "anthropic" else "input"]
+
+    try:
+        first = story.compile()
+        prefix = request_rows(first)
+        story.commit(first)
+        story.snapshot["state"] = copy.deepcopy(empty_state)
+        cleared = story.compile()
+        assert cleared["context_ledger"]["rebuild_reason"] is None
+        assert cleared["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
+        content = cleared["messages"][-1]["content"]
+        assert "取代此前同来源版本" in content
+        assert content.endswith(json.dumps(empty_state) + "\n</tavern_state>")
+        assert "hp" not in content
+        rows = request_rows(cleared)
+        assert rows[:len(prefix)] == prefix
+        assert "hp" not in json.dumps(rows[-1], ensure_ascii=False)
+        story.commit(cleared)
+
+        unchanged = story.compile()
+        assert unchanged["context_ledger"]["updates"] == []
+        assert request_rows(unchanged)[:len(rows)] == rows
+        story.commit(unchanged)
+        story.snapshot["state"] = original
+        restored = story.compile()
+        assert restored["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
+        assert restored["messages"][-1]["content"].endswith(json.dumps(original) + "\n</tavern_state>")
+        assert "当前剧情状态" in json.dumps(request_rows(restored)[-1], ensure_ascii=False)
+        story.commit(restored)
+        assert story.compile()["context_ledger"]["updates"] == []
+    finally:
+        await provider.close()
+
+
 @pytest.mark.parametrize("change", ["history", "fixed", "depth", "order", "window", "format"])
 def test_rebuild_preserves_compiler_positions_and_drops_obsolete_frames(change):
     story = Story()

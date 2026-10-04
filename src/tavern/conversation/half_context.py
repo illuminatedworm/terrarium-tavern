@@ -201,8 +201,6 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     for key, previous_value in seen.items():
         if key not in current and previous_value["value"] is not None:
             source = previous_value["source"]
-            if source == "state":
-                continue
             updates.append({"role": previous_value["role"], "source": source, "anchor_id": input_id,
                 "content": frame_content(source,
                     f"[此前{previous_value['label']}已撤销；旧版本不再作为当前要求或状态。]"),
