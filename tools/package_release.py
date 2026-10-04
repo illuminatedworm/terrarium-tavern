@@ -12,6 +12,7 @@ FILES = (
     "pyproject.toml", "uv.lock", "package.json", "package-lock.json",
     "compatibility.lock.json", "index.html", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
     "setup.ps1", "start.ps1", "stop.ps1", "run-dev.ps1", "build.ps1",
+    "setup.sh", "start.sh", "stop.sh", "run-dev.sh", "build.sh",
 )
 DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools")
 
@@ -79,6 +80,9 @@ def package(destination=None):
         for name, data in sorted(contents.items()):
             info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
+            if name.endswith(".sh"):
+                info.create_system = 3
+                info.external_attr = 0o100755 << 16
             archive.writestr(info, data)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     destination.with_suffix(".zip.sha256").write_text(f"{digest}  {destination.name}\n", encoding="ascii")

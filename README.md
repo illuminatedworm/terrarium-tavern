@@ -2,11 +2,11 @@
 
 **让设定在需要时进入故事，让记忆随故事逐步积累。**
 
-实验阶段 · Windows 10/11 · Python 3.12 · Vue 3 · TypeScript 5.8
+实验阶段 · Windows 10/11 / Linux（Bash） · Python 3.12 · Vue 3 · TypeScript 5.8
 
 Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的本地角色扮演应用。本项目类似 Silly Tavern 且兼容其部分生态，围绕长篇互动叙事组织角色卡、世界书、对话分支和剧情记忆，探索如何在有限上下文中维持设定与故事的连续性。
 
-项目目前处于实验阶段，面向 Windows 本机使用。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过 Chat Completions、Responses、Anthropic Messages 或 Gemini 接入，不同功能部分可以使用不同模型。
+项目目前处于实验阶段，面向本机使用，提供 Windows PowerShell 和 Linux Bash 脚本。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过 Chat Completions、Responses、Anthropic Messages 或 Gemini 接入，不同功能部分可以使用不同模型。
 
 ## 许可
 
@@ -94,6 +94,18 @@ Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 qu
 
 自定义端口使用 `start.ps1 -Port 8001`，自定义数据目录使用 `start.ps1 -Data 'D:\MyStories'`。详细说明见[安装与维护](docs/guides/maintenance.md)。
 
+Linux 下可使用根目录的 Bash 脚本：
+
+```bash
+./setup.sh
+./start.sh
+# 自定义端口和数据目录
+./start.sh --port 8001 --data '/path/to/My Stories'
+./stop.sh --port 8001
+```
+
+`setup.sh` 默认沿用环境中的代理，可用 `--proxy '<HTTP(S) 代理地址>'` 指定代理，或用 `--proxy ''` 禁用安装代理；本地检索依赖使用 `--local-retrieval`。已有 uv 时直接使用，否则在 `.cache/uv/` 中安装 uv，避免修改系统 Python。Chromium 缺少系统库时，可运行 `.venv/bin/python -m playwright install-deps chromium` 安装所需系统依赖（可能需要 sudo）。
+
 ## 开始使用
 
 1. **配置模型**：在“设置 → 通用 → 提供商”添加连接，再分别配置 full agent 或 half agent 的模型。两种模式参数独立；half agent 内的正文生成和后台整理也分别选择模型。普通参数自动保存，提示词点击绿色勾保存；详见[设置说明](docs/guides/settings.md)。后台历史补查等功能需要模型支持工具调用。
@@ -140,6 +152,8 @@ npm.cmd test
 ```
 
 也可直接运行 `.\run-dev.ps1`。若 8000 端口已有本项目后端，开发脚本会复用它；否则会启动后端并在退出时关闭。访问 8000 端口仍使用上次构建的页面；需要更新该页面时运行 `.\build.ps1`（等同于 `npm.cmd run build`）。
+
+Linux 开发时运行 `./run-dev.sh`，构建时运行 `./build.sh`；测试使用 `npm test` 和 `.venv/bin/python -m pytest -q`。`npm run dev` 目前仍是 Windows PowerShell 入口。
 
 ## 致谢
 
