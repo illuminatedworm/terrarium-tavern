@@ -497,11 +497,12 @@ const loreRecords = computed(() => {
     pendingVisible.value ? [...messages, { snapshot: { lore_injections: pendingLore.value } }] : messages,
   );
 });
-const pendingInputLore = computed(() =>
-  pendingLore.value.filter(
-    (record) => !record.manually_removed && record.anchor_id === pendingInput.value?.id,
-  ),
-);
+const pendingInputLore = computed(() => {
+  const inputId = pendingInput.value?.id;
+  // Regeneration reuses an input whose lore is already shown at its history anchor.
+  if (session.value?.messages.some((message: any) => message.id === inputId)) return [];
+  return pendingLore.value.filter((record) => !record.manually_removed && record.anchor_id === inputId);
+});
 const removingLore = ref(false);
 async function removeLore(record: LoreRecord) {
   if (removingLore.value || busy.value || activeTurn.value?.status === 'awaiting_review') return;

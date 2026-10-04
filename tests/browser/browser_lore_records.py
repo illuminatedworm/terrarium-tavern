@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import sys
 import tempfile
 from pathlib import Path
 from threading import Thread
@@ -11,11 +12,56 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
-from tavern.core.models import SessionCreate
+from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import dump, uid
 
 
-async def main():
+async def check_pending_lore(page, store, sid, screenshots):
+    records = page.locator('.lore-injection-records')
+    for index, mode in enumerate(('regenerate', 'regenerate', 'send')):
+        current = store.session(sid)
+        user = current['messages'][-2] if mode == 'regenerate' else {
+            'id': uid(), 'parent': current['head'], 'role': 'user',
+            'raw': '新的发言', 'model': '新的发言', 'display': '新的发言',
+            'snapshot': current['snapshot'],
+        }
+        injections = [r for r in current['snapshot']['lore_injections'] if not r.get('manually_removed')]
+        if mode == 'send':
+            injections = [*injections, {**injections[-1], 'anchor_id': user['id']}]
+        tid, _ = store.create_turn(sid, TurnRequest(
+            mode=mode, text=user['raw'], message_id=current['head'] if mode == 'regenerate' else None,
+            operation_id=uid(), expected_revision=current['revision'],
+        ))
+        store.set_turn(tid, status='running')
+        store.event(tid, 'input_ready', {'message': user, 'lore_injections': injections})
+        store.event(tid, 'text', {'text': '等待中的草稿'})
+        for width, height in [(1440, 900), (390, 844)]:
+            await page.set_viewport_size({'width': width, 'height': height})
+            await page.reload()
+            await expect(page.locator('.draft')).to_contain_text('等待中的草稿')
+            await expect(records).to_have_count(len(injections))
+            await expect(page.locator(f'.message.user[data-message-id="{user["id"]}"]')
+                         if mode == 'regenerate' else page.locator('.message.user').last).to_contain_text(user['raw'])
+            anchors = await records.evaluate_all('nodes=>nodes.map(e=>e.dataset.anchorId)')
+            assert len(set(anchors)) == len(anchors), anchors
+            await expect(page.locator('.message.user').filter(has_text=user['raw'])).to_have_count(1)
+            await page.screenshot(path=str(screenshots / f'pending-{index}-{width}.png'))
+        reply = {
+            'id': uid(), 'parent': user['id'], 'role': 'assistant',
+            'raw': '已完成的回复', 'model': '已完成的回复', 'display': '已完成的回复',
+            'snapshot': {**current['snapshot'], 'lore_injections': injections},
+        }
+        store.commit_turn(tid, {'messages': [reply] if mode == 'regenerate' else [user, reply],
+                                'before': current['snapshot']})
+        await expect(page.get_by_role('button', name='发送', exact=True)).to_be_visible()
+        await expect(page.locator(f'.message[data-message-id="{reply["id"]}"]')).to_contain_text(reply['raw'])
+        await expect(records).to_have_count(len(injections))
+        assert store.events(tid)[0]['payload']['lore_injections'] == injections
+        assert store.session(sid)['snapshot']['lore_injections'] == injections
+    print('Pending lore: repeated regeneration, streaming, reload, completion and new-send reinjection passed.')
+
+
+async def main(*, pending_only=False):
     screenshots = Path(".cache/lore-records-ui")
     screenshots.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as root:
@@ -71,6 +117,10 @@ async def main():
                     await page.reload()
                     records = page.locator('.lore-injection-records')
                     await expect(records).to_have_count(2)
+                    if pending_only:
+                        await check_pending_lore(page, store, session['id'], screenshots)
+                        assert not errors, errors
+                        return
                     for anchor in [greeting, later_user]:
                         record = page.locator(f'.lore-injection-records[data-anchor-id="{anchor}"]')
                         assert await record.evaluate("e=>e.nextElementSibling.dataset.messageId") == anchor
@@ -134,6 +184,7 @@ async def main():
                     snapshot = store.session(session['id'])['snapshot']
                     assert snapshot['lore']['first'] == {'present': True}
                     assert snapshot['lore_injections'][0] == {'id': 'first', 'anchor_id': greeting, 'manually_removed': True}
+                    await check_pending_lore(page, store, session['id'], screenshots)
                     assert not errors, errors
                     print('Lore records, anchors, preview order, reload and mobile layout passed.')
                 finally:
@@ -144,4 +195,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(pending_only='--pending-only' in sys.argv))
