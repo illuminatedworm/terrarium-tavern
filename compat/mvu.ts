@@ -97,23 +97,48 @@ function clean(data: any): any {
   if (_.isPlainObject(data)) return Object.fromEntries(Object.entries(data).filter(([k]) => !['$meta','$arrayMeta'].includes(k)).map(([k,v]) => [safePath(k), clean(v)]));
   return data;
 }
+function parseInitialData(content: string) {
+  const wrapped = content.trim().match(/^<initvar\b[^>]*>([\s\S]*?)<\/initvar\s*>$/i);
+  const text = (wrapped?.[1] ?? content).trim();
+  const codeblock = text.match(/^```[^\r\n]*\r?\n([\s\S]*?)\r?\n```$/);
+  const initial = YAML.parse(codeblock?.[1] ?? text);
+  if (!_.isPlainObject(initial)) throw Error('InitVar 必须为对象');
+  safePath(JSON.stringify(initial).includes('__proto__') ? '__proto__' : 'ok');
+  return initial;
+}
+function mergeInitialData(target: Data, initial: Data) {
+  // Match upstream correctlyMerge for fragments in the same worldbook/opening.
+  return _.mergeWith(target, initial, (_old, value) => Array.isArray(value) ? value : undefined);
+}
 export async function initialize(entries: any[], old: Data, emit: (name: string, ...args: any[]) => Promise<void>, greeting = '') {
   const data = _.cloneDeep(old);
   data.stat_data ||= {};
   data.initialized_lorebooks ||= {};
   let changed = false;
-  // Opening-specific values take precedence over worldbook defaults, once only.
+  // MVU reads InitVar entries even when their prompt injection is disabled.
+  entries = entries.filter(e => (e.terrarium?.audience ?? e.extensions?.terrarium?.audience) !== 'tracker_mvu' && /\[initvar\]/i.test(e.comment || ''));
   const opening = Array.from(greeting.matchAll(/<initvar\b[^>]*>([\s\S]*?)<\/initvar\s*>/gi));
-  entries = [...opening.map((match, index) => ({id: `opening:${index}`, comment: '[initvar]', content: match[1]})), ...entries];
-  for (const entry of entries.filter(e => e.enabled !== false && !e.disable && (e.terrarium?.audience ?? e.extensions?.terrarium?.audience) !== 'tracker_mvu' && /\[initvar\]/i.test(e.comment || ''))) {
-    const key = `card:${entry.id}`;
-    if (data.initialized_lorebooks[key]) continue;
-    const initial = YAML.parse(entry.content);
-    if (!_.isPlainObject(initial)) throw Error('InitVar 必须为对象');
-    safePath(JSON.stringify(initial).includes('__proto__') ? '__proto__' : 'ok');
-    data.stat_data = _.merge({}, initial, data.stat_data);
-    data.initialized_lorebooks[key] = [entry.content];
-    changed = true;
+  const openingInitialized = _.has(data.initialized_lorebooks, 'card:opening:0');
+  if (opening.length || openingInitialized) {
+    if (!openingInitialized) {
+      // A complete opening replaces this card's defaults; keep the marker on
+      // later runtime opens so omitted fields never return from the worldbook.
+      data.stat_data = opening.reduce((initial, match) => mergeInitialData(initial, parseInitialData(match[1])), {});
+      opening.forEach((match, index) => {data.initialized_lorebooks[`card:opening:${index}`] = [match[1]];});
+      for (const entry of entries) data.initialized_lorebooks[`card:${entry.id}`] = [entry.content];
+      changed = true;
+    }
+  } else {
+    const initial: Data = {};
+    for (const entry of entries) {
+      const key = `card:${entry.id}`;
+      if (data.initialized_lorebooks[key]) continue;
+      mergeInitialData(initial, parseInitialData(entry.content));
+      data.initialized_lorebooks[key] = [entry.content];
+      changed = true;
+    }
+    // Upstream preserves existing root values as complete objects/arrays.
+    if (changed) data.stat_data = {...initial, ...data.stat_data};
   }
   const core=(globalThis as any).MVUReference;
   if (changed || !data.schema) data.schema = core ? core.generateSchema(_.cloneDeep(data.stat_data),data.schema) : schemaFor(data.stat_data);

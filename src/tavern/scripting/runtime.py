@@ -93,7 +93,8 @@ class ScriptRuntime:
             "bookName": normalize(document).get("character_book", {}).get("name", "character"),
         }
         for entry in data["lore"]:
-            if entry.get("terrarium", {}).get("audience") == "runtime_init" and entry.get("enabled", True):
+            if (entry.get("terrarium", {}).get("audience") == "runtime_init"
+                    and entry.get("enabled", True) and not entry.get("disable", False)):
                 entry["comment"] = "[initvar] " + entry.get("comment", "")
             if "[initvar]" in entry.get("comment", "").lower():
                 entry["content"] = (
