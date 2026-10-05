@@ -80,6 +80,26 @@ async def test_read_history_can_correct_missing_ref_after_actionable_feedback(st
         await service.close()
 
 
+@pytest.mark.parametrize("name", ["search_lore", "unknown_tool"])
+async def test_unknown_tool_errors_identify_missing_name_and_allow_retry(story, name):
+    store, session = story
+    service = runtime(store)
+    model = Model((name, {"query": "灯塔"}), ("search_read_lore", {"query": "灯塔"}), "继续。")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        assert name not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
+        output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert output[0] == {"error": f"工具不存在：{name}；请使用本轮提供的工具名称"}
+        assert output[1]["matches"]
+        event = next(e for e in store.events(result["id"]) if e["kind"] == "full_agent_tool")
+        assert event["payload"]["result"] == output[0]
+        for key in ("handoff", "notes", "window"):
+            assert current["snapshot"]["full_agent"][key] == session["snapshot"]["full_agent"][key]
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize("lore_name", ["search_lore", "search_read_lore"])
 async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story, lore_name):
     store, session = story
@@ -118,7 +138,7 @@ async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected
         input_at = max(i for i, message in enumerate(initial) if message["role"] == "user")
         assert all(r["messages"][:input_at + 1] == initial[:input_at + 1] for r in model.requests)
         output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-        assert "不允许此工具" in output[0]["error"]
+        assert output[0] == {"error": "工具不存在：read_lore；请使用本轮提供的工具名称"}
         assert output[1]["matches"]
         assert all("text" in match and "error" not in match for match in output[1]["matches"])
         # The rejected historical call/result remains a complete exchange before the successful search.
@@ -182,7 +202,8 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert result["status"] == "committed", result["error"]
             assert not session["snapshot"]["full_agent"]["handoff"]["text"]
             assert "write_handoff" not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
-            assert "error" in json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
+            feedback = json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
+            assert feedback == {"error": "当前模式或授权不允许此工具"}
             fork = store.fork_session(session["id"], session["head"], session["revision"])
             assert fork["disabled_tools"] == ["write_handoff"]
             result, session = await turn(service, session, Model("重生成"), mode="regenerate")

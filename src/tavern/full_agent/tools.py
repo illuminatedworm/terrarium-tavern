@@ -234,6 +234,8 @@ class AgentTools:
 
     async def execute(self, name, arguments):
         owner = self.owner
+        if name not in SPECS:
+            raise ValueError(f"工具不存在：{name}；请使用本轮提供的工具名称")
         allowed = {t["function"]["name"] for t in owner.definitions}
         if name not in allowed:
             raise ValueError("当前模式或授权不允许此工具")

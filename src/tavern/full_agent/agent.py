@@ -304,7 +304,7 @@ class FullAgent:
             self.append({"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}, window_id)
             self.event("full_agent_tool", {**activity, "result": result,
                 "duration_s": time.perf_counter() - tool_started,
-                "message": name + (" · 参数/权限错误" if "error" in result else " · 完成")})
+                "message": name + (" · 调用错误" if "error" in result else " · 完成")})
             if self.rolled:
                 self.continuation = []
                 self.rolled = False
