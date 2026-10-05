@@ -2131,22 +2131,37 @@ header {
   background: var(--danger-surface);
 }
 .inline-message-editor textarea {
-  min-height: 130px;
-  resize: vertical;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
   font-size: var(--story-font-size, 18px);
   line-height: var(--story-line-height, 1.9);
   font-family: var(--story-font-family, sans-serif);
-  background: var(--surface-panel);
-  border-color: var(--text-faint);
+  background: transparent;
+  color: var(--text-story);
+  overflow-wrap: anywhere;
+  outline: 1px solid transparent;
+  outline-offset: 4px;
 }
-.inline-message-editor > div {
+.inline-message-editor textarea:focus-visible {
+  outline: 1px solid var(--border-subtle);
+  outline-offset: 4px;
+}
+.inline-edit-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
 }
-.inline-message-editor > div span {
+.inline-edit-actions span {
   margin-right: auto;
   color: var(--text-faint);
   font-size: 10px;
@@ -2154,6 +2169,62 @@ header {
 .inline-message-editor button {
   padding: 6px 10px;
   font-size: 11px;
+}
+.message-edit-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 8px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  box-shadow: 0 8px 30px #0006;
+  font: 13px/1.7 var(--font-ui);
+}
+.edit-choice-menu {
+  width: 184px;
+}
+.edit-choice-menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+}
+.edit-choice-menu button:hover,
+.edit-choice-menu button.selected,
+.edit-choice-menu button:focus-visible {
+  background: var(--surface-hover);
+  color: var(--accent-hover);
+}
+.edit-save-question {
+  width: 256px;
+  padding: 14px;
+}
+.edit-save-question p {
+  margin: 0 0 12px;
+}
+.edit-save-question > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.edit-save-question button {
+  padding: 7px 10px;
+  font: 12px/1.5 var(--font-ui);
+}
+@media (max-width: 520px) {
+  .inline-edit-actions {
+    flex-wrap: wrap;
+  }
 }
 .regenerate-bar input {
   flex: 1;

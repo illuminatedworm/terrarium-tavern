@@ -271,6 +271,7 @@ class SessionCacheBreakpoint(BaseModel):
 class MessageEdit(BaseModel):
     text: str = Field(min_length=1)
     expected_revision: int
+    notify_ai: bool = False
 
 
 class ContentEdit(BaseModel):

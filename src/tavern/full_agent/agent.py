@@ -26,7 +26,7 @@ class FullAgent:
     def __init__(self, store, tid, document, session, history, snapshot, request, script, settings,
                  user_message, retrieval, progress=None):
         self.store, self.tid, self.document = store, tid, document
-        self.session = {**session, "messages": history}
+        self.session = {**session, "messages": history, "edit_notification_history": session["messages"]}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.settings, self.user_message, self.lane = settings, user_message, retrieval
         self.source_history = history + [user_message]

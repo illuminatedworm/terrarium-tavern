@@ -710,6 +710,12 @@ def compile_context(
             "rules", "session_preference", "retrieval_protocol"):
         at += 1
     messages[at:at] = constant_messages
+    from tavern.conversation.message_editing import edit_notification
+    notice = edit_notification(snapshot, session.get("messages", history),
+        {m["message_id"]: m["content"] for m in messages if m.get("message_id")}, expand)
+    if notice:
+        messages.append({"role": "system", "content": notice, "source": "message_edit_notice",
+                         "priority": 100, "required": True})
     total = REPLY_PRIMING + sum(message_tokens(m, settings) for m in messages)
     if enforce_budget and total > available:
         diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})

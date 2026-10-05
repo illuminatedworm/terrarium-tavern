@@ -14,6 +14,7 @@ CLEAR_TEXT = {
     "regenerate_instruction": "此前的重生成要求已撤销。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",
     "context_warning": "此前的 handoff 过时提醒已解除。",
+    "message_edit_notice": "本轮原文编辑提醒已处理。",
     "context_budget": "此前的窗口压力提醒已解除。",
 }
 

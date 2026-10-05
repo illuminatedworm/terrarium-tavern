@@ -211,7 +211,7 @@ class RoleplayRuntime:
             await runtime.close()
         return self.store.session(sid)
 
-    async def edit_message(self, sid, mid, text, expected_revision):
+    async def edit_message(self, sid, mid, text, expected_revision, *, notify_ai=False):
         session = self.store.session(sid)
         if mid not in editable_message_ids(session["messages"], session["head"]):
             raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
@@ -239,7 +239,7 @@ class RoleplayRuntime:
                 await self.dependencies.resolve(card)
                 display = self.dependencies.markup(card, display)
             return self.store.edit_message(
-                sid, mid, text, expected_revision, model=model, display=display,
+                sid, mid, text, expected_revision, model=model, display=display, notify_ai=notify_ai,
             )
         finally:
             await runtime.close()
@@ -414,6 +414,12 @@ class RoleplayRuntime:
                 else {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}, "scopes": {}, "content": None}
             )
             snapshot = copy.deepcopy(before)
+            from tavern.conversation.message_editing import (
+                NOTIFICATIONS,
+                inherit_edit_notifications,
+                review_snapshot,
+            )
+            inherit_edit_notifications(snapshot, session["snapshot"])
             document = copy.deepcopy(
                 snapshot.get("content", {}).get("document", card["document"])
                 if snapshot.get("content")
@@ -632,12 +638,13 @@ class RoleplayRuntime:
                 "messages": [output] if reused_user else [user_message, output],
                 "before": before,
                 "reason": "Agent / MVU 回合提交",
+                "message_edit_notified": list(snapshot.get(NOTIFICATIONS, [])),
             }
             from tavern.conversation.half_context import finalize_record
             pending["half_agent_record"] = finalize_record(
                 agent.compiled["half_agent_record"], agent.native_response, agent.clean_response, output)
             self.store.set_turn(tid, draft=final_text)
-            changed = snapshot != before
+            changed = review_snapshot(snapshot) != review_snapshot(before)
             if session["policy_effective"] == "preview" and changed:
                 self.store.set_turn(tid, status="awaiting_review", pending=dump(pending))
                 self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})

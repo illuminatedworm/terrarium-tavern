@@ -406,7 +406,7 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/messages/{mid}")
     async def edit_message(sid: str, mid: str, edit: MessageEdit):
-        return await service.edit_message(sid, mid, edit.text, edit.expected_revision)
+        return await service.edit_message(sid, mid, edit.text, edit.expected_revision, notify_ai=edit.notify_ai)
 
     @app.put("/api/sessions/{sid}/messages/{mid}/version")
     async def switch_message_version(sid: str, mid: str, change: RevisionRequest):

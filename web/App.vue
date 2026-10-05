@@ -13,6 +13,7 @@ import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
+import InlineMessageEditor from './components/story/InlineMessageEditor.vue';
 import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
 import DialogueTools from './components/story/DialogueTools.vue';
@@ -221,6 +222,9 @@ const pageMode = ref(''),
   quickEffort = ref('inherit');
 const editingMessageId = ref(''),
   editingMessageText = ref('');
+const editingNotifyChoice = ref<boolean | null>(null);
+const savingMessageEdit = ref(false);
+let editingWasFollowing = false;
 const editNotice = ref('');
 const sceneSaving = ref<'memory' | null>(null);
 const memoryRebuildEstimate = ref<any>(null);
@@ -669,7 +673,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
   clearEditNotice();
   trace.value = [];
   draft.value = '';
-  editingMessageId.value = '';
+  cancelMessageEdit();
   quickEffort.value = localStorage.getItem(`tavern-effort-${id}`) || 'inherit';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   try {
@@ -1281,25 +1285,44 @@ async function review(accept: boolean) {
   });
 }
 function beginPendingEdit() {
+  pauseForMessageEdit();
   editingMessageId.value = '__pending__';
   editingMessageText.value = visiblePendingInput.value.raw;
 }
 async function savePendingEdit() {
-  if (!editingMessageText.value.trim() || !retryableTurn.value) return;
+  if (!editingMessageText.value.trim() || !retryableTurn.value || savingMessageEdit.value) return;
   const text = editingMessageText.value;
-  await guarded(async () => {
-    activeTurn.value = await viewApi(
-      `/turns/${activeTurn.value.id}/input`,
-      { text, expected_revision: session.value.revision },
-      'PUT',
-    );
-    pendingInput.value = { raw: text };
-    pendingLore.value = [];
-    draft.value = '';
-    cancelMessageEdit();
-  });
+  const token = viewScope.current();
+  savingMessageEdit.value = true;
+  try {
+    await guarded(async () => {
+      activeTurn.value = await viewApi(
+        `/turns/${activeTurn.value.id}/input`,
+        { text, expected_revision: session.value.revision },
+        'PUT',
+      );
+      pendingInput.value = { raw: text };
+      pendingLore.value = [];
+      draft.value = '';
+      cancelMessageEdit();
+    });
+  } finally {
+    if (viewScope.owns(token)) savingMessageEdit.value = false;
+  }
 }
-function beginMessageEdit(message: any) {
+function pauseForMessageEdit() {
+  const top = chat.value?.scrollTop || 0;
+  const token = viewScope.current();
+  editingWasFollowing = followLatest.value;
+  followLatest.value = false;
+  dialogue.value?.releaseAnchor();
+  void nextTick(() =>
+    requestAnimationFrame(() => {
+      if (viewScope.owns(token) && editingMessageId.value && chat.value) chat.value.scrollTop = top;
+    }),
+  );
+}
+function beginMessageEdit(message: any, notifyAi: boolean | null = null) {
   if (
     !editableMessageIds.value.has(message.id) ||
     busy.value ||
@@ -1308,12 +1331,28 @@ function beginMessageEdit(message: any) {
     activeTurn.value?.status === 'awaiting_review'
   )
     return;
+  pauseForMessageEdit();
+  editingNotifyChoice.value = notifyAi;
   editingMessageId.value = message.id;
   editingMessageText.value = message.raw;
 }
 function cancelMessageEdit() {
+  const previous = editingMessageId.value;
   editingMessageId.value = '';
   editingMessageText.value = '';
+  editingNotifyChoice.value = null;
+  savingMessageEdit.value = false;
+  if (previous)
+    void nextTick(() => {
+      if (editingMessageId.value) return;
+      if (chat.value)
+        followLatest.value =
+          editingWasFollowing &&
+          chat.value.scrollHeight - chat.value.scrollTop - chat.value.clientHeight <= 48;
+      document
+        .querySelector<HTMLButtonElement>(`[data-message-id="${previous}"] button[aria-label="编辑"]`)
+        ?.focus({ preventScroll: true });
+    });
 }
 const switchingVersion = ref(false);
 async function switchReplyVersion(message: any, offset: number) {
@@ -1340,26 +1379,34 @@ async function switchReplyVersion(message: any, offset: number) {
     switchingVersion.value = false;
   }
 }
-async function saveMessageEdit(message: any) {
+async function saveMessageEdit(message: any, notifyAi: boolean) {
   if (
     !editingMessageText.value.trim() ||
     !editableMessageIds.value.has(message.id) ||
     busy.value ||
     switchingVersion.value ||
+    savingMessageEdit.value ||
     activeTurn.value?.status === 'awaiting_review'
   )
     return;
-  await guarded(async () => {
-    session.value = await viewApi(
-      `/sessions/${session.value.id}/messages/${message.id}`,
-      { text: editingMessageText.value, expected_revision: session.value.revision },
-      'PUT',
-    );
-    cancelMessageEdit();
-    if (session.value.edit_affected_memory) showEditNotice();
-    await load();
-    await refreshContextStats();
-  });
+  const token = viewScope.current();
+  savingMessageEdit.value = true;
+  editingNotifyChoice.value = notifyAi;
+  try {
+    await guarded(async () => {
+      session.value = await viewApi(
+        `/sessions/${session.value.id}/messages/${message.id}`,
+        { text: editingMessageText.value, expected_revision: session.value.revision, notify_ai: notifyAi },
+        'PUT',
+      );
+      cancelMessageEdit();
+      if (session.value.edit_affected_memory) showEditNotice();
+      await load();
+      await refreshContextStats();
+    });
+  } finally {
+    if (viewScope.owns(token)) savingMessageEdit.value = false;
+  }
 }
 async function inspectContext() {
   await guarded(async () => {
@@ -2115,6 +2162,8 @@ useTimedError(error);
                   :switching-version="switchingVersion"
                   :editable="editableMessageIds.has(message.id)"
                   :editing-message-id="editingMessageId"
+                  :editing-notify-choice="editingNotifyChoice"
+                  :saving-edit="savingMessageEdit"
                   v-model:editing-message-text="editingMessageText"
                   :reviewing="activeTurn?.status === 'awaiting_review'"
                   :hide-panel="!!mvuPanel"
@@ -2136,26 +2185,23 @@ useTimedError(error);
                       !session.messages.some((m: any) => m.id === visiblePendingInput.id)
                     "
                     class="message user"
+                    data-message-id="__pending__"
                   >
                     <div class="avatar">你</div>
                     <div class="message-body">
                       <div class="message-meta">
                         <strong>{{ session.persona }}</strong>
                       </div>
-                      <div v-if="editingMessageId === '__pending__'" class="inline-message-editor">
-                        <textarea
-                          v-model="editingMessageText"
-                          aria-label="编辑最新用户消息"
-                          @keydown.ctrl.enter.prevent="savePendingEdit"
-                          @keydown.escape.prevent="cancelMessageEdit"
-                        />
-                        <div class="actions">
-                          <button @click="cancelMessageEdit">取消</button
-                          ><button :disabled="!editingMessageText.trim()" @click="savePendingEdit">
-                            保存
-                          </button>
-                        </div>
-                      </div>
+                      <InlineMessageEditor
+                        v-if="editingMessageId === '__pending__'"
+                        v-model="editingMessageText"
+                        :original="visiblePendingInput.raw"
+                        :busy="savingMessageEdit"
+                        :ask-notify="false"
+                        save-label="保存"
+                        @cancel="cancelMessageEdit"
+                        @save="savePendingEdit"
+                      />
                       <template v-else>
                         <StoryProse
                           :text="visiblePendingInput.display || visiblePendingInput.raw"

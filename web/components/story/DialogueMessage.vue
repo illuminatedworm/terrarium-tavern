@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
+import InlineMessageEditor from './InlineMessageEditor.vue';
+import EditMessageButton from './EditMessageButton.vue';
 import { computed } from 'vue';
 const props = defineProps<{
   message: any;
@@ -14,6 +16,8 @@ const props = defineProps<{
   switchingVersion: boolean;
   editable: boolean;
   editingMessageId: string;
+  editingNotifyChoice: boolean | null;
+  savingEdit: boolean;
   reviewing: boolean;
   hidePanel: boolean;
   enabled: boolean;
@@ -33,8 +37,8 @@ const emit = defineEmits<{
   cancelEdit: [];
   toggleCacheBreakpoint: [];
   setCacheBreakpoint: [messageId: string];
-  saveEdit: [message: any];
-  edit: [message: any];
+  saveEdit: [message: any, notifyAi: boolean];
+  edit: [message: any, notifyAi: boolean | null];
   fork: [message: any];
   switchVersion: [message: any, direction: number];
   action: [
@@ -89,21 +93,15 @@ function forwardAction(
           >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
         >
       </div>
-      <div v-if="editingMessageId === message.id" class="inline-message-editor">
-        <textarea
-          v-model="editingMessageText"
-          rows="5"
-          autofocus
-          @keydown.escape.prevent="emit('cancelEdit')"
-          @keydown.ctrl.enter.prevent="emit('saveEdit', message)"
-        />
-        <div>
-          <span>Ctrl + Enter 保存 · Esc 取消</span><button @click="emit('cancelEdit')">取消</button
-          ><button class="primary" :disabled="!editingMessageText.trim()" @click="emit('saveEdit', message)">
-            保存修改
-          </button>
-        </div>
-      </div>
+      <InlineMessageEditor
+        v-if="editingMessageId === message.id"
+        v-model="editingMessageText"
+        :original="message.raw"
+        :busy="savingEdit"
+        :notify-choice="editingNotifyChoice"
+        @cancel="emit('cancelEdit')"
+        @save="emit('saveEdit', message, $event)"
+      />
       <StoryMessage
         v-else
         find-in-dialogue
@@ -166,24 +164,11 @@ function forwardAction(
             </svg>
           </button>
         </template>
-        <button
+        <EditMessageButton
           v-if="editable"
-          class="icon-action"
           :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
-          aria-label="编辑"
-          title="编辑本条消息"
-          @click="emit('edit', message)"
-        >
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="m12.5 3.5 4 4M3 17l1-4L14 3a2.1 2.1 0 0 1 3 3L7 16l-4 1Z"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+          @edit="emit('edit', message, $event)"
+        />
         <button
           v-if="message.role === 'assistant'"
           class="icon-action"

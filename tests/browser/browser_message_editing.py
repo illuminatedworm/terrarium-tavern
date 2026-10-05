@@ -66,6 +66,8 @@ async def main():
                             await user.get_by_role("textbox").fill(user_text)
                             async with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith(f"/messages/{user_id}")) as saved:
                                 await user.get_by_role("button", name="保存修改", exact=True).click()
+                                await expect(page.get_by_text("这次修改要提醒 AI 吗？", exact=True)).to_be_visible()
+                                await page.get_by_role("button", name="不提醒 AI", exact=True).click()
                             assert (await saved.value).status == 200
                             await expect(user.get_by_role("textbox")).to_have_count(0)
                             await expect(reply_edit).to_be_enabled()
@@ -73,6 +75,7 @@ async def main():
                             await expect(user_edit).to_be_disabled()
                             await reply.get_by_role("textbox").fill(reply_text)
                             await reply.get_by_role("button", name="保存修改", exact=True).click()
+                            await page.get_by_role("button", name="提醒 AI", exact=True).click()
                             await expect(reply.get_by_role("textbox")).to_have_count(0)
                             await page.reload()
                             await expect(user).to_contain_text(user_text)

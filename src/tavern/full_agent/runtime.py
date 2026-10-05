@@ -117,6 +117,12 @@ class FullAgentRuntime:
                 {"state": {}, "scopes": {}, "lore": {}, "content": None, "full_agent": new_state()})
             progress = self.store.full_agent_progress(tid)
             snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
+            from tavern.conversation.message_editing import (
+                NOTIFICATIONS,
+                inherit_edit_notifications,
+                review_snapshot,
+            )
+            inherit_edit_notifications(snapshot, session["snapshot"])
             card = self.store.session_card(session["id"])
             document = copy.deepcopy(progress["document"] if progress else
                 (snapshot.get("content") or {}).get("document", card["document"]))
@@ -182,8 +188,9 @@ class FullAgentRuntime:
                         "_history_observations": {user["id"]: fingerprint(user["model"]),
                                                   output_id: fingerprint(model)}}})
             pending = {"messages": [output] if reused else [user, output], "before": before,
-                       "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace}
-            if session["policy_effective"] == "preview" and snapshot != before:
+                       "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace,
+                       "message_edit_notified": list(snapshot.get(NOTIFICATIONS, []))}
+            if session["policy_effective"] == "preview" and review_snapshot(snapshot) != review_snapshot(before):
                 self.store.set_turn(tid, status="awaiting_review", pending=dump(pending))
                 self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})
             else:

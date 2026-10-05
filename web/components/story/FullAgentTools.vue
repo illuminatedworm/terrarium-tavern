@@ -154,7 +154,9 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
           />
           {{ resultLabel(tool.name, String(key)) }}
         </label>
-        <small v-if="tool.name === 'search_read_lore'">搜索直接返回命中条目的完整正文；编号和标题为可选附加信息。</small>
+        <small v-if="tool.name === 'search_read_lore'"
+          >搜索直接返回命中条目的完整正文；编号和标题为可选附加信息。</small
+        >
       </fieldset>
       <details>
         <summary>描述与参数</summary>

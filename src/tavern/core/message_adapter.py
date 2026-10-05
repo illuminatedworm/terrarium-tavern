@@ -57,6 +57,7 @@ TYPES = {item.id: item for item in (
     MessageType("custom", "自定义注入", "tavern_custom_context", True, True),
     *[MessageType(name, label, "tavern_" + name, True, True) for name, label in (
         ("turn_instruction", "本轮额外要求"), ("regenerate_instruction", "重生成要求"),
+        ("message_edit_notice", "原文编辑提醒"),
         ("turn_variable_instruction", "本轮变量要求"), ("context_warning", "资料过时提醒"),
         ("context_status", "上下文状态"), ("context_budget", "窗口预算提醒"),
         ("reply_correction", "回复纠正要求"), ("required_tool_notice", "必要工具提醒"),
@@ -76,6 +77,7 @@ SCOPES = {
        "turn_variable_instruction", "context_warning", "context_status", "context_budget")},
     "reply_correction": ("full_agent", "card_editor"), "required_tool_notice": ("background",),
     "tracker_task_update": ("background",), "last_call_notice": ("full_agent", "card_editor"),
+    "message_edit_notice": ("foreground", "full_agent", "background"),
 }
 TYPES = {name: replace(item, scopes=SCOPES.get(name, item.scopes)) for name, item in TYPES.items()}
 SOURCES = {"rules": "root_system", "system": "root_system", "input": "user", "history": None,

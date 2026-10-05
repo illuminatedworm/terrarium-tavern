@@ -41,6 +41,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     card = normalize(document)
     visible = history[window["start"]:]
     turn_instructions = {
+        "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
             if require_state_patch or allow_content_edit else ""),
@@ -81,6 +82,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}
+    from tavern.conversation.message_editing import edit_notification
+    turn_instructions["message_edit_notice"] = edit_notification(snapshot,
+        session.get("edit_notification_history", session.get("messages", history)),
+        {**history_text, input_id: user_input}, expand)
     ledger = ContextLedger(settings, items, tools, document, snapshot, records, input_id,
                            {mid: fingerprint(text) for mid, text in history_text.items()})
 
@@ -135,11 +140,9 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     for source, content in turn_instructions.items():
         update(source, content)
-    warning = ""
-    if handoff.get("stale"):
-        refs = [f"H{i+1}" for i, m in enumerate(history) if m["id"] in state.get("edited_sources", [])]
-        warning = "原始剧情已编辑，handoff 可能过时。请读取并核对：" + ", ".join(refs)
-    update("context_warning", warning)
+    # Staleness remains truthful in the user's notes and source checks. Proactive
+    # edit instructions now come only from the user's explicit notification queue.
+    update("context_warning", "")
     update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
         + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
         value=handoff["text"])

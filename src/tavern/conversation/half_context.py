@@ -11,9 +11,10 @@ from tavern.search.retrieval_text import split_retrieval
 
 # Rebuild saved frames whose update/revocation notices preceded their field tags.
 VERSION = 3
-DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction"}
+DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice"}
+TRANSIENT = {"message_edit_notice"}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
-          "state": "剧情状态", "turn_instruction": "本轮额外要求"}
+          "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒"}
 FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",
@@ -137,8 +138,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     if not reason:
         for mid, record in active:
             if record["epoch"] == epoch:
-                replay[mid] = copy.deepcopy(record["frames"])
-                for frame in record["frames"]:
+                replay[mid] = [copy.deepcopy(f) for f in record["frames"] if f["source"] not in TRANSIENT]
+                for frame in replay[mid]:
                     seen[frame["_half_frame"]["key"]] = frame["_half_frame"]
         if previous_record:
             for frame in sent:
@@ -184,13 +185,13 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
         occurrences[stem] = occurrences.get(stem, 0) + 1
         key = fingerprint([*stem, occurrences[stem]])
         label = f"{LABELS[source]}（{row['source']}/{row['role']}/{occurrences[stem]}）"
-        value = [row["content"], input_id if source == "turn_instruction" else None]
+        value = [row["content"], input_id if source == "turn_instruction" or source in TRANSIENT else None]
         current[key] = {"key": key, "source": source, "value": value, "role": row["role"], "label": label,
                         "message_type": row.get("message_type")}
         if key in seen and seen[key]["value"] == value:
             continue
         notice = (f"[当前{label}；取代此前同来源版本。"
-                  + ("仅适用于本轮。" if source == "turn_instruction" else "") + "]")
+                  + ("仅适用于本轮。" if source == "turn_instruction" or source in TRANSIENT else "") + "]")
         frame = {**row, "anchor_id": input_id, "_half_frame": current[key], "epoch": epoch,
                  "content": frame_content(source, notice, row["content"])}
         if row.get("message_type"):

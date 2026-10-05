@@ -498,6 +498,11 @@ class Store(MessageAdapters):
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
                 from tavern.full_agent.state import remap_sources
                 remap_sources(cloned["snapshot"], ids)
+                from tavern.conversation.message_editing import NOTIFICATIONS
+                if NOTIFICATIONS in cloned["snapshot"]:
+                    cloned["snapshot"][NOTIFICATIONS] = [
+                        ids[mid] for mid in cloned["snapshot"][NOTIFICATIONS] if mid in ids
+                    ]
                 for memory in cloned["snapshot"].get("memory_document", {}).get("records", []):
                     for source_ref in memory.get("sources", []) + memory.get("deleted_sources", []):
                         source_ref["message_id"] = ids.get(source_ref["message_id"], source_ref["message_id"])
@@ -739,7 +744,7 @@ class Store(MessageAdapters):
             db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
         return self.session(sid)
 
-    def edit_message(self, sid, mid, text, expected_revision, *, model=None, display=None):
+    def edit_message(self, sid, mid, text, expected_revision, *, model=None, display=None, notify_ai=False):
         if not text.strip():
             raise ValueError("消息不能为空")
         session = self.session(sid)
@@ -807,6 +812,15 @@ class Store(MessageAdapters):
                 history = lineage(row["id"], messages)
                 from tavern.full_agent.state import mark_edited
                 mark_edited(snapshot, mid, history)
+                if row["id"] == revision["head"]:
+                    from tavern.conversation.message_editing import NOTIFICATIONS
+                    notices = [ref for ref in snapshot.get(NOTIFICATIONS, []) if ref != mid]
+                    if notify_ai:
+                        notices.append(mid)
+                    if notices:
+                        snapshot[NOTIFICATIONS] = notices
+                    else:
+                        snapshot.pop(NOTIFICATIONS, None)
                 if snapshot.get("memory_document"):
                     from tavern.memories.memory_records import with_source_status
                     # Preserve the user's archive; this is a warning, not an
@@ -1142,6 +1156,21 @@ class Store(MessageAdapters):
             scene = pending.get("scene")
             if scene and not req.get("scene_refresh"):
                 raise ValueError("当前回合不允许更新场景档案")
+            if not scene and pending.get("message_edit_notified"):
+                # Consume only with the atomic story commit. Failed requests,
+                # previews and rejected reviews keep the active branch's queue.
+                from tavern.conversation.message_editing import NOTIFICATIONS
+                notified = set(pending["message_edit_notified"])
+                messages = []
+                for message in pending.get("messages", []):
+                    snapshot = dict(message["snapshot"])
+                    remaining = [mid for mid in snapshot.get(NOTIFICATIONS, []) if mid not in notified]
+                    if remaining:
+                        snapshot[NOTIFICATIONS] = remaining
+                    else:
+                        snapshot.pop(NOTIFICATIONS, None)
+                    messages.append({**message, "snapshot": snapshot})
+                pending = {**pending, "messages": messages}
             last = scene["message_id"] if scene else pending["messages"][-1]["id"]
             after = scene["snapshot"] if scene else pending["messages"][-1]["snapshot"]
             r = db.execute(

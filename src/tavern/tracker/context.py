@@ -49,4 +49,9 @@ def initial_messages(task):
         *([{"role": "system", "message_type": "tracker_mvu_rules", "content": wrap_mvu_rules("本轮 MVU 规则（只影响变量任务）：\n"
                                                       + "\n\n".join(rules))}] if rules else []),
         {"role": "user", "message_type": "tracker_input", "runtime_phase": "body", "content": json.dumps(payload, ensure_ascii=False)}]
+    from tavern.conversation.message_editing import edit_notification
+    notice = edit_notification(task.snapshot, task.session["messages"])
+    if notice:
+        messages.append({"role": "system", "message_type": "message_edit_notice",
+                         "runtime_phase": "body", "content": notice})
     return task.view.messages(runtime_messages(messages, "background"))
