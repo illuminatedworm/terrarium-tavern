@@ -206,10 +206,11 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         assert not any(m["content"].startswith("本轮须调用 patch_state")
                        for m in model.requests[0]["messages"] if isinstance(m.get("content"), str))
 
-        required = Model("过早的正文", ("patch_state", {"operations": operations, "reason": "能量变化"}), "最终正文")
+        required = Model("过早的正文", ("read_state", {}),
+                         ("patch_state", {"operations": operations, "reason": "能量变化"}), "最终正文")
         result, current = await turn(service, current, required, update_variables=True)
         assert result["status"] == "committed", result["error"]
-        assert len(required.requests) == 3
+        assert len(required.requests) == 4
         assert {tool["function"]["name"] for tool in required.requests[0]["extra_body"]["tools"]} == names
         messages = required.requests[0]["messages"]
         input_index = max(i for i, m in enumerate(messages) if m["role"] == "user" and "我答应明天" in m["content"])
@@ -219,7 +220,7 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         assert any(e["kind"] == "full_agent_reply_rejected" for e in store.events(result["id"]))
         assert current["messages"][-1]["raw"] == "最终正文"
 
-        repeated = Model(("patch_state", {"operations": operations, "reason": "首次更新"}),
+        repeated = Model(("read_state", {}), ("patch_state", {"operations": operations, "reason": "首次更新"}),
                          ("patch_state", {"operations": operations, "reason": "重复更新"}), "重复后的正文")
         result, _ = await turn(service, current, repeated, update_variables=True)
         assert result["status"] == "committed", result["error"]
@@ -616,6 +617,7 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
     try:
         session = await service.initialize_session(session["id"])
         failed, unchanged = await turn(service, session, Model(
+            ("read_state", {}),
             ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}],
                              "reason": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
         assert failed["status"] == "error"
@@ -663,7 +665,7 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
         await service.close()
 
 
-async def test_long_history_is_returned_complete_and_fact_sources_must_be_read(story):
+async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(story):
     from tavern.full_agent.agent import FullAgent
     store, session = story
     settings = store.settings().for_role("full_agent")
@@ -678,9 +680,14 @@ async def test_long_history_is_returned_complete_and_fact_sources_must_be_read(s
         "ref": "H1", "role": owner.source_history[0]["role"], "text": text}
     with pytest.raises(ValueError, match="没有此历史引用"):
         await owner.tools.execute("read_history", '{"ref":"T1.1"}')
-    with pytest.raises(ValueError, match="已搜索或读取"):
-        await owner.tools.execute("write_note", json.dumps({"key": "事实", "content": "未读", "kind": "fact", "sources": ["H2"]}))
-    assert owner.state["notes"] == {}
+    await owner.tools.execute("write_note", json.dumps({"key": "事实", "content": "未读", "kind": "fact", "sources": ["H2"]}))
+    note = copy.deepcopy(owner.state["notes"]["事实"])
+    assert note["sources"][0]["message_id"] == user["id"]
+    for sources in ([], ["H0"], ["H999"], ["T1.1"]):
+        with pytest.raises(ValueError):
+            await owner.tools.execute("write_note", json.dumps({
+                "key": "事实", "content": "无效", "kind": "fact", "sources": sources}))
+        assert owner.state["notes"]["事实"] == note
 
 
 async def test_empty_story_can_continue_without_half_agent_state(story):
@@ -730,7 +737,7 @@ async def test_empty_note_and_history_search_results_are_minimal(story):
 
 
 @pytest.mark.parametrize("status", ["active", "archived"])
-async def test_note_update_requires_complete_current_window_and_revision_read(story, status):
+async def test_note_update_and_reactivation_need_no_reads_across_windows(story, status):
     from tavern.full_agent.agent import FullAgent
     from tavern.full_agent.state import rollover
 
@@ -747,25 +754,13 @@ async def test_note_update_requires_complete_current_window_and_revision_read(st
     async def call(name, **args):
         return await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
 
-    async def denied():
-        with pytest.raises(ValueError, match="完整读取当前版本"):
-            await call("write_note", key="线索", content="覆盖", kind="hypothesis")
-
-    await call("search_notes", query="*")
-    await denied()
-    with pytest.raises(ValueError):
-        await call("read_note", ref="线索", offset=4)
-    await denied()
-    assert (await call("read_note", ref="线索"))["text"] == old["content"]
     await call("write_note", key="线索", content=old["content"] + "，新增猜想", kind="hypothesis")
     assert owner.state["notes"]["线索"]["revision"] == 2
     assert owner.state["notes"]["线索"]["status"] == "active"
-    await denied()  # Reading revision 1 does not authorize replacing revision 2.
-    await call("read_note", ref="线索")
+    await call("write_note", key="线索", content=old["content"] + "，再次修订", kind="hypothesis")
     rollover(owner.state, owner.history, "保留交接", 0)
-    await denied()  # The old tool result left the context window.
-    await call("read_note", ref="线索")
     await call("write_note", key="线索", content=old["content"] + "，修正猜想", kind="hypothesis")
+    assert owner.state["notes"]["线索"]["revision"] == 4
 
 
 async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(story):
@@ -845,7 +840,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert result["status"] == "committed", result["error"]
         wire = model.requests[-1]
         assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
-        assert all(name not in FULL_AGENT_PROMPT for name in SPECS if name != "read_note")
+        assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
         assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
         assert any(m.get("content", "").startswith("<tavern_memory>")

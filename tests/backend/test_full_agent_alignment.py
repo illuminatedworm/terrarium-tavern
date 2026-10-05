@@ -548,7 +548,7 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
 async def test_fork_remaps_runtime_references_and_uses_new_session_identity(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        result, session = await turn(service, session, Model(("patch_state", {"operations": [], "reason": "none"}),
+        result, session = await turn(service, session, Model(("read_state", {}), ("patch_state", {"operations": [], "reason": "none"}),
             ("patch_state", {"operations": [{"op": "add", "path": "/audit", "value": True}], "reason": "audit"}), "first"),
             update_variables=True)
         assert result["status"] == "committed", result["error"]
@@ -718,12 +718,17 @@ def test_history_macro_change_rebuilds_once_and_records_why():
     assert third["messages"] == second["messages"]
 
 
-def test_only_exact_old_default_memory_prompt_is_migrated():
+@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards"])
+def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
     from tavern.full_agent.config import FULL_AGENT_PROMPT
 
     raw = SettingsDocument().model_dump()
-    old = Path("tests/fixtures/full_agent_prompt_before_ledger.txt").read_text(encoding="utf-8")
+    if previous == "before_ledger":
+        old = Path("tests/fixtures/full_agent_prompt_before_ledger.txt").read_text(encoding="utf-8")
+    else:
+        old = FULL_AGENT_PROMPT.replace("不要只留下当前状态的快照。",
+            "不要只留下当前状态的快照。覆盖长期笔记前，先用 read_note 读取当前版本。")
     raw["full_agent"]["system_prompt"] = old
     migrated = migrate_settings(raw)
     assert migrated.full_agent.system_prompt == FULL_AGENT_PROMPT != old
@@ -731,6 +736,10 @@ def test_only_exact_old_default_memory_prompt_is_migrated():
     assert migrate_settings(migrated.model_dump()) == migrated
     raw["full_agent"]["system_prompt"] = old + "\nA custom instruction."
     assert migrate_settings(raw).full_agent.system_prompt == raw["full_agent"]["system_prompt"]
+    legacy = Settings(full_agent_system_prompt=old).model_dump()
+    assert migrate_settings(legacy).full_agent.system_prompt == FULL_AGENT_PROMPT
+    legacy["full_agent_system_prompt"] = old + "\nA custom instruction."
+    assert migrate_settings(legacy).full_agent.system_prompt == legacy["full_agent_system_prompt"]
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])

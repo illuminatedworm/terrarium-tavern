@@ -211,6 +211,18 @@ const updateVariables = ref(false);
 watch(updateVariables, () => {
   if (!busy.value) void refreshContextStats();
 });
+watch(
+  () => [session.value?.agent_mode, session.value?.disabled_tools],
+  () => {
+    if (
+      session.value?.agent_mode === 'full_agent' &&
+      (session.value.disabled_tools?.includes('read_state') ||
+        session.value.disabled_tools?.includes('patch_state'))
+    ) {
+      updateVariables.value = false;
+    }
+  },
+);
 const allowEdit = ref(false),
   importInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>();
@@ -2388,7 +2400,13 @@ useTimedError(error);
                     ><input
                       v-model="updateVariables"
                       type="checkbox"
-                      :disabled="busy || activeTurn?.status === 'awaiting_review'"
+                      :disabled="
+                        busy ||
+                        activeTurn?.status === 'awaiting_review' ||
+                        (isFullAgent &&
+                          (session?.disabled_tools?.includes('read_state') ||
+                            session?.disabled_tools?.includes('patch_state')))
+                      "
                     />
                     本轮更新变量</label
                   ><label

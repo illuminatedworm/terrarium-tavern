@@ -14,6 +14,7 @@ from tavern.conversation.variable_rules import collect_variable_rules, variable_
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
+from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.state import full_state
 
@@ -79,6 +80,20 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     for item in trace:
         if item["window_id"] == window["id"]:
             by_owner.setdefault(item["message_id"], []).append(item["message"])
+
+    # Filter a single chronological sequence so native state after a retired
+    # exchange cannot resurrect broad source reads through another turn.
+    records = [{**message, "_content_owner": owner["id"]}
+               for owner in visible for message in by_owner.get(owner["id"], [])]
+    records.extend({**message, "_content_owner": None} for message in continuation)
+    records, _ = content_history(records)
+    by_owner, continuation = {}, []
+    for message in records:
+        owner = message.pop("_content_owner")
+        if owner is None:
+            continuation.append(message)
+        else:
+            by_owner.setdefault(owner, []).append(message)
 
     records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}

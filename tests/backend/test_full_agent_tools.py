@@ -152,13 +152,14 @@ async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected
         await app.state.service.close()
 
 
-async def test_required_mvu_update_rejects_disabled_patch_tool(story):
+@pytest.mark.parametrize("tool", ["patch_state", "read_state"])
+async def test_required_mvu_update_rejects_disabled_dependency(story, tool):
     store, session = story
     with store.connection() as db:
-        db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (json.dumps(["patch_state"]), session["id"]))
+        db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (json.dumps([tool]), session["id"]))
     service = runtime(store)
     try:
-        with pytest.raises(ValueError, match="启用 patch_state"):
+        with pytest.raises(ValueError, match=f"启用 {tool}"):
             service.submit(session["id"], TurnRequest(
                 text="继续", operation_id="mvu-disabled", expected_revision=0, update_variables=True))
         assert store.session(session["id"])["turns"] == []
@@ -302,10 +303,11 @@ async def test_disabled_rollover_fails_before_requesting_unavailable_tool(story,
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
-async def test_character_tool_guidance_matches_read_and_patch_roots(wrapped):
+async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_cards(wrapped):
     from types import SimpleNamespace
 
     from tavern.core.model_view import ModelView
+    from tavern.full_agent.state import new_state
     from tavern.full_agent.tools import AgentTools, tool_definitions
 
     data = {"name": "Guide", "description": "Before", "custom_field": "Custom"}
@@ -313,15 +315,14 @@ async def test_character_tool_guidance_matches_read_and_patch_roots(wrapped):
     definitions = tool_definitions(TurnRequest(operation_id="guidance", expected_revision=0),
                                    {"policy_effective": "auto"}, document=document)
     catalog = {item["function"]["name"]: item["function"] for item in definitions}
-    assert "custom_field" in catalog["read_character"]["description"]
-    prefix = "/data" if wrapped else ""
-    assert f'prefix: {json.dumps(prefix)}.' in catalog["revise_content"]["description"]
-    owner = SimpleNamespace(document=document, definitions=definitions, state={}, snapshot={},
+    assert "custom_field" not in json.dumps(catalog)
+    assert "No wildcard" in catalog["read_character"]["description"]
+    owner = SimpleNamespace(document=document, definitions=definitions, state=new_state(), snapshot={},
                             session={}, model_view=ModelView(document), tid="guidance")
     tools = AgentTools(owner)
     before = await tools.execute("read_character", json.dumps({"ref": "description"}))
     assert before["text"] == "Before"
     await tools.execute("revise_content", json.dumps({"operations": [
-        {"op": "replace", "path": prefix + "/description", "value": "After"}], "reason": "Update setting"}))
+        {"op": "set_character", "field": "description", "value": "After"}], "reason": "Update setting"}))
     after = await tools.execute("read_character", json.dumps({"ref": "description"}))
     assert after["text"] == "After"

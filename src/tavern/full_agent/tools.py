@@ -5,12 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tavern.character.cards import normalize
 from tavern.conversation.context import get_path
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
+from tavern.full_agent.content import CharacterRead, ContentEditor, ContentRevision, LoreRead, entry_view
+from tavern.full_agent.read_guards import DraftReads
 from tavern.full_agent.state import note_view, rollover, source_hash
 
 
@@ -38,10 +39,6 @@ class NoteRead(Read):
     ref: str = Field(min_length=1, max_length=80, description="Exact existing note key, e.g. relationships/guide; accepts active or archived notes, not H/L references.")
 
 
-class CharacterRead(Read):
-    ref: str = Field(min_length=1, max_length=80, description="Exact existing top-level field of normalized character data, e.g. description or character_book. No data prefix, dotted paths, or JSON Pointers; read the whole field to inspect nested values.")
-
-
 class Handoff(Arguments):
     content: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text; must contain non-whitespace text.")
 
@@ -54,7 +51,7 @@ class Note(Arguments):
     key: str = Field(min_length=1, max_length=80, pattern=r"^[\w\-/ .\u4e00-\u9fff]+$", description="Meaningful, stable note key.")
     content: str = Field(min_length=1, max_length=64000, description="Complete updated note text; must contain non-whitespace text.")
     kind: Literal["fact", "hypothesis", "plan"] = Field(description="Whether the note records evidence-backed facts, a hypothesis, or a plan.")
-    sources: list[str] = Field(default_factory=list, max_length=20, description="H references searched or read in this turn; required for facts.")
+    sources: list[str] = Field(default_factory=list, max_length=20, description="Valid H references in this branch, including the current user input; required for facts. No prior tool read or search is required.")
 
 
 class NoteKey(Arguments):
@@ -99,6 +96,7 @@ RESULT_FIELDS = {
     "read_state": {"include_metadata": True},
     "read_character": {"include_metadata": True},
 }
+READ_DEPENDENCIES = {"patch_state": "read_state"}
 
 
 def result_field(session, tool, field):
@@ -106,6 +104,11 @@ def result_field(session, tool, field):
 
 
 SPECS = {
+    "search_lore_entries": (Search, "Locate ordinary narrative worldbook entries for editing by literal title, keywords or text. "
+        "Includes disabled ordinary entries; query=* lists up to limit results. Returns L handles, titles and labeled navigation previews, not full sources. "
+        "Does not grant edit permission or change narrative retrieval. Read one target with read_lore_entry before updating/removing it."),
+    "read_lore_entry": (LoreRead, "Read one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. "
+        "Scripts, variable rules, initialization and runtime configuration are not accessible. Reads qualify only in this turn/window while current."),
     "search_read_lore": (Query, "Search the lorebook and read complete matching entries. "
         "Use a concise, self-contained query in the lorebook's language to describe what you're looking for. "
         "Entry conditions, cooldowns, relevance thresholds, and limits may filter matches. "
@@ -125,9 +128,9 @@ SPECS = {
         "Use read_note for full text and optional source metadata."),
     "read_note": (NoteRead, "Read an active or archived note by key, with optional kind, H sources, and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
-    "write_note": (Note, "Create or fully replace a note by key. Before replacing any existing or archived note, "
-        "read its complete current version with read_note in this turn and window; preserve still-valid information. "
-        "kind=fact requires supporting H sources searched or read this turn. hypothesis marks uncertainty; plan marks intent. "
+    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. "
+        "No prior note or history read is required. kind=fact requires supporting H sources valid in this branch. "
+        "hypothesis marks uncertainty; plan marks intent. "
         "Attribute character claims and preserve uncertainty where evidence is insufficient. Respect revoked information. "
         "Replacing an archived key reactivates it. Draft changes commit with the turn; review mode requires approval."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
@@ -136,14 +139,19 @@ SPECS = {
         "a dot-separated path reads one field. For MVU variables include stat_data in the read path (e.g. stat_data.hp), unlike patch_state paths which are relative to stat_data. Check values and structure before updating."),
     "patch_state": (StatePatch, "Call exactly once only when this turn's system message requires an MVU update. "
         "Apply MVU-validated JSON Patch relative to stat_data; omit the /stat_data prefix from paths. "
-        "Read current values first; follow the latest <mvu_rules> snapshot, give story evidence in reason, "
+        "First read all current variables with read_state(path=\"\") or read_state(path=\"stat_data\") in this turn and window; "
+        "partial or stale reads do not qualify, even for operations=[]. Follow the latest <mvu_rules> snapshot, give story evidence in reason, "
         "and align changes with the final narrative. Submit operations=[] when nothing changed. "
         "Use this tool instead of MVU blocks in prose. Draft changes commit with the turn; review mode requires approval."),
-    "revise_content": (Patch, "Apply JSON Patch to this branch's character/lorebook draft, not the library card. "
-        "Paths are relative to the original card document: for spec-wrapped cards use /data/description or /data/character_book; for unwrapped cards use /description or /character_book. read_character strips the data wrapper when reading. Read fields with read_character first; follow turn authorization and give a reason. Do not modify internal fingerprints or hashes. "
+    "revise_content": (ContentRevision, "Edit this branch's narrative settings with set_character, add_lore, update_lore or remove_lore. "
+        "No card/worldbook replacement, JSON Patch, paths, indices, IDs, scripts, openings, extensions, variable rules or initialization. "
+        "set_character requires read_character for that field; update_lore/remove_lore require read_lore_entry for that L handle. "
+        "Read the complete latest target in this turn/window; after an accepted change reread it before another edit. "
+        "add_lore needs no bulk read. Omitted entry properties and unrelated source stay intact. Script-bearing targets are protected. "
         "Draft changes commit with the turn; review mode requires approval."),
-    "read_character": (CharacterRead, "Read a complete top-level character field, such as description, personality, "
-        "scenario, character_book, or extensions, for inspection or editing."),
+    "read_character": (CharacterRead, "Read one complete allowed setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
+        "A missing allowed field returns null. No wildcard, whole card, worldbook, opening, extensions or scripts. "
+        "Read the latest field in this turn/window before set_character; script-bearing fields cannot be read or edited by this tool."),
     "set_retrieval_query": (Query, "Save concise next-turn automatic lorebook retrieval clues about the scene, "
         "relevant entities, or unresolved issues. Distinguish anticipated events from facts. "
         "Clues commit with the final narrative and stay outside story prose."),
@@ -155,6 +163,9 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     names = set(SPECS)
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
+        for write, read in READ_DEPENDENCIES.items():
+            if read not in names:
+                names.discard(write)
     if not catalog and session["policy_effective"] == "directed" and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
@@ -162,11 +173,6 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         "new_context": f" content limit: {config.handoff_tokens} tokens.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
     }
-    if document is not None:
-        fields = json.dumps(list(normalize(document)), ensure_ascii=True)
-        limits["read_character"] = f" Existing fields at the start of this tool context: {fields}. Successful revisions may change them."
-        root = "/data" if document.get("spec") else ""
-        limits["revise_content"] = f" Current character-field JSON Pointer prefix: {json.dumps(root)}."
     if settings is not None:
         mechanisms = {
             "keyword": "keyword",
@@ -191,15 +197,8 @@ def encoded(value):
 class AgentTools:
     def __init__(self, owner):
         self.owner = owner
-        self.read_sources = {}
-        self.note_reads = {}
-
-    def note_read_key(self, note):
-        return (self.owner.state["window"]["id"], note["key"], note["revision"])
-
-    def require_note_read(self, note):
-        if self.note_read_key(note) not in self.note_reads:
-            raise ValueError("更新已有笔记前必须用 read_note 完整读取当前版本，再基于旧内容累积修订")
+        self.reads = DraftReads(owner)
+        self.content = ContentEditor(owner, self.reads)
 
     def cap_text(self, content, maximum, label):
         if not content.strip() or count_text(content, self.owner.settings) > maximum:
@@ -209,7 +208,7 @@ class AgentTools:
         return {**metadata, "text": wrap(text)}
 
     def archive(self):
-        return [{"ref": f"H{i+1}", "role": m["role"], "text": m["raw"], "source": m}
+        return [{"ref": f"H{i+1}", "role": m["role"], "text": m["raw"]}
                 for i, m in enumerate(self.owner.source_history)]
 
     def search(self, rows, query, limit, *, include_preview=True):
@@ -224,12 +223,10 @@ class AgentTools:
                 break
             text = row["text"]
             at = max(0, min((text.casefold().find(t) for t in terms if t in text.casefold()), default=0) - 80)
-            item = {k: v for k, v in row.items() if k not in ("source", "text")}
+            item = {k: v for k, v in row.items() if k != "text"}
             if include_preview:
                 item["preview"] = text[at:at+400]
             results.append(item)
-            if row.get("source"):
-                self.read_sources[row["ref"]] = row["source"]
         return {"matches": results, **({"notice": "使用 read 工具读取完整原文。"} if results else {})}
 
     async def execute(self, name, arguments):
@@ -250,6 +247,18 @@ class AgentTools:
         except ValidationError as error:
             raise ToolArgumentError(name, model, error) from None
         state = owner.state
+        if name == "search_lore_entries":
+            rows = [{"ref": row["ref"], "title": row["title"],
+                     "text": row["title"] + " " + " ".join(row["keys"] + row["secondary_keys"]) + " " + row["content"]}
+                    for row in self.content.rows()]
+            result = self.search(rows, args.query, args.limit)
+            result["notice"] = "preview 仅用于定位；用 read_lore_entry 完整读取一个目标后才能修改或删除。"
+            return owner.model_view.expose(result)
+        if name == "read_lore_entry":
+            _, raw, entry = self.content.resolve(args.ref)
+            result = owner.model_view.expose({"ref": args.ref, **entry_view(entry)})
+            self.reads.read_entry(args.ref, raw)
+            return result
         if name == "search_read_lore":
             return await owner.retrieve(args.query, source="agent",
                                         include_ref=result_field(owner.session, name, "include_ref"),
@@ -263,10 +272,7 @@ class AgentTools:
                 raise ValueError("当前分支没有此历史引用")
             metadata = ({"ref": args.ref, "role": row["role"]}
                         if result_field(owner.session, name, "include_metadata") else {})
-            result = self.read(row["text"], **metadata)
-            if row.get("source"):
-                self.read_sources[args.ref] = row["source"]
-            return result
+            return self.read(row["text"], **metadata)
         if name in ("write_handoff", "new_context"):
             self.cap_text(args.content, owner.settings.full_agent_config.handoff_tokens, "handoff")
             if name == "new_context":
@@ -289,22 +295,19 @@ class AgentTools:
             if note is None:
                 raise ValueError("笔记 key 不存在")
             meta = note_view(note, owner.source_history)
-            result = self.read(meta.pop("content"),
-                               **(meta if result_field(owner.session, name, "include_metadata") else {}))
-            self.note_reads[self.note_read_key(note)] = True
-            return result
+            return self.read(meta.pop("content"),
+                             **(meta if result_field(owner.session, name, "include_metadata") else {}))
         if name == "write_note":
             self.cap_text(args.content, owner.settings.full_agent_config.note_tokens, "笔记")
             old = state["notes"].get(args.key, {})
-            if old:
-                self.require_note_read(old)
             if args.kind == "fact" and not args.sources:
-                raise ValueError("fact 必须提供已读取的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
+                raise ValueError("fact 必须提供当前分支有效的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
             sources = []
+            history = {f"H{i+1}": message for i, message in enumerate(owner.source_history)}
             for ref in dict.fromkeys(args.sources):
-                source = self.read_sources.get(ref)
+                source = history.get(ref)
                 if source is None:
-                    raise ValueError("sources 只能引用本回合已搜索或读取的 H 原文；先调用历史工具")
+                    raise ValueError("sources 包含当前分支无效的历史引用；请使用有效的 H 引用")
                 sources.append({"message_id": source["id"], "hash": source_hash(source)})
             state["notes"][args.key] = {"key": args.key, "content": args.content, "kind": args.kind,
                                        "status": "active", "revision": old.get("revision", 0) + 1, "sources": sources}
@@ -316,28 +319,27 @@ class AgentTools:
             state["notes"][args.key]["revision"] += 1
             return {"key": args.key, "archived": True}
         if name == "read_state":
-            result = get_path(state_for_model(owner.snapshot["state"]), owner.model_view.restore(args.path))
-            return self.read(encoded(owner.model_view.expose(result)),
-                             **({"path": args.path} if result_field(owner.session, name, "include_metadata") else {}))
+            path = owner.model_view.restore(args.path)
+            value = get_path(state_for_model(owner.snapshot["state"]), path)
+            result = self.read(encoded(owner.model_view.expose(value)),
+                               **({"path": args.path} if result_field(owner.session, name, "include_metadata") else {}))
+            if path in ("", "stat_data"):
+                self.reads.read_state()
+            return result
         if name == "patch_state":
+            self.reads.require_state()
             result = await owner.script.call("process", "", owner.model_view.operations(args.operations), "")
             owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
             owner.patch_state_done = True
             return {"saved_to_draft": True, "notice": "变量已通过 MVU 校验。"}
         if name == "read_character":
-            data = owner.model_view.expose(normalize(owner.document))
-            if args.ref not in data:
-                raise ValueError("角色字段不存在")
-            value = data[args.ref]
-            return self.read(value if isinstance(value, str) else encoded(value),
-                             **({"ref": args.ref} if result_field(owner.session, name, "include_metadata") else {}))
+            value = self.content.character(args.ref)
+            result = owner.model_view.expose({"text": value,
+                **({"ref": args.ref, "exists": value is not None} if result_field(owner.session, name, "include_metadata") else {})})
+            self.reads.read_character(args.ref)
+            return result
         if name == "revise_content":
-            from tavern.character.card_workflow import validate_document
-            revised = owner.model_view.patch(owner.document, args.operations)
-            validate_document(revised)
-            owner.document = revised
-            owner.snapshot["content"] = {"document": revised, "reason": args.reason, "turn": owner.tid}
-            return {"saved_to_draft": True}
+            return self.content.revise(args)
         if name == "set_retrieval_query":
             owner.retrieval_query = args.query
             return {"saved_to_draft": True}

@@ -6,7 +6,7 @@ import time
 import jsonpatch
 import jsonpointer
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import normalize
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.conversation.variable_rules import collect_variable_rules
@@ -14,6 +14,8 @@ from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
 from tavern.full_agent.argument_errors import ToolArgumentError
+from tavern.full_agent.content import lore_references
+from tavern.full_agent.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.state import full_state
@@ -64,7 +66,9 @@ class FullAgent:
             self.state["window"]["id"], store.device_id(), routing=copy.deepcopy(saved_context.get("routing", {})),
             sent_breakpoints=store.cache_breakpoint_history(session["id"]))
         if progress:
-            self.continuation = copy.deepcopy(progress["continuation"])
+            self.continuation, retired = content_history(progress["continuation"])
+            if retired:
+                self.request_context.routing.clear()
             self.new_trace = copy.deepcopy(progress["new_trace"])
             self.retrieval_query = progress["retrieval_query"]
             self.must_rollover = progress["must_rollover"]
@@ -73,8 +77,7 @@ class FullAgent:
                 # it from portable history instead of inheriting the old limit.
                 self.must_rollover = False
             self.exiting = set(progress["exiting"])
-            self.tools.read_sources = copy.deepcopy(progress["read_sources"])
-            self.tools.note_reads = {tuple(key): True for key in progress["note_reads"]}
+            self.tools.reads.restore(progress.get("tool_reads", {}))
             if "patch_state_done" in progress:
                 self.patch_state_done = progress["patch_state_done"]
             else:
@@ -95,8 +98,7 @@ class FullAgent:
             "retrieval_query": self.retrieval_query, "must_rollover": self.must_rollover,
             "patch_state_done": self.patch_state_done,
             "variable_rules": self.variable_rules,
-            "exiting": sorted(self.exiting), "read_sources": self.tools.read_sources,
-            "note_reads": [list(key) for key in self.tools.note_reads],
+            "exiting": sorted(self.exiting), "tool_reads": copy.deepcopy(self.tools.reads.records),
             "request_context": self.request_context.saved(),
             "provider_origin": response_origin(self.settings),
         })
@@ -108,11 +110,7 @@ class FullAgent:
         return macros(text, normalize(self.document), self.session["persona"], self.snapshot["state"])
 
     def lore_refs(self):
-        refs = self.state.setdefault("lore_references", {})
-        for entry in lore_entries(self.document, "writer"):
-            if entry["id"] not in refs.values():
-                refs[f"L{len(refs)+1}"] = entry["id"]
-        return refs
+        return lore_references(self.document, self.state)
 
     def retain(self):
         visible = self.history[self.state["window"]["start"]:]
@@ -267,7 +265,10 @@ class FullAgent:
     async def resume_tools(self):
         records = list(self.new_trace)
         for seq, item in enumerate(records, 1):
-            message = item["message"]
+            message = copy.deepcopy(item["message"])
+            if message.get("tool_calls"):
+                message["tool_calls"] = [call for call in message["tool_calls"]
+                                         if not retired_content_call(message, call)]
             if item["window_id"] != self.state["window"]["id"] or not message.get("tool_calls"):
                 continue
             returned = set()
@@ -315,7 +316,8 @@ class FullAgent:
             await self.save_progress()
 
     def response_message(self, response, provider, calls):
-        message = {"role": "assistant", "content": response.content or "", "tool_calls": [
+        message = {"role": "assistant", "_content_tools_version": CONTENT_TOOLS_VERSION,
+                   "content": response.content or "", "tool_calls": [
             {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
             for c in calls]}
         message.update({k: copy.deepcopy(v) for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()

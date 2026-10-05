@@ -26,6 +26,11 @@ from tavern.core.prompts import (
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 
+LEGACY_FULL_AGENT_PROMPT_HASHES = {
+    "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e",
+    "7ee23c619af1a6cb406489c4c9316a8457e2161d68d1ef5feba332c8fdb267ea",
+}
+
 
 class StrictSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -275,7 +280,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                         changed_scopes.add(scope)
         # Upgrade only the exact previous application default. Custom story
         # instructions remain user-owned; tool descriptions carry the new rule too.
-        if fingerprint(raw["full_agent"].get("system_prompt")) == "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e":
+        if fingerprint(raw["full_agent"].get("system_prompt")) in LEGACY_FULL_AGENT_PROMPT_HASHES:
             raw["full_agent"]["system_prompt"] = FULL_AGENT_PROMPT
             changed_scopes.add("full_agent")
         for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
@@ -298,6 +303,8 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         return SettingsDocument.model_validate(raw)
     migrate_tracker_settings(raw)
     old = Settings.model_validate(raw)
+    if fingerprint(old.full_agent_system_prompt) in LEGACY_FULL_AGENT_PROMPT_HASHES:
+        old.full_agent_system_prompt = FULL_AGENT_PROMPT
     if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
         old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
     values = old.model_dump()

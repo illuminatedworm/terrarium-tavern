@@ -26,8 +26,10 @@ class FullAgentRuntime:
             raise ValueError("此会话不是 Full Agent 模式")
         if request.scene_refresh or request.generate is not None:
             raise ValueError("Full Agent 使用笔记工具管理记忆，不接受 Half Agent 的后台重建或上下文覆盖请求")
-        if request.update_variables and "patch_state" in session["disabled_tools"]:
-            raise ValueError("本轮要求更新 MVU 变量，请先在 Full Agent 工具页启用 patch_state")
+        if request.update_variables:
+            for name in ("patch_state", "read_state"):
+                if name in session["disabled_tools"]:
+                    raise ValueError(f"本轮要求更新 MVU 变量，请先在 Full Agent 工具页启用 {name}")
         settings = self.store.settings().for_role("full_agent")
         if self.provider_factory is None:
             if not settings.model:

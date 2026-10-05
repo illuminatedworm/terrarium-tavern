@@ -94,7 +94,7 @@ async def test_delayed_injection_deduplicates_across_tools_and_turns_without_gra
         assert result["status"] == "committed", result["error"]
         assert len(frames(unrequested.requests[-1]["messages"])) == 1
         assert "未要求更新" in [m["content"] for m in unrequested.requests[-1]["messages"] if m["role"] == "tool"][-1]
-        repeated = Model(empty_patch(), "Fourth narrative")
+        repeated = Model(("read_state", {}), empty_patch(), "Fourth narrative")
         result, session = await turn(service, session, repeated, update_variables=True)
         assert result["status"] == "committed", result["error"]
         assert len(frames(repeated.requests[0]["messages"])) == 1
@@ -108,19 +108,19 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
     store, service, session = game(tmp_path)
     opening = session["head"]
     try:
-        result, session = await turn(service, session, Model(empty_patch(), "First"), update_variables=True)
+        result, session = await turn(service, session, Model(("read_state", {}), empty_patch(), "First"), update_variables=True)
         assert result["status"] == "committed", result["error"]
         branch = store.fork_session(session["id"], opening, session["revision"])
         isolated = Model("Branch without variable update")
         _, branch = await turn(service, branch, isolated)
         assert not frames(isolated.requests[0]["messages"])
 
-        regenerated = Model(empty_patch(), "Replacement")
+        regenerated = Model(("read_state", {}), empty_patch(), "Replacement")
         result, session = await turn(service, session, regenerated, mode="regenerate", update_variables=True)
         assert result["status"] == "committed", result["error"]
         assert len(frames(regenerated.requests[0]["messages"])) == 1
         switched = Model(("new_context", {"content": "Keep current facts", "keep_recent": 0}),
-                         empty_patch(), "After rollover")
+                         ("read_state", {}), empty_patch(), "After rollover")
         result, session = await turn(service, session, switched, update_variables=True)
         assert result["status"] == "committed", result["error"]
         assert all(len(frames(r["messages"])) == 1 for r in switched.requests)
@@ -131,31 +131,25 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
         await service.close()
 
 
-@pytest.mark.parametrize("operation,expected", [
-    ({"op": "replace", "path": "/character_book/entries/1/content", "value": "RULE_B"}, ["RULE_B", "HP_AT_START="]),
-    ({"op": "add", "path": "/character_book/entries/-", "value": {
-        "content": "RULE_NEW", "extensions": {"terrarium": {"audience": "tracker_mvu"}}}}, ["RULE_A", "RULE_NEW"]),
-    ({"op": "add", "path": "/character_book/entries/1/enabled", "value": False}, ["HP_AT_START="]),
-    ({"op": "replace", "path": "/character_book/entries", "value": []}, ["当前没有启用"]),
-])
-async def test_rule_changes_take_effect_next_turn_and_empty_rules_revoke_previous_rules(tmp_path, operation, expected):
+@pytest.mark.parametrize("target", ["tracker_mvu", "runtime_init"])
+async def test_full_agent_cannot_edit_variable_rules_or_initialization(tmp_path, target):
     store, service, session = game(tmp_path)
     try:
-        changed = Model(("read_character", {"ref": "character_book"}),
-                        ("revise_content", {"operations": [operation], "reason": "User requested rule update"}),
-                        empty_patch(), "Narrative")
-        result, session = await turn(service, session, changed, update_variables=True, allow_content_edit=True)
+        model = Model(("read_character", {"ref": "character_book"}),
+            ("revise_content", {"operations": [{"op": "add_lore", "entry": {
+                "title": "Rule change", "content": "RULE_NEW", "extensions": {"terrarium": {"audience": target}}}}],
+                "reason": "Forbidden runtime configuration"}),
+            ("read_state", {}), empty_patch(), "Narrative")
+        result, session = await turn(service, session, model, update_variables=True, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
-        for request in changed.requests:
-            [rules] = frames(request["messages"])
-            assert "RULE_A" in rules and "RULE_B" not in rules and "RULE_NEW" not in rules
-        follow = Model(empty_patch(), "Next narrative")
+        errors = [e for e in store.events(result["id"]) if e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"]]
+        assert len(errors) == 2
+        assert "content" not in session["snapshot"] or session["snapshot"]["content"] is None
+        follow = Model(("read_state", {}), empty_patch(), "Next narrative")
         result, session = await turn(service, session, follow, update_variables=True, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
-        rules = frames(follow.requests[0]["messages"])[-1]
-        assert all(value in rules for value in expected)
-        if "RULE_A" not in expected:
-            assert "RULE_A" not in rules
+        assert "RULE_A" in frames(follow.requests[0]["messages"])[-1]
+        assert "RULE_NEW" not in frames(follow.requests[0]["messages"])[-1]
     finally:
         await service.close()
 
@@ -167,8 +161,8 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
         assert session["snapshot"]["state"]["stat_data"]["hp"] == 8
         model = Model(("read_state", {}),
             ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 5}], "reason": "Injury"}),
-            ("read_character", {"ref": "character_book"}),
-            ("revise_content", {"operations": [{"op": "replace", "path": "/character_book/entries/1/content", "value": "RULE_B"}], "reason": "Next turn rules"}),
+            ("read_lore_entry", {"ref": "L1"}),
+            ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": "NEW_NARRATIVE_SETTING"}}], "reason": "Narrative setting"}),
             ("new_context", {"content": "Injury applied, continue narrative", "keep_recent": 0}),
             RuntimeError("Disconnected"))
         failed, unchanged = await turn(service, session, model, update_variables=True, allow_content_edit=True)
@@ -204,7 +198,8 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
         result, current = await turn(service, current, following, update_variables=True, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
         rules = frames(following.requests[0]["messages"])[-1]
-        assert "HP_AT_START=5" in rules and "RULE_B" in rules and "RULE_A" not in rules
+        assert "HP_AT_START=5" in rules and "RULE_A" in rules and "RULE_B" not in rules
+        assert current["snapshot"]["content"]["document"]["character_book"]["entries"][0]["content"] == "NEW_NARRATIVE_SETTING"
         assert current["snapshot"]["state"]["stat_data"]["hp"] == 5
     finally:
         await service.close()
@@ -232,7 +227,7 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(
             repeated = await client.post(url, json=payload)
             assert frames(repeated.json()["messages"]) == frames(loaded.json()["messages"])
         assert load_trace(store, session["id"], session["messages"]) == []
-        model = Model(*([empty_patch()] if update_variables else []), "Narrative")
+        model = Model(*([("read_state", {}), empty_patch()] if update_variables else []), "Narrative")
         result, session = await turn(service, session, model,
                                      update_variables=update_variables, allow_content_edit=allow_content_edit)
         assert result["status"] == "committed", result["error"]
