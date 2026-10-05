@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from tavern.application.modes import ModeRuntime
-from tavern.character.cards import export_card, normalize
+from tavern.character.cards import append_lorebook, export_card, normalize
 from tavern.conversation.context import compile_context
 from tavern.core.models import (
     ContentEdit,
@@ -268,13 +268,8 @@ def create_app(data_dir=None):
     async def import_lore(cid: str, file: UploadFile = File(...)):
         card = store.card(cid)
         book = json.loads(await file.read(4 * 1024 * 1024))
-        entries = book.get("entries", [])
-        if isinstance(entries, dict):
-            entries = [{**entry, "uid": key} for key, entry in entries.items()]
-        if not isinstance(entries, list):
-            raise ValueError("世界书 entries 无效")
         data = card["document"].get("data", card["document"])
-        data["character_book"] = {**book, "entries": entries}
+        data["character_book"] = append_lorebook(data.get("character_book"), book)
         return store.edit_card(cid, card["document"], card["revision"])
 
     @app.get("/api/cards/{cid}/export")

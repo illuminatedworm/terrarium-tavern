@@ -7,6 +7,7 @@ import FieldHelp from '../common/FieldHelp.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from '../../lib/api';
+import { appendLoreBook } from '../../lib/loreBook';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const props = defineProps<{ card: any; session?: any; draftMode?: boolean }>();
@@ -326,14 +327,15 @@ async function dependencies() {
   });
 }
 async function importLore(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0];
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
   if (!file) return;
   await act(async () => {
     const book = JSON.parse(await file.text());
-    if (!book.entries || typeof book.entries !== 'object') throw Error('世界书 entries 无效');
-    data.value.character_book = book;
-    notice.value = '世界书已导入草稿，保存后生效。';
+    data.value.character_book = appendLoreBook(data.value.character_book, book);
+    notice.value = '世界书条目已添加到草稿，保存后生效。';
   });
+  input.value = '';
 }
 function addLore() {
   loreDialog.value = {

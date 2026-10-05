@@ -9,6 +9,7 @@ import struct
 import zipfile
 import zlib
 from pathlib import PurePosixPath
+from uuid import uuid4
 
 MAX_BYTES = 32 * 1024 * 1024
 PNG = b"\x89PNG\r\n\x1a\n"
@@ -123,6 +124,45 @@ def lore_entries(document, audience=None):
         if audience is None or e.get("terrarium", {}).get("audience", "writer") == audience:
             result.append(e)
     return result
+
+
+def append_lorebook(current, imported):
+    """Append losslessly, preserving the destination's settings and entry container."""
+    if not isinstance(imported, dict) or not isinstance(imported.get("entries"), (dict, list)):
+        raise ValueError("世界书 entries 无效")
+    incoming = imported["entries"]
+    if any(not isinstance(entry, dict) for entry in (incoming.values() if isinstance(incoming, dict) else incoming)):
+        raise ValueError("世界书条目及其扩展必须为对象")
+    book = copy.deepcopy(current if current is not None else {
+        **imported, "entries": {} if isinstance(incoming, dict) else [],
+    })
+    entries = book.setdefault("entries", [])
+    used = {entry["id"] for entry in lore_entries({"character_book": book})}
+    rows = incoming.items() if isinstance(incoming, dict) else enumerate(incoming)
+    identities = lore_entries({"character_book": imported})
+    for (key, raw), identity in zip(rows, identities, strict=True):
+        entry = copy.deepcopy(raw)
+        if isinstance(entries, list) and isinstance(incoming, dict):
+            entry["uid"] = key
+        eid = identity["id"]
+        collision = eid in used
+        if collision:
+            while eid in used:
+                eid = str(uuid4())
+        # Imported index/key identities must stay stable at their new location.
+        if "id" not in entry or collision:
+            entry["id"] = eid
+        if collision and "id" in entry.get("extensions", {}):
+            entry["extensions"]["id"] = eid
+        used.add(eid)
+        if isinstance(entries, list):
+            entries.append(entry)
+        else:
+            target = key if isinstance(incoming, dict) else eid
+            while target in entries:
+                target = str(uuid4())
+            entries[target] = entry
+    return book
 
 
 def card_scripts(document):
