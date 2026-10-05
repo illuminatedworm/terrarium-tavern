@@ -298,6 +298,17 @@ const sidebarSection = ref(
 const deleteBubble = ref<any>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
+let optionsNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+function clearOptionsNotice() {
+  clearTimeout(optionsNoticeTimer);
+  optionsNoticeTimer = undefined;
+  optionsNotice.value = '';
+}
+function showOptionsNotice(message: string) {
+  clearOptionsNotice();
+  optionsNotice.value = message;
+  optionsNoticeTimer = setTimeout(clearOptionsNotice, 2000);
+}
 const deletingCard = ref<any>(null),
   deletingCardBusy = ref(false);
 const forkMessage = ref<any>(null),
@@ -668,7 +679,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
   sidebarSection.value = 'sessions';
   pageMode.value = '';
   inspectorTab.value = 'mvu';
-  optionsNotice.value = '';
+  clearOptionsNotice();
   sourceHighlight.value = null;
   clearEditNotice();
   trace.value = [];
@@ -1576,7 +1587,7 @@ async function saveOptions() {
       },
       'PUT',
     );
-    optionsNotice.value = '已保存';
+    showOptionsNotice('已保存');
   });
 }
 async function saveRecipe(recipe: any) {
@@ -1607,7 +1618,7 @@ async function resetRecipe() {
         { use_global: true, expected_revision: session.value.revision },
         'PUT',
       );
-      optionsNotice.value = '已采用当前全局编排';
+      showOptionsNotice('已采用当前全局编排');
       await refreshContextStats();
     });
   } finally {
@@ -1723,6 +1734,7 @@ onBeforeUnmount(() => {
   mobileSidebarQuery.removeEventListener('change', syncMobileSidebar);
   rightOverlayQuery.removeEventListener('change', syncRightOverlay);
   clearEditNotice();
+  clearOptionsNotice();
   clearTimeout(contextRefreshTimer);
   document.removeEventListener('pointerdown', closeDeleteOnOutside);
   document.removeEventListener('scroll', closeDeleteOnViewportChange, true);
