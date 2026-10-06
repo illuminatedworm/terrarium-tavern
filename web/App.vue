@@ -127,6 +127,7 @@ watch(input, () => {
 });
 const workCount = ref(0),
   rewriteExpanded = ref(false);
+const rewriteToggle = ref<HTMLButtonElement>();
 const updatingVariables = computed(
   () =>
     busy.value &&
@@ -939,6 +940,11 @@ const regenerationIncludeReply = computed({
 const canReferenceReply = computed(() =>
   retryableTurn.value ? retryableTurn.value.request.mode === 'regenerate' : !!latestReply.value,
 );
+async function closeRewriteOptions() {
+  rewriteExpanded.value = false;
+  await nextTick();
+  rewriteToggle.value?.focus({ preventScroll: true });
+}
 async function regenerateReply() {
   if (busy.value || editingMessageId.value || activeTurn.value?.status === 'awaiting_review') return;
   if (retryableTurn.value) await retryTurn();
@@ -2340,6 +2346,46 @@ useTimedError(error);
             :breakpoint-id="writerResponseCache ? cacheBreakpointId : null"
             @navigate="navigateMessage"
           />
+          <section
+            v-if="(latestReply || retryableTurn) && rewriteExpanded"
+            class="regeneration-panel"
+            aria-label="重新生成选项"
+            @keydown.esc.prevent.stop="closeRewriteOptions"
+          >
+            <div class="retry-toolbar regenerate-bar">
+              <PromptField :prefix="activeSettings.regenerate_prompt || ''" label="重新生成补充要求">
+                <input
+                  v-model="regenerationNote"
+                  aria-label="重新生成补充要求"
+                  :placeholder="
+                    retryableTurn
+                      ? '补充本次要求，例如：严格遵守变量输出格式'
+                      : '补充要求；将重写上一条已提交回复'
+                  "
+                  :disabled="busy || !!editingMessageId"
+                  @keydown.enter.prevent="regenerateReply"
+                />
+              </PromptField>
+              <button
+                :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+                @click="regenerateReply"
+              >
+                ↻ 重新生成
+              </button>
+            </div>
+            <label
+              v-if="canReferenceReply"
+              class="regenerate-options"
+              title="将原回复全文提供给模型作为修改参考，仍从本轮生成前的状态和笔记开始。"
+            >
+              <input
+                v-model="regenerationIncludeReply"
+                type="checkbox"
+                :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+              />
+              带上原 AI 回复作为重写参考
+            </label>
+          </section>
         </div>
         <AppNotification
           :message="memoryWarning ? `记忆整理失败：${memoryWarning}。旧记忆保留；需要裁剪时将暂停发送。` : ''"
@@ -2347,7 +2393,7 @@ useTimedError(error);
         <div v-show="storyView === 'dialogue'" class="composer">
           <div class="composer-inner">
             <button
-              v-if="!followLatest"
+              v-if="!followLatest && !rewriteExpanded"
               class="jump-latest"
               aria-label="跳到最新"
               title="跳到最新"
@@ -2363,41 +2409,6 @@ useTimedError(error);
                   : '本次生成失败，正文与状态未提交。'
               "
             />
-            <div v-if="(latestReply || retryableTurn) && rewriteExpanded">
-              <div class="retry-toolbar regenerate-bar">
-                <PromptField :prefix="activeSettings.regenerate_prompt || ''" label="重新生成补充要求">
-                  <input
-                    v-model="regenerationNote"
-                    aria-label="重新生成补充要求"
-                    :placeholder="
-                      retryableTurn
-                        ? '补充本次要求，例如：严格遵守变量输出格式'
-                        : '补充要求；将重写上一条已提交回复'
-                    "
-                    :disabled="busy || !!editingMessageId"
-                    @keydown.enter.prevent="regenerateReply"
-                  />
-                </PromptField>
-                <button
-                  :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                  @click="regenerateReply"
-                >
-                  ↻ 重新生成
-                </button>
-              </div>
-              <label
-                v-if="canReferenceReply"
-                class="regenerate-options"
-                title="将原回复全文提供给模型作为修改参考，仍从本轮生成前的状态和笔记开始。"
-              >
-                <input
-                  v-model="regenerationIncludeReply"
-                  type="checkbox"
-                  :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                />
-                带上原 AI 回复作为重写参考
-              </label>
-            </div>
             <div class="compose-box">
               <ExpandableTextarea
                 v-model="input"
@@ -2413,6 +2424,7 @@ useTimedError(error);
               <div class="compose-bottom">
                 <div class="compose-actions">
                   <button
+                    ref="rewriteToggle"
                     v-if="latestReply || retryableTurn"
                     class="quiet regenerate-toggle"
                     :aria-expanded="rewriteExpanded"

@@ -60,7 +60,7 @@ def create_app(data_dir=None):
             await editor.close()
             await service.close()
 
-    app = FastAPI(title="Terrarium Tavern", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Terrarium Tavern", version="0.3.0", lifespan=lifespan)
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
@@ -105,7 +105,7 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.2.0"}
+        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.3.0"}
 
     @app.get("/api/storage")
     async def storage():

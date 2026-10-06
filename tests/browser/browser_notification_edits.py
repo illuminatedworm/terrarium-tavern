@@ -60,14 +60,14 @@ async def main():
                     assert await alert.evaluate("e=>getComputedStyle(e).position") == "fixed"
                     await expect(alert.locator("button")).to_have_count(0)
                     await page.locator(".message.user").get_by_role("button", name="编辑", exact=True).click()
-                    await page.get_by_role("textbox", name="编辑最新用户消息").fill("修改后的发言“正反引号”")
+                    await page.get_by_role("textbox", name="编辑消息原文", exact=True).fill("修改后的发言“正反引号”")
                     await page.locator(".inline-message-editor").get_by_role("button", name="保存", exact=True).click()
                     await expect(page.locator(".message.user")).to_contain_text("修改后的发言")
                     await page.reload()
                     await expect(page.locator(".message.user")).to_contain_text("修改后的发言")
                     await expect(page.get_by_role("alert")).to_have_count(0, timeout=9500)
                     assert store.turn(tid)["request"]["text"] == "修改后的发言“正反引号”"
-                    regenerate = page.locator(".composer").get_by_role("button", name="↻ 重新生成", exact=True)
+                    regenerate = page.locator(".story").get_by_role("button", name="↻ 重新生成", exact=True)
                     await expect(regenerate).to_have_count(1)
                     collapsed_width = (await regenerate.bounding_box())["width"]
                     await regenerate.click()
@@ -89,8 +89,9 @@ async def main():
                     await expect(collapse).to_be_visible()
                     await regenerate.click()
                     await expect(page.locator(".message.assistant").last).to_contain_text("剧情继续", timeout=15000)
+                    await expect(page.get_by_role("button", name="发送", exact=True)).to_be_visible(timeout=15000)
                     assert store.session(session["id"])["messages"][-2]["raw"] == "修改后的发言“正反引号”"
-                    await expect(page.locator(".composer").get_by_role("button", name="↻ 重新生成", exact=True)).to_have_count(1)
+                    await expect(regenerate).to_have_count(1)
                     print("Floating notification, automatic dismissal, persisted pending edit and retry passed.")
                 finally:
                     await browser.close()

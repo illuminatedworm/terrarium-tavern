@@ -14,6 +14,7 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.storage.store import dump
+from tests.support.tracker_model import PatchModel
 
 
 async def main():
@@ -45,7 +46,7 @@ async def main():
         app.state.service.provider_factory = make_provider
         variable_responses = iter(['[{"op":"add","path":"/unknown","value":1}]',
                                    '[{"op":"replace","path":"/hp","value":6}]'])
-        app.state.service.variable_provider_factory = lambda: ScriptedLLM([next(variable_responses)])
+        app.state.service.variable_provider_factory = lambda: PatchModel(next(variable_responses))
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         address = f"http://127.0.0.1:{sock.getsockname()[1]}"
@@ -83,7 +84,7 @@ async def main():
                     await page.set_viewport_size({'width': 1440, 'height': 1000})
                     await page.get_by_role('button', name='展开左侧栏', exact=True).click()
                     await page.get_by_role('button', name='展开右侧栏', exact=True).click()
-                    composer_input = page.locator('.compose-box .expandable-textarea > textarea')
+                    composer_input = page.get_by_role('textbox', name='用户输入', exact=True)
                     expand_input = page.get_by_role('button', name='放大编辑：用户输入')
                     await send.focus()
                     await expect(expand_input).to_be_hidden()
@@ -101,7 +102,7 @@ async def main():
                     await editor.get_by_role('textbox').fill('应用的改动')
                     await editor.get_by_role('button', name='应用修改').click()
                     await expect(composer_input).to_have_value('应用的改动')
-                    await page.locator('.compose-box .expandable-textarea > textarea').fill('第一轮')
+                    await composer_input.fill('第一轮')
                     await send.click()
                     await expect(page.locator('.draft')).to_contain_text('新的剧情', timeout=15000)
                     chat = page.locator('.messages')
@@ -124,10 +125,10 @@ async def main():
                     await expect(send).to_be_visible(timeout=15000)
                     assert abs(await chat.evaluate('e=>e.scrollTop') - top) < 3
                     await page.screenshot(path=str(screenshots / 'paused-stream-desktop.png'))
-                    await page.locator('.compose-box .expandable-textarea > textarea').fill('第二轮')
+                    await composer_input.fill('第二轮')
                     await page.get_by_role('checkbox', name='本轮更新变量', exact=True).check()
                     await send.click()
-                    retry = page.locator('.composer').get_by_role('button', name='↻ 重新生成', exact=True)
+                    retry = page.locator('.story').get_by_role('button', name='↻ 重新生成', exact=True)
                     await expect(retry).to_be_enabled(timeout=15000)
                     await expect(page.get_by_role('alert')).to_contain_text('未提交')
                     await expect(page.get_by_role('alert')).not_to_contain_text('Page.evaluate')

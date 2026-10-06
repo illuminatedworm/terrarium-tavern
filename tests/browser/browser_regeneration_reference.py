@@ -11,9 +11,29 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
-from tavern.core.models import SessionCreate
 from tests.backend.test_full_agent import Model, ScriptHost
 from tests.backend.test_message_versions import generate
+from tests.browser.browser_history_navigation import seed
+
+
+async def layout(page):
+    # Wait for the reading marker and rail's ResizeObserver to settle.
+    return await page.evaluate("""async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        await document.fonts.ready;
+        const selectors = ['.dialogue-viewport', '.messages', '.message-jumps', '.conversation-rail',
+                           '.compose-box', '.rail-tick.current'];
+        return Object.fromEntries(selectors.map(selector => {
+            const rect = document.querySelector(selector).getBoundingClientRect();
+            return [selector, {x: rect.x, y: rect.y, width: rect.width, height: rect.height}];
+        }));
+    }""")
+
+
+def same_layout(before, after):
+    for selector, rect in before.items():
+        for dimension, value in rect.items():
+            assert abs(value - after[selector][dimension]) < 1, (selector, dimension, before, after)
 
 
 async def main():
@@ -31,8 +51,10 @@ async def main():
         service.half.runtime = ScriptHost()
         service.full.runtime = ScriptHost()
         original = "原 AI 回复：她沿着旧港回家。"
-        sessions = {mode: generate(store, store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode)), original)
-                    for mode in ("half_agent", "full_agent")}
+        sessions = {}
+        for mode in ("half_agent", "full_agent"):
+            sid, _, _ = seed(store, card["id"], mode, 56)
+            sessions[mode] = generate(store, store.session(sid), original)
         half_models = [ScriptedLLM(["参考原文后的改写"]), ScriptedLLM(["重新从头生成"])]
         full_models = [Model(("read_state", {}), RuntimeError("synthetic interruption")),
                        Model("关闭参考后的改写")]
@@ -76,15 +98,36 @@ async def main():
                             try:
                                 view = await context.new_page()
                                 await view.goto(address)
+                                await expect(view.get_by_role("slider", name="对话历史导航")).to_be_visible()
+                                await expect(view.locator(".composer-meta")).to_contain_text("tokens")
+                                before = await layout(view)
                                 await view.locator(".regenerate-toggle").click()
                                 option = view.get_by_role("checkbox", name="带上原 AI 回复作为重写参考", exact=True)
                                 await expect(option).to_be_visible()
+                                await option.scroll_into_view_if_needed()
+                                await expect(option).to_be_in_viewport()
+                                same_layout(before, await layout(view))
+                                assert await view.evaluate("""() =>
+                                    [...document.querySelectorAll('.message-jumps button, .conversation-rail')]
+                                        .every(node => {
+                                            const rect = node.getBoundingClientRect();
+                                            return node.contains(document.elementFromPoint(
+                                                rect.x + rect.width / 2, rect.y + rect.height / 2));
+                                        })""")
                                 assert await view.evaluate("""() =>
                                     document.documentElement.scrollWidth <= innerWidth &&
                                     document.documentElement.scrollHeight <= innerHeight""")
                                 assert await view.locator(".regenerate-options").evaluate(
                                     "e=>e.scrollWidth<=e.clientWidth+1")
                                 await view.screenshot(path=str(screenshots / f"{mode}-{label}.png"))
+                                note = view.get_by_role("textbox", name="重新生成补充要求")
+                                await note.fill("保留原文的语气")
+                                await note.press("Escape")
+                                await expect(view.get_by_role("region", name="重新生成选项", exact=True)).to_be_hidden()
+                                await expect(view.locator(".regenerate-toggle")).to_be_focused()
+                                same_layout(before, await layout(view))
+                                await view.locator(".regenerate-toggle").click()
+                                await expect(note).to_have_value("保留原文的语气")
                             finally:
                                 await context.close()
                         await checkbox.check()
@@ -121,7 +164,7 @@ async def main():
                         assert len(current["messages"]) == len(session["messages"])
                         assert not errors, errors
                         await page.close()
-                    print("Both modes: rewrite reference defaults, requests, responsive layout and retry choice passed.")
+                    print("Both modes: rewrite reference requests, retry choice, stable history navigation and responsive layout passed.")
                 finally:
                     await browser.close()
         finally:
