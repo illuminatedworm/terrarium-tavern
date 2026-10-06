@@ -36,6 +36,10 @@ npm.cmd test -- tests/frontend/storyHistory.test.ts
 
 重点保护协议、存储、权限、事务及资源生命周期。代表性边界包括失败、取消、版本冲突、分支、重生成和回调顺序；已解决的专用复现应在通用覆盖充分后收拢，避免无目的地枚举全部模型别名组合。
 
+控制测试增长：参数化只展开会改变被测行为的维度，不在共享夹具上默认叠加所有格式或协议组合。格式适配集中验证读写往返、增删和身份映射；独立于格式的参数校验、状态、笔记与脚本拦截使用单一基准夹具，并保留各自不同的边界样本。纯工具测试直接构造内存数据，需要验证持久化或完整回合时才创建数据库。
+
+新增回归前先检查能否补充既有场景；统计时区分测试函数数与参数展开后的用例数，同时看耗时。不通过隐藏用例、跳过测试或把独立场景塞进大循环来压低数字。
+
 ## 完整验证
 
 ```powershell
@@ -43,12 +47,16 @@ npm.cmd test
 npm.cmd run format:check
 npm.cmd run build
 .venv/Scripts/python.exe -m ruff check src tests tools
-.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal
 .venv/Scripts/python.exe -m tests.browser.browser_release
 .venv/Scripts/python.exe -m tests.browser.browser_full_agent
 ```
 
 后端全套包含真实 Terrarium／Chromium 运行与长程检查，执行时间比普通单元测试长。浏览器发行入口使用 8015/8016 端口，运行前需空闲；其他专项使用各自独立数据和端口。
+
+完整后端检查使用开发依赖中的 pytest-xdist，以 4 个独立进程运行并动态分配剩余测试；每个用例继续使用各自的临时数据，不共享可变数据库或浏览器会话。依赖由 `uv sync --frozen` 安装。资源受限时将 `-n 4` 改为 `-n 2`；执行少量用例或定位顺序问题时不加并行参数，避免启动多个进程的额外开销。
+
+排查耗时使用 `--durations=20`。并行与串行对比时使用同一套测试，避免同时运行两套测试互相争用资源。若本机继承的 SOCKS 代理导致 SDK 初始化报缺少 socksio，在当前测试进程改用已配置的 HTTP 代理；本地模拟测试不需要真实模型服务。
 
 发行浏览器检查覆盖设置、角色编辑、故事、重生成、工作记录、上下文、分支与 MVU，并使用 1440×900、1280×720、390×844 和 720×450 视口。最后一种模拟 200% 等效 CSS 视口，不代替所有浏览器的原生缩放检查。
 

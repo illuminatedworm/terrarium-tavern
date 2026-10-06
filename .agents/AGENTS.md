@@ -93,6 +93,7 @@
 ## 验证与交付
 
 - 验证按改动风险选择。纯文档和小范围低风险改动不机械运行整套测试；用户明确要求不测试时遵从并注明。
+- 以实际耗时衡量测试成本。全套后端检查优先使用 4 进程并行，少量用例串行；参数化只展开相关行为维度，纯工具测试不初始化无关数据库。不要以跳过场景或合成大循环来降低用例计数。
 - 核心流程、存储、检索或依赖变更须有对应回归，并完成相关完整门禁；测试使用可重复的独立夹具。
 - 检索验收检查最终模型请求，覆盖困难负例、零命中、递归拒绝与通道降级，分别记录质量、延迟和 token 开销。
 - 涉及窗口、恢复或资源生命周期时覆盖长对话、重试、取消、审核、分支及清理后的恢复。
@@ -101,7 +102,7 @@
 - 交付说明改动、验证证据、未验证范围与已知限制；实际执行结果才可报告为通过。
 
 常用命令：`npm.cmd run build`、`npm.cmd test`、`npm.cmd run format:check`、
-`.venv/Scripts/python.exe -m pytest -q`、`.venv/Scripts/python.exe -m ruff check src tests tools`、
+`.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal`、`.venv/Scripts/python.exe -m ruff check src tests tools`、
 `.venv/Scripts/python.exe -m tests.browser.browser_release`、`.venv/Scripts/python.exe tools/package_release.py`。
 详细职责见 [工作流](../docs/design/agent-workflow.md)、[上下文](../docs/design/context-lifecycle.md)、
 [计数口径](../docs/guides/token-counting.md)、[维护](../docs/guides/maintenance.md)和[验证说明](../docs/development/validation.md)。

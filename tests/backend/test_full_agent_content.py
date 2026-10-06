@@ -19,10 +19,19 @@ from tests.backend.test_full_agent import Model, runtime, turn
 story = test_full_agent.story
 
 
-@pytest.fixture(params=[(False, False), (False, True), (True, False), (True, True)])
-def owner(story, request):
-    store, _ = story
-    wrapped, dictionary = request.param
+CARD_FORMATS = [
+    pytest.param((False, False), id="plain-list"),
+    pytest.param((False, True), id="plain-dict"),
+    pytest.param((True, False), id="wrapped-list"),
+    pytest.param((True, True), id="wrapped-dict"),
+]
+
+
+@pytest.fixture
+def owner(request):
+    # Only storage-format tests opt into the format matrix. Argument validation
+    # and script detection have the same branches for every document container.
+    wrapped, dictionary = getattr(request, "param", (False, False))
     entries = [
         {"id": "harbor", "comment": "港口", "content": "Harbor source", "keys": ["港口"],
          "extensions": {"unknown": {"keep": True}, "position": 4}},
@@ -58,6 +67,7 @@ async def revise(owner, *operations):
     return await call(owner, "revise_content", operations=list(operations), reason="User requested setting")
 
 
+@pytest.mark.parametrize("owner", [CARD_FORMATS[0], CARD_FORMATS[2]], indirect=True)
 @pytest.mark.parametrize("field", CHARACTER_FIELDS)
 async def test_only_allowed_fields_can_be_read_and_written_in_both_card_formats(owner, field):
     original = copy.deepcopy(owner.document)
@@ -82,6 +92,7 @@ async def test_no_bulk_or_configuration_field_reads(owner, field):
     assert owner.tools.reads.records == before
 
 
+@pytest.mark.parametrize("owner", CARD_FORMATS, indirect=True)
 async def test_search_is_navigation_only_and_disabled_entry_aliases_roundtrip(owner):
     results = await call(owner, "find_lore_for_edit", query="旧船")
     assert len(results["matches"]) == 1 and "仅用于定位" in results["notice"]
@@ -145,6 +156,7 @@ async def test_execution_content_cannot_be_introduced(owner, text):
         assert owner.document == before
 
 
+@pytest.mark.parametrize("owner", [CARD_FORMATS[0], CARD_FORMATS[3]], indirect=True)
 async def test_protected_entries_and_script_bearing_fields_cannot_be_read_changed_or_removed(owner):
     owner.state["lore_references"] = {"L20": "rule", "L21": "init", "L22": "script"}
     search = await call(owner, "find_lore_for_edit", query="*")
@@ -161,6 +173,7 @@ async def test_protected_entries_and_script_bearing_fields_cannot_be_read_change
         await revise(owner, {"op": "set_character", "field": "description", "value": "Clean replacement"})
 
 
+@pytest.mark.parametrize("owner", CARD_FORMATS, indirect=True)
 async def test_append_requires_no_bulk_read_and_old_references_do_not_shift(owner):
     entries = card_data(owner.document)["character_book"]["entries"]
     for entry in (entries.values() if isinstance(entries, dict) else entries):
@@ -179,6 +192,7 @@ async def test_append_requires_no_bulk_read_and_old_references_do_not_shift(owne
     assert added["enabled"] and added["keys"] == [] and added["secondary_keys"] == []
 
 
+@pytest.mark.parametrize("owner", CARD_FORMATS[:2], indirect=True)
 async def test_effective_extension_aliases_and_injection_invalidation(owner):
     entries = card_data(owner.document)["character_book"]["entries"]
     raw = next(e for e in (entries.values() if isinstance(entries, dict) else entries) if e["id"] == "harbor")
@@ -211,6 +225,7 @@ async def test_strict_interface_rejects_paths_ids_configuration_and_empty_change
     assert owner.document == original
 
 
+@pytest.mark.parametrize("owner", CARD_FORMATS[:2], indirect=True)
 async def test_identity_ambiguity_and_failed_validation_do_not_change_draft(owner):
     await call(owner, "read_character", ref="name")
     before = copy.deepcopy(owner.document)

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from tavern.core.model_view import ModelView
-from tavern.core.models import TurnRequest
+from tavern.core.models import Settings, TurnRequest
 from tavern.full_agent.state import new_state, note_view, rollover
 from tavern.full_agent.tools import AgentTools, tool_definitions
 from tests.backend import test_full_agent
@@ -15,17 +15,18 @@ from tests.backend.test_full_agent import Model, Script, runtime, turn
 story = test_full_agent.story
 
 
-@pytest.fixture(params=[False, True])
-def owner(story, request):
-    store, _ = story
+@pytest.fixture
+def owner():
+    # State and note contracts are independent of the character-card envelope.
+    # Card-format coverage belongs to test_full_agent_content.
     data = {"name": "Guide", "description": "Before", "personality": "Shy",
             "a/b~c": {"items": [1, 2]}, "extensions": {"value": 3}}
-    doc = {"spec": "chara_card_v2", "spec_version": "2.0", "data": data} if request.param else data
+    doc = data
     snapshot = {"state": {"stat_data": {"hp": 8}}, "scopes": {}}
     req = TurnRequest(operation_id="guards", expected_revision=0, update_variables=True, allow_content_edit=True)
     result = SimpleNamespace(document=doc, state=new_state(), snapshot=snapshot,
         request=req, session={}, tid="guards", model_view=ModelView(doc), patch_state_done=False,
-        script=Script([], snapshot), settings=store.settings().for_role("full_agent"),
+        script=Script([], snapshot), settings=Settings().for_role("full_agent"),
         source_history=[{"id": "history", "role": "assistant", "raw": "Before"},
                         {"id": "input", "role": "user", "raw": "Now"}])
     result.definitions = tool_definitions(req, {"policy_effective": "auto"}, document=doc)
@@ -37,14 +38,6 @@ async def call(owner, name, **args):
     result = await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
     assert result["ok"] is True
     return result["data"]
-
-
-def path(owner, pointer):
-    return ("/data" if owner.document.get("spec") else "") + pointer
-
-
-async def revise(owner, *operations):
-    return await call(owner, "revise_content", operations=list(operations), reason="User requested edit")
 
 
 async def test_nonempty_patch_requires_current_complete_variables_read(owner):

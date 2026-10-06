@@ -148,12 +148,12 @@ npm.cmd run dev:web        # 仅启动 Vite；需另行运行 .\start.ps1
 npm.cmd run build
 .\build.ps1               # 更新 dist/ 和后端使用的静态页面
 npm.cmd test
-.venv/Scripts/python.exe -m pytest -q
+.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal
 ```
 
 也可直接运行 `.\run-dev.ps1`。若 8000 端口已有本项目后端，开发脚本会复用它；否则会启动后端并在退出时关闭。访问 8000 端口仍使用上次构建的页面；需要更新该页面时运行 `.\build.ps1`（等同于 `npm.cmd run build`）。
 
-Linux 开发时运行 `./run-dev.sh`，构建时运行 `./build.sh`；测试使用 `npm test` 和 `.venv/bin/python -m pytest -q`。`npm run dev` 目前仍是 Windows PowerShell 入口。
+Linux 开发时运行 `./run-dev.sh`，构建时运行 `./build.sh`；测试使用 `npm test` 和 `.venv/bin/python -m pytest -q tests/backend -n 4 --dist worksteal`。仅检查少量 Python 用例时省略并行参数；更多说明见[验证与发行](docs/development/validation.md)。`npm run dev` 目前仍是 Windows PowerShell 入口。
 
 ## 致谢
 
