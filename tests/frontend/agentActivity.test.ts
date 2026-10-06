@@ -11,7 +11,7 @@ it('pairs streamed calls/results in order and ignores replay and foreign turns',
   });
   const first = event(1, 'full_agent_tool_started', 'call-1-0', 11);
   const events = [
-    event(4, 'full_agent_tool', 'call-1-0', 11, { result: { text: '原文' } }),
+    event(4, 'full_agent_tool', 'call-1-0', 11, { result: { ok: true, data: { text: '原文' } } }),
     first,
     first,
     event(3, 'full_agent_tool_started', 'call-1-1', 12),
@@ -39,7 +39,15 @@ it('keeps errors visible and hides transport metadata from dialogue activity', (
           order: 1,
           name: 'read_note',
           arguments: '{"key":"约定"}',
-          result: { error: '未找到笔记' },
+          result: {
+            ok: false,
+            error: {
+              code: 'INVALID_REFERENCE',
+              message: '未找到笔记',
+              retryable: true,
+              next_action: '重新搜索笔记',
+            },
+          },
           reasoning_content: 'PRIVATE_REASONING',
         },
       },

@@ -32,6 +32,8 @@ class MessageType:
 
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
+    MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
+    MessageType("call_budget", "模型调用额度", "tavern_call_budget", appendable=True, scopes=("full_agent",)),
     MessageType("user", "用户输入", role="user"),
     MessageType("assistant", "模型回复", role="assistant"),
     MessageType("tool", "工具结果", role="tool"),

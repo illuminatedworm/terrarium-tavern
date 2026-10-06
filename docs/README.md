@@ -39,6 +39,7 @@
 |---|---|
 | 设置范围、API、修订和数据库迁移 | [设置持久化与 API](reference/settings-api.md) |
 | 模型协议、请求身份、思考和缓存字段 | [模型接入参考](reference/model-api.md) |
+| Full Agent 全部工具的简短列表与作用 | [工具速查](reference/full-agent-tools-summary.md) |
 | Full Agent 工具参数、引用和路径规则 | [工具协议](reference/full-agent-tools.md) |
 | 开发运行、测试选择、实测与打包 | [验证与发行](development/validation.md) |
 | 原创和第三方许可、发行未决事项 | [许可范围与发行维护](development/licensing.md)、[许可文件](../LICENSE/README.md) |

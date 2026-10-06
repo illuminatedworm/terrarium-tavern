@@ -71,7 +71,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
           .replace(/\s+/g, ' ')
           .slice(0, 140),
         status: finished
-          ? p.result && typeof p.result === 'object' && 'error' in p.result
+          ? p.result && typeof p.result === 'object' && 'ok' in p.result && p.result.ok === false
             ? 'error'
             : 'returned'
           : 'running',
@@ -90,11 +90,9 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
 }
 
 export const toolLabels: Record<string, string> = {
-  search_lore: '检索世界书',
-  search_read_lore: '检索并读取世界书',
-  search_lore_entries: '定位世界书条目',
+  recall_lore: '检索并读取世界书',
+  find_lore_for_edit: '定位世界书条目',
   read_lore_entry: '读取单条世界书',
-  read_lore: '读取世界书',
   search_history: '搜索历史',
   read_history: '读取历史',
   write_handoff: '更新交接笔记',

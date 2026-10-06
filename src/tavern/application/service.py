@@ -122,8 +122,7 @@ class RoleplayRuntime:
         if accept:
             self.store.commit_turn(tid, turn["pending"])
         else:
-            self.store.set_turn(tid, status="cancelled", pending=None)
-            self.store.event(tid, "cancelled", {})
+            self.store.reject_review(tid)
         return self.store.turn(tid)
 
     async def refresh_scene(self, tid, req, settings, session):

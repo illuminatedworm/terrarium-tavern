@@ -127,14 +127,18 @@ describe('native tool messages in context preview', () => {
     expect(groups[0].items.map((item) => item.role)).toEqual(['user', 'assistant', 'tool', 'assistant']);
   });
   it('renders calls when assistant content is empty and retains intermediate text', () => {
-    const call = { id: 'call1', function: { name: 'read_note', arguments: '{"ref":"约定/钟楼"}' } };
+    const call = { id: 'call1', function: { name: 'read_note', arguments: '{"key":"约定/钟楼"}' } };
     const rendered = contextMessageContent({ content: '', tool_calls: [call] });
     expect(rendered).toContain('read_note');
     expect(rendered).toContain('约定/钟楼');
     expect(rendered).toContain('call1');
     expect(contextMessageContent({ content: '核对约定', tool_calls: [call] })).toContain('核对约定');
     expect(
-      contextMessageContent({ role: 'tool', tool_call_id: 'call1', content: '{"text":"明天"}' }),
+      contextMessageContent({
+        role: 'tool',
+        tool_call_id: 'call1',
+        content: '{"ok":true,"data":{"text":"明天"}}',
+      }),
     ).toContain('工具返回 · call1');
   });
   it('preserves malformed arguments without exposing reasoning fields', () => {

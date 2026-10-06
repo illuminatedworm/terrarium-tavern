@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.character.card_workflow import validate_document
 from tavern.character.cards import lore_entries
+from tavern.full_agent.protocol import ToolError
 
 SettingField = Literal["name", "description", "personality", "scenario", "mes_example",
                        "system_prompt", "post_history_instructions"]
@@ -139,7 +140,7 @@ def entry_rows(document):
     effective = lore_entries(document)
     identities = [entry["id"] for entry in effective]
     if len(identities) != len(set(identities)):
-        raise ValueError("世界书条目身份重复，无法安全定位；请先由用户修正")
+        raise ToolError("INVALID_REFERENCE", "世界书条目身份重复，无法安全定位；请先由用户修正")
     return [(slot, raw, entry) for (slot, raw), entry in zip(slots, effective, strict=True)]
 
 
@@ -174,7 +175,7 @@ class ContentEditor:
     def character(self, field):
         value = card_data(self.owner.document).get(field)
         if runtime_code(value):
-            raise ValueError("该设定字段含执行脚本或变量指令，不能通过设定编辑工具读取或修改")
+            raise ToolError("PROTECTED_TARGET", "该设定字段含执行脚本或变量指令，不能通过设定编辑工具读取或修改")
         return value
 
     def resolve(self, ref, *, document=None, refs=None):
@@ -183,9 +184,9 @@ class ContentEditor:
         identity = refs.get(ref)
         row = next((row for row in entry_rows(document) if row[2]["id"] == identity), None)
         if row is None:
-            raise ValueError("世界书引用无效或条目已删除；请重新定位目标条目")
+            raise ToolError("INVALID_REFERENCE", "世界书引用无效或条目已删除；请重新定位目标条目")
         if not editable_entry(row[1], row[2]):
-            raise ValueError("该条目属于变量规则、初始化或脚本，不能通过设定编辑工具读取或修改")
+            raise ToolError("PROTECTED_TARGET", "该条目属于变量规则、初始化或脚本，不能通过设定编辑工具读取或修改")
         return row
 
     def rows(self):
@@ -195,7 +196,7 @@ class ContentEditor:
 
     def require_tool(self, name):
         if name not in {tool["function"]["name"] for tool in self.owner.definitions}:
-            raise ValueError(f"此类设定修改需要启用 {name}")
+            raise ToolError("PERMISSION_DENIED", f"此类设定修改需要启用 {name}")
 
     def revise(self, arguments):
         owner = self.owner
@@ -212,7 +213,7 @@ class ContentEditor:
                 self.character(operation["field"])
                 self.reads.require_character(operation["field"])
                 if runtime_code(operation["value"]):
-                    raise ValueError("人物设定不能引入执行脚本或变量指令")
+                    raise ToolError("PROTECTED_TARGET", "人物设定不能引入执行脚本或变量指令")
                 fields.add(operation["field"])
             elif operation["op"] in ("update_lore", "remove_lore"):
                 self.require_tool("read_lore_entry")
@@ -239,7 +240,7 @@ class ContentEditor:
                 values = {"keys": [], "secondary_keys": [], "enabled": True, **operation["entry"]}
                 raw = {"id": uuid4().hex, "comment": values.pop("title"), **values}
                 if not editable_entry(raw, raw):
-                    raise ValueError("只能新增普通叙事设定，不能引入初始化、变量规则或脚本")
+                    raise ToolError("PROTECTED_TARGET", "只能新增普通叙事设定，不能引入初始化、变量规则或脚本")
                 if isinstance(entries, dict):
                     entries[raw["id"]] = raw
                 else:
@@ -267,12 +268,29 @@ class ContentEditor:
                     raw[key] = value
             current = next(row for row in entry_rows(revised) if row[2]["id"] == entry["id"])
             if not editable_entry(current[1], current[2]):
-                raise ValueError("普通条目不能改成初始化、变量规则或执行脚本")
+                raise ToolError("PROTECTED_TARGET", "普通条目不能改成初始化、变量规则或执行脚本")
         validate_document(revised)
         current_refs = lore_references(revised, {"lore_references": refs}) if edits_lore else refs
+        reverse = {identity: ref for ref, identity in current_refs.items()}
+        final_entries = [(raw, entry) for _, raw, entry in entry_rows(revised)
+                         if entry["id"] in changed or entry["id"] in added] if edits_lore else []
+        present = {reverse[entry["id"]] for _, entry in final_entries}
+        removed_refs = sorted(affected_refs - present)
+        # Return the complete final view once per target, then register that exact
+        # content as observed. No intermediate batch version grants a read record.
+        result = owner.model_view.expose({
+            "saved_to_draft": True, "added_refs": [reverse[identity] for identity in added],
+            "characters": [{"ref": field, "text": card_data(revised).get(field)} for field in sorted(fields)],
+            "entries": [{"ref": reverse[entry["id"]], **entry_view(entry)} for _, entry in final_entries],
+            "removed_refs": removed_refs,
+        })
         owner.document = revised
         owner.snapshot["content"] = {"document": revised, "reason": reason, "turn": owner.tid}
-        self.reads.invalidate_content(fields, affected_refs)
+        self.reads.invalidate_content((), removed_refs)
+        for field in fields:
+            self.reads.read_character(field)
+        for raw, entry in final_entries:
+            self.reads.read_entry(reverse[entry["id"]], raw)
         if edits_lore:
             owner.state["lore_references"] = current_refs
         if changed:
@@ -282,5 +300,4 @@ class ContentEditor:
             owner.snapshot.get("lore", {}).pop(identity, None)
         if hasattr(owner, "exiting"):
             owner.exiting.difference_update(changed)
-        reverse = {identity: ref for ref, identity in current_refs.items()}
-        return {"saved_to_draft": True, "added_refs": [reverse[identity] for identity in added]}
+        return result

@@ -57,13 +57,13 @@ def test_tool_result_field_options(story):
     assert tools.search(rows, "旧港", 5, include_preview=False)["matches"] == [
         {"ref": "H1", "role": "user"}]
     assert tools.search(rows, "旧港", 5)["matches"][0]["preview"] == "旧港的船只出发"
-    assert result_field({}, "search_read_lore", "include_ref") is False
-    assert result_field({}, "search_read_lore", "include_title") is False
+    assert result_field({}, "recall_lore", "include_ref") is False
+    assert result_field({}, "recall_lore", "include_title") is False
     assert result_field({}, "search_history", "include_preview") is True
     assert result_field({}, "read_history", "include_metadata") is True
-    assert result_field({"tool_result_options": {"search_read_lore": {"include_ref": True}}},
-                        "search_read_lore", "include_ref") is True
-    assert set(RESULT_FIELDS["search_read_lore"]) == {"include_ref", "include_title"}
+    assert result_field({"tool_result_options": {"recall_lore": {"include_ref": True}}},
+                        "recall_lore", "include_ref") is True
+    assert set(RESULT_FIELDS["recall_lore"]) == {"include_ref", "include_title"}
 
 
 class Script:
@@ -225,8 +225,8 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         result, _ = await turn(service, current, repeated, update_variables=True)
         assert result["status"] == "committed", result["error"]
         returns = [json.loads(m["content"]) for m in repeated.requests[-1]["messages"] if m["role"] == "tool"][-2:]
-        assert returns[0]["saved_to_draft"] is True
-        assert "不允许重复更新" in returns[1]["error"]
+        assert returns[0]["data"]["saved_to_draft"] is True
+        assert "不允许重复更新" in returns[1]["error"]["message"]
     finally:
         await service.close()
 
@@ -325,8 +325,7 @@ async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards
         model = Model("她看向新的方向。")
         service.full.provider_factory = lambda: model
         fresh = service.submit(session["id"], TurnRequest(
-            text="改成另一个行动。", operation_id="resume-edited", expected_revision=0,
-            resume_turn_id=retried["id"]))
+            text="改成另一个行动。", operation_id="resume-edited", expected_revision=0))
         await service.tasks[fresh["id"]]
         assert store.turn(fresh["id"])["status"] == "committed"
         assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model.requests[0]["messages"])
@@ -546,8 +545,8 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
     try:
-        model = Model(("search_read_lore", {"query": "旧港"}), ("search_read_lore", {"query": "钟楼"}),
-                      ("search_read_lore", {"query": "旧港"}), "向导指向旧港。")
+        model = Model(("recall_lore", {"query": "旧港"}), ("recall_lore", {"query": "钟楼"}),
+                      ("recall_lore", {"query": "旧港"}), "向导指向旧港。")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [r["messages"] for r in model.requests]
@@ -557,9 +556,9 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
         assert not any("旧港的船只明晨出发。" in m.get("content", "")
                        for messages in requests for m in messages if m["role"] == "system")
         tool_results = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
-        assert tool_results[0]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
-        assert set(tool_results[0]) == {"matches"}
-        assert set(tool_results[0]["matches"][0]) == {"text"}
+        assert tool_results[0]["data"]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+        assert set(tool_results[0]["data"]) == {"matches"}
+        assert set(tool_results[0]["data"]["matches"][0]) == {"text"}
         assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
         assert sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
         records = current["snapshot"]["lore_injections"]
@@ -622,13 +621,7 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
                              "reason": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
         assert failed["status"] == "error"
         assert unchanged["snapshot"]["state"]["stat_data"]["能量"] != 4
-        # Progress written before the one-call marker was introduced remains resumable.
-        with store.connection() as db:
-            progress = json.loads(db.execute("SELECT payload FROM full_agent_progress WHERE turn=?",
-                                             (failed["id"],)).fetchone()[0])
-            progress.pop("patch_state_done")
-            db.execute("UPDATE full_agent_progress SET payload=? WHERE turn=?",
-                       (json.dumps(progress, ensure_ascii=False), failed["id"]))
+        assert store.full_agent_progress(failed["id"])["patch_state_done"] is True
         model = Model("洛伊带你来到观测窗。")
         service.full.provider_factory = lambda: model
         resumed = service.submit(session["id"], TurnRequest(
@@ -655,12 +648,12 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
     store.save_settings(settings)
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     service = runtime(store)
-    model = Model(("search_read_lore", {"query": "loreword"}), "继续。")
+    model = Model(("recall_lore", {"query": "loreword"}), "继续。")
     try:
         result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         tool_result = next(json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool")
-        assert tool_result["matches"] == [{"text": f"<lorebook>\n{content}\n</lorebook>"}]
+        assert tool_result["data"]["matches"] == [{"text": f"<lorebook>\n{content}\n</lorebook>"}]
     finally:
         await service.close()
 
@@ -677,7 +670,7 @@ async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(stor
     text = "精确原文不可丢失。" * 300
     owner.source_history[0]["raw"] = text
     assert await owner.tools.execute("read_history", '{"ref":"H1"}') == {
-        "ref": "H1", "role": owner.source_history[0]["role"], "text": text}
+        "ok": True, "data": {"ref": "H1", "role": owner.source_history[0]["role"], "text": text}}
     with pytest.raises(ValueError, match="没有此历史引用"):
         await owner.tools.execute("read_history", '{"ref":"T1.1"}')
     await owner.tools.execute("write_note", json.dumps({"key": "事实", "content": "未读", "kind": "fact", "sources": ["H2"]}))
@@ -715,7 +708,7 @@ def test_lore_tool_description_matches_enabled_retrieval(story, channels, rerank
     settings.local_models.reranker_enabled = rerank
     definitions = tool_definitions(TurnRequest(operation_id="description", expected_revision=0),
                                    session, settings.full_agent_config, settings=settings)
-    description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "search_read_lore")
+    description = next(t["function"]["description"] for t in definitions if t["function"]["name"] == "recall_lore")
     for channel, marker in (("keyword", "keyword"), ("bm25", "BM25"), ("embedding", "semantic")):
         assert (marker in description) == (channel in channels)
     assert ("Reranking orders" in description) == rerank
@@ -731,7 +724,7 @@ async def test_empty_note_and_history_search_results_are_minimal(story):
         result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         results = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-        assert results == [{"matches": []}, {"matches": []}]
+        assert results == [{"ok": True, "data": {"matches": []}}] * 2
     finally:
         await service.close()
 
@@ -777,7 +770,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
         versions = []
         for index in range(3):
             model = Model(
-                ("read_note", {"ref": "线索"}),
+                ("read_note", {"key": "线索"}),
                 ("write_note", {"key": "线索", "content": f"旧线索，加候选{index}", "kind": "hypothesis"}),
                 ("archive_note", {"key": "待办"}),
                 ("write_handoff", {"content": f"旧交接，加候选{index}"}), f"正文候选{index}")
@@ -791,7 +784,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
             assert current["messages"][-2]["snapshot"]["full_agent"] == baseline
             read_result = json.loads(next(m["content"] for m in reversed(model.requests[1]["messages"])
                                           if m["role"] == "tool"))
-            assert read_result["text"] == "旧线索"
+            assert read_result["data"]["text"] == "旧线索"
             assert "旧交接" in json.dumps(model.requests[0]["messages"], ensure_ascii=False)
             assert f"候选{index - 1}" not in json.dumps(model.requests[0]["messages"], ensure_ascii=False)
         for version in versions:
@@ -839,7 +832,8 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         result, _ = await turn(service, session, model, update_variables=False, allow_content_edit=False)
         assert result["status"] == "committed", result["error"]
         wire = model.requests[-1]
-        assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
+        assert "Full Agent 工具协议" in wire["messages"][0]["content"]
+        assert wire["messages"][1]["content"] == FULL_AGENT_PROMPT
         assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
         assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
@@ -850,11 +844,11 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         assert set(definitions) == set(SPECS) - {"revise_content"}
-        assert "Call exactly once" in definitions["patch_state"]["description"]
+        assert "Must succeed exactly once" in definitions["patch_state"]["description"]
         assert not any(m.get("content", "").startswith("本轮须调用 patch_state") for m in wire["messages"])
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]
-        assert "Call this tool alone" in definitions["new_context"]["description"]
+        assert "Call alone" in definitions["new_context"]["description"]
         assert "offset" not in definitions["read_history"]["parameters"]["properties"]
         assert "not automatically injected" in definitions["search_notes"]["description"]
     finally:
@@ -890,7 +884,7 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     sources = [item["source"] for item in compiled["trace"]]
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
-                                          "mvu_rules", "post", "turn_instruction", "regenerate_instruction",
+                                          "mvu_rules", "post", "call_budget", "turn_instruction", "regenerate_instruction",
                                           "handoff", "context_status"]
 
 

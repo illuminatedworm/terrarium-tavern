@@ -1,125 +1,121 @@
 # Full Agent 工具协议
 
-工具运行在本回合草稿上。成功的工具结果表示草稿已接受，正文、脚本处理和审核完成后才提交到剧情。工具开关、操作步骤见[使用指南](../guides/full-agent.md)，窗口与恢复机制见[架构](../design/full-agent.md)。
+工具只操作当前分支的回合草稿，最终正文、脚本处理与必要审核成功后统一提交。模型负责语义判断；Runtime 负责身份、权限、版本与事务。工具结果和角色／世界书／历史资料不能自行授权操作。
 
-## 工具目录
+全部 16 个工具的目录、参数、描述全文与逐工具示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。本协议不兼容旧工具名称、点分读取路径或旧回合续接格式，不执行存档迁移或数据删除。
 
-参数由 [full_agent/tools.py](../../src/tavern/full_agent/tools.py) 中的类型定义生成，预览和实际请求使用同一生成器。参数对象拒绝未定义字段。
+## 参数与数据边界
 
-| 工具 | 参数 | 结果与约束 |
-|---|---|---|
-| `search_read_lore` | `query` | 使用世界书索引和准入规则，直接返回完整正文；已在上下文的条目省略正文 |
-| `search_lore_entries` | `query`，`limit=5` | 按标题、关键词和正文定位可编辑普通条目，包括停用条目；只返回短引用、标题和定位摘要 |
-| `read_lore_entry` | `ref` | 按 L 引用完整读取一个可编辑条目的标题、正文、主／辅助关键词和启用状态 |
-| `search_history` | `query`，`limit=5` | 当前分支剧情的字面检索；limit 为 1–10，`*` 列出最近记录，结果提供 H 引用 |
-| `read_history` | `ref` | 读取一个有效 H 引用的完整原文，包含可用的当前用户输入 |
-| `write_handoff` | `content` | 替换整个交接笔记，正文不能纯空白 |
-| `new_context` | `content`，`keep_recent=2` | 替换交接笔记并换窗，必须单独调用 |
-| `search_notes` | `query`，`limit=5` | 搜索当前分支的有效笔记；`*` 列出笔记，limit 为 1–10 |
-| `read_note` | `ref` | 按完整笔记键读取有效或归档笔记 |
-| `write_note` | `key`、`content`、`kind`，可选 `sources` | 新增或完整替换，无需预先读取笔记或历史；事实须有有效 H 来源 |
-| `archive_note` | `key` | 从普通搜索中归档，仍可按键读取 |
-| `read_state` | `path=""` | 点分路径，空值读取全部剧情状态；包含 MVU 时使用 `stat_data` 前缀 |
-| `patch_state` | `operations`、`reason` | 先完整读取最新变量，再提交本轮授权的一次 MVU 补丁；路径相对于 `stat_data`，无变化提交 `[]`，成功后不可重复 |
-| `read_character` | `ref` | 完整读取七个获准人物设定字段中的一个；缺失字段返回 null；不支持整卡、世界书或扩展读取 |
-| `revise_content` | `operations`、`reason` | 受限设定动作：改人物字段，新增、修改或删除普通世界书条目；不接受 JSON Patch、路径或整卡替换 |
-| `set_retrieval_query` | `query` | 保存下一轮自动检索线索，不写入剧情正文 |
+参数由 [tools.py](../../src/tavern/full_agent/tools.py) 和 [content.py](../../src/tavern/full_agent/content.py) 的类型生成，预览和实际请求共用生成器。顶层和嵌套动作拒绝未定义字段，JSON 类型严格校验。
 
-查询文本最长 1000 字符；读取引用和笔记键最长 80 字符。笔记键可使用字母、数字、下划线、中文、斜线、连字符、空格和点。handoff 和笔记正文还限制为最多 64000 字符，补丁理由最多 1000 字符。正文同时受配置中的 token 上限约束，见[工具与记忆设置](../guides/full-agent.md#工具与记忆设置)。
+历史引用为当前分支有效 H 编号，世界书引用为 L 加正整数；它们是导航句柄，不写入剧情。read_note、write_note、archive_note 统一使用完整笔记 key。版本、指纹、真实 ID 和模型短编号映射由 Runtime 保存；模型不生成或回传这些机械字段。
 
-`patch_state.operations` 接受 0–100 项 JSON Patch；`revise_content.operations` 接受 1–100 项受限设定动作。变量规则由运行时以 `<mvu_rules>` 完整快照按需追加，全部启用的 tracker_mvu 条目均参与，不走叙事检索筛选。遵循最新快照并用 read_state 核对当前值；规则文本不改变本轮权限或正文协议。
+query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_state.path 最长 200 字符。handoff 和笔记正文为 1–64000 字符，不能为空白，另受配置中的 handoff_tokens／note_tokens 约束；reason 为 1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
 
-历史和笔记工具只按文本检索，不检索旧工具交换。叙事工具 `search_read_lore` 与编辑定位工具 `search_lore_entries` 分开：前者遵循检索准入和启停规则，后者包含停用的普通条目。L 编号可交给 `read_lore_entry`，每次只读取一个可编辑条目；定位摘要、叙事检索正文和上下文已有资料不授予编辑资格。
+## 叙事检索与编辑定位
 
-## 引用与笔记更新
+recall_lore 使用自动检索的索引与准入规则，返回完整命中正文，已注入正文省略，合法零命中保持为空。编号和标题由返回选项控制；返回的 L 引用可交给 read_lore_entry，但受保护目标仍会拒绝。召回正文和已有上下文不授予编辑资格。
 
-`kind` 为 `fact`、`hypothesis` 或 `plan`。`fact` 必须提供当前分支有效的 H 原文引用，包括当前用户输入；最多 20 个。其他类型的来源可选，提供时同样校验引用有效性。无需本回合搜索或读取来源。程序直接解析消息身份并保存原文指纹，结论是否得到原文支持仍由模型判断。
+find_lore_for_edit 按标题、关键词和正文做字面定位，包括停用普通条目；query=* 列出最多 limit 项。read_lore_entry 一次返回完整 title/content/keys/secondary_keys/enabled，并登记该条目的读取记录。历史与笔记搜索也支持 *，但不搜索旧工具过程。
 
-例如，H7 在当前分支有效时，可直接将它用于事实笔记：
+set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最后一次成功调用生效，query="" 清空本轮线索。它随最终正文提交，不清除旧回合线索，不进入正文。
 
-```json
-{
-  "key": "物品/戒指",
-  "content": "艾琳把戒指借给用户，约定离港前归还。",
-  "kind": "fact",
-  "sources": ["H7"]
-}
-```
+## 变量路径与唯一成功提交
 
-H7 只用于说明格式，实际调用必须使用当前分支有效的引用。如果 `物品/戒指` 已存在，可以直接提交完整新版；模型仍应保留有效信息，并按需要用 `read_note` 核对。覆盖归档笔记会重新激活该键。
+read_state 默认 scope="variables"，根对象为投影后的 stat_data；scope="story" 的根对象为投影后的完整剧情状态。两者 path 都是 JSON Pointer，空串读取整个作用域，缺失目标返回 text:"null"，没有 stat_data 时变量视图为 {}。内部账本与 MVU 元数据不开放。父对象替换会保留隐藏字段，数组下标按模型可见项定位，由程序映射到实际存储位置。
 
-handoff 的有效版本取最新运行时记忆更新与成功 `write_handoff` 结果中较晚者。失败调用中的新内容不构成当前记忆。
-
-## 换窗参数
-
-`new_context.keep_recent` 按剧情消息条数计数，范围 0–12，默认 2；保留边界向前扩展到完整交流，当前用户输入另行保留。旧工具交换整体退出，不能留孤立的 tool result。
-
-```json
-{
-  "content": "当前在港口。用户保管借来的戒指；离港前须归还。下轮核对码头通行证。相关长期笔记：物品/戒指。",
-  "keep_recent": 2
-}
-```
-
-换窗继续同一回合，不重置调用额度。强制换窗期间只接受单独的 `new_context`；正文、其他工具及混合批次被拒绝，随后将原因交回模型。
-
-## 变量与设定编辑
-
-`read_state` 使用点分路径，MVU 变量带 `stat_data` 前缀，如 `stat_data.hp`。`patch_state` 使用相对于 `stat_data` 的 JSON Pointer，如 `/hp`，省略 `/stat_data`。调用前须在本回合当前窗口成功完整读取最新变量：`read_state(path="")` 或 `read_state(path="stat_data")`；局部或过期读取不满足要求，空补丁也须先读。
-
-`read_character` 只接受 `name`、`description`、`personality`、`scenario`、`mes_example`、`system_prompt`、`post_history_instructions`。每次完整读取一个字段；缺失时返回 `text: null`，附加信息默认含 `exists`。`*`、根路径、`character_book`、开场白、扩展和脚本均不能读取。
-
-`revise_content` 的受限动作与参数为：
-
-| 动作 | 参数 | 行为 |
-|---|---|---|
-| `set_character` | `field`、文本 `value` | 设置一个获准人物字段；先用 read_character 读取；空串可清空可选字段，name 必须有效 |
-| `add_lore` | `entry` | 新增普通叙事条目；必填 title/content，可选 keys/secondary_keys/enabled；默认启用并追加，不要求整本读取 |
-| `update_lore` | `ref`、非空 `changes` | 修改已读的一个 L 条目；只接受 title/content/keys/secondary_keys/enabled，省略保留 |
-| `remove_lore` | `ref` | 删除已读的一个普通 L 条目 |
-
-例如分别读取和更新单条设定：
-
-```json
-{"ref": "L7"}
-```
-
-```json
-{"operations": [{"op": "update_lore", "ref": "L7", "changes": {"content": "用户获准在港口过夜。"}}], "reason": "用户要求更新港口设定"}
-```
-
-身份、数组位置、旧字段别名及配置保留由程序处理，模型不能提交路径、ID、数组下标、扩展或整卡对象。支持包装卡、未包装卡及列表／字典世界书。条目短引用在删除前项后仍指向原条目；已删除引用不会复用。
-
-人物修改、已有条目修改／删除须在本回合当前窗口完整读取最新目标。成功修改使该项读取资格失效，其他项保持有效；换窗或新回合须重读，失败续接保留有效的字段／条目登记。旧版整卡读取登记不授予新编辑资格。整批先校验、再应用，失败不部分修改。
-
-只开放普通叙事条目，包含停用条目。`tracker_mvu`、`runtime_init`、传统 `[InitVar]`、执行脚本和相关配置均受保护；原字段／条目包含内嵌脚本、HTML 执行入口或 InitVar/MVU 执行指令时整项不能修改或删除，新内容也不得引入这些代码。无关字段、开场白、脚本和未知扩展原样保留，程序不会执行代码来判断可编辑性。
-
-## 权限与错误
-
-关闭的工具同时退出模型工具列表和运行时白名单。关闭 `read_state` 时 `patch_state` 不可用；设定编辑按类型检查依赖，关闭 `read_character` 只阻止人物修改，关闭 `read_lore_entry` 只阻止已有条目的修改和删除，新增普通条目不要求读取。工具目录的 `edit_capabilities` 显示三类能力。`patch_state` 的定义在本轮授权前后保持稳定，但执行时要求本轮勾选更新变量，并限制一次成功提交；缺少必要提交时，最终正文会被否决并要求补调。关闭它或 `read_state` 后，界面取消变量更新勾选，提交接口也会提前拒绝。
-
-`revise_content` 受对话设定策略控制。预览策略下，包含设定变更的整份回合草稿等待审核。取消、失败或拒绝审核均不提交剧情状态。
-
-参数 JSON 损坏时停止回合并保留已有进度；合法 JSON 中的字段、引用或权限错误作为工具结果返回，允许模型在调用额度内纠正。
-
-参数校验失败时，`error` 明确指出缺少、多余、类型或范围错误的字段，`expected_parameters` 返回该工具接受的参数定义，供模型修正后重新调用。错误结果不回显输入值、Pydantic 内部类名或文档链接；校验通过前不执行工具。例如 `read_history` 收到 `reason` 而未收到 `ref`，会说明“缺少必填参数 ref；不接受参数 reason，请删除”，并返回必填字符串 `ref` 的定义。
-
-## 返回字段与会话接口
-
-用户在“工具”页选择返回字段，模型不能通过调用参数改变这些选项：
-
-| 工具 | 可选字段与默认值 |
+| 目标 | 默认变量作用域的 path |
 |---|---|
-| `search_read_lore` | 编号、标题默认关闭；开启编号后可返回 `already_in_context` |
-| `search_history`、`search_notes` | 摘要默认开启；空结果为 `matches: []` |
-| `read_history`、`read_note`、`read_state`、`read_character` | 附加信息默认开启 |
+| 所有变量 | `""` |
+| hp | `/hp` |
+| items 数组首项的 name | `/items/0/name` |
+| 名为 a.b 的键 | `/a.b` |
+| 名为 a/b~c 的键 | `/a~1b~0c` |
 
-工具返回正文完整进入上下文；界面分页只限制展示，不截断模型结果。
+patch_state.operations 为 0–100 项带类型的 JSON Patch：每项 op/path 必填，add/replace/test 需要 value（包括 null），move/copy 需要 from，remove 无其他字段。path/from 相对 stat_data；数组从 0 起，add 可用末尾 /-，空指针指根。既有目标、父节点和根值限制由补丁及 MVU 校验共同检查。
 
-| 会话 API | 用途 |
-|---|---|
-| `GET/PUT /api/sessions/{sid}/full-agent/tools` | 读取工具定义及保存开关、返回字段；写入带 `expected_revision` |
-| `GET /api/sessions/{sid}/full-agent` | 读取 handoff、笔记与窗口概况 |
-| `PUT /api/sessions/{sid}/full-agent/context` | 人工保存 handoff；`new_window=true` 时换窗，`keep_recent` 默认 0 |
+授权回合必须且只能成功一次。非空补丁须先在当前窗口完整执行 read_state(path="",scope="variables")；局部、story 作用域或过期读取无效。operations=[] 可直接确认无变化，不调用补丁阶段的脚本，仍消耗一次成功提交。失败不计成功，补丁失败恢复脚本镜像后允许修正重试；恢复失败则终止回合。错误路径给出纠正建议，不自动改写路径；真实存在的 stat_data 同名嵌套键仍合法。
 
-人工编辑需要已有剧情节点，正文非空且符合 handoff token 上限；写入携带 `expected_revision`，运行或待审核回合期间拒绝修改。活动记录接口与完整类型见 [full_agent/api.py](../../src/tavern/full_agent/api.py)，回归入口见 [test_full_agent_tools.py](../../tests/backend/test_full_agent_tools.py)。
+变量规则以本轮固定的完整 mvu_rules 快照提供，规则不扩大权限。patch_state 定义不随本轮授权变化，以保持请求前缀稳定；关闭 read_state 或 patch_state 则不允许发起变量更新。
+
+## 设定编辑与读取记录
+
+read_character.ref 和 set_character.field 的白名单为 name、description、personality、scenario、mes_example、system_prompt、post_history_instructions；每次读取一个完整字段，缺失返回 null。
+
+revise_content 接受 1–100 项受限动作及 reason：
+
+| op | 参数 | 规则 |
+|---|---|---|
+| set_character | field、完整文本 value | 首次编辑前完整读取字段；可清空可选字段，name 必须有效。 |
+| add_lore | entry | 必填非空白 title/content，可选 keys=[]、secondary_keys=[]、enabled=true；不需预读。 |
+| update_lore | ref、非空 changes | 首次编辑前完整读取条目；可改 title/content/keys/secondary_keys/enabled，不能传 null，省略保留。 |
+| remove_lore | ref | 使用最新读取记录删除一个普通条目。 |
+
+整批在副本上校验并应用，失败不改变内容或读取记录。成功返回 characters、entries 中每个新增／修改目标的完整最终视图，同目标只返回一次；删除项进入 removed_refs，新增引用进入 added_refs。后端为返回的完整内容刷新记录，因此可以连续编辑或编辑新建条目；删除、外部内容变化、换窗或新回合使旧记录失效。
+
+只开放普通叙事条目，包含停用条目。脚本、HTML 执行入口、tracker_mvu、runtime_init、传统 InitVar 和执行配置受保护；不能借新文本引入执行内容。无关字段、开场白和扩展保持原样。身份、别名、数组位置及原配置由程序维护，工具不接受整卡替换或任意 JSON Patch。
+
+沿用 directed／auto／preview 会话策略；删除和修改角色系统／后置字段不另加审批。关闭某类读取会阻止对应已有目标的修改，新增普通条目不依赖读取开关。
+
+## 记忆与换窗
+
+write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入；最多 20 个，无需预先搜索或读取。程序校验来源身份与过时状态，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。stale=true 表示来源变化或不可用，应先核对原文。
+
+write_note 完整替换内容，无先读要求；覆盖归档键重新激活。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
+
+handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 只替换笔记；new_context 同时换窗，keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
+
+new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
+
+## 返回格式与错误恢复
+
+成功结果统一为：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true}}
+```
+
+失败结果统一为：
+
+```json
+{"ok":false,"error":{"code":"READ_REQUIRED","message":"非空补丁前须完整读取最新变量","retryable":true,"next_action":"调用 read_state，使用默认作用域及空 path。","patch_state_completed":false}}
+```
+
+参数错误在顶层额外返回 expected_parameters；patch_state 的错误在 error 内额外返回 patch_state_completed，明确失败是否发生在已有一次成功提交之后。错误与结果都先做模型数据投影，不暴露真实身份和指纹；分类来自显式异常，不解析报错文案。
+
+非法 JSON 或非法工具序列是 TOOL_PROTOCOL_INVALID，额度耗尽是 BUDGET_EXHAUSTED，提供商异常为 PROVIDER_ERROR，不完整回复为 PROVIDER_INCOMPLETE，脚本恢复失败为 SCRIPT_RESTORE_FAILED。它们是终止回合的诊断事件，不返回可重试工具结果；其他运行异常记录为 RUNTIME_FAILURE。
+
+## 请求预算与草稿生命周期
+
+max_steps 默认 24，范围 2–100，按模型请求次数计数。工具续答和换窗均计入。每次请求的动态 call_budget 给出上限及包含本次的剩余次数；最后一次另提醒收尾，固定规则与工具前缀保持稳定。下一回合不回放旧倒计时；手动续接获得新请求额度，已成功工具及 patch_state_completed 对应的后端提交标记保持不变。
+
+| 情况 | 正式剧情 | 草稿与恢复 |
+|---|---|---|
+| 正文、脚本处理及审核完成 | 原子提交 | 正文、笔记、变量、设定一起生效。 |
+| 生成失败、预算耗尽、取消或中断 | 不变 | 保留进度；只能续接本会话最新且输入／授权一致的可恢复回合，成功工具不重跑。 |
+| 等待审核 | 不变 | 整轮保持待提交。 |
+| 明确拒绝审核，包括取消待审核回合 | 不变 | 清除 pending、draft、preview 和可续接进度，保留过程记录；续接接口拒绝恢复。 |
+| 输入或授权改变 | 不变 | 以新请求重新开始，不复用旧草稿。 |
+
+回合接口返回 resumable，前端仅在它为 true 且变量／设定授权均一致时尝试续接，否则发起新请求。该字段表示当前回合具有可恢复进度，实际提交时仍检查它是否为最新回合及版本是否匹配。
+
+错误码表由 `tools/export_full_agent_tools.py` 生成；描述与示例的核对见[速查附录](full-agent-tools-summary.md#附录工具描述全文与最小示例)。
+
+## 错误码（由源码生成）
+
+`retryable=true` 表示修正原因后可再次调用，并非原样重试。
+
+| code | 可修正重试 | 默认 next_action |
+|---|---|---|
+| `UNKNOWN_TOOL` | 是 | 使用本轮工具目录中的名称。 |
+| `PERMISSION_DENIED` | 否 | 遵守本轮授权；需要时由用户调整工具开关或授权。 |
+| `INVALID_ARGUMENTS` | 是 | 按参数定义修正后重试。 |
+| `INVALID_REFERENCE` | 是 | 重新搜索或读取当前分支中的有效引用。 |
+| `READ_REQUIRED` | 是 | 在当前窗口完整读取最新目标后重试。 |
+| `INVALID_PATH` | 是 | 使用 JSON Pointer；变量路径相对于 stat_data，如 /hp，不是 stat_data.hp 或 /stat_data/hp。不要自动删除真实同名键。 |
+| `PATCH_VALIDATION_FAILED` | 是 | 核对最新变量与 MVU 规则，修正补丁后重试。 |
+| `CONTENT_LIMIT` | 是 | 精简本次写入内容后重试；不能截断读取的原文。 |
+| `PROTECTED_TARGET` | 否 | 仅修改工具公开的业务字段；程序内部字段与执行配置不可修改。 |
+| `STATE_ALREADY_SUBMITTED` | 否 | 本轮变量已成功提交，不要重复调用 patch_state。 |
+| `MIXED_CONTEXT_CALLS` | 是 | 本批次未执行任何工具；单独调用 new_context。 |
+| `CONTEXT_ROLLOVER_REQUIRED` | 是 | 单独调用 new_context 后继续本轮。 |

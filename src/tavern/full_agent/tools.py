@@ -1,18 +1,22 @@
 """Typed tools over a turn draft; storage identities never become model arguments."""
 import json
 import re
-from typing import Literal
+from typing import Annotated, Any, Literal
 
+import jsonpatch
+import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from tavern.conversation.context import get_path
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
 from tavern.full_agent.content import CharacterRead, ContentEditor, ContentRevision, LoreRead, entry_view
+from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads
 from tavern.full_agent.state import note_view, rollover, source_hash
+from tavern.scripting.runtime import RuntimeRollbackError
+from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
 
 
 class Arguments(BaseModel):
@@ -21,6 +25,10 @@ class Arguments(BaseModel):
 
 class Query(Arguments):
     query: str = Field(min_length=1, max_length=1000, description="Search text or retrieval clues.")
+
+
+class RetrievalQuery(Arguments):
+    query: str = Field(max_length=1000, description="Replace next-turn retrieval clues; empty string clears this turn's clues.")
 
 
 class Search(Query):
@@ -35,8 +43,8 @@ class HistoryRead(Read):
     ref: str = Field(min_length=1, max_length=80, description="Exact H reference from search_history or retained context, e.g. H1; must exist in the current branch.")
 
 
-class NoteRead(Read):
-    ref: str = Field(min_length=1, max_length=80, description="Exact existing note key, e.g. relationships/guide; accepts active or archived notes, not H/L references.")
+class NoteRead(Arguments):
+    key: str = Field(min_length=1, max_length=80, description="Exact existing note key, e.g. relationships/guide; accepts active or archived notes, not H/L references.")
 
 
 class Handoff(Arguments):
@@ -67,28 +75,38 @@ PATCH_GUIDANCE = ("JSON Patch objects. Each requires op and path. "
         "remove/replace/test and from, and add requires an existing parent.")
 
 
-class Patch(Arguments):
-    operations: list[dict] = Field(min_length=1, max_length=100, description=PATCH_GUIDANCE)
+class ValueOperation(Arguments):
+    op: Literal["add", "replace", "test"] = Field(description="Operation that supplies a JSON value.")
+    path: str = Field(description="Target JSON Pointer relative to stat_data.")
+    value: Any = Field(description="JSON value, including null.")
+
+
+class FromOperation(Arguments):
+    op: Literal["move", "copy"] = Field(description="Operation that reads another location.")
+    path: str = Field(description="Target JSON Pointer relative to stat_data.")
+    from_: str = Field(alias="from", description="Source JSON Pointer relative to stat_data.")
+
+
+class RemoveOperation(Arguments):
+    op: Literal["remove"] = Field(description="Remove an existing value.")
+    path: str = Field(description="Target JSON Pointer relative to stat_data.")
+
+
+StateOperation = Annotated[ValueOperation | FromOperation | RemoveOperation, Field(discriminator="op")]
+
+
+class StatePatch(Arguments):
+    operations: list[StateOperation] = Field(max_length=100, description=PATCH_GUIDANCE + " Empty array means no changes.")
     reason: str = Field(min_length=1, max_length=1000, description="Story evidence and purpose of this change.")
 
 
-class StatePatch(Patch):
-    operations: list[dict] = Field(max_length=100, description=PATCH_GUIDANCE + " Empty array means no changes.")
-
-
 class StateRead(Arguments):
-    path: str = Field(default="", max_length=200, description="Dot-separated state path, including stat_data for MVU variables (e.g. stat_data.hp); array elements use zero-based numeric segments (e.g. stat_data.items.0.name). Empty reads the entire story state; missing paths return null. Literal dots in keys cannot be escaped with this path syntax.")
+    path: str = Field(default="", max_length=200, description="JSON Pointer relative to the selected scope, e.g. /hp or /items/0/name. Escape ~ as ~0 and / as ~1 in keys. Empty reads the complete scope; missing paths return null.")
+    scope: Literal["variables", "story"] = Field(default="variables", description="variables reads stat_data, matching patch_state paths. story reads projected story state. Only a complete variables read qualifies for a nonempty patch.")
 
 
-HANDOFF_GUIDANCE = (
-    "content replaces the entire handoff. Build on the latest <tavern_memory> update or the most recent "
-    "successful write_handoff call, whichever is later; failed proposals are not current memory. Preserve valid scene context, "
-    "relationships, user constraints, important experiences, unresolved issues, tone, and useful H references or note keys. "
-    "Mark plans as pending and verify stale sources. Draft changes commit with the turn; review mode requires approval."
-)
-REFERENCE_GUIDANCE = "H/L references are navigation handles, not story prose."
 RESULT_FIELDS = {
-    "search_read_lore": {"include_ref": False, "include_title": False},
+    "recall_lore": {"include_ref": False, "include_title": False},
     "search_history": {"include_preview": True},
     "read_history": {"include_metadata": True},
     "search_notes": {"include_preview": True},
@@ -104,57 +122,48 @@ def result_field(session, tool, field):
 
 
 SPECS = {
-    "search_lore_entries": (Search, "Locate ordinary narrative worldbook entries for editing by literal title, keywords or text. "
-        "Includes disabled ordinary entries; query=* lists up to limit results. Returns L handles, titles and labeled navigation previews, not full sources. "
-        "Does not grant edit permission or change narrative retrieval. Read one target with read_lore_entry before updating/removing it."),
+    "find_lore_for_edit": (Search, "Locate ordinary narrative worldbook entries for editing; use recall_lore for narrative recall. "
+        "Search literal title, keywords or text, including disabled ordinary entries; query=* lists up to limit results. "
+        "Returns L handles, titles and navigation previews. Read one target with read_lore_entry before updating/removing it."),
     "read_lore_entry": (LoreRead, "Read one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. "
-        "Scripts, variable rules, initialization and runtime configuration are not accessible. Reads qualify only in this turn/window while current."),
-    "search_read_lore": (Query, "Search the lorebook and read complete matching entries. "
-        "Use a concise, self-contained query in the lorebook's language to describe what you're looking for. "
-        "Entry conditions, cooldowns, relevance thresholds, and limits may filter matches. "
-        "Returns complete selected entries in <lorebook>; auto-injected entries already in context are omitted. "
-        "Optional result fields may include L references and titles."),
+        "Establishes a current read record for editing. Protected scripts, variable rules and initialization are unavailable."),
+    "recall_lore": (Query, "Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. "
+        "Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. "
+        "Returns complete selected entries in <lorebook>; already injected text is omitted. "
+        "When enabled, results include titles and L handles. These handles can be passed to read_lore_entry, subject to target protection; recall alone does not establish an edit read record."),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
-        "Use short text fragments; query=* lists recent records. Use read_history to verify facts and note sources."),
-    "read_history": (HistoryRead, "Read original dialogue by H reference, including the current user input. " + REFERENCE_GUIDANCE),
-    "write_handoff": (Handoff, "Update the handoff in the current window. " + HANDOFF_GUIDANCE),
-    "new_context": (NewContext, "Save a handoff and switch windows. " + HANDOFF_GUIDANCE
-        + " Call this tool alone. The current user input stays; keep_recent counts dialogue messages, "
-        "expanded to complete exchanges. Old tool exchanges leave the window, so include needed results or references "
-        "in the handoff. Forced rollover accepts only this tool. Continue the turn after switching; "
-        "the model-call budget does not reset."),
-    "search_notes": (Search, "Search active notes in this branch by literal text terms in content or keys. "
-        "Use short text fragments; query=* lists notes. Notes are not automatically injected. "
-        "Use read_note for full text and optional source metadata."),
-    "read_note": (NoteRead, "Read an active or archived note by key, with optional kind, H sources, and stale status. "
+        "Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable."),
+    "read_history": (HistoryRead, "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose."),
+    "write_handoff": (Handoff, "Replace the complete handoff in the current window. Build on the latest runtime memory update or successful write, whichever is later. "
+        "Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources."),
+    "new_context": (NewContext, "Replace the complete handoff and switch windows. Preserve valid context, constraints, unresolved issues and references needed to continue. "
+        "Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. "
+        "Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset."),
+    "search_notes": (Search, "Search active notes in this branch by literal terms in content or keys; query=* lists notes. "
+        "Returns navigation previews when enabled. Notes are not automatically injected; use read_note for complete text."),
+    "read_note": (NoteRead, "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
-    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. "
-        "No prior note or history read is required. kind=fact requires supporting H sources valid in this branch. "
-        "hypothesis marks uncertainty; plan marks intent. "
-        "Attribute character claims and preserve uncertainty where evidence is insufficient. Respect revoked information. "
-        "Replacing an archived key reactivates it. Draft changes commit with the turn; review mode requires approval."),
+    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. "
+        "kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks intent. "
+        "Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
-        "History and older branches remain. Draft changes commit with the turn; review mode requires approval."),
-    "read_state": (StateRead, "Read story state, including MVU variables under stat_data, excluding runtime ledgers and MVU internals. An empty path reads all state; "
-        "a dot-separated path reads one field. For MVU variables include stat_data in the read path (e.g. stat_data.hp), unlike patch_state paths which are relative to stat_data. Check values and structure before updating."),
-    "patch_state": (StatePatch, "Call exactly once only when this turn's system message requires an MVU update. "
-        "Apply MVU-validated JSON Patch relative to stat_data; omit the /stat_data prefix from paths. "
-        "First read all current variables with read_state(path=\"\") or read_state(path=\"stat_data\") in this turn and window; "
-        "partial or stale reads do not qualify, even for operations=[]. Follow the latest <mvu_rules> snapshot, give story evidence in reason, "
-        "and align changes with the final narrative. Submit operations=[] when nothing changed. "
-        "Use this tool instead of MVU blocks in prose. Draft changes commit with the turn; review mode requires approval."),
-    "revise_content": (ContentRevision, "Edit this branch's narrative settings with set_character, add_lore, update_lore or remove_lore. "
-        "No card/worldbook replacement, JSON Patch, paths, indices, IDs, scripts, openings, extensions, variable rules or initialization. "
-        "set_character requires read_character for that field; update_lore/remove_lore require read_lore_entry for that L handle. "
-        "Read the complete latest target in this turn/window; after an accepted change reread it before another edit. "
-        "add_lore needs no bulk read. Omitted entry properties and unrelated source stay intact. Script-bearing targets are protected. "
-        "Draft changes commit with the turn; review mode requires approval."),
-    "read_character": (CharacterRead, "Read one complete allowed setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
-        "A missing allowed field returns null. No wildcard, whole card, worldbook, opening, extensions or scripts. "
-        "Read the latest field in this turn/window before set_character; script-bearing fields cannot be read or edited by this tool."),
-    "set_retrieval_query": (Query, "Save concise next-turn automatic lorebook retrieval clues about the scene, "
-        "relevant entities, or unresolved issues. Distinguish anticipated events from facts. "
-        "Clues commit with the final narrative and stay outside story prose."),
+        "This does not delete it or older history. write_note with the same key reactivates it."),
+    "read_state": (StateRead, "Read state using JSON Pointer. Default scope=variables reads stat_data with the same relative paths as patch_state, e.g. /hp. "
+        "Empty path reads the complete scope; scope=story reads projected story state. Internal ledgers remain hidden. "
+        'Before a nonempty patch, read all variables with path="", scope=variables; partial or story-scope reads do not qualify.'),
+    "patch_state": (StatePatch, "Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. "
+        'Nonempty operations require a current complete variables read with read_state(path="", scope="variables"). '
+        "Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. "
+        "Follow the latest <mvu_rules>, explain story evidence in reason and align with the final narrative. "
+        "Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose."),
+    "revise_content": (ContentRevision, "Edit narrative settings with set_character, add_lore, update_lore or remove_lore; use these semantic actions, not JSON Patch or storage IDs. "
+        "Existing fields require a current read_character record; existing entries require a current read_lore_entry record. add_lore needs no prior read. "
+        "Success returns complete final contents of changed targets and refreshes their read records for further edits in this window; deletion invalidates the record. "
+        "Omitted properties remain intact. Script-bearing targets and execution settings are protected; failed batches change nothing."),
+    "read_character": (CharacterRead, "Read one complete setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
+        "Missing fields return null. Establishes a current read record for set_character; script-bearing fields are protected."),
+    "set_retrieval_query": (RetrievalQuery, "Replace this turn's clues for next-turn automatic worldbook retrieval; the last successful call wins. "
+        'query="" clears these clues without erasing clues saved by earlier turns. Describe relevant scenes, entities or unresolved issues, distinguishing anticipated events from facts. Clues stay outside narrative prose.'),
 }
 
 
@@ -185,7 +194,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         mechanism = " Uses " + channel_names + " recall."
         if settings.local_models.reranker_enabled:
             mechanism += " Reranking orders and filters candidates by relevance."
-        limits["search_read_lore"] = mechanism
+        limits["recall_lore"] = mechanism
     return [{"type": "function", "function": {"name": name, "description": description + limits.get(name, ""),
              "parameters": model.model_json_schema()}} for name, (model, description) in SPECS.items() if name in names]
 
@@ -202,7 +211,7 @@ class AgentTools:
 
     def cap_text(self, content, maximum, label):
         if not content.strip() or count_text(content, self.owner.settings) > maximum:
-            raise ValueError(f"{label}不能为空，且须在 {maximum} tokens 内；请自行精简")
+            raise ToolError("CONTENT_LIMIT", f"{label}不能为空，且须在 {maximum} tokens 内；请自行精简")
 
     def read(self, text, *, wrap=str, **metadata):
         return {**metadata, "text": wrap(text)}
@@ -230,24 +239,28 @@ class AgentTools:
         return {"matches": results, **({"notice": "使用 read 工具读取完整原文。"} if results else {})}
 
     async def execute(self, name, arguments):
+        # One boundary covers every successful result, including free-form source text.
+        return success(self.owner.model_view.expose(await self._execute(name, arguments)))
+
+    async def _execute(self, name, arguments):
         owner = self.owner
         if name not in SPECS:
-            raise ValueError(f"工具不存在：{name}；请使用本轮提供的工具名称")
+            raise ToolError("UNKNOWN_TOOL", f"工具不存在：{name}；请使用本轮提供的工具名称")
         allowed = {t["function"]["name"] for t in owner.definitions}
         if name not in allowed:
-            raise ValueError("当前模式或授权不允许此工具")
+            raise ToolError("PERMISSION_DENIED", "当前模式或授权不允许此工具")
         if name == "patch_state":
             if not owner.request.update_variables:
-                raise ValueError("本轮未要求更新 MVU 变量，不允许调用 patch_state")
+                raise ToolError("PERMISSION_DENIED", "本轮未要求更新 MVU 变量，不允许调用 patch_state")
             if owner.patch_state_done:
-                raise ValueError("本轮已完成一次 patch_state，不允许重复更新")
+                raise ToolError("STATE_ALREADY_SUBMITTED", "本轮已完成一次 patch_state，不允许重复更新")
         model = SPECS[name][0]
         try:
             args = model.model_validate_json(arguments)
         except ValidationError as error:
             raise ToolArgumentError(name, model, error) from None
         state = owner.state
-        if name == "search_lore_entries":
+        if name == "find_lore_for_edit":
             rows = [{"ref": row["ref"], "title": row["title"],
                      "text": row["title"] + " " + " ".join(row["keys"] + row["secondary_keys"]) + " " + row["content"]}
                     for row in self.content.rows()]
@@ -259,7 +272,7 @@ class AgentTools:
             result = owner.model_view.expose({"ref": args.ref, **entry_view(entry)})
             self.reads.read_entry(args.ref, raw)
             return result
-        if name == "search_read_lore":
+        if name == "recall_lore":
             return await owner.retrieve(args.query, source="agent",
                                         include_ref=result_field(owner.session, name, "include_ref"),
                                         include_title=result_field(owner.session, name, "include_title"))
@@ -269,7 +282,7 @@ class AgentTools:
         if name == "read_history":
             row = next((r for r in self.archive() if r["ref"] == args.ref), None)
             if row is None:
-                raise ValueError("当前分支没有此历史引用")
+                raise ToolError("INVALID_REFERENCE", "当前分支没有此历史引用")
             metadata = ({"ref": args.ref, "role": row["role"]}
                         if result_field(owner.session, name, "include_metadata") else {})
             return self.read(row["text"], **metadata)
@@ -288,50 +301,91 @@ class AgentTools:
                     if n["status"] == "active"]
             for row in rows:
                 row.pop("content")
+                row.pop("revision")
             return self.search(rows, args.query, args.limit,
                                include_preview=result_field(owner.session, name, "include_preview"))
         if name == "read_note":
-            note = state["notes"].get(args.ref)
+            note = state["notes"].get(args.key)
             if note is None:
-                raise ValueError("笔记 key 不存在")
+                raise ToolError("INVALID_REFERENCE", "笔记 key 不存在")
             meta = note_view(note, owner.source_history)
+            meta.pop("revision")
             return self.read(meta.pop("content"),
                              **(meta if result_field(owner.session, name, "include_metadata") else {}))
         if name == "write_note":
             self.cap_text(args.content, owner.settings.full_agent_config.note_tokens, "笔记")
             old = state["notes"].get(args.key, {})
             if args.kind == "fact" and not args.sources:
-                raise ValueError("fact 必须提供当前分支有效的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
+                raise ToolError("INVALID_ARGUMENTS", "fact 必须提供当前分支有效的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
             sources = []
             history = {f"H{i+1}": message for i, message in enumerate(owner.source_history)}
             for ref in dict.fromkeys(args.sources):
                 source = history.get(ref)
                 if source is None:
-                    raise ValueError("sources 包含当前分支无效的历史引用；请使用有效的 H 引用")
+                    raise ToolError("INVALID_REFERENCE", "sources 包含当前分支无效的历史引用；请使用有效的 H 引用")
                 sources.append({"message_id": source["id"], "hash": source_hash(source)})
             state["notes"][args.key] = {"key": args.key, "content": args.content, "kind": args.kind,
                                        "status": "active", "revision": old.get("revision", 0) + 1, "sources": sources}
             return {"key": args.key, "saved_to_draft": True}
         if name == "archive_note":
             if args.key not in state["notes"]:
-                raise ValueError("笔记 key 不存在")
+                raise ToolError("INVALID_REFERENCE", "笔记 key 不存在")
             state["notes"][args.key]["status"] = "archived"
             state["notes"][args.key]["revision"] += 1
             return {"key": args.key, "archived": True}
         if name == "read_state":
-            path = owner.model_view.restore(args.path)
-            value = get_path(state_for_model(owner.snapshot["state"]), path)
+            try:
+                path = owner.model_view.pointer(args.path, restore=True)
+            except jsonpointer.JsonPointerException as error:
+                raise ToolError("INVALID_PATH", str(error)) from None
+            projected = state_for_model(owner.snapshot["state"])
+            root = projected.get("stat_data", {}) if args.scope == "variables" else projected
+            value = jsonpointer.resolve_pointer(root, path, default=None)
             result = self.read(encoded(owner.model_view.expose(value)),
-                               **({"path": args.path} if result_field(owner.session, name, "include_metadata") else {}))
-            if path in ("", "stat_data"):
+                               **({"path": args.path, "scope": args.scope}
+                                  if result_field(owner.session, name, "include_metadata") else {}))
+            if path == "" and args.scope == "variables":
                 self.reads.read_state()
             return result
         if name == "patch_state":
-            self.reads.require_state()
-            result = await owner.script.call("process", "", owner.model_view.operations(args.operations), "")
-            owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
+            if args.operations:
+                self.reads.require_state()
+                try:
+                    operations = owner.model_view.operations([op.model_dump(by_alias=True) for op in args.operations])
+                    # Share only the pure variable projection validator, not Tracker
+                    # orchestration. It preserves hidden parent metadata and maps
+                    # visible array indices before any MVU callback can execute.
+                    operations, _ = stage(owner.snapshot["state"].get("stat_data", {}), operations)
+                except ProtectedStateField as error:
+                    raise ToolError("PROTECTED_TARGET", str(error),
+                                    next_action="仅修改读取得到的业务变量，内部字段由程序维护。") from None
+                except (jsonpointer.JsonPointerException, jsonpatch.JsonPatchConflict, InvalidStatePath) as error:
+                    raise ToolError("INVALID_PATH", str(error)) from None
+                except (jsonpatch.InvalidJsonPatch, KeyError, TypeError) as error:
+                    raise ToolError("INVALID_ARGUMENTS", str(error)) from None
+                except jsonpatch.JsonPatchTestFailed:
+                    # The library exception embeds complete compared values,
+                    # including metadata the model was deliberately not shown.
+                    raise ToolError("PATCH_VALIDATION_FAILED", "补丁的 test 条件未满足；请核对当前变量和预期值。") from None
+                except (jsonpatch.JsonPatchException, InvalidStatePatch) as error:
+                    raise ToolError("PATCH_VALIDATION_FAILED", str(error)) from None
+                before = await owner.script.call("snapshot")
+                try:
+                    result = await owner.script.call("process", "", operations, "")
+                except RuntimeRollbackError as error:
+                    raise TurnError("SCRIPT_RESTORE_FAILED", "变量工具失败且运行时恢复失败，停止回合；草稿未提交") from error
+                except Exception as error:
+                    try:
+                        await owner.script.call("update", before)
+                    except Exception as restore_error:
+                        raise TurnError("SCRIPT_RESTORE_FAILED", "变量工具失败且运行时恢复失败，停止回合；草稿未提交") from restore_error
+                    # Script exceptions can contain snapshots of private runtime
+                    # fields. Keep the diagnostic out of the model tool result.
+                    raise ToolError("PATCH_VALIDATION_FAILED", "MVU 或脚本校验失败；本次变量补丁已回滚。") from error
+                owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
             owner.patch_state_done = True
-            return {"saved_to_draft": True, "notice": "变量已通过 MVU 校验。"}
+            return {"saved_to_draft": True, "patch_state_completed": True,
+                    "notice": "变量已通过 MVU 校验。" if args.operations else "已确认本轮变量无变化；未执行变量补丁或脚本回调。"}
         if name == "read_character":
             value = self.content.character(args.ref)
             result = owner.model_view.expose({"text": value,
@@ -342,5 +396,5 @@ class AgentTools:
             return self.content.revise(args)
         if name == "set_retrieval_query":
             owner.retrieval_query = args.query
-            return {"saved_to_draft": True}
-        raise ValueError("未知工具")
+            return {"saved_to_draft": True, "query": args.query}
+        raise ToolError("UNKNOWN_TOOL", "未知工具")

@@ -13,6 +13,10 @@ from tavern.character.cards import card_scripts, lore_entries, normalize
 SDK = Path(__file__).parents[1] / "static" / "runtime.js"
 
 
+class RuntimeRollbackError(RuntimeError):
+    """A failed script patch cannot safely be retried in this runtime."""
+
+
 class ScriptRuntime:
     def __init__(self):
         self.playwright = None
@@ -183,11 +187,23 @@ class RuntimeSession:
             else "({name,args}) => TavernRuntime[name](...args)"
         )
         payload = args[0] if install else {"name": name, "args": args}
+        # Full Agent patches may invoke MVU callbacks in message-local realms.
+        # Restore every mirror on failure, not just the server's stat_data.
+        patch_call = name == "process" and len(args) >= 3 and args[2] == "" and bool(args[1])
+        checkpoints = [(page, await page.evaluate("() => TavernRuntime.snapshot()"))
+                       for page in [self.page, *self.frames]] if patch_call else []
         try:
             return await asyncio.wait_for(self.page.evaluate(expression, payload), timeout=10)
         except asyncio.TimeoutError:
             await self.context.close()
             raise ValueError("卡片脚本运行超时，回合未提交") from None
+        except Exception:
+            try:
+                for page, checkpoint in checkpoints:
+                    await page.evaluate("data => TavernRuntime.update(data)", checkpoint)
+            except Exception as error:
+                raise RuntimeRollbackError("脚本镜像回滚失败，必须停止当前回合") from error
+            raise
 
     async def close(self):
         await self.context.close()

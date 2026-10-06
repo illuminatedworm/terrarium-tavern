@@ -34,7 +34,9 @@ def owner(story, request):
 
 
 async def call(owner, name, **args):
-    return await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
+    result = await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
+    assert result["ok"] is True
+    return result["data"]
 
 
 def path(owner, pointer):
@@ -45,24 +47,38 @@ async def revise(owner, *operations):
     return await call(owner, "revise_content", operations=list(operations), reason="User requested edit")
 
 
-@pytest.mark.parametrize("read_path", ["", "stat_data"])
-async def test_state_requires_current_complete_read_even_for_empty_patch(owner, read_path):
+async def test_nonempty_patch_requires_current_complete_variables_read(owner):
+    operations = [{"op": "replace", "path": "/hp", "value": 7}]
     async def denied():
         with pytest.raises(ValueError, match="完整读取最新变量"):
-            await call(owner, "patch_state", operations=[], reason="No changes")
+            await call(owner, "patch_state", operations=operations, reason="Injury")
         assert not owner.patch_state_done
 
     await denied()
-    await call(owner, "read_state", path="stat_data.hp")
+    await call(owner, "read_state", path="/hp")
     await denied()
-    await call(owner, "read_state", path=read_path)
-    owner.snapshot["state"]["stat_data"]["hp"] = 7
+    await call(owner, "read_state", scope="story")
     await denied()
-    await call(owner, "read_state", path=read_path)
+    await call(owner, "read_state")
+    owner.snapshot["state"]["stat_data"]["hp"] = 6
+    await denied()
+    await call(owner, "read_state")
     rollover(owner.state, [], "Continue", 0)
     await denied()
-    await call(owner, "read_state", path=read_path)
-    assert (await call(owner, "patch_state", operations=[], reason="No changes"))["saved_to_draft"]
+    await call(owner, "read_state")
+    assert (await call(owner, "patch_state", operations=operations, reason="Injury"))["saved_to_draft"]
+    with pytest.raises(ValueError, match="不允许重复"):
+        await call(owner, "patch_state", operations=operations, reason="Repeat")
+
+
+async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
+    before = copy.deepcopy(owner.snapshot)
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Empty patch must not call the script runtime")
+    owner.script.call = forbidden
+    result = await call(owner, "patch_state", operations=[], reason="No changes")
+    assert result["patch_state_completed"] and owner.patch_state_done
+    assert owner.snapshot == before and owner.tools.reads.records["state"] is None
     with pytest.raises(ValueError, match="不允许重复"):
         await call(owner, "patch_state", operations=[], reason="Repeat")
 

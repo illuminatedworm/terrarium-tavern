@@ -13,11 +13,11 @@ from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
-from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.content import lore_references
 from tavern.full_agent.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
+from tavern.full_agent.protocol import ToolError, TurnError, failed
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 from tavern.scripting.native_response import message_digest
@@ -78,16 +78,7 @@ class FullAgent:
                 self.must_rollover = False
             self.exiting = set(progress["exiting"])
             self.tools.reads.restore(progress.get("tool_reads", {}))
-            if "patch_state_done" in progress:
-                self.patch_state_done = progress["patch_state_done"]
-            else:
-                patch_ids = {call["id"] for item in self.new_trace if item["message"]["role"] == "assistant"
-                             for call in item["message"].get("tool_calls", [])
-                             if call["function"]["name"] == "patch_state"}
-                self.patch_state_done = any(
-                    item["message"].get("tool_call_id") in patch_ids
-                    and json.loads(item["message"].get("content", "{}")).get("saved_to_draft")
-                    for item in self.new_trace if item["message"]["role"] == "tool")
+            self.patch_state_done = progress["patch_state_done"]
 
     async def save_progress(self):
         script_mirror = await self.script.call("snapshot")
@@ -200,7 +191,10 @@ class FullAgent:
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
-                response = await provider.chat_complete(provider_messages(provider, model_messages(compiled), self.settings), extra_body=tool_options)
+                try:
+                    response = await provider.chat_complete(provider_messages(provider, model_messages(compiled), self.settings), extra_body=tool_options)
+                except Exception as error:
+                    raise TurnError("PROVIDER_ERROR", str(error) or type(error).__name__) from error
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
@@ -209,7 +203,7 @@ class FullAgent:
                     "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],
                     "provider_response": copy.deepcopy(getattr(provider, "last_response_record", {}))})
                 if getattr(response, "finish_reason", None) in ("length", "content_filter"):
-                    raise ValueError("Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应")
+                    raise TurnError("PROVIDER_INCOMPLETE", "Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应")
                 if not calls:
                     if self.must_rollover:
                         self.event("full_agent_reply_rejected", {"message": "强制换窗期间的正文回复已否决"})
@@ -229,7 +223,7 @@ class FullAgent:
                     self.final_response = self.response_message(response, provider, calls)
                     return text
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
-                    raise ValueError("模型返回了无效的工具调用序列")
+                    raise TurnError("TOOL_PROTOCOL_INVALID", "模型返回了无效的工具调用序列")
                 # A malformed protocol payload (observed from relays as
                 # '{}{"content":...}') cannot be repaired by executing a tool.
                 # Do not echo it through up to max_steps paid requests. Usage and
@@ -238,7 +232,7 @@ class FullAgent:
                     try:
                         json.loads(call.arguments)
                     except (ValueError, TypeError):
-                        raise ValueError(
+                        raise TurnError("TOOL_PROTOCOL_INVALID",
                             f"服务商返回的 {call.name} 工具参数不是合法 JSON；已停止本回合，避免连续付费重试。"
                             "请检查提供商的工具调用协议；Claude 可尝试 Anthropic Messages 接口。") from None
                 window_id = self.state["window"]["id"]
@@ -252,7 +246,7 @@ class FullAgent:
                 # result. Interrupted batches resume only their unpaired calls.
                 await self.save_progress()
                 await self.execute_tools(assistant, window_id, assistant_seq)
-            raise ValueError("Full Agent 达到本回合模型调用上限，草稿未提交；换窗不会重置调用额度")
+            raise TurnError("BUDGET_EXHAUSTED", "Full Agent 达到本回合模型调用上限，草稿未提交；换窗不会重置调用额度")
         finally:
             await provider.close()
 
@@ -284,6 +278,7 @@ class FullAgent:
 
     async def execute_tools(self, assistant, window_id, assistant_seq, returned=()):
         calls = assistant["tool_calls"]
+        mixed_rollover = len(calls) > 1 and any(call["function"]["name"] == "new_context" for call in calls)
         for index, call in enumerate(calls):
             if call["id"] in returned:
                 continue
@@ -293,19 +288,31 @@ class FullAgent:
             self.event("full_agent_tool_started", activity)
             tool_started = time.perf_counter()
             try:
+                if mixed_rollover:
+                    raise ToolError("MIXED_CONTEXT_CALLS", "new_context 必须单独调用；当前批次未执行任何工具")
                 if self.must_rollover and (name != "new_context" or len(calls) != 1):
-                    raise ValueError("当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
-                if name == "new_context" and len(calls) != 1:
-                    raise ValueError("new_context 必须单独调用；当前批次没有换窗")
+                    raise ToolError("CONTEXT_ROLLOVER_REQUIRED", "当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
                 result = await self.tools.execute(name, arguments)
-            except ToolArgumentError as error:
-                result = self.model_view.expose(error.result)
-            except (ValueError, KeyError, TypeError, jsonpatch.JsonPatchException, jsonpointer.JsonPointerException) as error:
-                result = {"error": self.model_view.text(str(error))}
+            except TurnError:
+                raise
+            except ToolError as error:
+                result = error.result
+                if error.__cause__ is not None:
+                    self.event("full_agent_tool_diagnostic", {"name": name,
+                        "error_type": type(error.__cause__).__name__, "message": str(error.__cause__)})
+            except jsonpointer.JsonPointerException as error:
+                result = ToolError("INVALID_PATH", str(error)).result
+            except jsonpatch.JsonPatchException as error:
+                result = ToolError("PATCH_VALIDATION_FAILED", str(error)).result
+            except (ValueError, KeyError, TypeError) as error:
+                result = ToolError("INVALID_ARGUMENTS", str(error)).result
+            if failed(result) and name == "patch_state":
+                result["error"]["patch_state_completed"] = self.patch_state_done
+            result = self.model_view.expose(result)
             self.append({"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}, window_id)
             self.event("full_agent_tool", {**activity, "result": result,
                 "duration_s": time.perf_counter() - tool_started,
-                "message": name + (" · 调用错误" if "error" in result else " · 完成")})
+                "message": name + (" · 调用错误" if failed(result) else " · 完成")})
             if self.rolled:
                 self.continuation = []
                 self.rolled = False
@@ -313,6 +320,12 @@ class FullAgent:
                 self.retain()
                 self.event("context_rollover", {"window": self.state["window"]["number"],
                                                "message": "Agent 已保存 handoff 并换新窗口"})
+            if not mixed_rollover:
+                await self.save_progress()
+        if mixed_rollover:
+            # A rejected batch must never persist just its first error. Recovery
+            # removes failed calls; a partial checkpoint could otherwise turn the
+            # remaining new_context into a valid standalone call.
             await self.save_progress()
 
     def response_message(self, response, provider, calls):

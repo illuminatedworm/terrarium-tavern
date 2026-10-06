@@ -3,7 +3,7 @@ import copy
 from typing import Literal
 
 from fastapi import Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from tavern.core.models import TurnRequest
 from tavern.core.tokens import count_text
@@ -28,12 +28,6 @@ class ToolSettings(BaseModel):
     disabled_tools: list[str] = Field(max_length=len(SPECS))
     tool_result_options: dict[str, dict[str, bool]] | None = None
 
-    @field_validator("disabled_tools", mode="before")
-    @classmethod
-    def remove_retired_tools(cls, value):
-        # Older open clients can still submit the retired tool switch.
-        return list(dict.fromkeys("search_read_lore" if name == "search_lore" else name
-                                  for name in value if name != "read_lore")) if isinstance(value, list) else value
 
 
 def require_full(store, sid):
@@ -75,11 +69,6 @@ def register_full_agent_routes(app, store):
         session = require_full(store, sid)
         options = session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
         options = dict(options)
-        legacy_lore = options.pop("search_lore", None)
-        if legacy_lore is not None:
-            options.setdefault("search_read_lore", legacy_lore)
-        options = {name: {key: value for key, value in fields.items() if key != "include_offset"}
-                   for name, fields in options.items() if name != "read_lore"}
         if any(name not in RESULT_FIELDS or set(fields) - set(RESULT_FIELDS[name])
                for name, fields in options.items()):
             raise ValueError("未知的工具返回选项")

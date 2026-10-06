@@ -30,7 +30,7 @@ Writer 编译、模型文本宏、Tracker 状态读取、MVU 输入和记忆辅�
 
 Tracker 的 S/H 指向原文片段，R 指向已有记忆，E 指向参考资料。模型通过 `write_memory` 的 `operations/questions` 提交语义增量，程序恢复真实消息、原文摘录与指纹。只有实际提供的编号可以引用，完整协议见[记忆设计](memory-consistency.md#短编号输出协议)。
 
-Tracker 的 `search_lore` 返回命中的启用条目名称和完整正文，不提供 L 编号，不改变 Writer 的注入选择。设定修改后 Runtime 重新检索。Full Agent 的 `search_read_lore` 也直接返回正文，其可选 L 编号仅标识资料，详见[工具参考](../reference/full-agent-tools.md)。
+Tracker 的 `search_lore` 返回命中的启用条目名称和完整正文，不提供 L 编号，不改变 Writer 的注入选择。设定修改后 Runtime 重新检索。Full Agent 的 `recall_lore` 也直接返回正文，其可选 L 编号仅标识资料，详见[工具参考](../reference/full-agent-tools.md)。
 
 短编号投影、恢复和来源校验均在本地执行。它们不决定是否增加模型调用；任务请求额度由各模式运行时管理。编号和包装仍计入输入 tokens。
 

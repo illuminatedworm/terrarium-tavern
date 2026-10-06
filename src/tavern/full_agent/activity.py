@@ -1,6 +1,8 @@
 """Public dialogue activity, separated from provider/debug records and reasoning."""
 import json
 
+from tavern.full_agent.protocol import failed
+
 
 def pretty(value):
     if value is None:
@@ -31,7 +33,7 @@ def finish_tool(item, result):
         result = json.loads(result) if isinstance(result, str) else result
     except (ValueError, TypeError):
         pass
-    item["status"] = "error" if isinstance(result, dict) and "error" in result else "returned"
+    item["status"] = "error" if failed(result) else "returned"
 
 
 def text_item(key, order, content):

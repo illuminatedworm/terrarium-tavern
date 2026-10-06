@@ -3,8 +3,9 @@ import copy
 
 from tavern.core.cache_policy import fingerprint
 from tavern.full_agent.content import card_data
+from tavern.full_agent.protocol import ToolError
 
-VERSION = 2
+VERSION = 3
 
 
 class DraftReads:
@@ -13,8 +14,8 @@ class DraftReads:
         self.records = {"version": VERSION, "state": None, "fields": {}, "entries": {}}
 
     def restore(self, records):
-        self.records["state"] = copy.deepcopy(records.get("state"))
         if records.get("version") == VERSION:
+            self.records["state"] = copy.deepcopy(records.get("state"))
             self.records["fields"] = copy.deepcopy(records.get("fields", {}))
             self.records["entries"] = copy.deepcopy(records.get("entries", {}))
 
@@ -30,8 +31,8 @@ class DraftReads:
 
     def require_state(self):
         if self.records["state"] != self.state_stamp():
-            raise ValueError('调用 patch_state 前必须在本回合当前窗口完整读取最新变量；'
-                             '请调用 read_state，path 使用 "" 或 "stat_data"，空补丁也须先读')
+            raise ToolError("READ_REQUIRED", '非空 patch_state 前必须在本回合当前窗口完整读取最新变量；'
+                            '请调用 read_state(path="", scope="variables")')
 
     def character_stamp(self, field):
         data = card_data(self.owner.document)
@@ -42,7 +43,7 @@ class DraftReads:
 
     def require_character(self, field):
         if self.records["fields"].get(field) != self.character_stamp(field):
-            raise ValueError(f"修改前必须在本回合当前窗口用 read_character 完整读取最新字段：{field}")
+            raise ToolError("READ_REQUIRED", f"修改前必须在本回合当前窗口用 read_character 完整读取最新字段：{field}")
 
     def entry_stamp(self, raw):
         value = copy.deepcopy(raw)
@@ -56,7 +57,7 @@ class DraftReads:
 
     def require_entry(self, ref, raw):
         if self.records["entries"].get(ref) != self.entry_stamp(raw):
-            raise ValueError("修改或删除前必须在本回合当前窗口用 read_lore_entry 完整读取最新条目")
+            raise ToolError("READ_REQUIRED", "修改或删除前必须在本回合当前窗口用 read_lore_entry 完整读取最新条目")
 
     def invalidate_content(self, fields, refs):
         for field in fields:

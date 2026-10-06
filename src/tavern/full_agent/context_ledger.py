@@ -3,11 +3,12 @@ import copy
 import json
 
 from tavern.core.cache_policy import fingerprint
+from tavern.full_agent.protocol import saved
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
 
-# Retire old countdown frames and token-by-token pressure notices on rebuild.
-VERSION = 6
+# Fixed tool protocol and result envelopes changed; rebuild the working prefix.
+VERSION = 7
 CLEAR_TEXT = {
     "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
@@ -97,7 +98,7 @@ class ContextLedger:
             return
         # A proposal in tool arguments is not an effective memory until the
         # matching tool result confirms that the local draft accepted it.
-        if isinstance(result, dict) and result.get("saved_to_draft") and "error" not in result:
+        if saved(result):
             self.seen["handoff"] = args["content"]
 
     def update(self, source, content, *, value=None):

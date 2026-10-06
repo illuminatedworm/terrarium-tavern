@@ -2,7 +2,52 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+from playwright.async_api import Error as PlaywrightError
+
 from tavern.scripting.runtime import ScriptRuntime
+
+
+async def test_full_agent_patch_failure_restores_server_and_message_frame_mirrors():
+    runtime = ScriptRuntime()
+    document = {"name": "rollback", "extensions": {"tavern_helper": {"scripts": [
+        {"id": "failure", "enabled": True, "content": """
+            globalThis.patchRollbackListener = eventOn('MESSAGE_RECEIVED', () => {
+                replaceVariables({dirty: true}, {type: 'character'});
+                throw Error('rollback-test');
+            });
+        """}]}}}
+    snapshot = {"state": {"stat_data": {"hp": 8}}, "scopes": {"character": {"original": True}}}
+    html = """<script>
+        eventOn(Mvu.events.VARIABLE_UPDATE_STARTED, () => {
+            replaceVariables({frameDirty: true}, {type: 'character'});
+        });
+    </script>"""
+    history = [{"id": "greeting", "role": "assistant", "raw": html, "snapshot": snapshot}]
+
+    async def host(*args):
+        return None
+
+    session = None
+    try:
+        session = await runtime.open(document, history, snapshot, True, host)
+        before = await session.call("snapshot")
+        frame = session.frames[0]
+        frame_before = await frame.evaluate("() => TavernRuntime.snapshot()")
+        operations = [{"op": "replace", "path": "/hp", "value": 7}]
+        with pytest.raises(PlaywrightError, match="rollback-test"):
+            await session.call("process", "", operations, "")
+        assert await session.call("snapshot") == before
+        assert await frame.evaluate("() => TavernRuntime.snapshot()") == frame_before
+        await session.page.evaluate("() => patchRollbackListener.stop()")
+        result = await session.call("process", "", operations, "")
+        assert result["state"]["stat_data"]["hp"] == 7
+        assert result["scopes"] == before["scopes"]
+        assert await frame.evaluate("() => TavernRuntime.snapshot().scopes.character") == {"frameDirty": True}
+    finally:
+        if session:
+            await session.close()
+        await runtime.close()
 
 
 async def test_selected_opening_initializes_state_and_preserves_it_on_reopen():

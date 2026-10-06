@@ -14,6 +14,7 @@ from tavern.conversation.variable_rules import collect_variable_rules, variable_
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
+from tavern.full_agent.config import TOOL_PROTOCOL
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.state import full_state
@@ -42,6 +43,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     card = normalize(document)
     visible = history[window["start"]:]
     turn_instructions = {
+        "call_budget": (
+            f"本次运行模型请求上限：{settings.full_agent_config.max_steps}；"
+            f"包含本次请求的剩余次数：{max(0, settings.full_agent_config.max_steps - calls)}。"
+            "工具续答和换窗计入额度；换窗不重置。"),
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
@@ -60,6 +65,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         if content:
             items.append({"role": role, "content": content, "source": source, **metadata})
 
+    add("system", TOOL_PROTOCOL, "tool_protocol")
     add("system", settings.full_agent_system_prompt, "rules")
     if session.get("turn_preference"):
         add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")

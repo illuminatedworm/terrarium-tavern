@@ -2,6 +2,7 @@
 import copy
 import json
 
+from tavern.full_agent.protocol import failed as tool_failed
 from tavern.scripting.native_response import portable
 
 
@@ -15,7 +16,7 @@ def without_failed_tools(messages):
                 result = json.loads(message.get("content", ""))
             except (ValueError, TypeError):
                 continue
-            if isinstance(result, dict) and "error" in result:
+            if tool_failed(result):
                 call_id = message["tool_call_id"]
                 failed.setdefault(pending[call_id], set()).add(call_id)
                 results.add(index)

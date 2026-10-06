@@ -42,8 +42,8 @@ async def test_argument_errors_explain_repairs_without_executing_or_echoing_inpu
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         feedback = json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
-        assert feedback["error"].startswith(f"{name} 参数错误，工具未执行：")
-        assert all(text in feedback["error"] for text in expected)
+        assert feedback["error"]["message"].startswith(f"{name} 参数错误，工具未执行：")
+        assert all(text in feedback["error"]["message"] for text in expected)
         schema = feedback["expected_parameters"]
         original = SPECS[name][0].model_json_schema()
         assert set(schema["properties"]) == set(original["properties"])
@@ -69,29 +69,31 @@ async def test_read_history_can_correct_missing_ref_after_actionable_feedback(st
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         returned = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-        assert "缺少必填参数 ref" in returned[0]["error"]
+        assert "缺少必填参数 ref" in returned[0]["error"]["message"]
         assert returned[0]["expected_parameters"]["required"] == ["ref"]
         assert set(returned[0]["expected_parameters"]["properties"]) == {"ref"}
         assert returned[0]["expected_parameters"]["properties"]["ref"]["type"] == "string"
-        assert "error" not in returned[1] and returned[1]["ref"] == "H2"
-        assert returned[1]["text"] == "我答应明天在钟楼见面。"
+        assert "error" not in returned[1] and returned[1]["data"]["ref"] == "H2"
+        assert returned[1]["data"]["text"] == "我答应明天在钟楼见面。"
         assert current["messages"][-1]["raw"] == "核对后继续正文"
     finally:
         await service.close()
 
 
-@pytest.mark.parametrize("name", ["search_lore", "unknown_tool"])
+@pytest.mark.parametrize("name", ["search_lore", "search_read_lore", "search_lore_entries", "unknown_tool"])
 async def test_unknown_tool_errors_identify_missing_name_and_allow_retry(story, name):
     store, session = story
     service = runtime(store)
-    model = Model((name, {"query": "灯塔"}), ("search_read_lore", {"query": "灯塔"}), "继续。")
+    model = Model((name, {"query": "灯塔"}), ("recall_lore", {"query": "灯塔"}), "继续。")
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert name not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
         output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-        assert output[0] == {"error": f"工具不存在：{name}；请使用本轮提供的工具名称"}
-        assert output[1]["matches"]
+        assert output[0]["ok"] is False
+        assert output[0]["error"]["code"] == "UNKNOWN_TOOL"
+        assert name in output[0]["error"]["message"]
+        assert output[1]["data"]["matches"]
         event = next(e for e in store.events(result["id"]) if e["kind"] == "full_agent_tool")
         assert event["payload"]["result"] == output[0]
         for key in ("handoff", "notes", "window"):
@@ -100,55 +102,17 @@ async def test_unknown_tool_errors_identify_missing_name_and_allow_retry(story, 
         await service.close()
 
 
-@pytest.mark.parametrize("lore_name", ["search_lore", "search_read_lore"])
-async def test_retired_lore_tool_settings_remain_editable_and_calls_are_rejected(story, lore_name):
+@pytest.mark.parametrize("old_name", ["search_lore", "search_read_lore", "search_lore_entries", "read_lore"])
+async def test_retired_tool_names_are_not_accepted_in_settings(story, old_name):
     store, session = story
-    options = {"read_lore": {"include_metadata": False}, lore_name: {"include_title": True}}
-    with store.connection() as db:
-        db.execute("UPDATE sessions SET disabled_tools=?,tool_result_options=? WHERE id=?",
-                   (json.dumps(["read_lore", "write_note", lore_name]), json.dumps(options), session["id"]))
-    session = Store(store.root).session(session["id"])
-    assert session["disabled_tools"] == ["write_note", "search_read_lore"]
-    assert session["tool_result_options"] == {"search_read_lore": options[lore_name]}
-    fork = store.fork_session(session["id"], session["head"], session["revision"])
-    assert fork["disabled_tools"] == session["disabled_tools"]
-    assert fork["tool_result_options"] == session["tool_result_options"]
     app = create_app(store.root)
-    service = runtime(store)
-    url = f"/api/sessions/{session['id']}/full-agent/tools"
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-            # A pre-upgrade open client may submit every switch, including the retired tool.
-            response = await client.put(url, json={"expected_revision": 0,
-                "disabled_tools": [*SPECS, "read_lore"], "tool_result_options": options})
-            assert response.status_code == 200
-            session = response.json()
-            assert set(session["disabled_tools"]) == set(SPECS)
-            assert session["tool_result_options"] == {"search_read_lore": options[lore_name]}
-            response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": []})
-            assert response.status_code == 200
-            session = response.json()
-        model = Model(("read_lore", {"ref": "L1"}), ("search_read_lore", {"query": "灯塔"}), "继续。")
-        result, _ = await turn(service, session, model)
-        assert result["status"] == "committed", result["error"]
-        assert all("read_lore" not in {t["function"]["name"] for t in r["extra_body"]["tools"]}
-                   for r in model.requests)
-        assert all(r["extra_body"]["tools"] == model.requests[0]["extra_body"]["tools"] for r in model.requests)
-        initial = model.requests[0]["messages"]
-        input_at = max(i for i, message in enumerate(initial) if message["role"] == "user")
-        assert all(r["messages"][:input_at + 1] == initial[:input_at + 1] for r in model.requests)
-        output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-        assert output[0] == {"error": "工具不存在：read_lore；请使用本轮提供的工具名称"}
-        assert output[1]["matches"]
-        assert all("text" in match and "error" not in match for match in output[1]["matches"])
-        # The rejected historical call/result remains a complete exchange before the successful search.
-        messages = model.requests[-1]["messages"]
-        exchange = [m for m in messages if m.get("tool_calls") or m["role"] == "tool"]
-        assert [m["role"] for m in exchange] == ["assistant", "tool", "assistant", "tool"]
-        assert exchange[1]["tool_call_id"] == exchange[0]["tool_calls"][0]["id"]
-        assert exchange[3]["tool_call_id"] == exchange[2]["tool_calls"][0]["id"]
+            response = await client.put(f"/api/sessions/{session['id']}/full-agent/tools", json={
+                "expected_revision": 0, "disabled_tools": [old_name]})
+            assert response.status_code == 400
+            assert store.session(session["id"])["disabled_tools"] == []
     finally:
-        await service.close()
         await app.state.service.close()
 
 
@@ -183,7 +147,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 assert tool["enabled"]
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
-            lore = next(t for t in catalog if t["name"] == "search_read_lore")
+            lore = next(t for t in catalog if t["name"] == "recall_lore")
             assert lore["result_options"] == {"include_ref": False, "include_title": False}
             assert set(lore["parameters"]["properties"]) == {"query"}
             patch = next(t for t in catalog if t["name"] == "patch_state")
@@ -204,7 +168,9 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert not session["snapshot"]["full_agent"]["handoff"]["text"]
             assert "write_handoff" not in {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
             feedback = json.loads(next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool"))
-            assert feedback == {"error": "当前模式或授权不允许此工具"}
+            assert feedback["ok"] is False
+            assert feedback["error"]["code"] == "PERMISSION_DENIED"
+            assert feedback["error"]["retryable"] is False
             fork = store.fork_session(session["id"], session["head"], session["revision"])
             assert fork["disabled_tools"] == ["write_handoff"]
             result, session = await turn(service, session, Model("重生成"), mode="regenerate")
@@ -245,33 +211,33 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
     app = create_app(store.root)
     service = runtime(store)
     url = f"/api/sessions/{session['id']}/full-agent/tools"
-    options = {"search_read_lore": {"include_ref": True, "include_title": True},
+    options = {"recall_lore": {"include_ref": True, "include_title": True},
                "search_history": {"include_preview": False},
                "read_history": {"include_metadata": False}}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             assert (await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
-                                                "tool_result_options": {"search_read_lore": {"unknown": True}}})).status_code == 400
+                                                "tool_result_options": {"recall_lore": {"unknown": True}}})).status_code == 400
             response = await client.put(url, json={"expected_revision": 0, "disabled_tools": [],
                                                     "tool_result_options": options})
             assert response.status_code == 200
             session = response.json()
             assert session["tool_result_options"] == options
             catalog = (await client.get(url)).json()["tools"]
-            assert next(t for t in catalog if t["name"] == "search_read_lore")["result_options"] == options["search_read_lore"]
+            assert next(t for t in catalog if t["name"] == "recall_lore")["result_options"] == options["recall_lore"]
             fork = store.fork_session(session["id"], session["head"], session["revision"])
             assert fork["tool_result_options"] == options
-            model = Model(("search_read_lore", {"query": "旧港"}),
+            model = Model(("recall_lore", {"query": "旧港"}),
                           ("search_history", {"query": "开场"}),
                           ("read_history", {"ref": "H1"}), "继续。")
             result, _ = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
             output = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
-            assert output[0]["matches"] == [{"ref": "L1", "title": "旧港",
+            assert output[0]["data"]["matches"] == [{"ref": "L1", "title": "旧港",
                                               "text": "<lorebook>\n旧港有一艘船。\n</lorebook>"}]
-            assert "preview" not in output[1]["matches"][0]
-            assert "offset" not in output[1]["matches"][0]
-            assert set(output[2]) == {"text"}
+            assert "preview" not in output[1]["data"]["matches"][0]
+            assert "offset" not in output[1]["data"]["matches"][0]
+            assert set(output[2]["data"]) == {"text"}
     finally:
         await service.close()
         await app.state.service.close()
@@ -316,13 +282,13 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
                                    {"policy_effective": "auto"}, document=document)
     catalog = {item["function"]["name"]: item["function"] for item in definitions}
     assert "custom_field" not in json.dumps(catalog)
-    assert "No wildcard" in catalog["read_character"]["description"]
+    assert set(catalog["read_character"]["parameters"]["properties"]["ref"]["enum"]) == {"name", "description", "personality", "scenario", "mes_example", "system_prompt", "post_history_instructions"}
     owner = SimpleNamespace(document=document, definitions=definitions, state=new_state(), snapshot={},
                             session={}, model_view=ModelView(document), tid="guidance")
     tools = AgentTools(owner)
     before = await tools.execute("read_character", json.dumps({"ref": "description"}))
-    assert before["text"] == "Before"
+    assert before["data"]["text"] == "Before"
     await tools.execute("revise_content", json.dumps({"operations": [
         {"op": "set_character", "field": "description", "value": "After"}], "reason": "Update setting"}))
     after = await tools.execute("read_character", json.dumps({"ref": "description"}))
-    assert after["text"] == "After"
+    assert after["data"]["text"] == "After"

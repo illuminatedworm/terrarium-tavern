@@ -932,9 +932,12 @@ async function retryTurn() {
   if (!retryableTurn.value || busy.value || editingMessageId.value) return;
   const resumeFullAgent =
     session.value?.agent_mode === 'full_agent' &&
+    retryableTurn.value.resumable === true &&
+    allowEdit.value === !!retryableTurn.value.request.allow_content_edit &&
     updateVariables.value === !!retryableTurn.value.request.update_variables;
   const request = {
     ...retryableTurn.value.request,
+    allow_content_edit: allowEdit.value,
     update_variables: updateVariables.value,
     regenerate_note: retryNote.value.trim(),
     operation_id: crypto.randomUUID(),

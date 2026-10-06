@@ -583,15 +583,8 @@ class Store(MessageAdapters):
             result = dict(row)
             result["recipe"] = recipe_types(ContextRecipe.model_validate_json(result["recipe"]).model_dump())
             result["persona_data"] = json.loads(result["persona_data"])
-            result["disabled_tools"] = [name for name in json.loads(result["disabled_tools"]) if name != "read_lore"]
+            result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])
-            result["tool_result_options"].pop("read_lore", None)
-            if result["agent_mode"] == "full_agent":
-                result["disabled_tools"] = list(dict.fromkeys(
-                    "search_read_lore" if name == "search_lore" else name for name in result["disabled_tools"]))
-                legacy_lore = result["tool_result_options"].pop("search_lore", None)
-                if legacy_lore is not None:
-                    result["tool_result_options"].setdefault("search_read_lore", legacy_lore)
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
         result["messages"] = self.history(sid, result["head"])
@@ -968,6 +961,8 @@ class Store(MessageAdapters):
                 if (source is None or source["session"] != sid or source["status"] not in
                         ("error", "cancelled", "interrupted") or latest["id"] != request.resume_turn_id):
                     raise Conflict("只能续接当前会话最新的失败或中断回合")
+                if not db.execute("SELECT 1 FROM full_agent_progress WHERE turn=?", (request.resume_turn_id,)).fetchone():
+                    raise Conflict("此回合没有可续接进度；已拒绝的审核草稿不能恢复，请重新开始")
                 previous = TurnRequest.model_validate_json(source["request"])
                 matching = ("text", "expected_revision", "mode", "message_id",
                             "allow_content_edit", "update_variables", "generate", "scene_refresh")
@@ -1021,6 +1016,22 @@ class Store(MessageAdapters):
             row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
         return json.loads(row["payload"]) if row else None
 
+    def reject_review(self, tid):
+        """Explicit rejection retires executable work but preserves its audit trail."""
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT s.agent_mode FROM turns t JOIN sessions s ON s.id=t.session WHERE t.id=?",
+                             (tid,)).fetchone()
+            clear_draft = ",draft='',preview=NULL" if row and row["agent_mode"] == "full_agent" else ""
+            result = db.execute(f"UPDATE turns SET status='cancelled',pending=NULL{clear_draft} "
+                                "WHERE id=? AND status='awaiting_review'", (tid,))
+            if result.rowcount != 1:
+                raise Conflict("此回合没有待审核变更")
+            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
+            db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                       (tid, "cancelled", dump({"reason": "review_rejected", "resumable": False}), time.time()))
+        return self.turn(tid)
+
     def save_full_agent_progress(self, tid, progress):
         with self.connection() as db:
             db.execute("INSERT OR REPLACE INTO full_agent_progress(turn,payload) VALUES (?,?)",
@@ -1031,7 +1042,10 @@ class Store(MessageAdapters):
             r = db.execute("SELECT * FROM turns WHERE id=?", (tid,)).fetchone()
             if r is None:
                 raise KeyError("回合不存在")
+            resumable = r["status"] in ("error", "cancelled", "interrupted") and bool(db.execute(
+                "SELECT 1 FROM full_agent_progress WHERE turn=?", (tid,)).fetchone())
         result = dict(r)
+        result["resumable"] = resumable
         for key in ("request", "preview", "pending"):
             result[key] = json.loads(result[key]) if result[key] else None
         return result

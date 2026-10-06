@@ -90,7 +90,7 @@ async def test_pending_activity_survives_reopen_and_marks_unfinished_calls(tmp_p
     try:
         tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="partial", expected_revision=0))
         store.event(tid, "full_agent_tool_started", {"activity_id": "call-1-0", "order": 11,
-                    "name": "search_read_lore", "arguments": '{"query":"钟楼"}'})
+                    "name": "recall_lore", "arguments": '{"query":"钟楼"}'})
         store.set_turn(tid, status="cancelled")
         other = store.new_session(SessionCreate(card_id=session["card"], agent_mode="full_agent"))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -112,9 +112,9 @@ def test_batch_calls_pair_results_by_id_and_preserve_request_order():
         row(1, {"role": "assistant", "tool_calls": [
             {"id": "a", "function": {"name": "read_state", "arguments": "{}"}},
             {"id": "b", "function": {"name": "read_note", "arguments": '{"key":"钟楼"}'}}]}),
-        row(2, {"role": "tool", "tool_call_id": "b", "content": '{"error":"未找到"}'}),
-        row(3, {"role": "tool", "tool_call_id": "a", "content": '{"energy":4}'}),
+        row(2, {"role": "tool", "tool_call_id": "b", "content": '{"ok":false,"error":{"code":"INVALID_REFERENCE","message":"未找到","retryable":true,"next_action":"重新搜索"}}'}),
+        row(3, {"role": "tool", "tool_call_id": "a", "content": '{"ok":true,"data":{"energy":4}}'}),
     ])
     assert [item["name"] for item in items] == ["read_state", "read_note"]
     assert [item["status"] for item in items] == ["returned", "error"]
-    assert json.loads(items[0]["details"]["result"]) == {"energy": 4}
+    assert json.loads(items[0]["details"]["result"]) == {"ok": True, "data": {"energy": 4}}

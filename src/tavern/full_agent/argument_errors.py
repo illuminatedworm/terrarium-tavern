@@ -1,6 +1,8 @@
 """Actionable tool argument feedback without validator internals or input echoes."""
 import copy
 
+from tavern.full_agent.protocol import ToolError
+
 
 def parameter_schema(schema):
     result = copy.deepcopy(schema)
@@ -52,10 +54,10 @@ def issue_text(issue):
     return f"{field}不符合要求，请按参数定义修正"
 
 
-class ToolArgumentError(ValueError):
+class ToolArgumentError(ToolError):
     def __init__(self, name, model, error):
         issues = error.errors(include_url=False, include_input=False)
         message = f"{name} 参数错误，工具未执行：" + "；".join(issue_text(issue) for issue in issues)
         message += "。请按 expected_parameters 修正后重新调用。"
-        self.result = {"error": message, "expected_parameters": parameter_schema(model.model_json_schema())}
-        super().__init__(message)
+        super().__init__("INVALID_ARGUMENTS", message)
+        self.result["expected_parameters"] = parameter_schema(model.model_json_schema())

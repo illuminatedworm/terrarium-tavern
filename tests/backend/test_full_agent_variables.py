@@ -10,9 +10,10 @@ from tavern.application.api import create_app
 from tavern.application.modes import ModeRuntime
 from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.models import SessionCreate, Settings, TurnRequest
+from tavern.full_agent.content import ContentRevision
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.state import new_state
-from tavern.full_agent.tools import Patch, StatePatch
+from tavern.full_agent.tools import StatePatch
 from tavern.storage.store import Store
 from tests.backend.test_full_agent import Model, runtime, turn
 from tests.backend.test_full_agent_alignment import strip_local
@@ -87,7 +88,7 @@ async def test_delayed_injection_deduplicates_across_tools_and_turns_without_gra
         for first, second in zip(requests, requests[1:]):
             assert first == second[:len(first)]
         returns = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
-        assert returns[-2]["saved_to_draft"] and "error" in returns[-1]
+        assert returns[-2]["data"]["saved_to_draft"] and "error" in returns[-1]
 
         unrequested = Model(empty_patch(), "Third narrative")
         result, session = await turn(service, session, unrequested)
@@ -256,6 +257,6 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(
 def test_empty_patch_is_specific_to_variable_updates():
     assert StatePatch(operations=[], reason="No change").operations == []
     with pytest.raises(ValidationError):
-        Patch(operations=[], reason="No content edit")
+        ContentRevision(operations=[], reason="No content edit")
     rules = collect_variable_rules(document(), "Reader", {"stat_data": {"hp": 8}})
     assert rules == ["RULE_A Reader", "HP_AT_START=8"]

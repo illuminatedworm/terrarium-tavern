@@ -58,8 +58,7 @@ class FullAgentRuntime:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         elif self.store.turn(tid)["status"] == "awaiting_review":
-            self.store.set_turn(tid, status="cancelled", pending=None)
-            self.store.event(tid, "cancelled", {})
+            self.store.reject_review(tid)
 
     async def initialize_session(self, sid):
         session = self.store.session(sid)
@@ -203,7 +202,8 @@ class FullAgentRuntime:
         except Exception as error:
             message = str(error) or type(error).__name__
             self.store.set_turn(tid, status="error", error=message)
-            self.store.event(tid, "error", {"message": message, "error_type": type(error).__name__})
+            self.store.event(tid, "error", {"message": message, "error_type": type(error.__cause__ or error).__name__,
+                                           "error_code": getattr(error, "code", "RUNTIME_FAILURE")})
         finally:
             self.agents.pop(tid, None)
             if script:

@@ -49,7 +49,9 @@ def owner(story, request):
 
 
 async def call(owner, name, **args):
-    return await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
+    result = await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
+    assert result["ok"] is True
+    return result["data"]
 
 
 async def revise(owner, *operations):
@@ -67,8 +69,9 @@ async def test_only_allowed_fields_can_be_read_and_written_in_both_card_formats(
     expected = card_data(original)
     expected[field] = "Updated"
     assert owner.document == original
-    with pytest.raises(ValueError, match="最新字段"):
-        await revise(owner, {"op": "set_character", "field": field, "value": "Again"})
+    result = await revise(owner, {"op": "set_character", "field": field, "value": "Again"})
+    assert result["characters"] == [{"ref": field, "text": "Again"}]
+    assert card_data(owner.document)[field] == "Again"
 
 
 @pytest.mark.parametrize("field", ["*", "", "/", "character_book", "extensions", "first_mes", "unknown", "description.child"])
@@ -80,7 +83,7 @@ async def test_no_bulk_or_configuration_field_reads(owner, field):
 
 
 async def test_search_is_navigation_only_and_disabled_entry_aliases_roundtrip(owner):
-    results = await call(owner, "search_lore_entries", query="旧船")
+    results = await call(owner, "find_lore_for_edit", query="旧船")
     assert len(results["matches"]) == 1 and "仅用于定位" in results["notice"]
     ref = results["matches"][0]["ref"]
     with pytest.raises(ValueError, match="read_lore_entry"):
@@ -144,7 +147,7 @@ async def test_execution_content_cannot_be_introduced(owner, text):
 
 async def test_protected_entries_and_script_bearing_fields_cannot_be_read_changed_or_removed(owner):
     owner.state["lore_references"] = {"L20": "rule", "L21": "init", "L22": "script"}
-    search = await call(owner, "search_lore_entries", query="*")
+    search = await call(owner, "find_lore_for_edit", query="*")
     assert {row["title"] for row in search["matches"]} == {"港口", "旧船"}
     for ref in ("L20", "L21", "L22"):
         for name, args in [("read_lore_entry", {"ref": ref}),
@@ -219,7 +222,7 @@ async def test_identity_ambiguity_and_failed_validation_do_not_change_draft(owne
     rows = list(entries.values()) if isinstance(entries, dict) else entries
     rows[1]["id"] = rows[0]["id"]
     with pytest.raises(ValueError, match="身份重复"):
-        await call(owner, "search_lore_entries", query="*")
+        await call(owner, "find_lore_for_edit", query="*")
 
 
 async def test_edit_type_dependencies_allow_additions_when_reads_are_disabled(story):
@@ -239,7 +242,7 @@ async def test_edit_type_dependencies_allow_additions_when_reads_are_disabled(st
         result, _ = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
         results = [e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"]
-        assert "read_character" in results[0]["error"] and results[1]["saved_to_draft"]
+        assert "read_character" in results[0]["error"]["message"] and results[1]["data"]["saved_to_draft"]
     finally:
         await service.close()
         await app.state.service.close()
@@ -259,7 +262,7 @@ async def test_five_hundred_entries_only_selected_source_reaches_model_and_other
     settings.context_tokens = 128000
     store.save_settings(settings)
     service = runtime(store)
-    model = Model(("search_lore_entries", {"query": "PICKED_TARGET"}), ("read_lore_entry", {"ref": "L251"}),
+    model = Model(("find_lore_for_edit", {"query": "PICKED_TARGET"}), ("read_lore_entry", {"ref": "L251"}),
         ("revise_content", {"operations": [{"op": "update_lore", "ref": "L251", "changes": {"content": "Updated selected setting"}}], "reason": "User request"}), "Narrative")
     try:
         result, current = await turn(service, session, model, allow_content_edit=True)

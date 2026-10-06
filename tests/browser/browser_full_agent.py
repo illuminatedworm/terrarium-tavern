@@ -141,10 +141,10 @@ async def main():
                     await page.get_by_role("button", name="展开右侧栏", exact=True).click()
                 await page.get_by_role("button", name="工具", exact=True).click()
                 tools = page.get_by_role("region", name="Full Agent 工具")
-                search_toggle = tools.get_by_label("启用 search_read_lore", exact=True)
+                search_toggle = tools.get_by_label("启用 recall_lore", exact=True)
                 await expect(search_toggle).to_be_checked()
-                ref_toggle = tools.get_by_label("search_read_lore 返回编号", exact=True)
-                title_toggle = tools.get_by_label("search_read_lore 返回标题", exact=True)
+                ref_toggle = tools.get_by_label("recall_lore 返回编号", exact=True)
+                title_toggle = tools.get_by_label("recall_lore 返回标题", exact=True)
                 await expect(ref_toggle).not_to_be_checked()
                 await expect(title_toggle).not_to_be_checked()
                 await ref_toggle.check()
@@ -177,7 +177,7 @@ async def main():
                 await expect(revise_card).to_contain_text("已有世界书条目的修改和删除需启用 read_lore_entry")
                 await expect(revise_card).to_contain_text("本轮可用")
                 await expect(revise_card).to_contain_text("新增普通世界书条目无需读取整本世界书")
-                await tools.locator(".tool-card").filter(has=page.get_by_label("启用 search_read_lore", exact=True)).locator("summary").click()
+                await tools.locator(".tool-card").filter(has=page.get_by_label("启用 recall_lore", exact=True)).locator("summary").click()
                 await expect(tools).to_contain_text("Uses keyword and BM25 recall.")
                 await expect(tools).to_contain_text("Search text or retrieval clues")
                 await page.screenshot(path=str(output / "tools-desktop.png"))
@@ -190,7 +190,7 @@ async def main():
                 await page.set_viewport_size({"width": 390, "height": 844})
                 if not await search_toggle.is_visible():
                     await page.get_by_role("button", name="展开右侧栏", exact=True).click()
-                await tools.locator(".tool-card").filter(has=page.get_by_label("启用 search_read_lore", exact=True)).locator("summary").click()
+                await tools.locator(".tool-card").filter(has=page.get_by_label("启用 recall_lore", exact=True)).locator("summary").click()
                 await page.screenshot(path=str(output / "tools-mobile.png"))
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 await page.set_viewport_size({"width": 1440, "height": 900})
@@ -230,7 +230,7 @@ async def main():
                 await page.screenshot(path=str(output / "settings.png"))
                 await modal.get_by_role('button', name='关闭', exact=True).click()
                 app.state.service.full.provider_factory = lambda: Model(
-                    ("read_note", {"ref": "约定/钟楼"}), "她再次确认明天见面的约定。")
+                    ("read_note", {"key": "约定/钟楼"}), "她再次确认明天见面的约定。")
                 await page.get_by_placeholder('说些什么，或描述你的行动…').fill('我们再确认一次明天的约定。')
                 await page.get_by_role('button', name='发送', exact=True).click()
                 await expect(page.locator('.message.assistant')).to_have_count(3)
@@ -254,6 +254,30 @@ async def main():
                 await expect(page.locator('.work-turn-preview')).to_have_text([
                     '我答应明天在钟楼见面。', '我们再确认一次明天的约定。',
                 ])
+                # Changing authorization must start fresh instead of silently
+                # resuming tools accepted under the earlier permissions.
+                await page.get_by_role('button', name='对话', exact=True).click()
+                app.state.service.full.provider_factory = lambda: Model(
+                    ('write_note', {'key': 'discarded', 'content': 'DO_NOT_RESUME', 'kind': 'plan'}),
+                    RuntimeError('fixture retry failure'))
+                await page.get_by_placeholder('说些什么，或描述你的行动…').fill('调整授权后重试。')
+                await page.get_by_role('button', name='发送', exact=True).click()
+                await expect(page.get_by_text('本次生成失败，正文与状态未提交。', exact=True)).to_be_visible()
+                with store.connection() as db:
+                    failed_id = db.execute('SELECT id FROM turns ORDER BY rowid DESC LIMIT 1').fetchone()[0]
+                assert store.turn(failed_id)['resumable']
+                fresh = Model('按新的授权重新开始。')
+                app.state.service.full.provider_factory = lambda: fresh
+                await page.get_by_label('本轮允许修改设定', exact=True).check()
+                if await page.locator('.regenerate-toggle').get_attribute('aria-expanded') != 'true':
+                    await page.locator('.regenerate-toggle').click()
+                async with page.expect_request(lambda request: request.method == 'POST' and request.url.endswith('/turns')) as submitted:
+                    await page.locator('.regenerate-bar').get_by_role('button', name='↻ 重新生成', exact=True).click()
+                retry = (await submitted.value).post_data_json
+                assert retry['resume_turn_id'] is None and retry['allow_content_edit'] is True
+                await expect(page.locator('.message.assistant').last).to_contain_text('按新的授权重新开始。')
+                assert 'DO_NOT_RESUME' not in str(fresh.requests)
+                assert 'discarded' not in store.session(store.turn(failed_id)['session'])['snapshot']['full_agent']['notes']
                 assert not errors, errors
                 await browser.close()
         finally:
