@@ -20,7 +20,7 @@ SYSTEM_PROMPT = """你是后台 MVU 变量分析员。根据当前变量、近�
 
 
 async def analyze_variables(store, tid, settings, history, state, user_text, narrative, provider_factory=None,
-                            *, document=None, persona="旅人", request_context=None):
+                            *, document=None, persona="用户", request_context=None):
     cfg = settings.for_role("background") if hasattr(settings, "for_role") else settings
     rules = []
     for entry in lore_entries(document or {"name": ""}, "tracker_mvu"):

@@ -16,7 +16,7 @@ def test_final_request_cannot_resurrect_rejected_lore():
         {"id": "harbor", "keys": ["港口"], "content": "港口附近有钟塔。"},
         {"id": "tower", "keys": ["钟塔"], "content": "钟塔的秘密与当前行动无关。"},
     ]}}
-    session = {"id": "s", "persona": "旅人", "recipe": ContextRecipe().model_dump(),
+    session = {"id": "s", "persona": "用户", "recipe": ContextRecipe().model_dump(),
                "lore_injection_mode": "conversation"}
     history = [{"id": "g", "role": "assistant", "raw": "欢迎", "model": "欢迎"}]
     retrieval = {"ids": ["harbor"], "query": "进入港口", "diagnostics": [],

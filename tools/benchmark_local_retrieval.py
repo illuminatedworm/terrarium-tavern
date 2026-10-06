@@ -149,7 +149,7 @@ async def main(args):
         config.batch_size = args.batch_size
         config.dimensions = args.dimensions if purpose == 'embedding' else 1024
     store = Store(args.output.parent / f'store-{args.variant}-{args.dimensions}d')
-    session = {'id': 'benchmark', 'persona': '旅人', 'agent_mode': args.mode, 'lore_injection_mode': 'conversation'}
+    session = {'id': 'benchmark', 'persona': '用户', 'agent_mode': args.mode, 'lore_injection_mode': 'conversation'}
     with store.connection() as db:
         db.execute('INSERT OR IGNORE INTO sessions(id,card,persona,recipe,created,card_data,lore_injection_mode) '
                    'VALUES(?,?,?,?,?,?,?)', (session['id'], card_id, session['persona'], '{}', time.time(), '{}', 'conversation'))

@@ -25,7 +25,7 @@ class Story:
         self.cfg = Settings(api_mode=api, model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
                             api_key="fixture-secret", base_url="https://fixture.test/v1", use_proxy=False,
                             cache={"mode": "runtime", "retention": "1h" if api == "anthropic" else "default"})
-        self.session = {"id": uuid4().hex, "recipe": ContextRecipe().model_dump(), "persona": "旅人",
+        self.session = {"id": uuid4().hex, "recipe": ContextRecipe().model_dump(), "persona": "用户",
                         "lore_injection_mode": "conversation"}
         self.document = {"name": "测试", "description": "固定设定", "post_history_instructions": "角色后置要求"}
         self.snapshot = {"state": {"stat_data": {"hp": 3}}, "memory_document": {"version": 1, "records": []}}
@@ -302,7 +302,7 @@ def test_memory_macro_conditions_and_turn_scoping_are_independent():
     story = Story()
     story.note = "给 {{user}} 的作者注"
     first = story.compile(turn_instruction="本轮提醒")
-    assert any("给 旅人 的作者注" in m["content"] for m in first["messages"])
+    assert any("给 用户 的作者注" in m["content"] for m in first["messages"])
     story.commit(first)
     second = story.compile(turn_instruction="本轮提醒")
     assert second["context_ledger"]["updates"] == [{"source": "turn_instruction", "cleared": False}]

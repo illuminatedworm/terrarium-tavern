@@ -43,7 +43,7 @@ class ScriptRuntime:
         host,
         scripts_override=None,
         prepare_markup=None,
-        persona="旅人",
+        persona="用户",
         opening=False,
         greeting_id=None,
     ):

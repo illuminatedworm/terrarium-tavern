@@ -62,7 +62,7 @@ async def main(neural, model_dir=None):
                         '当前时间线':case.get('timeline','')}}}, settings, {'id':'eval'}, str(i))
                     ids = result['ids']
                     degraded += int(any('降级' in str(d) or '不可用' in str(d) for d in result['diagnostics']))
-                session = {'id': 'eval', 'persona': '旅人', 'recipe': ContextRecipe().model_dump(), 'lore_injection_mode': 'conversation'}
+                session = {'id': 'eval', 'persona': '用户', 'recipe': ContextRecipe().model_dump(), 'lore_injection_mode': 'conversation'}
                 prepared = {'ids': ids, 'query': case['text'], 'diagnostics': []} if mode == 'keyword_only' else result
                 compiled = compile_context(doc, session, [], {'state': {'世界': {'当前时间线': case.get('timeline', '')}}},
                                            case['text'], settings, str(i), retrieval=prepared)

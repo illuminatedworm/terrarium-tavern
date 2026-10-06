@@ -17,7 +17,7 @@ def history(n, size=0):
 
 
 def session():
-    return {"id": "s", "persona": "旅人", "persona_data": {},
+    return {"id": "s", "persona": "用户", "persona_data": {},
             "lore_injection_mode": "conversation", "recipe": ContextRecipe().model_dump()}
 
 

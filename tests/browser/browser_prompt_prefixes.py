@@ -32,7 +32,7 @@ async def main():
             agent.preference_prompt = f"{mode} 用户偏好：\n<创作要求>"
             agent.regenerate_prompt = f"{mode} 用户本次要求："
             heads[mode] = (agent.preference_prompt, agent.regenerate_prompt)
-            sessions[mode] = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, persona="旅人"))
+            sessions[mode] = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
         store.save_settings(settings)
         providers = {mode: [] for mode in sessions}
 
@@ -109,7 +109,7 @@ async def main():
                         text = "\n".join(m.get("content", "") for m in messages)
                         assert heads[mode][0] + "\n放缓节奏。" in text
                         assert heads[mode][1] + "\n多用对白。" in text
-                        assert "用户名字：旅人" in text if mode == "half_agent" else "用户：旅人" in text
+                        assert "用户名字：用户" in text if mode == "half_agent" else "用户：用户" in text
                         assert "玩家" not in text
                         first_user = next(i for i, message in enumerate(messages) if message["role"] == "user")
                         preference_at = next(i for i, message in enumerate(messages) if heads[mode][0] in message.get("content", ""))

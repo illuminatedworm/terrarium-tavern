@@ -15,7 +15,7 @@ def card():
 
 
 def session(recipe=None):
-    return {"id": "story", "persona": "旅人", "recipe": (recipe or ContextRecipe()).model_dump(),
+    return {"id": "story", "persona": "用户", "recipe": (recipe or ContextRecipe()).model_dump(),
             "lore_injection_mode": "conversation"}
 
 
@@ -35,7 +35,7 @@ def test_all_card_fields_are_tagged_and_runtime_rules_are_plain(legacy):
     out = compile(recipe)
     text = "\n".join(m["content"] for m in out["messages"])
     for field, tag in CARD_FIELDS.items():
-        assert text.count(f"<{tag}>\n{field}: 旅人\n</{tag}>") == 1
+        assert text.count(f"<{tag}>\n{field}: 用户\n</{tag}>") == 1
     assert next(m["content"] for m in out["trace"] if m["source"] == "rules") == Settings().system_prompt
     assert not any(m["source"] == "character" for m in compile(ContextRecipe(blocks=[]))["trace"])
 
@@ -118,12 +118,12 @@ def test_full_agent_tags_card_fields_and_keeps_greeting_plain_without_mutating_s
     settings = Settings()
     document = card()
     document["post_history_instructions"] = "{{getvar::stat_data.post}}"
-    snapshot = {"state": {"stat_data": {"post": "post_history_instructions: 旅人"}}}
+    snapshot = {"state": {"stat_data": {"post": "post_history_instructions: 用户"}}}
     full_state(snapshot)
     out = compile_window(document, session(), history, snapshot, "继续", settings, [])
     text = "\n".join(m["content"] for m in out["messages"])
     for field, tag in CARD_FIELDS.items():
-        assert text.count(f"<{tag}>\n{field}: 旅人\n</{tag}>") == 1
+        assert text.count(f"<{tag}>\n{field}: 用户\n</{tag}>") == 1
     assert next(m["content"] for m in out["trace"] if m.get("message_id") == "opening") == "备选开场"
     assert history == original
     assert next(m["content"] for m in out["trace"] if m["source"] == "rules") == settings.full_agent_system_prompt

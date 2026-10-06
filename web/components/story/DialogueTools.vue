@@ -35,7 +35,7 @@ const indexed = computed(() => {
   return props.messages.map((message) => {
     const raw = (message.display || message.raw || '').replace(
       /\{\{user\}\}/g,
-      () => props.persona || '旅人',
+      () => props.persona || '用户',
     );
     const source = storyHtml(raw) || raw;
     let entry = cache.get(message.id);

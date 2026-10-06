@@ -103,7 +103,7 @@ async def test_recent_context_and_provider_cleanup(with_rules):
     rules = [m['content'] for m in provider.messages if m['content'].startswith('<mvu_rules>\n')]
     assert len(rules) == int(with_rules)
     if with_rules:
-        assert '变量规则 旅人' in rules[0] and rules[0].endswith('\n</mvu_rules>')
+        assert '变量规则 用户' in rules[0] and rules[0].endswith('\n</mvu_rules>')
     assert [m['content'] for m in payload['recent_history']] == [str(i) for i in range(6, 12)]
     assert payload['current_turn'] == {'user': 'input', 'assistant': 'new prose'}
     assert provider.closed

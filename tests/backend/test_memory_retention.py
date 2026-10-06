@@ -104,7 +104,7 @@ async def test_retention_runs_on_send_even_when_no_tracker_batch_is_due(tmp_path
                                                     record(history, "new", "episode", 4)),
             "memory_archive": {"covered_count": len(history), "fingerprint": fingerprint(history),
                                "last_round": 4}}
-    session = {"id": "s", "persona": "旅人", "persona_data": {}, "recipe": ContextRecipe().model_dump(),
+    session = {"id": "s", "persona": "用户", "persona_data": {}, "recipe": ContextRecipe().model_dump(),
                "lore_injection_mode": "conversation"}
     calls = []
 

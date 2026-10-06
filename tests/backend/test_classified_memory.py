@@ -192,7 +192,7 @@ async def test_incremental_input_and_shared_budget_are_bounded():
         calls.append((json.loads(messages[-1]["content"]), kw, messages.references))
         return json.dumps({"operations": [], "questions": []})
     budget = CallBudget()
-    await consolidate(history(), Settings(), generate, memory=empty(), start=2, budget=budget, document={}, persona="旅人")
+    await consolidate(history(), Settings(), generate, memory=empty(), start=2, budget=budget, document={}, persona="用户")
     assert [calls[0][2].messages[m["id"]] for m in calls[0][0]["messages"]] == ["m2", "m3"]
     assert [calls[0][2].messages[m["id"]] for m in calls[0][0]["background_messages"]] == ["m0", "m1"]
     await consolidate(history(), Settings(), generate, memory=empty(), budget=budget)
@@ -388,5 +388,5 @@ async def test_rebuild_cancel_and_review_are_atomic(tmp_path):
     assert store.session(s["id"])["snapshot"] == s["snapshot"]
     app.state.service.review(turn["id"], False)
     assert store.session(s["id"])["snapshot"] == s["snapshot"]
-    assert estimate_batches(s["messages"], empty(), {}, "旅人", store.settings().for_role("background")) == 1
+    assert estimate_batches(s["messages"], empty(), {}, "用户", store.settings().for_role("background")) == 1
     await app.state.service.close()

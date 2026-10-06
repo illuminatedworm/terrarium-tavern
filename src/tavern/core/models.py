@@ -216,7 +216,7 @@ class SessionCreate(BaseModel):
     card_id: str
     agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
     greeting: int = 0
-    persona: str = "旅人"
+    persona: str = "用户"
     policy: Policy | None = None
     persona_id: str | None = None
 
@@ -305,7 +305,7 @@ class CardEditorSave(CardEditorRevision):
 class SessionOptions(BaseModel):
     expected_revision: int
     policy: Policy | None = None
-    persona: str = "旅人"
+    persona: str = "用户"
     persona_data: dict[str, Any] = Field(default_factory=dict)
     turn_preference: str = ""
 

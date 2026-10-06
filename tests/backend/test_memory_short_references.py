@@ -32,12 +32,12 @@ async def test_minimal_wire_response_fills_exact_expanded_sources_without_long_i
         assert all(m["id"] not in wire for m in messages)
         payload = json.loads(prompt[-1]["content"])
         source = payload["messages"][-1]["passages"][0]
-        assert source["text"] == "她把戒指借给旅人。"
-        return answer({"category": "current", "content": "戒指暂由旅人保管", "sources": [source["ref"]]})
-    result = await consolidate(messages, Settings(), generate, memory={"version": 1, "records": []}, persona="旅人", document={})
+        assert source["text"] == "她把戒指借给用户。"
+        return answer({"category": "current", "content": "戒指暂由用户保管", "sources": [source["ref"]]})
+    result = await consolidate(messages, Settings(), generate, memory={"version": 1, "records": []}, persona="用户", document={})
     record = result["records"][0]
     assert len(record["id"]) == 32
-    assert record["sources"] == [{"message_id": messages[-1]["id"], "excerpt": "她把戒指借给旅人。",
+    assert record["sources"] == [{"message_id": messages[-1]["id"], "excerpt": "她把戒指借给用户。",
                                   "fingerprint": source_hash(messages[-1])}]
     changed = copy.deepcopy(messages)
     changed[-1]["model"] = "她拒绝借出戒指。"

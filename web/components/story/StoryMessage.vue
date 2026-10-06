@@ -28,7 +28,7 @@ let buildVersion = 0;
 const raw = computed(() =>
   (props.message.display || props.message.raw).replace(
     /\{\{user\}\}/g,
-    () => props.session.persona || '旅人',
+    () => props.session.persona || '用户',
   ),
 );
 const htmlCard = computed(() => storyHtml(raw.value));

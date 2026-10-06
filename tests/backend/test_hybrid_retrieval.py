@@ -64,7 +64,7 @@ def test_hybrid_obeys_secondary_and_timeline_and_disabled_constraints():
                for i, values in enumerate([{}, {'secondary_keys': ['许可'], 'selective': True},
                                            {'enabled': False}, {'timelines': ['过去']}])]
     doc = {'character_book': {'entries': entries}}
-    session = {'id': 's', 'persona': '旅人', 'recipe': ContextRecipe().model_dump()}
+    session = {'id': 's', 'persona': '用户', 'recipe': ContextRecipe().model_dump()}
     result = compile_context(doc, session, [], {'state': {'世界': {'当前时间线': '现在'}}},
                              '银色钥匙 灯塔', Settings(lore_recursive=False), 't')
     assert [e['id'] for e in result['lore']] == ['0']

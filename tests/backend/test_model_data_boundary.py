@@ -111,7 +111,7 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     snapshot = {"state": state, "memory_document": {"version": 1, "records": [Record(id=ID, category="episode", content="有约定", sources=[{"message_id": ID, "excerpt": "约定", "fingerprint": HASH}]).model_dump()]}, "lore": {}}
     doc = {"name": "艾琳", "description": "角色描述", "character_book": {"entries": [
         {"id": ID, "comment": "资料", "content": "普通设定", "constant": True}]}}
-    session = {"id": ID, "persona": "旅人", "recipe": ContextRecipe().model_dump()}
+    session = {"id": ID, "persona": "用户", "recipe": ContextRecipe().model_dump()}
     compiled = compile_context(doc, session, [{"id": ID, "role": "assistant", "raw": "相遇。"}], snapshot,
                                "继续", Settings(), ID)
     wire = json.dumps(compiled["messages"], ensure_ascii=False)
@@ -120,7 +120,7 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     assert any('"hp": 8' in m["content"] for m in compiled["messages"])
     assert state == runtime_state()
     assert state_for_model(state) == {"stat_data": {"hp": 8}}
-    assert ID not in macros("{{getvar::initialized_openings}}", doc, "旅人", state)
+    assert ID not in macros("{{getvar::initialized_openings}}", doc, "用户", state)
     # Script-triggered generation uses this exact compiler and messages view.
     nested = compile_context(doc, session, [], snapshot, "继续", Settings(), ID, generate={"user_input": "继续"})
     assert ID not in json.dumps(nested["messages"]) and HASH not in json.dumps(nested["messages"])

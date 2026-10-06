@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from tavern.core.models import SessionCreate, Settings
+from tavern.core.models import PersonaEdit, SessionCreate, Settings
 from tavern.memories.memory_protocol import References
 from tavern.memories.memory_records import read_memory
 from tavern.storage.store import Store
@@ -16,6 +16,7 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     store.save_settings(cfg)
     card = store.import_card(b'{"name":"fixture","first_mes":"hello"}', 'card.json')
     session = store.new_session(SessionCreate(card_id=card['id']))
+    assert session['persona'] == '用户'
     assert read_memory(session['snapshot']) == {'version': 1, 'records': []}
     reopened = Store(tmp_path)
     assert reopened.settings_document() == store.settings_document()
@@ -24,6 +25,27 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     with reopened.connection() as db:
         assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '3'
         assert dict((r[1], r[3]) for r in db.execute('PRAGMA table_info(sessions)'))['card_data'] == 1
+
+
+@pytest.mark.parametrize('mode', ['half_agent', 'full_agent'])
+@pytest.mark.parametrize('name', ['旅人', '林舟'])
+def test_saved_persona_names_survive_reopen_and_fork(tmp_path, mode, name):
+    store = Store(tmp_path)
+    card = store.import_card(b'{"name":"fixture","first_mes":"hello {{user}}"}', 'card.json')
+    saved = store.save_persona(None, PersonaEdit(name=name, description='保留的用户介绍'))
+    explicit = store.new_session(SessionCreate(card_id=card['id'], agent_mode=mode, persona=name))
+    selected = store.new_session(SessionCreate(card_id=card['id'], agent_mode=mode, persona_id=saved['id']))
+
+    reopened = Store(tmp_path)
+    assert reopened.persona(saved['id']) == saved
+    for original in (explicit, selected):
+        session = reopened.session(original['id'])
+        assert session['persona'] == name
+        assert session['persona_data'] == original['persona_data']
+        fork = reopened.fork_session(session['id'], session['head'], session['revision'])
+        assert fork['persona'] == name and fork['persona_data'] == session['persona_data']
+    fresh = reopened.new_session(SessionCreate(card_id=card['id'], agent_mode=mode))
+    assert fresh['persona'] == '用户' and fresh['persona_data'] == {}
 
 
 @pytest.mark.parametrize('version', [None, '0', '999', 'invalid'])
