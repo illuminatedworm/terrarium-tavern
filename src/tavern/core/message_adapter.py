@@ -33,7 +33,6 @@ class MessageType:
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
     MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
-    MessageType("call_budget", "模型调用额度", "tavern_call_budget", appendable=True, scopes=("full_agent",)),
     MessageType("user", "用户输入", role="user"),
     MessageType("assistant", "模型回复", role="assistant"),
     MessageType("tool", "工具结果", role="tool"),
@@ -63,7 +62,7 @@ TYPES = {item.id: item for item in (
         ("turn_variable_instruction", "本轮变量要求"), ("context_warning", "资料过时提醒"),
         ("context_status", "上下文状态"), ("context_budget", "窗口预算提醒"),
         ("reply_correction", "回复纠正要求"), ("required_tool_notice", "必要工具提醒"),
-        ("tracker_task_update", "Tracker 任务更新"), ("last_call_notice", "最后调用提醒"))],
+        ("tracker_task_update", "Tracker 任务更新"))],
     *[MessageType("editor_" + name, label, "tavern_editor_" + name, True, True,
                   scopes=("card_editor",)) for name, label in (
         ("overview", "草稿概览"), ("briefs", "确认资料"), ("handoff", "交接笔记"),
@@ -78,7 +77,7 @@ SCOPES = {
     **{name: ("full_agent",) for name in ("handoff", "mvu_rules", "regenerate_instruction",
        "turn_variable_instruction", "context_warning", "context_status", "context_budget")},
     "reply_correction": ("full_agent", "card_editor"), "required_tool_notice": ("background",),
-    "tracker_task_update": ("background",), "last_call_notice": ("full_agent", "card_editor"),
+    "tracker_task_update": ("background",),
     "message_edit_notice": ("foreground", "full_agent", "background"),
 }
 TYPES = {name: replace(item, scopes=SCOPES.get(name, item.scopes)) for name, item in TYPES.items()}
@@ -113,6 +112,19 @@ class MessageAdapterConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal[1] = 1
     mappings: dict[str, dict[str, AdapterRule]] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_call_notifications(cls, value):
+        if isinstance(value, dict) and isinstance(value.get("mappings"), dict):
+            value = copy.deepcopy(value)
+            for api, rules in value["mappings"].items():
+                if isinstance(rules, dict):
+                    value["mappings"][api] = {
+                        name: rule for name, rule in rules.items()
+                        if not isinstance(name, str) or (name not in ("call_budget", "last_call_notice")
+                        and not name.startswith(("compat:call_budget:", "compat:last_call_notice:")))}
+        return value
 
     @model_validator(mode="after")
     def editable_types(self):

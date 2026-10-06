@@ -48,7 +48,7 @@ class FullAgent:
         self.model_view.forward = {raw: ref for ref, raw in refs.items()}
         self.model_view.reserved.difference_update(refs)
         self.model_view.seed(initial_view)
-        self.calls, self.rolled, self.retrieval_query = 0, False, ""
+        self.rolled, self.retrieval_query = False, ""
         self.must_rollover = False
         self.exiting = set()
         self.patch_state_done = False
@@ -143,7 +143,7 @@ class FullAgent:
             input_id=self.user_message["id"], instruction=(
                 self.settings.regenerate_prompt + "\n" + self.request.regenerate_note
                 if self.request.regenerate_note else ""),
-            calls=self.calls, force_rollover=self.must_rollover,
+            force_rollover=self.must_rollover,
             require_state_patch=self.request.update_variables, variable_rules=self.variable_rules,
             allow_content_edit=self.request.allow_content_edit, regenerate_reply=self.regenerate_reply)
         self.must_rollover = result["rollover_required"]
@@ -184,7 +184,6 @@ class FullAgent:
                 compiled = self.compile()
                 if self.must_rollover and not any(t["function"]["name"] == "new_context" for t in self.definitions):
                     raise ValueError("上下文已满，但 new_context 已关闭。请在工具页启用它，或在场景页手动保存并换新窗口。")
-                self.calls += 1
                 started = time.perf_counter()
                 tool_options = {
                     "tools": self.definitions,

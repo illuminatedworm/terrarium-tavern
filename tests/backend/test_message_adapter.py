@@ -44,6 +44,47 @@ def state_messages():
 
 
 @pytest.mark.parametrize("api", APIS)
+def test_removed_call_notifications_are_purged_from_settings_and_catalog(api):
+    original = {"mappings": {api: {
+        "last_call_notice": {"role": "user", "wrap": True},
+        "compat:last_call_notice:assistant": {"role": "assistant", "wrap": False},
+        "call_budget": {"role": "system", "wrap": True},
+        "handoff": {"role": "user", "wrap": False}}}}
+    before = copy.deepcopy(original)
+    cleaned = MessageAdapterConfig.model_validate(original).model_dump()
+    assert cleaned["mappings"][api] == {"handoff": {"role": "user", "wrap": False}}
+    assert original == before
+    for lane in ("full_agent", "card_editor"):
+        assert not {"call_budget", "last_call_notice"} & {item["id"] for item in catalog(lane)}
+
+
+@pytest.mark.parametrize("kind", ["story", "editor"])
+async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind):
+    store, session = story(tmp_path, "full_agent")
+    editor = CardEditorService(store)
+    try:
+        owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
+        lane = "full_agent" if kind == "story" else "card_editor"
+        saved = {lane: config(last_call_notice={"role": "user", "wrap": True})}
+        with store.connection() as db:
+            db.execute("UPDATE message_adapter_configs SET config=? WHERE owner_kind=? AND owner_id=?",
+                       (json.dumps(saved), kind, owner))
+        reopened = Store(store.root)
+        result = reopened.message_adapter_settings(kind, owner)
+        assert result["config"][lane]["mappings"] == {"chat_completions": {}}
+        assert result["revision"] == 1
+        assert "last_call_notice" not in str(result)
+        assert reopened.message_adapter(kind, owner, lane)["config"] == result["config"][lane]
+        with reopened.connection() as db:
+            persisted = db.execute("SELECT config FROM message_adapter_configs WHERE owner_kind=? AND owner_id=?",
+                                   (kind, owner)).fetchone()["config"]
+        assert "last_call_notice" not in persisted
+        assert Store(store.root).message_adapter_settings(kind, owner)["revision"] == 1
+    finally:
+        await editor.close()
+
+
+@pytest.mark.parametrize("api", APIS)
 def test_full_agent_default_application_messages_remain_system_for_every_protocol(api):
     settings = Settings(runtime_mode="full_agent", api_mode=api)
     types = [item["id"] for item in catalog("full_agent") if item["id"] not in ("user", "assistant", "tool")]

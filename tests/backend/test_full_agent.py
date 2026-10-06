@@ -386,8 +386,11 @@ async def test_budget_step_limit_and_invalid_tools_roll_back(story):
                       ("new_context", {"content": "不能重置本回合调用额度"}))
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and "上限" in result["error"]
-        assert "最后一次模型请求" not in str(model.requests[0]["messages"])
-        assert "最后一次模型请求" in str(model.requests[1]["messages"])
+        for request in model.requests:
+            assert "最后一次模型请求" not in str(request["messages"])
+            assert "tavern_call_budget" not in str(request["messages"])
+        assert any(e["kind"] == "error" and e["payload"].get("error_code") == "BUDGET_EXHAUSTED"
+                   for e in store.events(result["id"]))
         assert "不允许" in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert current["revision"] == 0
         assert current["snapshot"] == session["snapshot"]
@@ -884,7 +887,7 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     sources = [item["source"] for item in compiled["trace"]]
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
-                                          "mvu_rules", "post", "call_budget", "turn_instruction", "regenerate_instruction",
+                                          "mvu_rules", "post", "turn_instruction", "regenerate_instruction",
                                           "handoff", "context_status"]
 
 
@@ -956,7 +959,7 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
     continuation = []
 
     def compile_current():
-        result = compile_window(*args, input_id="current-input", continuation=continuation, calls=1)
+        result = compile_window(*args, input_id="current-input", continuation=continuation)
         continuation.extend(result["context_additions"])
         return result
 

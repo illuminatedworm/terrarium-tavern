@@ -9,7 +9,7 @@ from kohakuterrarium.llm.base import ToolSchema
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_tools import EditorTools, tool_definitions
-from tavern.core.message_adapter import provider_messages, runtime_messages
+from tavern.core.message_adapter import provider_messages
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation
 from tavern.storage.store import dump
@@ -180,10 +180,6 @@ class EditorRun:
             if self.context.must_rollover:
                 self.event("context_warning", {"message": "编辑上下文达到窗口上限，要求换窗；原文仍完整保留"})
             definitions = self.definitions
-            if self.legacy and self.calls == maximum:
-                definitions = []
-                self.context.messages.append({"role": "system", "message_type": "last_call_notice", "runtime_phase": "body", "content": "本轮最后一次调用：只汇报结果和未完成项。"})
-                messages = runtime_messages(self.context.messages, "card_editor")
             schemas = [ToolSchema(name=d["function"]["name"], description=d["function"]["description"], parameters=d["function"]["parameters"]) for d in definitions]
             self.save()
             self.event("model_call", {"call": self.calls, "model": self.cfg.model})

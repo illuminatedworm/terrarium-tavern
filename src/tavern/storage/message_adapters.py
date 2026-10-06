@@ -25,6 +25,14 @@ class MessageAdapters:
             owners += [("editor", r["id"], "card_editor") for r in db.execute("SELECT id FROM card_editor_conversations")]
             for kind, owner, mode in owners:
                 self.create_message_adapter(db, kind, owner, mode)
+            for row in db.execute("SELECT owner_kind,owner_id,config FROM message_adapter_configs").fetchall():
+                config = json.loads(row["config"])
+                cleaned = {lane: MessageAdapterConfig.model_validate(value).model_dump()
+                           for lane, value in config.items()}
+                if cleaned != config:
+                    db.execute("""UPDATE message_adapter_configs SET config=?,revision=revision+1
+                        WHERE owner_kind=? AND owner_id=?""",
+                        (json.dumps(cleaned, ensure_ascii=False), row["owner_kind"], row["owner_id"]))
 
     def create_message_adapter(self, db, kind, owner, mode):
         document = self.settings_document()

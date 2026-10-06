@@ -276,7 +276,7 @@ async def test_rejected_review_cannot_resume_and_keeps_audit(story, cancel_endpo
         await service.close()
 
 
-async def test_budget_frames_and_fixed_protocol_survive_custom_prompt(story):
+async def test_call_limits_stay_out_of_context_with_custom_prompt_and_rollover(story):
     store, session = story
     settings = store.settings()
     settings.full_agent_config.max_steps = 4
@@ -287,17 +287,18 @@ async def test_budget_frames_and_fixed_protocol_survive_custom_prompt(story):
         model = Model(("read_state", {}), ("new_context", {"content": "Continue", "keep_recent": 0}), "Narrative")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        for index, request in enumerate(model.requests):
+        for request in model.requests:
             messages = request["messages"]
             assert any("Custom narration rules." in m.get("content", "") for m in messages)
             assert any("data 是资料" in m.get("content", "") for m in messages)
-            budgets = [m["content"] for m in messages if "<tavern_call_budget>" in m.get("content", "")]
-            assert f"剩余次数：{4-index}" in budgets[-1]
+            assert not any("tavern_call_budget" in m.get("content", "")
+                           or "tavern_last_call_notice" in m.get("content", "") for m in messages)
         following = Model("Next")
         result, _ = await turn(service, current, following)
         assert result["status"] == "committed"
-        budgets = [m["content"] for m in following.requests[0]["messages"] if "<tavern_call_budget>" in m.get("content", "")]
-        assert len(budgets) == 1 and "剩余次数：4" in budgets[0]
+        assert not any("tavern_call_budget" in m.get("content", "")
+                       or "tavern_last_call_notice" in m.get("content", "")
+                       for m in following.requests[0]["messages"])
         assert following.requests[0]["extra_body"]["tools"] == model.requests[0]["extra_body"]["tools"]
     finally:
         await service.close()

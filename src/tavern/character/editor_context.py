@@ -24,7 +24,7 @@ class EditorContext:
         history = owner.edits.messages(owner.wid)
         seed = {"documents": [c["document"] for c in owner.working["cards"]], "history": [m["content"] for m in history]}
         self.reason = None
-        if not saved or saved.get("version") != 3:
+        if not saved or saved.get("version") != 4:
             self.reason = "initial_context" if not saved else "context_version_changed"
         elif saved["origin"] != self.origin:
             self.reason = "provider_or_model_changed"
@@ -36,7 +36,7 @@ class EditorContext:
                  for m in history if m["ref"] not in saved["seen"]):
             self.reason = "literal_handle_collision"
         self.view = ModelView(seed if self.reason else None)
-        if saved and saved.get("version") in (2, 3) and self.reason != "literal_handle_collision":
+        if saved and saved.get("version") in (2, 3, 4) and self.reason != "literal_handle_collision":
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
             self.view.reverse = copy.deepcopy(saved["view"]["reverse"])
             self.view.reserved = set(saved["view"]["reserved"])
@@ -122,7 +122,7 @@ class EditorContext:
         self.must_rollover = False
 
     def saved(self):
-        return {"version": 3, "origin": self.origin, "policy": self.policy, "epoch": self.epoch,
+        return {"version": 4, "origin": self.origin, "policy": self.policy, "epoch": self.epoch,
                 "document": signature(self.owner.working), "messages": copy.deepcopy(self.messages),
                 "frames": copy.deepcopy(self.frames), "seen": list(self.seen),
                 "view": {"forward": dict(self.view.forward), "reverse": dict(self.view.reverse), "reserved": sorted(self.view.reserved)}}

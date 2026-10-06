@@ -133,7 +133,7 @@ async def test_editor_native_prefix_identity_and_committed_replay(tmp_path, monk
         await editor.service.close()
 
 
-@pytest.mark.parametrize("change", ["model", "credential", "draft", "history", "handles"])
+@pytest.mark.parametrize("change", ["model", "credential", "draft", "history", "handles", "call_notifications"])
 async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
     editor = Editor(tmp_path, monkeypatch, "responses")
     try:
@@ -159,6 +159,14 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
                     db.execute("INSERT INTO card_edit_runs VALUES (?,?,?,'{}','error','','',?)",
                                (f"failed{i}", editor.workspace["id"], f"failed{i}", 9999999999 + i))
             expected = "context_window_changed"
+        elif change == "call_notifications":
+            before["version"] = 3
+            before["messages"].append({"role": "system", "message_type": "last_call_notice",
+                                       "content": "本轮最后一次调用：只汇报结果和未完成项。"})
+            with editor.store.connection() as db:
+                db.execute("UPDATE card_edit_contexts SET payload=? WHERE workspace=?",
+                           (json.dumps(before), editor.workspace["id"]))
+            expected = "context_version_changed"
         else:
             # A literal handle in a new user request must not be restored to an old ID.
             doc = copy.deepcopy(editor.workspace["document"])
@@ -176,6 +184,11 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
         assert next(e["payload"]["rebuild_reason"] for e in events if e["kind"] == "context_baseline") == expected
         assert editor.service.edits.context(editor.workspace["id"])["epoch"] != before["epoch"]
         assert "encrypted_content" not in json.dumps(editor.wire(editor.requests[-1]))
+        if change == "call_notifications":
+            assert "last_call_notice" not in json.dumps(editor.wire(editor.requests[-1]))
+            assert "本轮最后一次调用" not in json.dumps(editor.wire(editor.requests[-1]), ensure_ascii=False)
+            saved = editor.service.edits.context(editor.workspace["id"])
+            assert saved["version"] == 4 and "last_call_notice" not in str(saved["messages"])
     finally:
         await editor.service.close()
 

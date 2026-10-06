@@ -261,7 +261,7 @@ async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
 
 
 @pytest.mark.parametrize("fail_last_request", [False, True])
-async def test_last_call_notice_does_not_leak_into_next_turn_or_resume(tmp_path, fail_last_request):
+async def test_call_notifications_are_absent_even_on_last_request_and_resume(tmp_path, fail_last_request):
     store, service, session = game(tmp_path)
     document = store.settings_document()
     document.full_agent.tools.max_steps = 3
@@ -271,8 +271,10 @@ async def test_last_call_notice_does_not_leak_into_next_turn_or_resume(tmp_path,
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == ("error" if fail_last_request else "committed"), result["error"]
-        assert [sum("<tavern_last_call_notice>" in m.get("content", "") for m in request["messages"])
-                for request in model.requests] == [0, 0, 1]
+        for request in model.requests:
+            assert not any("tavern_call_budget" in m.get("content", "")
+                           or "tavern_last_call_notice" in m.get("content", "")
+                           or "最后一次模型请求" in m.get("content", "") for m in request["messages"])
         next_model = Model("next narrative")
         if fail_last_request:
             assert current["revision"] == 0
@@ -286,6 +288,7 @@ async def test_last_call_notice_does_not_leak_into_next_turn_or_resume(tmp_path,
             following, _ = await turn(service, current, next_model)
         assert following["status"] == "committed", following["error"]
         assert not any("最后一次模型请求" in m.get("content", "") for m in next_model.requests[0]["messages"])
+        assert "tavern_call_budget" not in str(next_model.requests[0]["messages"])
     finally:
         await service.close()
 
@@ -647,7 +650,7 @@ async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_p
         await service.close()
 
 
-@pytest.mark.parametrize("version", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 6, 7])
 def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatch, version):
     from tavern.full_agent import context_ledger
     from tavern.full_agent.state import new_state
@@ -669,7 +672,8 @@ def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatc
     assert third["messages"] == second["messages"]
 
 
-def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch):
+@pytest.mark.parametrize("version", [5, 7])
+def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch, version):
     from tavern.full_agent import context_ledger
     from tavern.full_agent.state import new_state
 
@@ -677,7 +681,7 @@ def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch)
     snapshot = {"state": {}, "full_agent": new_state()}
     args = ({"name": "fixture"}, session, [], snapshot, "next", config(), [])
     with monkeypatch.context() as legacy:
-        legacy.setattr(context_ledger, "VERSION", 5)
+        legacy.setattr(context_ledger, "VERSION", version)
         first = compile_window(*args, input_id="u1")
     records = first["context_additions"]
     old_status = next(m for m in records if m.get("source") == "context_status")
@@ -685,6 +689,12 @@ def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch)
         notice = copy.deepcopy(old_status)
         notice["content"] = f"本回合还可调用模型 {remaining} 次。"
         notice["_runtime_context"]["value"] = notice["content"]
+        records.append(notice)
+    for source, content in (("call_budget", "本次运行模型请求上限：24；包含本次请求的剩余次数：1。"),
+                            ("last_call_notice", "这是本回合最后一次模型请求。")):
+        notice = copy.deepcopy(old_status)
+        notice.update(source=source, message_type=source, content=content)
+        notice["_runtime_context"]["value"] = content
         records.append(notice)
     records.extend([
         {"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
@@ -694,6 +704,9 @@ def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch)
     rebuilt = compile_window(*args, input_id="u1", continuation=records)
     assert rebuilt["context_ledger"]["rebuild_reason"] == "context_version_changed"
     assert not any("还可调用模型" in m.get("content", "") for m in rebuilt["messages"])
+    assert not any(m["source"] in ("call_budget", "last_call_notice") for m in rebuilt["trace"])
+    assert "剩余次数" not in str(rebuilt["messages"])
+    assert "最后一次模型请求" not in str(rebuilt["messages"])
     assert sum(m["source"] == "context_status" for m in rebuilt["trace"]) == 1
     assert [m["content"] for m in rebuilt["messages"] if m["role"] == "tool"] == ["原有完整工具结果"]
     again = compile_window(*args, input_id="u1", continuation=records + rebuilt["context_additions"])

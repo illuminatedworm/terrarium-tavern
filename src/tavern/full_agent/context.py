@@ -37,17 +37,13 @@ def load_trace(store, sid, history):
 
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
-                   trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False,
+                   trace=(), continuation=(), input_id="pending", instruction="", force_rollover=False,
                    require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply=""):
     state = full_state(snapshot)
     window = state["window"]
     card = normalize(document)
     visible = history[window["start"]:]
     turn_instructions = {
-        "call_budget": (
-            f"本次运行模型请求上限：{settings.full_agent_config.max_steps}；"
-            f"包含本次请求的剩余次数：{max(0, settings.full_agent_config.max_steps - calls)}。"
-            "工具续答和换窗计入额度；换窗不重置。"),
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
@@ -55,10 +51,6 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         "regenerate_instruction": instruction,
         "regenerate_reference": regeneration_reference(
             macros(regenerate_reply, card, session["persona"], snapshot.get("state", {}))),
-        "last_call_notice": (
-            "这是本回合最后一次模型请求。遵守当前强制换窗及必要工具要求，能完成时直接回复故事正文；"
-            "继续调用工具后将达到上限，草稿不会提交。"
-            if calls == settings.full_agent_config.max_steps - 1 else ""),
     }
     def expand(value):
         return macros(value, card, session["persona"], snapshot.get("state", {}))
@@ -115,8 +107,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     def replay(message, *, current_turn=False):
         source = message.get("source")
-        # Turn requirements and last-call notices must not leak into later turns
-        # or a resume whose fresh request budget makes the notice obsolete.
+        # Turn requirements must not leak into later turns.
         if source in turn_instructions and (not current_turn or not turn_instructions[source]):
             return
         item = ledger.replay(message)

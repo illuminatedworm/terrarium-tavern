@@ -342,10 +342,11 @@ async def test_twelve_call_limit_and_full_event_replay(tmp_path):
         final = editor.edits.run(run['id'])
         assert final['status'] == 'completed', final['error']
         assert provider.call_count == 12
-        assert not provider.schemas[-1]
+        assert provider.schemas[-1]
         for previous, current in zip(provider.call_log, provider.call_log[1:]):
             assert current[:len(previous)] == previous
-        assert "本轮最后一次调用" in provider.call_log[-1][-1]["content"]
+        assert not any("本轮最后一次调用" in str(messages)
+                       or "tavern_last_call_notice" in str(messages) for messages in provider.call_log)
         for index in range(230):
             editor.edits.event(run['id'], 'diagnostic', {'index': index})
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:

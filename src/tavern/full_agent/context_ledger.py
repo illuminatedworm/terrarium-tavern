@@ -7,8 +7,8 @@ from tavern.full_agent.protocol import saved
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
 
-# Fixed tool protocol and result envelopes changed; rebuild the working prefix.
-VERSION = 7
+# Retire stored call-count notifications by rebuilding the working prefix.
+VERSION = 8
 CLEAR_TEXT = {
     "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
