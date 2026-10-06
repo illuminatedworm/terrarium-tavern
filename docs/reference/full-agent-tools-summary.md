@@ -150,7 +150,7 @@ Read complete original dialogue by a valid H reference, including the current us
 ### `write_handoff`
 
 ```text
-Replace the complete handoff in the current window. Build on the latest runtime memory update or successful write, whichever is later. Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.
+Replace the complete handoff in the current window. The handoff is a summary of all current context. Build on the latest runtime memory update or successful write, whichever is later. Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.
 ```
 
 请求：
@@ -168,7 +168,7 @@ Replace the complete handoff in the current window. Build on the latest runtime 
 ### `new_context`
 
 ```text
-Replace the complete handoff and switch windows. Preserve valid context, constraints, unresolved issues and references needed to continue. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
+Replace the complete handoff and switch windows. The handoff is a summary of all current context. Preserve valid context, constraints, unresolved issues and references needed to continue. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
 ```
 
 请求：

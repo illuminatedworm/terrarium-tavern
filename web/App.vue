@@ -146,11 +146,13 @@ const updatingTracker = computed(
       .find((event) => ['tracker_started', 'tracker_completed', 'tracker_failed'].includes(event.kind))
       ?.kind === 'tracker_started',
 );
-const retryNote = ref('');
+const retryNote = ref(''),
+  retryIncludeReply = ref(false);
 watch(
   () => activeTurn.value?.id,
   () => {
     retryNote.value = activeTurn.value?.request?.regenerate_note || '';
+    retryIncludeReply.value = !!activeTurn.value?.request?.regenerate_include_reply;
     if (session.value?.agent_mode === 'full_agent' && retryableTurn.value)
       updateVariables.value = !!activeTurn.value?.request?.update_variables;
   },
@@ -231,6 +233,7 @@ const readingPinned = ref(false);
 const pendingReplyStart = ref('');
 const pageMode = ref(''),
   regenerateNote = ref(''),
+  regenerateIncludeReply = ref(false),
   quickEffort = ref('inherit');
 const editingMessageId = ref(''),
   editingMessageText = ref('');
@@ -510,6 +513,7 @@ const contextLabels: Record<string, string> = {
   inject: '脚本注入',
   turn_instruction: '补充要求',
   regenerate_instruction: '重生成要求',
+  regenerate_reference: '待重写回复参考',
   'provider-fallback': '兼容提示',
   session_preference: '本轮偏好',
   chat_framing: '请求封装',
@@ -670,6 +674,8 @@ async function refreshContextStats() {
 }
 async function openSession(id: string, creating = false, createdSession?: any) {
   pendingReplyStart.value = '';
+  regenerateIncludeReply.value = false;
+  rewriteExpanded.value = false;
   const token = viewScope.enter();
   storyLoad.value = {
     id,
@@ -923,6 +929,16 @@ const regenerationNote = computed({
     else regenerateNote.value = value;
   },
 });
+const regenerationIncludeReply = computed({
+  get: () => (retryableTurn.value ? retryIncludeReply.value : regenerateIncludeReply.value),
+  set: (value: boolean) => {
+    if (retryableTurn.value) retryIncludeReply.value = value;
+    else regenerateIncludeReply.value = value;
+  },
+});
+const canReferenceReply = computed(() =>
+  retryableTurn.value ? retryableTurn.value.request.mode === 'regenerate' : !!latestReply.value,
+);
 async function regenerateReply() {
   if (busy.value || editingMessageId.value || activeTurn.value?.status === 'awaiting_review') return;
   if (retryableTurn.value) await retryTurn();
@@ -934,12 +950,14 @@ async function retryTurn() {
     session.value?.agent_mode === 'full_agent' &&
     retryableTurn.value.resumable === true &&
     allowEdit.value === !!retryableTurn.value.request.allow_content_edit &&
-    updateVariables.value === !!retryableTurn.value.request.update_variables;
+    updateVariables.value === !!retryableTurn.value.request.update_variables &&
+    retryIncludeReply.value === !!retryableTurn.value.request.regenerate_include_reply;
   const request = {
     ...retryableTurn.value.request,
     allow_content_edit: allowEdit.value,
     update_variables: updateVariables.value,
     regenerate_note: retryNote.value.trim(),
+    regenerate_include_reply: retryIncludeReply.value,
     operation_id: crypto.randomUUID(),
     expected_revision: session.value.revision,
     ...(resumeFullAgent ? { resume_turn_id: retryableTurn.value.id } : { resume_turn_id: null }),
@@ -1125,12 +1143,14 @@ async function send(mode = 'send', message?: any, text?: string, note = '') {
       update_variables: updateVariables.value,
       reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
       regenerate_note: note,
+      regenerate_include_reply: mode === 'regenerate' && regenerateIncludeReply.value,
     });
     if (!viewScope.owns(token)) return;
     activeTurn.value = turn;
     if (mode === 'send') pendingInput.value = { raw: value };
     if (mode === 'send' && input.value === value) input.value = '';
     regenerateNote.value = '';
+    regenerateIncludeReply.value = false;
     rewriteExpanded.value = false;
     workCount.value += 1;
     void scroll(true);
@@ -2365,6 +2385,18 @@ useTimedError(error);
                   ↻ 重新生成
                 </button>
               </div>
+              <label
+                v-if="canReferenceReply"
+                class="regenerate-options"
+                title="将原回复全文提供给模型作为修改参考，仍从本轮生成前的状态和笔记开始。"
+              >
+                <input
+                  v-model="regenerationIncludeReply"
+                  type="checkbox"
+                  :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+                />
+                带上原 AI 回复作为重写参考
+              </label>
             </div>
             <div class="compose-box">
               <ExpandableTextarea

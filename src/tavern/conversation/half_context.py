@@ -11,10 +11,11 @@ from tavern.search.retrieval_text import split_retrieval
 
 # Rebuild saved frames whose update/revocation notices preceded their field tags.
 VERSION = 3
-DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice"}
-TRANSIENT = {"message_edit_notice"}
+DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference"}
+TRANSIENT = {"message_edit_notice", "regenerate_reference"}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
-          "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒"}
+          "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒",
+          "regenerate_reference": "待重写回复参考"}
 FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",

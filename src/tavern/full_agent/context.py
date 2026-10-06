@@ -10,6 +10,7 @@ from tavern.conversation.context import (
     wrap_card_field,
     wrap_lorebook,
 )
+from tavern.conversation.regeneration import regeneration_reference
 from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
@@ -37,7 +38,7 @@ def load_trace(store, sid, history):
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
                    trace=(), continuation=(), input_id="pending", instruction="", calls=0, force_rollover=False,
-                   require_state_patch=False, variable_rules=None, allow_content_edit=False):
+                   require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply=""):
     state = full_state(snapshot)
     window = state["window"]
     card = normalize(document)
@@ -52,6 +53,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
             if require_state_patch or allow_content_edit else ""),
         "regenerate_instruction": instruction,
+        "regenerate_reference": regeneration_reference(
+            macros(regenerate_reply, card, session["persona"], snapshot.get("state", {}))),
         "last_call_notice": (
             "这是本回合最后一次模型请求。遵守当前强制换窗及必要工具要求，能完成时直接回复故事正文；"
             "继续调用工具后将达到上限，草稿不会提交。"

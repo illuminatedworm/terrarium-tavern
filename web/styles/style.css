@@ -2242,6 +2242,14 @@ header {
 .regenerate-bar button {
   white-space: nowrap;
 }
+.regenerate-options {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
 .lore-group {
   margin-top: 24px;
 }

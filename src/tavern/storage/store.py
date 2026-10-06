@@ -965,7 +965,8 @@ class Store(MessageAdapters):
                     raise Conflict("此回合没有可续接进度；已拒绝的审核草稿不能恢复，请重新开始")
                 previous = TurnRequest.model_validate_json(source["request"])
                 matching = ("text", "expected_revision", "mode", "message_id",
-                            "allow_content_edit", "update_variables", "generate", "scene_refresh")
+                            "allow_content_edit", "update_variables", "generate", "scene_refresh",
+                            "regenerate_include_reply")
                 if any(getattr(previous, field) != getattr(request, field) for field in matching):
                     raise Conflict("续接请求的输入或授权已改变，请重新开始本轮")
             tid = uid()

@@ -79,7 +79,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
     <p v-if="error" role="alert">{{ error }}</p>
     <h3>按需笔记</h3>
     <p class="inspector-note">这些笔记由 Agent 通过工具维护，按需读取，不会全部装入上下文。</p>
-    <label><input v-model="showArchived" type="checkbox" />显示归档笔记</label>
+    <label><input v-model="showArchived" type="checkbox" />显示已归档笔记</label>
     <details v-for="note in notes" :key="note.key" class="agent-note">
       <summary>
         {{ note.key }} · {{ kindLabel[note.kind] }}{{ note.status === 'archived' ? ' · 已归档' : '' }}

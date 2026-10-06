@@ -284,6 +284,7 @@ def compile_context(
     *,
     enforce_budget=True,
     turn_instruction="",
+    regenerate_reply="",
     input_message_id="",
     retrieval=None,
     retrieval_protocol=True,
@@ -663,6 +664,13 @@ def compile_context(
             "source": "session_preference",
             "priority": 100,
             "required": True,
+        })
+    if regenerate_reply:
+        from tavern.conversation.regeneration import regeneration_reference
+
+        messages.append({
+            "role": "system", "content": regeneration_reference(expand(regenerate_reply)),
+            "source": "regenerate_reference", "priority": 100, "required": True,
         })
     if turn_instruction.strip():
         messages.append(

@@ -6,6 +6,7 @@ import json
 from tavern.conversation.cache_breakpoint import model_messages, prepare_context
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_context import load_trace
+from tavern.conversation.regeneration import reply_for_regeneration
 from tavern.core.message_adapter import provider_messages
 from tavern.core.provider import make_provider
 from tavern.scripting.request_context import OperationContexts, configure_operation
@@ -19,6 +20,7 @@ class TurnAgent:
         self.store, self.tid = store, tid
         self.document, self.session, self.history = document, session, history
         self.snapshot, self.request, self.runtime = snapshot, request, runtime
+        self.regenerate_reply = reply_for_regeneration(request, session)
         self.requested = set()
         self.state_patches = []
         self.agent = None
@@ -51,6 +53,7 @@ class TurnAgent:
             self.requested,
             self.request.generate,
             turn_instruction=self.request.regenerate_note,
+            regenerate_reply=self.regenerate_reply,
             input_message_id=self.input_message_id,
             retrieval=self.retrieval,
             replay_records=load_trace(self.store, self.session["id"], self.history),

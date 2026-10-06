@@ -9,6 +9,7 @@ import jsonpointer
 from tavern.character.cards import normalize
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
+from tavern.conversation.regeneration import reply_for_regeneration
 from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
@@ -30,6 +31,7 @@ class FullAgent:
         self.store, self.tid, self.document = store, tid, document
         self.session = {**session, "messages": history, "edit_notification_history": session["messages"]}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
+        self.regenerate_reply = reply_for_regeneration(request, session)
         self.settings, self.user_message, self.lane = settings, user_message, retrieval
         self.source_history = history + [user_message]
         self.state = full_state(snapshot)
@@ -143,7 +145,7 @@ class FullAgent:
                 if self.request.regenerate_note else ""),
             calls=self.calls, force_rollover=self.must_rollover,
             require_state_patch=self.request.update_variables, variable_rules=self.variable_rules,
-            allow_content_edit=self.request.allow_content_edit)
+            allow_content_edit=self.request.allow_content_edit, regenerate_reply=self.regenerate_reply)
         self.must_rollover = result["rollover_required"]
         self.context_epoch = result["context_ledger"]["epoch"]
         self.native_epoch = result["context_ledger"]["native_epoch"]

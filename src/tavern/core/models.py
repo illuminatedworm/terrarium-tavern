@@ -232,6 +232,7 @@ class TurnRequest(BaseModel):
     generate: dict[str, Any] | None = None
     reasoning_effort: ReasoningEffort | None = None
     regenerate_note: str = ""
+    regenerate_include_reply: bool = False
     scene_refresh: Literal["memory"] | None = None
     resume_turn_id: str | None = None
 

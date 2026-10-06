@@ -134,9 +134,9 @@ SPECS = {
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable."),
     "read_history": (HistoryRead, "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose."),
-    "write_handoff": (Handoff, "Replace the complete handoff in the current window. Build on the latest runtime memory update or successful write, whichever is later. "
+    "write_handoff": (Handoff, "Replace the complete handoff in the current window. The handoff is a summary of all current context. Build on the latest runtime memory update or successful write, whichever is later. "
         "Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources."),
-    "new_context": (NewContext, "Replace the complete handoff and switch windows. Preserve valid context, constraints, unresolved issues and references needed to continue. "
+    "new_context": (NewContext, "Replace the complete handoff and switch windows. The handoff is a summary of all current context. Preserve valid context, constraints, unresolved issues and references needed to continue. "
         "Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. "
         "Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset."),
     "search_notes": (Search, "Search active notes in this branch by literal terms in content or keys; query=* lists notes. "
