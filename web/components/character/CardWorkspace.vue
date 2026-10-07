@@ -14,6 +14,7 @@ import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
 import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
+import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 
 const props = defineProps<{ conversationId: string; library: any[] }>();
@@ -336,13 +337,13 @@ onBeforeUnmount(() => {
 <template>
   <section ref="shell" class="card-workspace" aria-label="角色卡 Agent" :inert="!!modal">
     <header class="cw-header">
-      <div>
+      <div class="cw-heading">
         <small>CARD EDITOR</small>
         <h1>{{ workspace?.title || '角色卡 Agent' }}</h1>
       </div>
       <div class="cw-toolbar">
-        <button :disabled="locked" @click="openModal('rename')">改名</button>
-        <button :disabled="locked" @click="openModal('delete')">删除对话</button>
+        <button class="cw-quiet" :disabled="locked" @click="openModal('rename')">改名</button>
+        <button class="cw-quiet cw-delete" :disabled="locked" @click="openModal('delete')">删除对话</button>
         <button
           class="cw-inspector-toggle"
           :aria-expanded="inspectorOpen"
@@ -358,47 +359,69 @@ onBeforeUnmount(() => {
       <div class="cw-dialogue" :inert="inspectorOpen && narrow">
         <div class="cw-chat-wrap">
           <div ref="chat" class="cw-chat" aria-label="制卡对话" @scroll="trackScroll">
-            <div v-if="workspace && !workspace.messages.length" class="cw-empty">
-              <h2>从一个想法开始</h2>
-              <p>讨论人物、世界或互动情境，也可以引用书架中的角色卡来分析和修改。</p>
-              <p>制作新卡时，先讨论方案，确认后生成可审阅的草稿。</p>
-            </div>
-            <article
-              v-for="message in workspace?.messages"
-              :key="message.ref"
-              class="cw-message"
-              :class="message.role"
-            >
-              <small>{{ message.role === 'user' ? '你' : 'Card Editor' }} · {{ message.ref }}</small>
-              <StoryProse :text="message.content" />
-            </article>
-            <article v-if="active" class="cw-message" aria-live="polite">
-              <small>Card Editor · 处理中</small><StoryProse v-if="partial" :text="partial" />
-              <p v-else class="muted">正在读取资料或处理工具…</p>
-            </article>
-            <details
-              v-for="run in workspace?.runs"
-              :key="run.id"
-              class="cw-run"
-              :open="run.id === active?.id"
-              @toggle="showRun(run.id, $event)"
-            >
-              <summary>{{ run.request.text || '继续本轮' }} · {{ actionStatus(run.status) }}</summary>
-              <p v-if="run.error" class="danger">{{ run.error }}</p>
-              <details
-                v-for="step in editorActions(activities[run.id] || [], run.status)"
-                :key="step.id"
-                class="cw-step"
+            <div class="cw-chat-content">
+              <div v-if="workspace && !workspace.messages.length" class="cw-empty">
+                <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span>
+                <h2>从一个想法开始</h2>
+                <p>讨论人物、世界或互动情境，也可以引用书架中的角色卡来分析和修改。</p>
+                <p>制作新卡时，先讨论方案，确认后生成可审阅的草稿。</p>
+              </div>
+              <article
+                v-for="message in workspace?.messages"
+                :key="message.ref"
+                class="cw-message"
+                :class="message.role"
               >
-                <summary>{{ step.title }} · {{ step.target }} · {{ actionStatus(step.status) }}</summary>
-                <pre v-if="step.arguments">{{ step.arguments }}</pre>
-                <pre v-if="step.result">{{ step.result }}</pre>
-                <small v-if="step.truncated">这里只展示日志摘要；模型读取的原文保持完整。</small>
+                <div class="cw-message-meta">
+                  <span v-if="message.role !== 'user'" class="cw-agent-mark"
+                    ><CardWorkspaceIcon name="pen"
+                  /></span>
+                  <span>{{ message.role === 'user' ? '你' : 'Card Editor' }}</span>
+                  <small>{{ message.ref }}</small>
+                </div>
+                <div class="cw-message-content"><StoryProse :text="message.content" /></div>
+              </article>
+              <article v-if="active" class="cw-message" aria-live="polite">
+                <div class="cw-message-meta">
+                  <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span><span>Card Editor</span
+                  ><small class="cw-working">处理中</small>
+                </div>
+                <div class="cw-message-content">
+                  <StoryProse v-if="partial" :text="partial" />
+                  <p v-else class="muted">正在读取资料或处理工具…</p>
+                </div>
+              </article>
+              <details
+                v-for="run in workspace?.runs"
+                :key="run.id"
+                class="cw-run"
+                :open="run.id === active?.id"
+                @toggle="showRun(run.id, $event)"
+              >
+                <summary>
+                  <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">{{
+                    run.request.text || '继续本轮'
+                  }}</span
+                  ><span class="cw-run-status" :class="`is-${run.status}`">{{
+                    actionStatus(run.status)
+                  }}</span>
+                </summary>
+                <p v-if="run.error" class="danger">{{ run.error }}</p>
+                <details
+                  v-for="step in editorActions(activities[run.id] || [], run.status)"
+                  :key="step.id"
+                  class="cw-step"
+                >
+                  <summary>{{ step.title }} · {{ step.target }} · {{ actionStatus(step.status) }}</summary>
+                  <pre v-if="step.arguments">{{ step.arguments }}</pre>
+                  <pre v-if="step.result">{{ step.result }}</pre>
+                  <small v-if="step.truncated">这里只展示日志摘要；模型读取的原文保持完整。</small>
+                </details>
               </details>
-            </details>
+            </div>
           </div>
           <button v-if="!followingLatest" class="cw-latest" aria-label="跳到最新" @click="scroll(true)">
-            ↓
+            <CardWorkspaceIcon name="down" />
           </button>
         </div>
         <div v-if="workspace?.pending && !active" class="cw-pending" role="status">
@@ -418,39 +441,72 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <form class="cw-composer" @submit.prevent="send(!!workspace?.pending)">
-          <div class="cw-references">
-            <button type="button" :disabled="locked" @click="openModal('references')">＋ 引用角色卡</button>
-            <button v-for="item in workspace?.cards" :key="item.ref" type="button" @click="mention(item)">
-              @{{ item.ref }} {{ cardName(item) }}
-            </button>
-          </div>
-          <textarea
-            ref="composer"
-            v-model="input"
-            aria-label="制卡要求"
-            :disabled="busy || !!active"
-            :placeholder="
-              workspace?.pending
-                ? '可补充新要求后继续，例如：保留 A 的改动，恢复 B…'
-                : '描述想法，或输入 @ 引用角色卡。Enter 发送，Shift+Enter 换行。'
-            "
-            @keydown.enter.exact.prevent="!$event.isComposing && send(!!workspace?.pending)"
-          />
-          <div class="cw-composer-actions">
-            <button type="button" @click="openModal('adapter')">消息适配</button>
-            <button type="button" :disabled="busy" @click="showPreview">工具与上下文</button>
-            <button v-if="active" type="button" @click="stop">停止</button>
-            <button v-else class="primary" :disabled="busy || (!input.trim() && !workspace?.pending)">
-              {{ workspace?.pending ? (input.trim() ? '补充要求并继续' : '继续本轮') : '发送' }}
-            </button>
+          <div class="cw-composer-frame">
+            <div class="cw-references">
+              <button
+                class="cw-reference-add cw-quiet"
+                type="button"
+                :disabled="locked"
+                @click="openModal('references')"
+              >
+                <CardWorkspaceIcon name="plus" />引用角色卡
+              </button>
+              <button
+                v-for="item in workspace?.cards"
+                :key="item.ref"
+                class="cw-reference-chip"
+                type="button"
+                :title="`引用 ${cardName(item)}`"
+                @click="mention(item)"
+              >
+                <span>@{{ item.ref }}</span
+                ><span class="cw-reference-name">{{ cardName(item) }}</span>
+              </button>
+            </div>
+            <textarea
+              ref="composer"
+              v-model="input"
+              aria-label="制卡要求"
+              :disabled="busy || !!active"
+              :placeholder="
+                workspace?.pending
+                  ? '可补充新要求后继续，例如：保留 A 的改动，恢复 B…'
+                  : '描述想法，或输入 @ 引用角色卡…'
+              "
+              @keydown.enter.exact.prevent="!$event.isComposing && send(!!workspace?.pending)"
+            />
+            <div class="cw-composer-actions">
+              <div class="cw-composer-tools">
+                <button class="cw-quiet" type="button" @click="openModal('adapter')">
+                  <CardWorkspaceIcon name="message" />消息适配
+                </button>
+                <button class="cw-quiet" type="button" :disabled="busy" @click="showPreview">
+                  <CardWorkspaceIcon name="sliders" />工具与上下文
+                </button>
+              </div>
+              <span class="cw-shortcut">Enter 发送 · Shift+Enter 换行</span>
+              <button v-if="active" class="cw-stop" type="button" :disabled="busy" @click="stop">
+                <span aria-hidden="true" />停止
+              </button>
+              <button
+                v-else
+                class="primary cw-send"
+                :disabled="busy || (!input.trim() && !workspace?.pending)"
+              >
+                {{ workspace?.pending ? (input.trim() ? '补充要求并继续' : '继续本轮') : '发送' }}
+                <CardWorkspaceIcon name="up" />
+              </button>
+            </div>
           </div>
         </form>
       </div>
       <aside class="cw-inspector" :class="{ open: inspectorOpen }" aria-label="卡片与修改">
         <button class="cw-close-inspector" @click="inspectorOpen = false">返回对话</button>
         <div class="cw-inspector-top">
+          <h2>卡片与修改</h2>
           <label
-            >当前卡片<select v-model="selected" aria-label="选择卡片">
+            >当前卡片<select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
+              <option v-if="!items.length" value="">暂无卡片</option>
               <option v-for="item in items" :key="item.ref" :value="item.ref">
                 {{ item.ref }} · {{ cardName(item) }}
               </option>
@@ -473,12 +529,12 @@ onBeforeUnmount(() => {
               :aria-pressed="tab === t.id"
               @click="tab = t.id"
             >
-              {{ t.name }}{{ t.id === 'changes' ? ` ${changes.length}` : '' }}
+              {{ t.name }}<span v-if="t.id === 'changes'" class="cw-tab-count">{{ changes.length }}</span>
             </button>
           </nav>
           <div class="cw-inspector-scroll">
             <template v-if="tab === 'document'">
-              <p class="muted">
+              <p class="muted cw-card-kind">
                 {{ current.kind === 'reference' ? '参考卡 · 修改时自动建立草稿' : '独立草稿' }}
               </p>
               <label
@@ -492,7 +548,9 @@ onBeforeUnmount(() => {
                   <option value="full_agent">Full Agent</option>
                 </select></label
               >
-              <button :disabled="locked || pendingView" @click="openModal('form')">打开表单编辑</button>
+              <button class="cw-edit-form" :disabled="locked || pendingView" @click="openModal('form')">
+                <CardWorkspaceIcon name="file" />打开表单编辑
+              </button>
               <details v-if="current.brief">
                 <summary>已确认方案与要求</summary>
                 <StoryProse :text="current.brief" />
@@ -660,245 +718,4 @@ onBeforeUnmount(() => {
   >
 </template>
 
-<style scoped>
-.card-workspace {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.cw-header {
-  height: auto;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 24px 16px 56px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cw-header small {
-  color: var(--text-faint);
-  letter-spacing: 0.12em;
-  font-size: 10px;
-}
-.cw-header h1 {
-  font-size: 19px;
-  margin: 4px 0 0;
-  overflow-wrap: anywhere;
-}
-.cw-toolbar,
-.cw-composer-actions,
-.cw-references {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.cw-body {
-  min-height: 0;
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 36%);
-}
-.cw-dialogue {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.cw-chat-wrap {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.cw-latest {
-  position: absolute;
-  right: 20px;
-  bottom: 16px;
-  border-radius: 50%;
-  width: 38px;
-  height: 38px;
-  background: var(--surface-active);
-}
-.cw-chat {
-  overflow: auto;
-  flex: 1;
-  min-height: 0;
-  padding: 24px clamp(16px, 4vw, 64px);
-}
-.cw-empty {
-  color: var(--text-secondary);
-  line-height: 1.8;
-  padding: 30px 18px;
-}
-.cw-empty h2 {
-  color: var(--text-primary);
-  font-size: 24px;
-}
-.cw-message {
-  padding: 12px 0 24px;
-  overflow-wrap: anywhere;
-}
-.cw-message > small {
-  color: var(--text-muted);
-  display: block;
-  margin-bottom: 10px;
-}
-.cw-message.user {
-  padding: 16px;
-  margin-bottom: 14px;
-  background: var(--surface-panel);
-  border-radius: 10px;
-}
-.cw-composer {
-  padding: 12px 20px 18px;
-  border-top: 1px solid var(--border-subtle);
-}
-.cw-composer textarea {
-  width: 100%;
-  min-height: 86px;
-  max-height: 180px;
-  resize: vertical;
-  margin: 10px 0;
-}
-.cw-composer-actions {
-  justify-content: space-between;
-}
-.cw-references {
-  max-height: 80px;
-  overflow: auto;
-}
-.cw-references button {
-  font-size: 12px;
-}
-.cw-notice {
-  padding: 8px 16px;
-  margin: 0;
-  color: var(--warning);
-  background: var(--surface-panel);
-  font-size: 13px;
-}
-.cw-pending {
-  padding: 12px 20px;
-  border-top: 1px solid var(--border-control);
-  font-size: 13px;
-}
-.cw-pending p {
-  margin: 6px 0;
-}
-.cw-inspector {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--surface-panel);
-}
-.cw-inspector-top {
-  padding: 16px;
-}
-.cw-inspector select {
-  width: 100%;
-}
-.cw-tabs {
-  display: flex;
-  gap: 6px;
-  padding: 0 16px 12px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.cw-tabs button[aria-pressed='true'] {
-  background: var(--accent-soft);
-}
-.cw-inspector-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
-}
-.cw-inspector-scroll details {
-  margin: 12px 0;
-}
-.cw-save-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-.cw-run {
-  border-top: 1px solid var(--border-subtle);
-  padding: 10px 0;
-  font-size: 12px;
-}
-.cw-run > summary {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.cw-step {
-  padding: 8px;
-}
-pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 12px;
-}
-.cw-inspector-toggle,
-.cw-close-inspector {
-  display: none;
-}
-.cw-picker {
-  display: grid;
-  gap: 8px;
-  padding-top: 16px;
-}
-.cw-overlay :deep(.editor-page) {
-  height: min(70vh, 800px);
-}
-@media (max-width: 1100px) {
-  .cw-body {
-    grid-template-columns: minmax(0, 1fr);
-    position: relative;
-  }
-  .cw-inspector {
-    display: none;
-  }
-  .cw-inspector.open {
-    display: flex;
-    position: absolute;
-    inset: 0;
-    z-index: 5;
-  }
-  .cw-inspector-toggle,
-  .cw-close-inspector {
-    display: inline-block;
-  }
-  .cw-close-inspector {
-    margin: 12px 16px 0;
-    align-self: flex-start;
-  }
-  .cw-header {
-    padding: 14px 16px 14px 56px;
-  }
-  .cw-header h1 {
-    font-size: 16px;
-  }
-  .cw-toolbar {
-    gap: 4px;
-  }
-  .cw-header button {
-    font-size: 12px;
-    padding: 6px 8px;
-  }
-}
-@media (max-width: 600px) {
-  .cw-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-}
-</style>
+<style scoped src="./CardWorkspace.css"></style>
