@@ -792,8 +792,7 @@ def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     if previous == "before_ledger":
         old = Path("tests/fixtures/full_agent_prompt_before_ledger.txt").read_text(encoding="utf-8")
     else:
-        old = FULL_AGENT_PROMPT.replace("不要只留下当前状态的快照。",
-            "不要只留下当前状态的快照。覆盖长期笔记前，先用 read_note 读取当前版本。")
+        old = Path("tests/fixtures/full_agent_prompt_before_read_guards.txt").read_text(encoding="utf-8")
     raw["full_agent"]["system_prompt"] = old
     migrated = migrate_settings(raw)
     assert migrated.full_agent.system_prompt == FULL_AGENT_PROMPT != old
