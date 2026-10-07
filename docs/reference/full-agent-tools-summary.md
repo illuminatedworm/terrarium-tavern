@@ -186,7 +186,7 @@ Replace the complete handoff and switch windows. The handoff is a summary of all
 ### `search_notes`
 
 ```text
-Search active notes in this branch by literal terms in content or keys; query=* lists notes. Returns navigation previews when enabled. Notes are not automatically injected; use read_note for complete text.
+Search active notes in this branch by literal terms in content or keys; query=* lists notes. Returns navigation previews when enabled. Note contents are not automatically injected; use read_note for complete text.
 ```
 
 请求：

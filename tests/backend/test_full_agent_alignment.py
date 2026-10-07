@@ -260,6 +260,58 @@ async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
         await service.close()
 
 
+async def test_note_list_updates_on_key_changes_and_survives_rollover_without_search(tmp_path):
+    store, service, session = game(tmp_path)
+    model = Model(
+        ("write_note", {"key": "线索/钟楼", "content": "初版笔记", "kind": "plan"}),
+        ("new_context", {"content": "继续当前场景", "keep_recent": 0}),
+        ("write_note", {"key": "线索/钟楼", "content": "更新笔记正文", "kind": "hypothesis"}),
+        ("write_note", {"key": "计划/港口", "content": "新计划", "kind": "plan"}),
+        ("archive_note", {"key": "线索/钟楼"}),
+        ("write_note", {"key": "线索/钟楼", "content": "重新启用笔记", "kind": "plan"}),
+        ("read_note", {"key": "计划/港口"}),
+        ("new_context", {"content": "继续下一段场景", "keep_recent": 0}),
+        "narrative",
+    )
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        expected = [None, None, "线索/钟楼", "线索/钟楼", "线索/钟楼\n计划/港口",
+                    "计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口"]
+        fixed_prefix = None
+        for request, keys in zip(model.requests, expected, strict=True):
+            messages = request["messages"]
+            directories = [i for i, m in enumerate(messages)
+                           if m.get("content", "").startswith("<tavern_note_list>\n")]
+            if keys is None:
+                assert directories == []
+                continue
+            assert len(directories) == 1
+            at = directories[0]
+            assert messages[at]["role"] == "system"
+            assert messages[at]["content"] == f"<tavern_note_list>\n{keys}\n</tavern_note_list>"
+            prefix = strip_local(messages[:at])
+            if fixed_prefix is None:
+                fixed_prefix = prefix
+            assert prefix == fixed_prefix
+            assert messages[at + 1]["role"] == "user"
+        # Editing contents with the same key keeps the entire previously sent prefix.
+        before_edit, after_edit = [strip_local(r["messages"]) for r in model.requests[2:4]]
+        assert after_edit[:len(before_edit)] == before_edit
+        assert current["snapshot"]["full_agent"]["window"]["number"] == 3
+        directory_trace = next(m for m in result["preview"]["trace"] if m["source"] == "note_list")
+        assert directory_trace["runtime_phase"] == "header"
+        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model.requests[-1]["messages"])
+        follow = Model("next narrative")
+        follow_result, _ = await turn(service, current, follow)
+        assert follow_result["status"] == "committed", follow_result["error"]
+        directory = next(m for m in follow.requests[0]["messages"]
+                         if m.get("content", "").startswith("<tavern_note_list>\n"))
+        assert directory["content"] == model.requests[-1]["messages"][len(fixed_prefix)]["content"]
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize("fail_last_request", [False, True])
 async def test_call_notifications_are_absent_even_on_last_request_and_resume(tmp_path, fail_last_request):
     store, service, session = game(tmp_path)

@@ -534,6 +534,40 @@ def test_notes_and_runtime_metadata_are_not_implicitly_in_context(story):
         assert hidden not in wire
 
 
+@pytest.mark.parametrize("window_number, empty", [(1, False), (2, False), (3, False), (2, True)])
+def test_note_list_at_header_end_contains_all_active_keys_only(story, window_number, empty):
+    store, session = story
+    snapshot = copy.deepcopy(session["snapshot"])
+    state = snapshot["full_agent"]
+    state["window"]["number"] = window_number
+    keys = [f"线索/人物{i}" for i in range(12)] + ["约定/钟楼"]
+    state["notes"] = {} if empty else {
+        key: {"key": key, "content": "正文不能自动注入", "kind": "hypothesis", "status": "active",
+              "revision": 42, "sources": [{"message_id": "opaque-source", "hash": "source-fingerprint"}]}
+        for key in keys}
+    state["notes"]["归档/旧计划"] = {"status": "archived", "content": "归档正文"}
+    before = copy.deepcopy(snapshot)
+    result = compile_window({"name": "向导", "mes_example": "示例原文"}, session, session["messages"],
+                            snapshot, "继续", store.settings().for_role("full_agent"), [])
+    sources = [m["source"] for m in result["trace"]]
+    wire = json.dumps(result["messages"], ensure_ascii=False)
+    assert snapshot == before  # Preview must not write an injection or alter note state.
+    for hidden in ("正文不能自动注入", "归档/旧计划", "归档正文", "opaque-source", "source-fingerprint"):
+        assert hidden not in wire
+    if window_number == 1:
+        assert "note_list" not in sources
+        assert "<tavern_note_list>" not in wire
+        return
+    at = sources.index("note_list")
+    assert sources.count("note_list") == 1
+    assert sources[at - 1:at + 2] == ["examples", "note_list", "history"]
+    directory = result["messages"][at]
+    assert directory["role"] == "system"
+    assert directory["content"] == "<tavern_note_list>\n" + "\n".join([] if empty else keys) + "\n</tavern_note_list>"
+    assert result["trace"][at]["runtime_phase"] == "header"
+    assert result["budget_sources"]["note_list"] > 0
+
+
 async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp_path):
     store = Store(tmp_path)
     document = {"name": "向导", "first_mes": "钟楼的门开了。", "description": "你是向导。",
@@ -853,7 +887,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call alone" in definitions["new_context"]["description"]
         assert "offset" not in definitions["read_history"]["parameters"]["properties"]
-        assert "not automatically injected" in definitions["search_notes"]["description"]
+        assert "Note contents are not automatically injected" in definitions["search_notes"]["description"]
     finally:
         await service.close()
 

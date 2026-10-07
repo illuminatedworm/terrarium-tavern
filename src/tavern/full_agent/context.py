@@ -75,6 +75,12 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
+    if window["number"] >= 2:
+        # Keep the current directory after fixed settings so key changes preserve
+        # their cache prefix. Note bodies and metadata remain tool-only.
+        note_keys = "\n".join(key for key, note in state["notes"].items()
+                              if note.get("status", "active") == "active")
+        add("system", "<tavern_note_list>\n" + note_keys + "\n</tavern_note_list>", "note_list")
     handoff = state["handoff"]
 
     by_owner = {}

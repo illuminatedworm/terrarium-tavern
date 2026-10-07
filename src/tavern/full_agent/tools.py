@@ -140,7 +140,7 @@ SPECS = {
         "Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. "
         "Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset."),
     "search_notes": (Search, "Search active notes in this branch by literal terms in content or keys; query=* lists notes. "
-        "Returns navigation previews when enabled. Notes are not automatically injected; use read_note for complete text."),
+        "Returns navigation previews when enabled. Note contents are not automatically injected; use read_note for complete text."),
     "read_note": (NoteRead, "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
     "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. "

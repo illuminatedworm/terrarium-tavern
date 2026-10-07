@@ -99,6 +99,32 @@ def test_full_agent_default_application_messages_remain_system_for_every_protoco
 
 
 @pytest.mark.parametrize("api", APIS)
+def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
+    settings = Settings(runtime_mode="full_agent", api_mode=api)
+    messages = runtime_messages([
+        {"role": "system", "source": "character", "content": "Character"},
+        {"role": "system", "source": "note_list", "content": "<tavern_note_list>\n线索/钟楼\n</tavern_note_list>"},
+        {"role": "user", "source": "input", "content": "Continue"},
+    ], "full_agent")
+    original = copy.deepcopy(messages)
+    defaults, _, _ = adapt_messages(messages, settings)
+    assert defaults[1]["role"] == "system"
+    assert defaults[1]["content"] == "<tavern_note_list>\n线索/钟楼\n</tavern_note_list>"
+    assert defaults[1]["runtime_phase"] == "header"
+    directory_type = next(t for t in catalog("full_agent") if t["id"] == "note_list")
+    assert directory_type["configurable"] and not directory_type["appendable"]
+    assert directory_type["defaults"][api] == {"role": "system", "wrap": True}
+    assert all(t["id"] != "note_list" for lane in ("foreground", "background", "card_editor") for t in catalog(lane))
+    settings.message_adapter = MessageAdapterConfig.model_validate({
+        "mappings": {api: {"note_list": {"role": "user", "wrap": False}}}})
+    projected, _, _ = adapt_messages(messages, settings)
+    assert projected[1]["role"] == "user"
+    assert projected[1]["content"] == "线索/钟楼"
+    assert [m["message_type"] for m in projected] == ["character", "note_list", "user"]
+    assert messages == original
+
+
+@pytest.mark.parametrize("api", APIS)
 def test_full_agent_existing_owner_and_new_owner_inherit_system_defaults(tmp_path, api):
     store, existing = story(tmp_path, "full_agent")
     reopened = Store(store.root)

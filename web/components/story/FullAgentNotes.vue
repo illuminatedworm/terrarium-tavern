@@ -78,7 +78,9 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
     </p>
     <p v-if="error" role="alert">{{ error }}</p>
     <h3>按需笔记</h3>
-    <p class="inspector-note">这些笔记由 Agent 通过工具维护，按需读取，不会全部装入上下文。</p>
+    <p class="inspector-note">
+      这些笔记由 Agent 通过工具维护，按需读取；从第二个窗口起自动提供有效笔记的名称列表。
+    </p>
     <label><input v-model="showArchived" type="checkbox" />显示已归档笔记</label>
     <details v-for="note in notes" :key="note.key" class="agent-note">
       <summary>
