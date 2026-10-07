@@ -49,7 +49,10 @@ export const retrievalAdvanced: SettingField[] = [
 export const fullFields: SettingField[] = [
   { path: 'tools.auto_retrieval', label: '每轮自动检索世界书', type: 'checkbox' },
   number('tools.max_steps', '每回合模型调用上限', 2, 100),
-  number('tools.pressure_ratio', '窗口压力提醒阈值', 0.25, 0.9, 0.05),
+  {
+    ...number('tools.pressure_ratio', '上下文占用提醒阈值（比例）', 0.25, 0.9, 0.05),
+    help: '上下文估算 token 数达到窗口容量的此比例时，提醒模型准备换窗。0.7 表示 70%；提醒本身不强制换窗。',
+  },
   number('tools.handoff_tokens', '交接笔记上限（tokens）', 128, 16384),
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
 ];

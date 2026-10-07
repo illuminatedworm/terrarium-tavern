@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { notification, notify } from './lib/notifications';
 import { useTimedError } from './composables/useTimedError';
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, h, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from './lib/api';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
@@ -22,7 +22,6 @@ import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
-import SettingsPanel from './components/settings/SettingsPanel.vue';
 import { defaultReadingLayout } from './lib/dataTransfer';
 import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
 import EffortControl from './components/settings/EffortControl.vue';
@@ -48,6 +47,13 @@ import {
   groupContext,
   summarizeBudgetSources,
 } from './lib/contextPreview';
+
+const SettingsPanel = defineAsyncComponent({
+  loader: () => import('./components/settings/SettingsPanel.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载设置…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '设置页面加载失败，请刷新页面后重试。') },
+});
 
 const orphanDrafts = ref<any[]>([]);
 const cardConversations = ref<any[]>([]);
@@ -111,7 +117,7 @@ const activeModel = computed(() =>
   isFullAgent.value ? activeSettings.value.model : activeSettings.value.foreground,
 );
 function closePanel() {
-  if (panel.value === 'settings') void settingsPanel.value?.requestClose();
+  if (panel.value === 'settings' && settingsPanel.value) void settingsPanel.value.requestClose();
   else panel.value = '';
 }
 const startupModels = ref<any>(null);

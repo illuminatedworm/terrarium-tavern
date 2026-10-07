@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { historyRounds, historySummary, type HistoryMessage } from '../../lib/storyHistory';
 const props = defineProps<{ messages: HistoryMessage[]; readingId: string; breakpointId?: string | null }>();
 const emit = defineEmits<{ navigate: [id: string] }>();
 const rail = ref<HTMLElement>();
 const wrap = ref<HTMLElement>();
 const height = ref(400);
+const previewBox = ref<HTMLElement>();
+const previewHeight = ref(300);
+const previewAnchor = ref(0);
+const keyboardIndex = ref<number | null>(null);
 const hovered = ref<number | null>(null);
 const dragging = ref(false);
 const rounds = computed(() => historyRounds(props.messages));
@@ -18,11 +22,82 @@ const railHeight = computed(() => Math.min(height.value, Math.max(24, (rounds.va
 const span = computed(() => Math.max(0, railHeight.value - 24));
 const count = computed(() => Math.min(rounds.value.length, Math.max(2, Math.floor(span.value / 12) + 1)));
 const preview = computed(() => (hovered.value === null ? undefined : rounds.value[hovered.value]));
+const nearby = computed(() => {
+  if (hovered.value === null) return [];
+  const start = Math.max(0, Math.min(rounds.value.length - 5, hovered.value - 2));
+  return rounds.value.slice(start, start + 5).map((round, offset) => ({
+    ...round,
+    index: start + offset,
+    summary: historySummary(round.user) || '故事开场',
+    replySummary: historySummary(round.reply) || '等待 AI 回复…',
+  }));
+});
 const fraction = (index: number) => (rounds.value.length <= 1 ? 0.5 : index / (rounds.value.length - 1));
 const percent = (index: number) =>
   (((railHeight.value - span.value) / 2 + fraction(index) * span.value) / railHeight.value) * 100;
-const previewPercent = (index: number) =>
-  (((height.value - span.value) / 2 + fraction(index) * span.value) / height.value) * 100;
+const previewTop = computed(() =>
+  Math.max(
+    0,
+    Math.min(
+      height.value - previewHeight.value,
+      (height.value - span.value) / 2 + fraction(previewAnchor.value) * span.value - previewHeight.value / 2,
+    ),
+  ),
+);
+const clampIndex = (index: number) => Math.max(0, Math.min(rounds.value.length - 1, index));
+let frame = 0;
+let pendingIndex: number | null = null;
+let lastDragId: string | undefined;
+let lastPointerY: number | null = null;
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
+function keepOpen() {
+  clearTimeout(closeTimer);
+}
+function closePreview() {
+  keepOpen();
+  hovered.value = null;
+  keyboardIndex.value = null;
+  lastPointerY = null;
+}
+function leave() {
+  if (!dragging.value && !wrap.value?.contains(document.activeElement))
+    closeTimer = setTimeout(closePreview, 180);
+}
+function blur(event: FocusEvent) {
+  if (!wrap.value?.contains(event.relatedTarget as Node | null)) closePreview();
+}
+function outside(event: PointerEvent) {
+  if (!wrap.value?.contains(event.target as Node)) closePreview();
+}
+function focus() {
+  keepOpen();
+  keyboardIndex.value = null;
+  lastPointerY = null;
+  hovered.value = current.value;
+  previewAnchor.value = current.value;
+}
+function dismiss() {
+  rail.value?.focus({ preventScroll: true });
+  closePreview();
+}
+function cancelNavigation() {
+  cancelAnimationFrame(frame);
+  frame = 0;
+  pendingIndex = null;
+}
+function flushNavigation() {
+  frame = 0;
+  const round = pendingIndex === null ? undefined : rounds.value[pendingIndex];
+  pendingIndex = null;
+  if (round && round.id !== lastDragId) {
+    lastDragId = round.id;
+    emit('navigate', round.id);
+  }
+}
+function queueNavigation(index: number) {
+  pendingIndex = index;
+  if (!frame) frame = requestAnimationFrame(flushNavigation);
+}
 function indexAt(event: PointerEvent) {
   const rect = rail.value!.getBoundingClientRect();
   return Math.max(
@@ -39,48 +114,134 @@ function indexAt(event: PointerEvent) {
   );
 }
 function move(event: PointerEvent) {
+  keepOpen();
+  // Moving horizontally into the preview must not undo a precise wheel selection.
+  if (event.clientY === lastPointerY && hovered.value !== null && !dragging.value) return;
+  lastPointerY = event.clientY;
+  keyboardIndex.value = null;
   hovered.value = indexAt(event);
-  if (dragging.value) navigate(hovered.value);
+  previewAnchor.value = hovered.value;
+  if (dragging.value) queueNavigation(hovered.value);
 }
 function navigate(index: number) {
-  const round = rounds.value[index];
+  cancelNavigation();
+  const round = rounds.value[clampIndex(index)];
   if (round) emit('navigate', round.id);
 }
 function down(event: PointerEvent) {
+  if (!event.isPrimary || event.button !== 0) return;
+  rail.value?.focus({ preventScroll: true });
+  keepOpen();
+  lastDragId = undefined;
   dragging.value = true;
   rail.value?.setPointerCapture(event.pointerId);
   move(event);
 }
 function up(event: PointerEvent) {
+  if (!dragging.value) return;
+  // Flush the release position even when no animation frame ran after the last move.
+  cancelNavigation();
+  hovered.value = indexAt(event);
+  pendingIndex = hovered.value;
+  flushNavigation();
   dragging.value = false;
   if (rail.value?.hasPointerCapture(event.pointerId)) rail.value.releasePointerCapture(event.pointerId);
 }
+function cancelDrag() {
+  dragging.value = false;
+  cancelNavigation();
+}
+function step(delta: number) {
+  keepOpen();
+  keyboardIndex.value = null;
+  if (hovered.value === null) previewAnchor.value = current.value;
+  hovered.value = clampIndex((hovered.value ?? current.value) + delta);
+}
+function wheel(event: WheelEvent) {
+  if (event.deltaY) step(Math.sign(event.deltaY));
+}
+function select(index: number) {
+  hovered.value = index;
+  navigate(index);
+}
 function key(event: KeyboardEvent) {
-  let index = hovered.value ?? current.value;
+  lastPointerY = null;
+  let index = keyboardIndex.value ?? current.value;
   if (event.key === 'Home') index = 0;
   else if (event.key === 'End') index = rounds.value.length - 1;
   else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') index--;
   else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') index++;
   else if (event.key === 'Escape') {
-    hovered.value = null;
+    event.preventDefault();
+    dismiss();
     return;
-  } else if (event.key !== 'Enter' && event.key !== ' ') return;
+  } else if (event.key === 'Enter' || event.key === ' ') index = hovered.value ?? index;
+  else return;
   event.preventDefault();
-  hovered.value = Math.max(0, Math.min(rounds.value.length - 1, index));
+  keepOpen();
+  keyboardIndex.value = clampIndex(index);
+  hovered.value = keyboardIndex.value;
+  previewAnchor.value = hovered.value;
   navigate(hovered.value);
 }
+// Reading can change through the prose, search, or other navigation controls.
+// A hover preview is never the starting point for a new arrow-key sequence.
+watch(current, () => {
+  keyboardIndex.value = null;
+});
+watch([hovered, previewHeight], async () => {
+  await nextTick();
+  const list = previewBox.value?.querySelector<HTMLElement>('.rail-nearby');
+  const selected = list?.querySelector<HTMLElement>('.selected');
+  if (!list || !selected) return;
+  const bounds = list.getBoundingClientRect();
+  const row = selected.getBoundingClientRect();
+  if (row.top < bounds.top) list.scrollTop += row.top - bounds.top;
+  else if (row.bottom > bounds.bottom) list.scrollTop += row.bottom - bounds.bottom;
+});
+watch(rounds, () => {
+  cancelDrag();
+  if (hovered.value !== null) hovered.value = clampIndex(hovered.value);
+  if (!rounds.value.length) closePreview();
+});
 let observer: ResizeObserver | undefined;
+watch(
+  [wrap, previewBox],
+  ([container, panel], [oldContainer, oldPanel]) => {
+    if (oldContainer) observer?.unobserve(oldContainer);
+    if (oldPanel) observer?.unobserve(oldPanel);
+    if (container) observer?.observe(container);
+    if (panel) observer?.observe(panel);
+  },
+  { flush: 'post' },
+);
 onMounted(() => {
   observer = new ResizeObserver(() => {
-    height.value = wrap.value?.clientHeight || 400;
+    if (wrap.value?.clientHeight) height.value = wrap.value.clientHeight;
+    if (previewBox.value?.offsetHeight) previewHeight.value = previewBox.value.offsetHeight;
   });
   if (wrap.value) observer.observe(wrap.value);
+  if (previewBox.value) observer.observe(previewBox.value);
+  document.addEventListener('pointerdown', outside);
 });
-onBeforeUnmount(() => observer?.disconnect());
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  cancelNavigation();
+  keepOpen();
+  document.removeEventListener('pointerdown', outside);
+});
 </script>
 
 <template>
-  <div v-if="rounds.length" ref="wrap" class="conversation-rail-wrap">
+  <div
+    v-if="rounds.length"
+    ref="wrap"
+    class="conversation-rail-wrap"
+    @pointerenter="keepOpen"
+    @pointerleave="leave"
+    @focusout="blur"
+    @keydown.esc.stop.prevent="dismiss"
+  >
     <div
       ref="rail"
       class="conversation-rail"
@@ -89,6 +250,7 @@ onBeforeUnmount(() => observer?.disconnect());
       tabindex="0"
       aria-label="对话历史导航"
       aria-orientation="vertical"
+      aria-description="点击或拖动快速定位；滚轮逐轮预览，回车跳转；方向键逐轮跳转。"
       :aria-valuemin="1"
       :aria-valuemax="rounds.length"
       :aria-valuenow="current + 1"
@@ -96,10 +258,11 @@ onBeforeUnmount(() => observer?.disconnect());
       @pointermove="move"
       @pointerdown.prevent="down"
       @pointerup="up"
-      @pointercancel="up"
-      @pointerleave="!dragging && (hovered = null)"
+      @pointercancel="cancelDrag"
+      @lostpointercapture="cancelDrag"
+      @wheel.stop.prevent="wheel"
       @keydown="key"
-      @blur="hovered = null"
+      @focus="focus"
     >
       <span
         v-for="tick in count"
@@ -107,18 +270,64 @@ onBeforeUnmount(() => observer?.disconnect());
         class="rail-tick"
         :style="{ top: percent(count <= 1 ? 0 : ((tick - 1) / (count - 1)) * (rounds.length - 1)) + '%' }"
       />
-      <span class="rail-tick current" :style="{ top: percent(current) + '%' }" />
-      <span v-if="cached !== undefined" class="rail-tick cached" :style="{ top: percent(cached) + '%' }" />
+      <span class="rail-tick current" title="当前阅读位置" :style="{ top: percent(current) + '%' }" />
+      <span
+        v-if="cached !== undefined"
+        class="rail-tick cached"
+        title="计划缓存断点"
+        :style="{ top: percent(cached) + '%' }"
+      />
       <span v-if="hovered !== null" class="rail-tick hovered" :style="{ top: percent(hovered) + '%' }" />
     </div>
     <div
       v-if="preview"
+      ref="previewBox"
       class="rail-preview"
-      :style="{ top: `clamp(0px, ${previewPercent(hovered!)}%, calc(100% - 132px))` }"
+      role="region"
+      aria-label="附近对话轮次"
+      :style="{ top: previewTop + 'px', maxHeight: height + 'px' }"
+      @wheel.stop.prevent="wheel"
     >
-      <small>{{ (hovered || 0) + 1 }} / {{ rounds.length }}</small>
-      <strong>{{ historySummary(preview.user) || '故事开场' }}</strong>
-      <p>{{ historySummary(preview.reply) || '等待 AI 回复…' }}</p>
+      <div class="rail-preview-heading">
+        <small>{{ (hovered ?? 0) + 1 }} / {{ rounds.length }}</small>
+        <span>滚轮逐轮预览 · 点击跳转</span>
+        <button type="button" aria-label="关闭轮次预览" @click="dismiss">×</button>
+      </div>
+      <div class="rail-nearby">
+        <button
+          v-for="round in nearby"
+          :key="round.id"
+          type="button"
+          :class="{ selected: round.index === hovered }"
+          :aria-label="`跳转到第 ${round.index + 1} 个对话位置`"
+          :aria-current="round.index === current ? 'location' : undefined"
+          @click="select(round.index)"
+        >
+          <small>{{ round.index + 1 }}</small>
+          <span
+            ><strong>{{ round.summary }}</strong
+            ><span class="rail-reply">{{ round.replySummary }}</span></span
+          >
+          <span class="rail-round-status">{{
+            [round.index === current ? '当前' : '', round.index === cached ? '缓存' : '']
+              .filter(Boolean)
+              .join(' · ')
+          }}</span>
+        </button>
+      </div>
+      <div class="rail-preview-controls">
+        <button type="button" :disabled="hovered === 0" aria-label="预览上一轮" @click="step(-1)">
+          ↑ 上一轮
+        </button>
+        <button
+          type="button"
+          :disabled="hovered === rounds.length - 1"
+          aria-label="预览下一轮"
+          @click="step(1)"
+        >
+          ↓ 下一轮
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -130,7 +339,7 @@ onBeforeUnmount(() => observer?.disconnect());
   top: 32px;
   bottom: 32px;
   width: 30px;
-  z-index: 5;
+  z-index: 9;
   pointer-events: none;
 }
 .conversation-rail {
@@ -157,54 +366,129 @@ onBeforeUnmount(() => observer?.disconnect());
   width: 13px;
 }
 .rail-tick.current {
-  width: 24px;
+  right: 17px;
+  width: 7px;
+  height: 8px;
   background: var(--text-primary);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 .rail-tick.cached {
-  width: 19px;
+  right: 0;
+  width: 5px;
+  height: 8px;
+  border-radius: 2px;
   background: #f2b928;
 }
 .rail-tick.hovered {
-  width: 24px;
-  background: var(--text-secondary);
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--text-secondary);
+  border-radius: 50%;
+  background: var(--bg-elevated, #292929);
 }
 .rail-preview {
   position: absolute;
-  right: 38px;
-  width: min(330px, calc(100vw - 90px));
-  padding: 12px 15px;
+  right: 30px;
+  width: min(360px, calc(100vw - 60px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--bg-elevated, #292929);
   box-shadow: 0 8px 28px #0003;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: auto;
 }
-.rail-preview small {
-  float: right;
-  margin-left: 8px;
-  color: var(--text-faint);
+.rail-preview-heading,
+.rail-preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.rail-preview-heading > span {
   font-size: 10px;
 }
-.rail-preview strong {
+.rail-preview button {
+  font: inherit;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.rail-preview button:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: -2px;
+}
+.rail-preview-heading button,
+.rail-preview-controls button {
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+}
+.rail-preview button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.rail-nearby {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.rail-nearby > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  background: transparent;
+}
+.rail-nearby > button.selected,
+.rail-preview button:hover:not(:disabled) {
+  background: var(--border-subtle, #ffffff12);
+}
+.rail-nearby small {
+  flex: 0 0 4ch;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.rail-nearby > button > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+}
+.rail-nearby strong,
+.rail-reply {
   display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-primary);
 }
-.rail-preview p {
-  margin: 4px 0 0;
+.rail-reply {
   color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-size: 11px;
+}
+.rail-round-status {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 10px;
 }
 @media (max-width: 620px) {
   .conversation-rail-wrap {
     right: 1px;
     width: 24px;
+  }
+  .rail-preview {
+    right: 24px;
   }
 }
 </style>

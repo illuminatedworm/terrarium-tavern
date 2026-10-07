@@ -193,7 +193,7 @@ async def main():
                         await select('full agent 模型与生成')
                         await page.get_by_label('模型名称', exact=True).fill('gemini-3.8-flash-high' if protocol == 'gemini' else 'claude-opus-4-6' if protocol == 'anthropic' else 'gpt-5.6-sol')
                         await saved()
-                        await page.locator('.settings-advanced summary').click()
+                        await page.get_by_text('更多参数：采样细项、分词器与提示缓存', exact=True).click()
                         if protocol == 'gemini':
                             await expect(page.get_by_text('由运行时创建和引用 Gemini 缓存对象', exact=False)).to_be_visible()
                         await expect(page.get_by_role('combobox', name='缓存控制', exact=True)).to_have_value('runtime')
