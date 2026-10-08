@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from kohakuterrarium.session.store import SessionStore
 from kohakuterrarium.testing.llm import ScriptedLLM, ScriptEntry
 
 from tavern.application.api import create_app
@@ -12,6 +13,21 @@ from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Store
 from tests.support.memory_fixtures import memory_output
 from tests.support.tracker_model import MemoryModel, PatchModel, TrackerModel, batch_payload
+
+
+def _assert_run_closed(path):
+    # Writer creates an engine per turn; shutdown must flush its output and
+    # release the writer lock before Runtime can clean up run files on Windows.
+    run_store = SessionStore.open_readonly(path)
+    try:
+        assert run_store.meta.get("status") == "paused"
+    finally:
+        run_store.close()
+    reopened = SessionStore(path)
+    reopened.close()
+    renamed = path.with_suffix(".closed")
+    path.rename(renamed)
+    renamed.rename(path)
 
 
 async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_path):
@@ -196,7 +212,10 @@ async def test_real_kt_turn_and_branch_restore(tmp_path):
         assert store.session(session["id"])["snapshot"]["state"]["stat_data"]["能量"] == 4
         switched = store.update_session(session["id"], 2, head=first_head)
         assert switched["snapshot"]["state"]["stat_data"]["能量"] == 4
-        assert list((tmp_path / "runs").glob("*.kohakutr"))
+        run_files = list((tmp_path / "runs").glob("*.kohakutr"))
+        assert len(run_files) == 2
+        for path in run_files:
+            _assert_run_closed(path)
     finally:
         await service.close()
 
@@ -266,6 +285,7 @@ async def test_preview_edit_and_cancel_are_atomic(tmp_path):
         await service.cancel(t["id"])
         assert store.turn(t["id"])["status"] == "cancelled"
         assert store.session(s["id"])["head"] == current["head"]
+        _assert_run_closed(tmp_path / "runs" / f"{t['id']}.kohakutr")
     finally:
         await service.close()
 

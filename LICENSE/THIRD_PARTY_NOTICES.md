@@ -7,7 +7,7 @@
 ## Kohaku Terrarium
 
 - 项目来源：[Kohaku-Lab/KohakuTerrarium](https://github.com/Kohaku-Lab/KohakuTerrarium)
-- 固定提交：`c01854de42eacf280d09b2dcdaeae51bab28d5ef`
+- 固定提交：`e4fb517939ba07086481251717e888cb74dc19a4`（2.1.5）
 - 版权所有：2024–2026 Shih-Ying Yeh（KohakuBlueLeaf）及贡献者。
 - 许可名称：**KohakuTerrarium License 1.0**。
 
@@ -32,6 +32,7 @@
 
 以下组件由固定版本的 Kohaku Terrarium 引入，版本及依赖关系见 [uv.lock](../uv.lock)：
 
+- **pathspec 1.1.1**：MPL-2.0，上游路径忽略规则匹配依赖；许可原文随该依赖发行包保留。
 - **html2text 2025.4.15**：GPL-3.0-or-later，见[该版本许可](https://github.com/Alir3z4/html2text/blob/2025.4.15/COPYING)。上游网页读取工具直接导入并调用该库。
 - **PyMuPDF 1.28.2**：AGPL-3.0 或另行取得的商业许可，见[官方许可说明](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright)。上游 PDF 读取工具通过 `fitz` 导入并调用。依赖被安装不表示本项目或用户已取得商业许可。
 

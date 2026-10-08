@@ -21,7 +21,7 @@
 
 | 依赖 | 锁定版本 | 仓库记录的许可与使用情况 |
 |---|---|---|
-| Kohaku Terrarium | 2.1.3 | 直接依赖下列组件，版本见 [uv.lock](../../uv.lock) |
+| Kohaku Terrarium | 2.1.5 | 直接依赖下列组件，版本见 [uv.lock](../../uv.lock) |
 | html2text | 2025.4.15 | GPL-3.0-or-later；上游网页读取工具直接调用 |
 | PyMuPDF | 1.28.2 | AGPL 或独立商业授权；上游 PDF 路径通过 `fitz` 调用 |
 

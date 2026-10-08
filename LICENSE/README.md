@@ -9,12 +9,12 @@ Terrarium Tavern 采用分层许可。本项目原创部分仅限非商业用途
 | 部分 | 适用文件 | 范围 |
 |---|---|---|
 | 本项目原创代码及随附原创资料 | [Terrarium Tavern 非商业许可 1.1](PROJECT_LICENSE.md) | 本项目独立编写的代码、脚本、测试、文档、示例和原创资源，包括其修改版及编译产物中的相应部分 |
-| Kohaku Terrarium | [KohakuTerrarium License 1.0 原文](KohakuTerrarium.txt) | 上游代码及其受该许可保护的部分，固定提交 `c01854de42eacf280d09b2dcdaeae51bab28d5ef` |
+| Kohaku Terrarium | [KohakuTerrarium License 1.0 原文](KohakuTerrarium.txt) | 上游代码及其受该许可保护的部分，固定提交 `e4fb517939ba07086481251717e888cb74dc19a4` |
 | 其他第三方组件、资源及规范 | [第三方声明](THIRD_PARTY_NOTICES.md) | 各组件适用各自的许可，源码所在位置的版权与许可声明继续保留 |
 
 非商业许可不改变第三方权利人的授权，也不限制从上游单独取得的组件所享有的权利。使用或分发包含本项目原创部分的完整应用，须同时遵守本项目的非商业限制及所含第三方组件的许可。
 
-Kohaku Terrarium 的许可副本来自[上述固定提交](https://github.com/Kohaku-Lab/KohakuTerrarium/blob/c01854de42eacf280d09b2dcdaeae51bab28d5ef/LICENSE)，未经修改；该许可基于 Apache License 2.0 并附加了命名、署名等条款，不能简称为 Apache-2.0。
+Kohaku Terrarium 的许可副本来自[上述固定提交](https://github.com/Kohaku-Lab/KohakuTerrarium/blob/e4fb517939ba07086481251717e888cb74dc19a4/LICENSE)，未经修改；该许可基于 Apache License 2.0 并附加了命名、署名等条款，不能简称为 Apache-2.0。
 
 本项目禁止商业用途，因此属于“源码可用、仅限非商业用途”，不属于 [OSI 开源定义](https://opensource.org/osd)所指的开源软件。
 

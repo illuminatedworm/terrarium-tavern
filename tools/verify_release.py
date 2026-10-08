@@ -39,6 +39,12 @@ def verify(archive_path):
         run("npm.cmd", "run", "build")
         python = str(target / ".venv/Scripts/python.exe")
         run(python, "-c", "import importlib.util; assert importlib.util.find_spec('torch') is None")
+        run(python, "-c",
+            "import importlib.metadata as metadata,json,tomllib; from pathlib import Path; "
+            "expected=next(p for p in tomllib.loads(Path('uv.lock').read_text(encoding='utf-8'))['package'] "
+            "if p['name']=='kohakuterrarium'); installed=metadata.distribution('kohakuterrarium'); "
+            "assert installed.version==expected['version']; "
+            "assert json.loads(installed.read_text('direct_url.json'))['url']==expected['source']['url']")
         # Exercise Windows PowerShell 5 as shipped with Windows, including UTF-8
         # script decoding, rather than bypassing the launcher with python -m.
         run("powershell", "-NoProfile", "-Command",
@@ -63,7 +69,7 @@ def verify(archive_path):
                 raise RuntimeError("Fresh installation startup timed out")
             assert httpx.get("http://127.0.0.1:8017/", trust_env=False).status_code == 200
             settings = httpx.get("http://127.0.0.1:8017/api/settings", trust_env=False).json()
-            assert not settings["providers"][0]["has_api_key"]
+            assert not settings["shared"]["providers"][0]["has_api_key"]
             second = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                                      str(target / "start.ps1"), "-Port", "8017"], cwd=target, env=env,
                                     capture_output=True, creationflags=flags)

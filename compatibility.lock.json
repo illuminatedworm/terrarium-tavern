@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "kohakuterrarium": {"repository": "https://github.com/Kohaku-Lab/KohakuTerrarium", "commit": "c01854de42eacf280d09b2dcdaeae51bab28d5ef", "integration": "Python dependency / Terrarium engine"},
+  "kohakuterrarium": {"repository": "https://github.com/Kohaku-Lab/KohakuTerrarium", "commit": "e4fb517939ba07086481251717e888cb74dc19a4", "integration": "Python dependency / Terrarium engine"},
   "tavern_helper": {"repository": "https://github.com/n0vi028/JS-Slash-Runner", "commit": "04a62b763513744b8cb3d85322f9b5c73bdf8a85", "integration": "independent API compatibility layer"},
   "mvu": {"repository": "https://github.com/MagicalAstrogy/MagVarUpdate", "commit": "4a3645f19705e9e73bb4df3a8e731d5ff994ce80", "integration": "vendored update / schema core, host adapters"}
 }
