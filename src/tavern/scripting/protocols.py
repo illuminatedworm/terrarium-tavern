@@ -173,7 +173,10 @@ def native_messages(messages, api, marker=None):
             if marker and message.get("_cache_breakpoint") and parts:
                 parts[-1][marker["field"]] = copy.deepcopy(marker["value"])
             if parts:
-                body.append({"role": "model" if role == "assistant" else role, "parts": parts})
+                if consecutive_tools:
+                    body[-1]["parts"].extend(parts)
+                else:
+                    body.append({"role": "model" if role == "assistant" else role, "parts": parts})
         if message.get("_cache_breakpoint"):
             prefix_count = len(body)
     # This rule is fixed and precedes all dynamic context on every request.

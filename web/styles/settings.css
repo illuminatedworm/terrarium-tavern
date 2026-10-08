@@ -345,6 +345,23 @@
 .settings-check input {
   order: -1;
 }
+.settings-shell .settings-detail .settings-check-help {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+}
+.settings-check-help > input {
+  grid-column: 1;
+  grid-row: 1;
+}
+.settings-check-help > span,
+.settings-check-help > small {
+  grid-column: 2;
+}
+.settings-shell .full-agent-fields .settings-check {
+  align-items: start;
+  align-self: start;
+}
 .profile-editor {
   min-width: 0;
 }

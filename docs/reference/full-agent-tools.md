@@ -67,6 +67,8 @@ handoff 使用最新运行时记忆或最近成功写入中较新的内容，失
 
 new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
 
+全局设置 `full_agent.tools.parallel_tool_calls` 默认 true，允许单次最多 8 个工具调用。关闭时，多调用批次中的未执行工具全部返回 PARALLEL_TOOL_CALLS_DISABLED，不产生新的草稿写入；模型应逐次调用。此限制由运行时统一校验，不依赖服务商是否支持或遵守原生参数。工具批次和内部动作批次不同，关闭此设置不限制 patch_state 或 revise_content 中合法的多项 operations。
+
 ## 返回格式与错误恢复
 
 成功结果统一为：
@@ -118,4 +120,5 @@ max_steps 默认 24，范围 2–100，按模型请求次数计数。工具续�
 | `PROTECTED_TARGET` | 否 | 仅修改工具公开的业务字段；程序内部字段与执行配置不可修改。 |
 | `STATE_ALREADY_SUBMITTED` | 否 | 本轮变量已成功提交，不要重复调用 patch_state。 |
 | `MIXED_CONTEXT_CALLS` | 是 | 本批次未执行任何工具；单独调用 new_context。 |
+| `PARALLEL_TOOL_CALLS_DISABLED` | 是 | 每次回复只提出一个工具调用，等待结果后再继续。 |
 | `CONTEXT_ROLLOVER_REQUIRED` | 是 | 单独调用 new_context 后继续本轮。 |

@@ -188,7 +188,9 @@ class FullAgent:
                 tool_options = {
                     "tools": self.definitions,
                     "tool_choice": {"type": "function", "function": {"name": "new_context"}}
-                    if self.must_rollover else "auto", "parallel_tool_calls": False} if self.definitions else {}
+                    if self.must_rollover else "auto",
+                    "parallel_tool_calls": self.settings.full_agent_config.parallel_tool_calls
+                    and not self.must_rollover} if self.definitions else {}
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
@@ -280,6 +282,8 @@ class FullAgent:
     async def execute_tools(self, assistant, window_id, assistant_seq, returned=()):
         calls = assistant["tool_calls"]
         mixed_rollover = len(calls) > 1 and any(call["function"]["name"] == "new_context" for call in calls)
+        disabled_batch = len(calls) > 1 and not self.settings.full_agent_config.parallel_tool_calls
+        rejected_batch = mixed_rollover or disabled_batch
         for index, call in enumerate(calls):
             if call["id"] in returned:
                 continue
@@ -293,6 +297,8 @@ class FullAgent:
                     raise ToolError("MIXED_CONTEXT_CALLS", "new_context 必须单独调用；当前批次未执行任何工具")
                 if self.must_rollover and (name != "new_context" or len(calls) != 1):
                     raise ToolError("CONTEXT_ROLLOVER_REQUIRED", "当前必须换窗；仅接受单独的 new_context，其他调用已否决且未执行")
+                if disabled_batch:
+                    raise ToolError("PARALLEL_TOOL_CALLS_DISABLED", "已关闭单次多工具调用；本次不执行此批次中尚未执行的工具")
                 result = await self.tools.execute(name, arguments)
             except TurnError:
                 raise
@@ -321,12 +327,12 @@ class FullAgent:
                 self.retain()
                 self.event("context_rollover", {"window": self.state["window"]["number"],
                                                "message": "Agent 已保存 handoff 并换新窗口"})
-            if not mixed_rollover:
+            if not rejected_batch:
                 await self.save_progress()
-        if mixed_rollover:
+        if rejected_batch:
             # A rejected batch must never persist just its first error. Recovery
             # removes failed calls; a partial checkpoint could otherwise turn the
-            # remaining new_context into a valid standalone call.
+            # remaining call into a valid standalone call.
             await self.save_progress()
 
     def response_message(self, response, provider, calls):

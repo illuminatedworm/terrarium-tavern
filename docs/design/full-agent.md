@@ -42,6 +42,8 @@ flowchart TD
 
 只有完整结束且不含工具调用的最终回复进入剧情。带工具调用的 assistant 文字和结果属于过程记录，排在对应正文之前；provider reasoning 不作为可见剧情过程展示。
 
+全局 `full_agent.tools.parallel_tool_calls` 默认开启，允许一次模型响应提出多个独立工具调用；后台按返回顺序执行并逐项保存进度，不并发修改草稿。OpenAI Chat Completions／Responses 显式发送 `parallel_tool_calls`，Anthropic 映射为 `tool_choice.disable_parallel_tool_use` 的反值；Gemini GenerateContent 没有对应开关，使用完整工具协议表达当前策略。关闭时，所有协议统一在执行前拒绝多调用批次并返回 `PARALLEL_TOOL_CALLS_DISABLED`，整批拒绝结果一次保存，避免恢复时把剩余调用当作合法单调用执行。此前已保存的成功调用不回滚、不重跑。强制换窗时显式关闭原生多调用，`new_context` 混合批次仍整批拒绝。
+
 ## 工作窗口与追加记录
 
 窗口基线按以下顺序组织：

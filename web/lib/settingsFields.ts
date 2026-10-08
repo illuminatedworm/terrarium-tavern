@@ -48,6 +48,12 @@ export const retrievalAdvanced: SettingField[] = [
 ];
 export const fullFields: SettingField[] = [
   { path: 'tools.auto_retrieval', label: '每轮自动检索世界书', type: 'checkbox' },
+  {
+    path: 'tools.parallel_tool_calls',
+    label: '单次允许多个工具调用',
+    type: 'checkbox',
+    help: '合并独立操作，减少等待。关闭后每次只调用一个工具。',
+  },
   number('tools.max_steps', '每回合模型调用上限', 2, 100),
   {
     ...number('tools.pressure_ratio', '上下文占用提醒阈值（比例）', 0.25, 0.9, 0.05),

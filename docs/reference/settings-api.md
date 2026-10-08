@@ -16,6 +16,8 @@
 
 `SettingsDocument.runtime(mode)` 生成一次操作的深拷贝配置。正在执行的回合继续使用开始时的快照；保存后的配置用于后续操作。Full Agent 与 Card Editor 都有明确模型配置，不在运行时继承 Half Agent 模型。
 
+`full_agent.tools.parallel_tool_calls` 为严格布尔值，默认 `true`；旧设置缺少此字段时自动采用开启值。它对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent；通过 `PATCH /api/settings/full_agent` 的 `changes` 传入 `{"tools.parallel_tool_calls":false}` 可关闭。
+
 ## 读取与写入
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。

@@ -178,7 +178,8 @@ class ModelTransport(BaseLLMProvider):
                 body = {"model": cfg.model, "system": system, "messages": contents, "max_tokens": maximum}
                 policy, thinking = anthropic_thinking(cfg.model, cfg.reasoning_effort)
                 if tools:
-                    selection = {"type": "auto", "disable_parallel_tool_use": True}
+                    disable_parallel = not extra.get("parallel_tool_calls", False)
+                    selection = {"type": "auto", "disable_parallel_tool_use": disable_parallel}
                     selected_tools = tools
                     if isinstance(choice, dict):
                         name = choice.get("function", choice)["name"]
@@ -190,7 +191,7 @@ class ModelTransport(BaseLLMProvider):
                             if not selected_tools:
                                 raise ValueError("指定工具不在当前允许的工具列表中")
                         else:
-                            selection = {"type": "tool", "name": name, "disable_parallel_tool_use": True}
+                            selection = {"type": "tool", "name": name, "disable_parallel_tool_use": disable_parallel}
                     elif choice == "none":
                         selection = {"type": "none"}
                     body.update(tools=native_tools(selected_tools, api), tool_choice=selection)

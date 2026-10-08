@@ -15,7 +15,7 @@ from tavern.conversation.variable_rules import collect_variable_rules, variable_
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
-from tavern.full_agent.config import TOOL_PROTOCOL
+from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.state import full_state
@@ -60,7 +60,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         if content:
             items.append({"role": role, "content": content, "source": source, **metadata})
 
-    add("system", TOOL_PROTOCOL, "tool_protocol")
+    add("system", tool_protocol(settings.full_agent_config), "tool_protocol")
     add("system", settings.full_agent_system_prompt, "rules")
     if session.get("turn_preference"):
         add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")

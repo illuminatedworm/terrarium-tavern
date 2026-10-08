@@ -39,6 +39,17 @@ FULL_AGENT_PROMPT = """你是互动故事的叙述者，与用户共同创作一
 class FullAgentConfig(BaseModel):
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
     auto_retrieval: bool = True
+    parallel_tool_calls: bool = Field(default=True, strict=True)
     pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
     handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
     note_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)
+
+
+def tool_protocol(config: FullAgentConfig):
+    # Gemini has no native single-call switch. Keep the instruction and runtime
+    # guard consistent for every provider, including relays ignoring API flags.
+    batching = ("允许单次回复提出多个工具调用；相互独立、参数已确定的操作应合并提出。"
+                "需要根据前一个结果判断或填写参数的操作，须等结果返回后再调用。"
+                if config.parallel_tool_calls else
+                "当前已关闭单次多工具调用；每次回复最多提出一个工具调用，等待结果返回后再继续。")
+    return TOOL_PROTOCOL + "\n" + batching

@@ -435,7 +435,12 @@ onMounted(async () => {
             </details>
           </template>
           <template v-else-if="page.key === 'memory'">
-            <SettingsFields v-if="scope === 'full_agent'" :value="values" :fields="fullFields" />
+            <SettingsFields
+              v-if="scope === 'full_agent'"
+              class="full-agent-fields"
+              :value="values"
+              :fields="fullFields"
+            />
             <template v-else
               ><h4>历史窗口</h4>
               <SettingsFields :value="values" :fields="historyFields" />

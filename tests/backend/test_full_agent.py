@@ -461,7 +461,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
     try:
         result, current = await turn(service, session, provider)
         assert result["status"] == "committed", result["error"]
-        assert calls[0]["tools"] and calls[0]["parallel_tool_calls"] is False
+        assert calls[0]["tools"] and calls[0]["parallel_tool_calls"] is True
         if api_mode == "responses":
             assert any(m.get("call_id") == "x" and "error" in m.get("output", "") for m in calls[1]["input"])
         else:
@@ -1062,7 +1062,9 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
         for request in model.requests[:4]:
             assert request["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
+            assert request["extra_body"]["parallel_tool_calls"] is False
         assert model.requests[-1]["extra_body"]["tool_choice"] == "auto"
+        assert model.requests[-1]["extra_body"]["parallel_tool_calls"] is True
         assert large in str(model.requests[0]["messages"])
         assert large not in str(model.requests[-1]["messages"])
         assert "我答应明天在钟楼见面" in str(model.requests[-1]["messages"])

@@ -207,10 +207,15 @@ async def test_mixed_rollover_batch_has_no_side_effects(story, rollover_first):
         await service.close()
 
 
-async def test_mixed_rollover_rejection_cannot_become_an_executable_call_on_resume(story, monkeypatch):
+@pytest.mark.parametrize("rejection", ["MIXED_CONTEXT_CALLS", "PARALLEL_TOOL_CALLS_DISABLED"])
+async def test_rejected_batch_cannot_become_an_executable_call_on_resume(story, monkeypatch, rejection):
     from tavern.full_agent.agent import FullAgent
 
     store, session = story
+    if rejection == "PARALLEL_TOOL_CALLS_DISABLED":
+        settings = store.settings_document()
+        settings.full_agent.tools.parallel_tool_calls = False
+        store.save_settings(settings)
     service = runtime(store)
     original, interrupted = FullAgent.save_progress, False
 
@@ -224,8 +229,9 @@ async def test_mixed_rollover_rejection_cannot_become_an_executable_call_on_resu
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
             response = await super().chat_complete(messages, **kwargs)
-            self.last_tool_calls.append(SimpleNamespace(id="roll", name="new_context",
-                arguments=json.dumps({"content": "MUST_NOT_REAPPEAR", "keep_recent": 0})))
+            name = "new_context" if rejection == "MIXED_CONTEXT_CALLS" else "write_handoff"
+            self.last_tool_calls.append(SimpleNamespace(id="roll", name=name,
+                arguments=json.dumps({"content": "MUST_NOT_REAPPEAR"})))
             return response
 
     monkeypatch.setattr(FullAgent, "save_progress", interrupt_after_error)
@@ -236,7 +242,7 @@ async def test_mixed_rollover_rejection_cannot_become_an_executable_call_on_resu
         progress = store.full_agent_progress(failed["id"])
         returns = [json.loads(item["message"]["content"]) for item in progress["new_trace"]
                    if item["message"]["role"] == "tool"]
-        assert len(returns) == 2 and all(r["error"]["code"] == "MIXED_CONTEXT_CALLS" for r in returns)
+        assert len(returns) == 2 and all(r["error"]["code"] == rejection for r in returns)
         model = Model("Narrative after resume")
         service.full.provider_factory = lambda: model
         resumed = service.submit(session["id"], TurnRequest(text=failed["request"]["text"],

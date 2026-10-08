@@ -40,7 +40,10 @@ function update(field: SettingField, event: Event) {
       v-for="field in fields"
       :key="field.path"
       :data-setting-path="field.path"
-      :class="{ 'settings-check': field.type === 'checkbox' }"
+      :class="{
+        'settings-check': field.type === 'checkbox',
+        'settings-check-help': field.type === 'checkbox' && field.help,
+      }"
     >
       <span>{{ field.label }}</span>
       <select
