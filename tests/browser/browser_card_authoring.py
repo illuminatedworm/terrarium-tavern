@@ -1,6 +1,7 @@
 """Standalone multi-card authoring acceptance, entirely local and isolated."""
 import asyncio
 import copy
+import json
 import re
 import socket
 import tempfile
@@ -132,6 +133,46 @@ async def main():
                     await form.get_by_role("button", name="原始 JSON", exact=True).click()
                     after = await form.bounding_box()
                     assert abs(before["height"] - after["height"]) < 2
+                    raw = form.get_by_role("textbox", name="原始 JSON", exact=True)
+                    baseline = json.loads(await raw.input_value())
+                    baseline_cards = copy.deepcopy(editor.edits.conversation(wid)["cards"])
+                    await raw.fill("{invalid form draft")
+                    await form.get_by_role("button", name="恢复原稿状态", exact=True).click()
+                    await form.get_by_role("button", name="确认放弃修改", exact=True).click()
+                    await expect(form.get_by_role("button", name="确认放弃修改", exact=True)).to_have_count(0)
+                    await expect(form.get_by_role("button", name="恢复原稿状态", exact=True)).to_be_disabled()
+                    assert json.loads(await raw.input_value()) == baseline
+                    assert editor.edits.conversation(wid)["cards"] == baseline_cards
+                    assert await page.evaluate(
+                        "prefix=>Object.keys(sessionStorage).filter(key=>key.startsWith(prefix))",
+                        f"tavern-card-draft-{wid}-",
+                    ) == []
+                    updated = copy.deepcopy(baseline)
+                    updated.get("data", updated)["creator_notes"] = "表单保存检查"
+                    await raw.fill(json.dumps(updated, ensure_ascii=False))
+                    selected_ref = await page.get_by_role("combobox", name="选择卡片", exact=True).input_value()
+                    endpoint = f'**/api/card-editor/conversations/{wid}/drafts/{selected_ref}'
+                    await page.route(endpoint, lambda route: route.fulfill(
+                        status=409, content_type="application/json", body='{"detail":"测试保存冲突"}',
+                    ))
+                    await form.get_by_role("button", name="保存草稿", exact=True).click()
+                    await expect(form).to_be_visible()
+                    await expect(form.get_by_role("alert").filter(has_text="测试保存冲突")).to_be_visible()
+                    assert await page.evaluate(
+                        "key=>sessionStorage.getItem(key)!==null", f"tavern-card-draft-{wid}-{selected_ref}",
+                    )
+                    assert editor.edits.conversation(wid)["cards"] == baseline_cards
+                    await page.unroute(endpoint)
+                    await form.get_by_role("button", name="保存草稿", exact=True).click()
+                    await expect(form).to_have_count(0)
+                    assert next(item for item in editor.edits.conversation(wid)["cards"]
+                                if item["ref"] == selected_ref)["document"] == updated
+                    assert await page.evaluate(
+                        "key=>sessionStorage.getItem(key)", f"tavern-card-draft-{wid}-{selected_ref}",
+                    ) is None
+                    await page.get_by_role("button", name="打开表单编辑", exact=True).click()
+                    await expect(form).to_be_visible()
+                    await expect(form.get_by_role("button", name="恢复原稿状态", exact=True)).to_be_disabled()
                     await form.get_by_role("button", name="关闭", exact=True).click()
                     await page.get_by_role("button", name="工具与上下文", exact=True).click()
                     await expect(page.get_by_role("dialog")).to_contain_text("只读预览")

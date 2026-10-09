@@ -5,10 +5,11 @@ import LoreFilter from './LoreFilter.vue';
 import { audiences, entryAudience, emptyLoreFilter, filterLore } from '../../lib/loreFilter';
 import FieldHelp from '../common/FieldHelp.vue';
 import { useTimedError } from '../../composables/useTimedError';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
 import { appendLoreBook } from '../../lib/loreBook';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
+import { positionPopover } from '../../lib/anchoredPopover';
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
 const props = defineProps<{ card: any; session?: any; draftMode?: boolean }>();
 const sendEvent = defineEmits<{
@@ -25,6 +26,9 @@ const emit: typeof sendEvent = (...args: any[]) => {
 };
 onBeforeUnmount(() => {
   alive = false;
+  closeRestore();
+  window.removeEventListener('resize', positionRestore);
+  window.removeEventListener('scroll', positionRestore, true);
 });
 const card = ref(clone(props.card)),
   document = ref(clone(props.card.document));
@@ -38,6 +42,11 @@ const tab = ref(props.session ? 'lore' : 'profile'),
   busy = ref(false),
   raw = ref(JSON.stringify(document.value, null, 2));
 const editorRoot = ref<HTMLElement>();
+const restoreButton = ref<HTMLButtonElement>();
+const restorePopover = ref<HTMLElement>();
+const restoreConfirmation = ref<HTMLButtonElement>();
+const confirmingRestore = ref(false);
+const restorePopoverId = useId();
 const loreFile = ref<HTMLInputElement>();
 const loreDialog = ref<{ mode: 'add' | 'edit'; index: number; entry: any } | null>(null);
 const confirmingLoreDelete = ref(false);
@@ -112,6 +121,11 @@ function replaceScript(target: any, text: string) {
   error.value = '';
 }
 const draftKey = () => `tavern-card-draft-${props.session?.id || workspace.value?.id || card.value.id}`;
+const hasUnsavedChanges = computed(
+  () =>
+    JSON.stringify(document.value) !== JSON.stringify(card.value.document) ||
+    (tab.value === 'raw' && raw.value !== JSON.stringify(card.value.document, null, 2)),
+);
 try {
   const saved = sessionStorage.getItem(draftKey());
   if (saved) {
@@ -156,14 +170,66 @@ async function act(fn: () => Promise<any>) {
     busy.value = false;
   }
 }
+async function requestRestore() {
+  if (busy.value || agentRunning.value || !hasUnsavedChanges.value || !restorePopover.value) return;
+  if (confirmingRestore.value) {
+    cancelRestore();
+    return;
+  }
+  restorePopover.value.showPopover();
+  confirmingRestore.value = true;
+  await nextTick();
+  positionRestore();
+  restoreConfirmation.value?.focus({ preventScroll: true });
+}
+function positionRestore() {
+  if (restorePopover.value?.matches(':popover-open') && restoreButton.value)
+    positionPopover(restorePopover.value, restoreButton.value);
+}
+function closeRestore() {
+  restorePopover.value?.hidePopover();
+  confirmingRestore.value = false;
+}
+function cancelRestore() {
+  closeRestore();
+  restoreButton.value?.focus({ preventScroll: true });
+}
+function syncRestorePopover() {
+  confirmingRestore.value = restorePopover.value?.matches(':popover-open') || false;
+}
+window.addEventListener('resize', positionRestore);
+window.addEventListener('scroll', positionRestore, true);
+async function restoreSaved() {
+  await act(async () => {
+    // Fetch before clearing the draft so a failed reload preserves all edits.
+    const saved = props.session || props.draftMode ? card.value : await api(`/cards/${card.value.id}`);
+    if (!alive) return;
+    const previousKey = draftKey();
+    card.value = clone(saved);
+    document.value = clone(saved.document);
+    raw.value = JSON.stringify(document.value, null, 2);
+    // An Agent conversation keeps its own draft; this action only resets this form.
+    workspace.value = null;
+    sessionStorage.removeItem(previousKey);
+    sessionStorage.removeItem(draftKey());
+    deletedGreetings.value = [];
+    closeLore();
+    closeRestore();
+    notice.value = props.draftMode
+      ? '已放弃表单修改，恢复打开表单时的草稿。'
+      : props.session
+        ? '已放弃未保存修改，恢复对话世界书。'
+        : '已放弃未保存修改，恢复已保存的角色卡。';
+  });
+}
 async function save() {
   await act(async () => {
     if (tab.value === 'raw') document.value = JSON.parse(raw.value);
     const previousKey = draftKey();
     await syncOpeningHashes();
     if (props.draftMode) {
+      // The parent clears the local draft only after its save request succeeds.
       emit('draftSaved', clone(document.value));
-      sessionStorage.removeItem(previousKey);
       return;
     }
     if (props.session) {
@@ -176,6 +242,9 @@ async function save() {
         },
         'PUT',
       );
+      card.value.document = clone(document.value);
+      raw.value = JSON.stringify(document.value, null, 2);
+      sessionStorage.removeItem(previousKey);
       emit('sessionSaved', updated);
       return;
     }
@@ -248,12 +317,6 @@ async function openAgent() {
     if (tab.value === 'raw') document.value = JSON.parse(raw.value);
     if (!agentRunning.value) await syncWorkspace();
     emit('openAgent', workspace.value.id);
-  });
-}
-async function copyCard() {
-  await act(async () => {
-    const copied = await api(`/cards/${card.value.id}/copy`, {});
-    emit('saved', copied);
   });
 }
 async function changeTab(next: string) {
@@ -445,16 +508,59 @@ useTimedError(error);
           />
           <div>
             <h1>{{ data.name || '角色编辑器' }}</h1>
-            <p class="muted">保留所有未编辑的扩展字段</p>
+            <p class="muted">保留所有未编辑的扩展字段<span v-if="hasUnsavedChanges"> · 有未保存修改</span></p>
           </div>
         </div>
       </div>
-      <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
-        {{ props.draftMode ? '保存草稿' : props.session ? '保存对话世界书' : '保存角色' }}
-      </button>
+      <div class="toolbar character-editor-actions">
+        <a
+          v-if="!props.session && !props.draftMode && !card._draftOnly"
+          class="editor-export"
+          :href="`/api/cards/${card.id}/export`"
+          >导出角色卡 ↓</a
+        >
+        <button
+          ref="restoreButton"
+          :disabled="busy || agentRunning || !hasUnsavedChanges"
+          aria-haspopup="dialog"
+          :aria-expanded="confirmingRestore"
+          :aria-controls="restorePopoverId"
+          @click="requestRestore"
+        >
+          恢复原稿状态
+        </button>
+        <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
+          {{ props.draftMode ? '保存草稿' : props.session ? '保存对话世界书' : '保存角色' }}
+        </button>
+      </div>
     </div>
     <AppNotification :message="error" />
     <AppNotification :message="notice" />
+    <div
+      ref="restorePopover"
+      :id="restorePopoverId"
+      popover="auto"
+      class="editor-restore-confirm"
+      role="dialog"
+      aria-label="恢复原稿状态"
+      @toggle="syncRestorePopover"
+      @keydown.esc.prevent.stop="cancelRestore"
+      @click.stop
+    >
+      <strong>恢复原稿状态？</strong>
+      <p>
+        {{
+          props.draftMode ? '放弃表单修改，恢复打开表单时的草稿。' : '放弃全部未保存修改，恢复已保存内容。'
+        }}
+        放弃的修改不会再自动恢复。
+      </p>
+      <div class="toolbar">
+        <button ref="restoreConfirmation" class="danger" :disabled="busy" @click="restoreSaved">
+          确认放弃修改
+        </button>
+        <button :disabled="busy" @click="cancelRestore">继续编辑</button>
+      </div>
+    </div>
     <div class="editor-tabs">
       <button
         v-for="t in [
@@ -472,7 +578,7 @@ useTimedError(error);
         {{ t.label }}
       </button>
     </div>
-    <div class="editor-layout">
+    <div class="editor-layout character-editor-layout">
       <div class="editor-fields">
         <template v-if="tab === 'profile'"
           ><label>角色名称<input v-model="data.name" /></label
@@ -861,15 +967,6 @@ useTimedError(error);
           <ExpandableTextarea v-model="raw" label="原始 JSON" code :validate="validateJson"
         /></template>
       </div>
-      <aside v-if="!props.session && !props.draftMode" class="editor-start">
-        <h3>角色卡管理</h3>
-        <p class="muted">开始故事请到左侧“会话”页点击“开始新故事”，选择角色卡后设置用户和开场。</p>
-        <button :disabled="busy || agentRunning || card._draftOnly" @click="copyCard">
-          复制已保存角色卡
-        </button>
-        <button :disabled="busy || agentRunning" @click="openAgent">Agent 编辑</button>
-        <a v-if="!card._draftOnly" :href="`/api/cards/${card.id}/export`">导出角色卡 ↓</a>
-      </aside>
     </div>
   </section>
 </template>

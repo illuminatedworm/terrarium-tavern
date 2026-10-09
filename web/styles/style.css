@@ -1360,6 +1360,49 @@ summary {
 .editor-header p {
   font-size: 13px;
 }
+.character-editor-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.editor-export {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  padding: 9px 14px;
+  background: var(--surface-panel);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.editor-export:hover {
+  background: var(--border-subtle);
+}
+.editor-restore-confirm {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(288px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  box-shadow: 0 8px 30px #0006;
+  font: 13px/1.6 var(--font-ui);
+}
+.editor-restore-confirm p {
+  margin: 8px 0 12px;
+  color: var(--text-secondary);
+}
+.editor-restore-confirm .toolbar {
+  justify-content: flex-end;
+}
+.editor-restore-confirm button {
+  padding: 7px 10px;
+  font-size: 12px;
+}
 .editor-tabs {
   display: flex;
   gap: 8px;
@@ -1376,6 +1419,9 @@ summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 270px;
   gap: 30px;
+}
+.editor-layout.character-editor-layout {
+  grid-template-columns: minmax(0, 1fr);
 }
 .editor-fields {
   min-width: 0;

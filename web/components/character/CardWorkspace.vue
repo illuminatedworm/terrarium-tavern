@@ -256,9 +256,11 @@ async function action(kind: string) {
 }
 async function saveForm(document: any) {
   const ref = current.value!.ref;
+  const draftKey = `tavern-card-draft-${formCard.value!.id}`;
   await guard(async () => {
     await api(base + `/drafts/${ref}`, { document, expected_revision: workspace.value!.revision }, 'PUT');
     if (!alive) return;
+    sessionStorage.removeItem(draftKey);
     closeModal();
     await refresh();
   });
