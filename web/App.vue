@@ -2436,7 +2436,10 @@ useTimedError(error);
                     class="quiet regenerate-toggle"
                     :aria-expanded="rewriteExpanded"
                     :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
-                    :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+                    :disabled="
+                      !rewriteExpanded &&
+                      (busy || !!editingMessageId || activeTurn?.status === 'awaiting_review')
+                    "
                     @click="rewriteExpanded = !rewriteExpanded"
                   >
                     ↻ 重新生成</button
