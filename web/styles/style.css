@@ -508,6 +508,7 @@ header {
 }
 .story {
   --reading-content-width: calc(var(--reading-width, 1120px) - 120px);
+  container: story / inline-size;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -2635,8 +2636,8 @@ header {
 .story-heading {
   min-height: 44px;
   padding: 7px 24px;
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
 }
 .story-heading h1 {
@@ -2649,7 +2650,9 @@ header {
 }
 .story-tools {
   margin: 0;
-  flex-shrink: 0;
+  min-width: 0;
+  justify-self: end;
+  justify-content: flex-end;
   gap: 6px;
 }
 .story-tools button {
@@ -4421,8 +4424,44 @@ main,
   flex: 1;
   min-width: 180px;
 }
-.story-channel-label {
+.story-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: 8px;
   white-space: nowrap;
+}
+.story-meta-separator {
+  color: var(--text-muted);
+}
+@container story (max-width: 860px) {
+  .story-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .story-heading h1 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .story-meta {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .story-tools {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+@container story (max-width: 600px) {
+  .story-heading h1 {
+    grid-column: 1 / -1;
+  }
+  .story-tools {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: stretch;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
 }
 .story-channel-model {
   display: flex;

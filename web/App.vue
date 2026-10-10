@@ -2199,10 +2199,13 @@ useTimedError(error);
       <section v-else class="story">
         <div class="story-heading">
           <h1>{{ name }}</h1>
-          <span class="muted">{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
-          <span class="muted story-channel-label">{{
-            channelLabels[session.channel_origin as Channel] || '渠道待确认'
-          }}</span>
+          <div class="story-meta muted" aria-label="运行模式与渠道">
+            <span>{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
+            <span class="story-meta-separator" aria-hidden="true">·</span>
+            <span class="story-channel-label">{{
+              channelLabels[session.channel_origin as Channel] || '渠道待确认'
+            }}</span>
+          </div>
           <div class="story-tools">
             <button v-if="isFullAgent" @click="panel = 'context-management'">窗口与笔记</button>
             <button @click="panel = 'state'">状态与记忆</button
