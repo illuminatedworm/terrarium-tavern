@@ -38,12 +38,14 @@ def load_trace(store, sid, history):
 
 def compile_window(document, session, history, snapshot, user_input, settings, tools, *,
                    trace=(), continuation=(), input_id="pending", instruction="", force_rollover=False,
-                   require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply=""):
+                   require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply="",
+                   replay_all=False):
     state = full_state(snapshot)
     compact = settings.context_strategy == "openai_compact"
     window = state["window"]
     card = normalize(document)
-    visible = history if compact else history[window["start"]:]
+    complete_source = compact or replay_all
+    visible = history if complete_source else history[window["start"]:]
     turn_instructions = {
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
@@ -82,7 +84,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
-    if compact or window["number"] >= 2:
+    if complete_source or window["number"] >= 2:
         # Keep the current directory after fixed settings so key changes preserve
         # their cache prefix. Note bodies and metadata remain tool-only.
         note_keys = "\n".join(key for key, note in state["notes"].items()
@@ -93,15 +95,21 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     by_owner = {}
     for item in trace:
-        if compact or item["window_id"] == window["id"]:
-            by_owner.setdefault(item["message_id"], []).append(item["message"])
+        if complete_source or window.get("replay_history") or item["window_id"] == window["id"]:
+            message = item["message"]
+            if window.get("replay_history") and item["window_id"] != window["id"]:
+                from tavern.scripting.native_response import portable
+                # A local window rebuilt from originals must not resurrect
+                # an old cloud checkpoint through a final-response attachment.
+                message = portable(message)
+            by_owner.setdefault(item["message_id"], []).append(message)
 
     # Filter a single chronological sequence so native state after a retired
     # exchange cannot resurrect broad source reads through another turn.
     records = [{**message, "_content_owner": owner["id"]}
                for owner in visible for message in by_owner.get(owner["id"], [])]
     records.extend({**message, "_content_owner": None} for message in continuation)
-    if compact:
+    if complete_source:
         from tavern.scripting.native_response import portable
         records = [portable(message) for message in records]
     else:
@@ -125,7 +133,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     def replay(message, *, current_turn=False):
         source = message.get("source")
-        if compact and source in ("handoff", "context_budget", "context_policy", "context_status", "context_warning"):
+        if complete_source and source in ("handoff", "context_budget", "context_policy", "context_status", "context_warning"):
             return
         # Turn requirements must not leak into later turns.
         if source in turn_instructions and (not current_turn or not turn_instructions[source]):
@@ -146,7 +154,12 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                 add("system", wrap_lorebook(record["content"]), "lore:" + record["id"], lore_ids=[record["id"]],
                     anchor_id=message_id, title=record["title"])
 
-    for message in visible:
+    # Boundaries belong to source exchanges, not SDK roles (lore may be mapped
+    # to user). Include anchored lore before its user and all tool continuations.
+    replay_starts = [{"offset": 0, "history_start": 0 if complete_source else window["start"]}]
+    for history_index, message in enumerate(visible, 0 if complete_source else window["start"]):
+        if message["role"] == "user" and len(items) > fixed_count:
+            replay_starts.append({"offset": len(items) - fixed_count, "history_start": history_index})
         anchored(message["id"])
         # Native tool calls/results belong before the final narrative that ended that turn.
         records = by_owner.get(message["id"], [])
@@ -154,11 +167,14 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             replay(record)
         add(message["role"], history_text[message["id"]], "history", message_id=message["id"])
         final = next((m for m in records if m.get("_full_agent_final")), None)
-        if not compact and final and items and items[-1].get("message_id") == message["id"]:
+        if not complete_source and final and items and items[-1].get("message_id") == message["id"]:
             items[-1].update({k: copy.deepcopy(final[k]) for k in (
                 "_native_response", "_response_origin", "_response_digest", "reasoning_content",
                 "reasoning_details", "reasoning", "_context_epoch", "_native_epoch") if k in final})
             items[-1] = ledger.native_message(items[-1])
+    pending_offset = len(items) - fixed_count if user_input or continuation or input_id != "pending" else None
+    if pending_offset is not None and len(items) > fixed_count:
+        replay_starts.append({"offset": len(items) - fixed_count, "history_start": len(history)})
     anchored(input_id)
     add("user", user_input, "input", message_id=input_id)
     for message in continuation:
@@ -177,7 +193,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         update(source, content)
     # Staleness remains truthful in the user's notes and source checks. Proactive
     # edit instructions now come only from the user's explicit notification queue.
-    if not compact:
+    if not complete_source:
         update("context_warning", "")
         update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
             + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
@@ -188,6 +204,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                       "_native_response", "_response_origin", "_response_digest"}
 
     def wire():
+        # Role remapping must not let anchored lore join/reorder the fixed
+        # prefix: replay offsets are defined by the original exchange order.
+        for item in items[fixed_count:]:
+            item["runtime_phase"] = "body"
         typed = runtime_messages(items, getattr(settings, "_adapter_lane", "full_agent"))
         adapted, _, _ = adapt_messages(typed, settings, managed=True)
         return [{k: v for k, v in m.items() if k in allowed_fields} for m in adapted]
@@ -204,11 +224,11 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     status = (f"上下文窗口：当前第 {window['number']} 个。\n"
               f"{history_status}；当前用户输入引用 H{len(history)+1}；{visible_status}。\n"
               f"{memory_status}")
-    if not compact:
+    if not complete_source:
         update("context_status", status)
     tokens = request_tokens(wire(), settings, tools) + reasoning_cost
-    rollover_required = not compact and (force_rollover or tokens >= settings.context_tokens)
-    if not compact and (rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio):
+    rollover_required = not complete_source and (force_rollover or tokens >= settings.context_tokens)
+    if not complete_source and (rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio):
         budget_item = None
         # Compare actionable pressure states, not the changing token estimate.
         # Include a new notice itself when checking whether it forces rollover.
@@ -236,7 +256,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             if updated == tokens:
                 break
             tokens = updated
-    elif not compact:
+    elif not complete_source:
         update("context_budget", "")
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
@@ -254,7 +274,14 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     result["context_ledger"] = ledger.audit()
     result["context_additions"] = copy.deepcopy(ledger.additions)
     project_context(result, settings, tools=tools, reasoning_cost=reasoning_cost, managed=True)
+    if complete_source:
+        from tavern.full_agent.compaction import canonical
+        from tavern.scripting.native_response import portable
+        complete = [canonical(portable(message)) for message in result["messages"]]
+        result.update(_replay_header=complete[:fixed_count], _replay_body=complete[fixed_count:],
+                      _replay_starts=replay_starts,
+                      _replay_complete=pending_offset if pending_offset is not None else len(complete) - fixed_count)
     if compact:
         from tavern.full_agent.compaction import project_compact
         return project_compact(result, state, settings, tools, fixed_count)
-    return prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)
+    return result if replay_all else prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

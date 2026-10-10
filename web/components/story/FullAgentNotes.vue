@@ -63,11 +63,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
 
 <template>
   <section class="full-agent-notes" aria-label="Full Agent 记忆与窗口">
-    <ContextStrategyControls
-      :session="session"
-      :disabled="disabled || saving"
-      :pressure-ratio="records?.pressure_ratio"
-    />
+    <ContextStrategyControls :session="session" :disabled="disabled || saving" />
     <template v-if="session.context_strategy !== 'openai_compact'">
       <p class="inspector-note">
         Full Agent · 工作窗口 {{ session.snapshot.full_agent?.window?.number || 1 }}。 Agent

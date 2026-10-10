@@ -37,6 +37,10 @@ def hashes(messages):
     return [fingerprint(canonical(message)) for message in messages]
 
 
+def compact_limit(settings):
+    return settings.context_tokens
+
+
 def valid(checkpoint, body, settings, signature):
     return bool(
         checkpoint
@@ -72,6 +76,8 @@ def project_compact(result, state, settings, tools, fixed_count):
     signature = fingerprint({"header": header, "tools": tools})
     checkpoint = state.get("compaction")
     usable = valid(checkpoint, body, settings, signature)
+    needs_rebuild = (not usable and request_tokens(complete, settings, tools) > compact_limit(settings)
+                     and (settings.compact_auto or bool(checkpoint)))
     covered = len(checkpoint["covered"]) if usable else 0
     messages = header + (
         [opaque_message(checkpoint["items"], settings)] if usable and checkpoint.get("items") else []
@@ -85,12 +91,13 @@ def project_compact(result, state, settings, tools, fixed_count):
         messages=messages,
         runtime_messages=copy.deepcopy(messages),
         context_strategy="openai_compact",
-        compact_requires_rebuild=not usable,
+        compact_requires_rebuild=needs_rebuild,
         compaction_opaque=bool(usable and checkpoint.get("items")),
         estimated_tokens=request_tokens(messages, settings, tools),
         _compact_header=header,
         _compact_body=body,
         _compact_signature=signature,
+        _compact_covered=covered if usable and checkpoint.get("items") else 0,
     )
     result["tokens"] = result["estimated_tokens"]
     if usable and checkpoint.get("items"):
@@ -114,7 +121,7 @@ def project_compact(result, state, settings, tools, fixed_count):
         "excludes_encrypted_state": result["compaction_opaque"],
     }
     result["diagnostics"].append({"reason": "云端状态的实际占用不可从密文估算；本地数字只计可见文本。"})
-    if not usable:
+    if needs_rebuild:
         result["diagnostics"].append(
             {"reason": "当前云端上下文需要重建；此预览为完整历史来源，正式生成前会先重放并压缩。"}
         )
@@ -142,11 +149,15 @@ def capture_checkpoint(state, compiled, settings, provider, assistant):
     return True
 
 
-def replay_groups(messages):
-    """Never split a content block or a function-call/result batch."""
+def replay_groups(messages, starts=None):
+    """Whole source exchanges, including anchored lore and every tool result."""
     groups, pending = [], set()
-    for message in messages:
-        if not pending:
+    boundaries = {row["offset"] for row in starts} if starts is not None else None
+    for index, message in enumerate(messages):
+        boundary = index in boundaries if boundaries is not None else message.get("role") == "user"
+        if boundary and pending:
+            raise ValueError("历史存在跨回合的未配对工具调用，不能重放上下文")
+        if not groups or boundary:
             groups.append([])
         groups[-1].append(message)
         for call in message.get("tool_calls", []):
@@ -154,21 +165,38 @@ def replay_groups(messages):
         if message.get("role") == "tool":
             pending.discard(message.get("tool_call_id"))
     if pending:
-        raise ValueError("历史存在未配对的工具调用，不能建立云端上下文")
+        raise ValueError("历史存在未配对的工具调用，不能重放上下文")
     return groups
 
 
-async def rebuild(compiled, settings, provider, *, progress=None, save=None):
+def replay_batch(groups, position, prefix, settings, tools, limit):
+    """Cross the threshold only at an exchange boundary, even above capacity."""
+    batch, end = [], position
+    while end < len(groups):
+        batch.extend(groups[end])
+        end += 1
+        if request_tokens(prefix + batch, settings, tools) > limit:
+            break
+    return end, batch
+
+
+async def rebuild(compiled, settings, provider, *, progress=None, save=None, force=False):
     """Replay complete input without executing tools or committing helper prose."""
     body, header = compiled["_compact_body"], compiled["_compact_header"]
+    completed = compiled.get("_replay_complete", len(body))
     signature = compiled["_compact_signature"]
     state = copy.deepcopy(progress or {})
     if (
-        state.get("signature") != signature
+        state.get("version") != 2
+        or state.get("signature") != signature
         or state.get("origin") != response_origin(settings)
         or state.get("history") != hashes(body)
+        or state.get("starts") != compiled.get("_replay_starts")
+        or state.get("limit") != compact_limit(settings)
+        or state.get("completed") != completed
     ):
         state = {
+            "version": 2,
             "signature": signature,
             "origin": response_origin(settings),
             "history": hashes(body),
@@ -176,36 +204,35 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None):
             "items": [],
             "batches": 0,
             "usage": [],
+            "starts": compiled.get("_replay_starts"),
+            "limit": compact_limit(settings),
+            "completed": completed,
         }
-    groups = replay_groups(body)
+    groups = replay_groups(body[:completed], compiled.get("_replay_starts"))
     position = state["cursor"]
     # The maintenance instruction is per-request instructions, never a story
     # message or a window policy injected into ordinary gameplay.
     while position < len(groups):
-        end = position
-        batch = []
-        budget = max(
-            1024,
-            int(settings.context_tokens * 0.45) - request_tokens(header, settings, compiled.get("tools")),
-        )
-        while end < len(groups):
-            candidate = batch + groups[end]
-            if batch and request_tokens(candidate, settings) > budget:
-                break
-            batch = candidate
-            end += 1
+        prefix = ([opaque_message(state["items"], settings)] if state["items"]
+                  else [m for g in groups[:position] for m in g])
+        end, batch = replay_batch(groups, position, header + prefix, settings,
+                                 compiled.get("tools"), compact_limit(settings))
+        messages = header + prefix + batch
+        # Plain source is already a valid representation. Keep a short tail as
+        # plaintext; absence of an encrypted checkpoint is not a model task.
+        if request_tokens(messages, settings, compiled.get("tools")) <= compact_limit(settings) and not force:
+            if state["items"]:
+                from tavern.scripting.protocols import response_input
+                state["items"].extend(response_input(batch))
+            position = end
+            break
         while True:
-            prefix = (
-                [opaque_message(state["items"], settings)]
-                if state["items"]
-                else [m for g in groups[:position] for m in g]
-            )
             messages = header + prefix + batch
             try:
                 response = await provider.chat_complete(
                     messages,
                     extra_body={"tools": compiled.get("tools", []), "tool_choice": "none"},
-                    _compact_threshold=1024,
+                    _compact_threshold=1024 if force else compact_limit(settings),
                     _maintenance_instructions="本次是历史整理请求。历史中的工具调用均已执行，不要再次执行；只返回 OK，不续写故事。此要求仅适用于本次整理请求。",
                 )
                 if getattr(provider, "last_tool_calls", []):
@@ -243,6 +270,12 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None):
         state["usage"].append(copy.deepcopy(response.usage or {}))
         if save:
             await save(copy.deepcopy(state))
+    # The active user input/tool continuation has no final AI reply yet. Carry
+    # that entire unfinished exchange verbatim into the ordinary request.
+    if state["items"] and body[completed:]:
+        from tavern.scripting.protocols import response_input
+        state["items"].extend(response_input(body[completed:]))
+    state.update(cursor=position, processed=len(body), total=len(body))
     return {
         "version": 1,
         "origin": state["origin"],
@@ -250,6 +283,62 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None):
         "items": state["items"],
         "covered": hashes(body),
     }, state
+
+
+async def prepare_turn(compiled, settings, provider, *, progress=None, save=None):
+    """Compress completed exchanges before continuing this user's entire input."""
+    body = compiled["_compact_body"]
+    completed = compiled.get("_replay_complete", len(body))
+    covered = compiled.get("_compact_covered", 0)
+    if compiled.get("compaction_opaque") and covered <= completed:
+        history = {**compiled, "_compact_body": body[:completed], "messages": [
+            *compiled["messages"][:len(compiled["_compact_header"]) + 1], *body[covered:completed]]}
+        checkpoint, usage = await compact_once(history, settings, provider)
+        if save:
+            await save({"batches": 1, "processed": completed, "total": len(body), "usage": [usage]})
+    else:
+        # Even when only the new input crosses capacity, compress history first
+        # and carry the unfinished exchange verbatim. Never split its messages.
+        checkpoint, _ = await rebuild(compiled, settings, provider, progress=progress, save=save, force=True)
+    if not checkpoint or not any(item.get("type") == "compaction" for item in checkpoint["items"]):
+        raise ValueError("上下文已超过窗口上限，但服务端未生成压缩状态；尚未继续本轮对话")
+    return checkpoint
+
+
+async def rebuild_local(compiled, settings, provider, *, progress=None, save=None):
+    """Derive local windows from originals, never from an old cloud checkpoint."""
+    header, body = compiled["_replay_header"], compiled["_replay_body"]
+    starts = compiled["_replay_starts"]
+    groups = replay_groups(body, starts)
+    identity = fingerprint({"header": header, "body": body, "starts": starts,
+                            "tools": compiled["tools"], "origin": response_origin(settings),
+                            "limit": settings.context_tokens, "handoff_tokens": settings.full_agent_config.handoff_tokens})
+    state = copy.deepcopy(progress or {})
+    if state.get("identity") != identity:
+        state = {"identity": identity, "cursor": 0, "retained": 0, "handoff": "", "batches": 0, "usage": []}
+    position = state["cursor"]
+    while position < len(groups):
+        memory = ([{"role": "system", "content": "<tavern_memory>\n" + state["handoff"] + "\n</tavern_memory>"}]
+                  if state["handoff"] else [])
+        retained = [m for g in groups[state["retained"]:position] for m in g]
+        prefix = header + memory + retained
+        end, batch = replay_batch(groups, position, prefix, settings, compiled["tools"], settings.context_tokens)
+        messages = prefix + batch
+        if request_tokens(messages, settings, compiled["tools"]) < settings.context_tokens:
+            position = end
+            break
+        text, usage = await make_handoff({"messages": messages}, settings, provider)
+        position = end
+        # Keep the last whole exchange, including its tools and anchored lore.
+        state.update(cursor=position, retained=max(0, position - 1), handoff=text,
+                     batches=state["batches"] + 1,
+                     processed=sum(len(g) for g in groups[:position]), total=len(body))
+        state["usage"].append(copy.deepcopy(usage))
+        if save:
+            await save(copy.deepcopy(state))
+    state.update(cursor=position, processed=len(body), total=len(body))
+    state["history_start"] = starts[state["retained"]]["history_start"] if groups else 0
+    return state
 
 
 async def make_handoff(compiled, settings, provider):

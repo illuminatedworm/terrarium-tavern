@@ -24,6 +24,13 @@ def compact_response(text="OK", number=1):
     return response
 
 
+def long_story(store):
+    from tavern.core.models import SessionCreate
+
+    card = store.import_card(json.dumps({"name": "Long fixture", "first_mes": "完整开场原文。" * 6000}).encode(), "long.json")
+    return store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+
+
 async def operate(service, session, kind):
     operations = service.full.context_operations
     operation = operations.start(
@@ -146,7 +153,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
     initial = Model(
         ("write_note", {"key": "plan", "content": "Keep this note", "kind": "plan"}),
         ("new_context", {"handoff": "OLD HANDOFF", "keep_recent": 0}),
-        "A committed story.",
+        "A committed story. " * 10000,
     )
     try:
         saved, session = await turn(service, session, initial)
@@ -177,7 +184,9 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
         assert [m["raw"] for m in session["messages"]] == [m["raw"] for m in before_history]
         first = wire[0]
-        assert first["context_management"] == [{"type": "compaction", "compact_threshold": 1024}]
+        settings = store.session_settings(session)
+        assert first["context_management"] == [{"type": "compaction", "compact_threshold":
+                                                settings.context_tokens}]
         assert first["input"][0]["role"] == "developer"
         assert "当前有效 handoff" not in json.dumps(first["input"], ensure_ascii=False)
         assert any(
@@ -189,19 +198,22 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         saved, session = await turn(service, session, None)
         assert saved["status"] == "committed", saved["error"]
         assert any(i.get("type") == "compaction" for i in wire[-1]["input"])
-        assert "context_management" in wire[-1]
+        assert "context_management" not in wire[-1]
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
         _, session = await operate(service, session, "enable_local")
         assert session["context_strategy"] == "new_context"
         assert session["snapshot"]["full_agent"]["handoff"]["text"].startswith("NEW HANDOFF")
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
+        export = wire[-1]
+        assert not any(item.get("type") == "compaction" for item in export["input"])
+        assert "A committed story." in json.dumps(export["input"])
     finally:
         await service.close()
 
 
 async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path):
     store, _, _ = connected_store(tmp_path)
-    _, session = story(store, "full_agent")
+    session = long_story(store)
     service = runtime(store)
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -239,7 +251,7 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
 
 async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path):
     store, _, _ = connected_store(tmp_path)
-    _, session = story(store, "full_agent")
+    session = long_story(store)
     service = runtime(store)
 
     def route(request):
@@ -302,10 +314,10 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
         context_tokens=10000,
         context_strategy="openai_compact",
     )
-    body = [
-        {"role": "user", "content": f"Exchange {i}: " + "complete reference sentence. " * 500}
-        for i in range(5)
-    ]
+    body = [message for i in range(5) for message in (
+        {"role": "user", "content": f"Exchange {i}: " + "complete reference sentence. " * 900},
+        {"role": "assistant", "content": f"Complete reply {i}."},
+    )]
     compiled = {
         "_compact_header": [{"role": "system", "content": "Rules"}],
         "_compact_body": body,
@@ -376,6 +388,7 @@ async def test_subscription_stream_compaction_item_survives_empty_terminal_outpu
     try:
         await provider.chat_complete([{"role": "user", "content": "Continue"}])
         assert provider.last_native_response["items"][0] == compaction
+        assert "context_management" not in captured[-1]
         provider.settings.compact_auto = False
         await provider.chat_complete(
             [
@@ -388,3 +401,239 @@ async def test_subscription_stream_compaction_item_survives_empty_terminal_outpu
         assert captured[-1]["input"][1] == compaction
     finally:
         await provider.close()
+
+
+@pytest.mark.parametrize("played", [False, True])
+async def test_short_mode_switches_use_complete_sources_without_maintenance_requests(tmp_path, played):
+    from tavern.full_agent.context import compile_window, load_trace
+
+    store, _, _ = connected_store(tmp_path)
+    _, session = story(store, "full_agent")
+    service = runtime(store)
+
+    def unexpected_provider(_):
+        raise AssertionError("Short source must not even initialize a maintenance provider")
+
+    service.full.context_operations.provider_factory = unexpected_provider
+    try:
+        if played:
+            saved, session = await turn(service, session, Model(
+                ("write_note", {"key": "promise", "content": "Original promise", "kind": "plan"}),
+                ("new_context", {"handoff": "OLD SUMMARY MUST NOT BE REUSED", "keep_recent": 0}),
+                "A short committed reply."))
+            assert saved["status"] == "committed"
+        originals = [m["raw"] for m in session["messages"]]
+        notes = copy.deepcopy(session["snapshot"]["full_agent"]["notes"])
+        result, session = await operate(service, session, "enable_compact")
+        assert result["usage"] == [] and not result["converted"]
+        revision = session["revision"]
+        _, session = await operate(service, session, "enable_compact")
+        assert session["revision"] == revision
+        result, session = await operate(service, session, "enable_local")
+        assert result["usage"] == [] and not result["converted"]
+        assert session["snapshot"]["full_agent"]["window"]["start"] == 0
+        assert session["snapshot"]["full_agent"]["handoff"]["text"] == ""
+        compiled = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
+                                  session["snapshot"], "", store.session_settings(session), [],
+                                  trace=load_trace(store, session["id"], session["messages"]))
+        if played:
+            assert any(call["function"]["name"] == "write_note"
+                       for m in compiled["messages"] for call in m.get("tool_calls", []))
+        assert [m["raw"] for m in session["messages"]] == originals
+        assert session["snapshot"]["full_agent"]["notes"] == notes
+        _, session = await operate(service, session, "enable_compact")
+        model = Model("Only the requested story response.")
+        saved, session = await turn(service, session, model)
+        assert saved["status"] == "committed", saved.get("error")
+        assert len(model.requests) == 1
+        assert "_maintenance_instructions" not in model.requests[0]
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("strategy", ["openai_compact", "new_context"])
+async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
+    from tavern.core.models import Settings
+    from tavern.core.tokens import request_tokens
+    from tavern.full_agent.compaction import rebuild, rebuild_local
+
+    settings = Settings(model="fixture", context_tokens=8192, context_strategy=strategy)
+    body, starts = [], []
+    for index in range(3):
+        starts.append({"offset": len(body), "history_start": index * 2})
+        body.extend([
+            # Adapter-configured lore role must not create another exchange.
+            {"role": "user", "content": f"Anchored lore {index}"},
+            {"role": "user", "content": f"User {index}: " + "whole original sentence. " * 2400},
+            {"role": "assistant", "content": "Tool process", "tool_calls": [
+                {"id": f"c{index}", "function": {"name": "read_state", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": f"c{index}", "content": f"Entire result {index}"},
+            {"role": "assistant", "content": f"Final reply {index} with its complete ending."},
+        ])
+    compiled = {"_compact_header": [], "_compact_body": body, "_compact_signature": "fixture",
+                "_replay_header": [], "_replay_body": body, "_replay_starts": starts, "tools": []}
+
+    class Provider(Model):
+        async def chat_complete(self, messages, **kwargs):
+            self.requests.append(copy.deepcopy(messages))
+            assert request_tokens(messages, settings) > settings.context_tokens
+            if strategy == "new_context":
+                assert not any(item.get("_native_response") for item in messages)
+            self.last_native_response = {"items": [{"type": "compaction", "encrypted_content": "fresh"}]}
+            self.last_tool_calls = ([] if strategy == "openai_compact" else [SimpleNamespace(
+                name="prepare_handoff", arguments=json.dumps({"handoff": "Fresh summary from this replay."}))])
+            return SimpleNamespace(content="OK", usage={"input_tokens": 5000})
+
+    run = rebuild if strategy == "openai_compact" else rebuild_local
+    progress = []
+
+    async def stop(value):
+        progress.append(value)
+        raise asyncio.CancelledError()
+
+    first = Provider()
+    with pytest.raises(asyncio.CancelledError):
+        await run(compiled, settings, first, save=stop)
+    assert progress[0]["processed"] == 5
+    resumed = Provider()
+    await run(compiled, settings, resumed, progress=progress[0])
+    assert len(first.requests) == 1 and len(resumed.requests) == 2
+    for index, request in enumerate(first.requests + resumed.requests):
+        for original in body[index * 5:(index + 1) * 5]:
+            assert original in request
+    if strategy == "new_context":
+        assert not any(item.get("_native_response") for request in resumed.requests for item in request)
+
+
+def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoint_special_cases():
+    from tavern.core.models import Settings
+    from tavern.full_agent.compaction import compact_limit, project_compact
+
+    settings = Settings(model="fixture", context_tokens=8192, context_strategy="openai_compact")
+
+    def projection(text, state=None):
+        return project_compact({"messages": [{"role": "user", "content": text}], "token_counting": {},
+                                "diagnostics": [], "trace": []}, state or {}, settings, [], 0)
+
+    assert not projection("Short source")["compact_requires_rebuild"]
+    long_text = "Complete source. " * 3000
+    assert projection(long_text)["compact_requires_rebuild"]
+    assert projection(long_text)["estimated_tokens"] >= compact_limit(settings)
+    exact = projection(long_text)["estimated_tokens"]
+    settings.context_tokens = exact
+    assert not projection(long_text)["compact_requires_rebuild"]
+    settings.context_tokens = exact - 1
+    assert projection(long_text)["compact_requires_rebuild"]
+    settings.compact_auto = False
+    assert not projection(long_text)["compact_requires_rebuild"]
+    assert projection(long_text, {"compaction": {"version": 0}})["compact_requires_rebuild"]
+
+
+@pytest.mark.parametrize("automatic", [True, False])
+async def test_user_turn_compacts_before_story_only_when_enabled_and_never_during_tools(tmp_path, automatic):
+    from tavern.core.models import TurnRequest
+
+    store, _, _ = connected_store(tmp_path)
+    config = store.settings_document()
+    config.full_agent.official_model.context_tokens = 10000
+    store.save_settings(config)
+    _, session = story(store, "full_agent")
+    service = runtime(store)
+    wire, stages = [], []
+    text = "本轮输入必须完整保留。" * 4000
+
+    def route(request):
+        body = json.loads(request.content)
+        wire.append(body)
+        if body.get("instructions"):
+            stages.append("maintenance")
+            assert text not in json.dumps(body["input"], ensure_ascii=False)
+            return sse(compact_response())
+        stages.append("story")
+        assert "context_management" not in body
+        assert text in json.dumps(body["input"], ensure_ascii=False)
+        if stages.count("story") == 1:
+            return sse(completed("", [("read_history", {"ref": "H2"})]))
+        return sse(completed("The final reply follows the complete current input."))
+
+    store.chatgpt.http_transport = httpx.MockTransport(route)
+    try:
+        _, session = await operate(service, session, "enable_compact")
+        assert wire == []
+        session = store.update_session(session["id"], session["revision"], compact_auto=int(automatic))
+        started = service.submit(session["id"], TurnRequest(
+            text=text, operation_id="long-user-input", expected_revision=session["revision"]))
+        await service.tasks[started["id"]]
+        saved = store.turn(started["id"])
+        assert saved["status"] == "committed", saved.get("error")
+        assert stages == (["maintenance"] if automatic else []) + ["story", "story"]
+        assert store.session(session["id"])["messages"][-2]["raw"] == text
+    finally:
+        await service.close()
+
+
+async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_path):
+    from tavern.core.models import TurnRequest
+
+    store, _, _ = connected_store(tmp_path)
+    _, session = story(store, "full_agent")
+    service = runtime(store)
+    requests = []
+
+    def route(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        assert body.get("instructions"), "Failure must stop before the story request"
+        return sse(completed("OK without a compaction checkpoint"))
+
+    store.chatgpt.http_transport = httpx.MockTransport(route)
+    try:
+        _, session = await operate(service, session, "enable_compact")
+        before = copy.deepcopy(session["snapshot"])
+        started = service.submit(session["id"], TurnRequest(
+            text="Whole oversized input. " * 15000, operation_id="no-compaction", expected_revision=session["revision"]))
+        await service.tasks[started["id"]]
+        saved = store.turn(started["id"])
+        assert saved["status"] == "error"
+        assert "未生成压缩状态" in saved["error"]
+        assert len(requests) == 1
+        current = store.session(session["id"])
+        assert current["head"] == session["head"] and current["snapshot"] == before
+    finally:
+        await service.close()
+
+
+async def test_pre_turn_recompaction_keeps_the_pending_exchange_outside_the_checkpoint():
+    from tavern.core.models import Settings
+    from tavern.full_agent.compaction import hashes, prepare_turn, project_compact
+    from tavern.scripting.request_context import response_origin
+
+    settings = Settings(model="fixture", auth_mode="chatgpt_subscription", context_strategy="openai_compact")
+    history = [{"role": "user", "content": "Old user input"},
+               {"role": "assistant", "content": "Old final reply"}]
+    pending = {"role": "user", "content": "Entire new user input. " * 15000}
+
+    def project(state):
+        return project_compact({"messages": history + [pending], "token_counting": {}, "diagnostics": [],
+                                "trace": [], "_replay_complete": 2}, state, settings, [], 0)
+
+    source = project({})
+    state = {"compaction": {"version": 1, "origin": response_origin(settings),
+                            "signature": source["_compact_signature"], "covered": hashes(history),
+                            "items": [{"type": "compaction", "encrypted_content": "prior"}]}}
+
+    class Provider(Model):
+        async def chat_complete(self, messages, **kwargs):
+            self.requests.append(messages)
+            assert pending not in messages
+            assert messages[0]["_native_response"]["items"][0]["encrypted_content"] == "prior"
+            self.last_native_response = {"items": [{"type": "compaction", "encrypted_content": "fresh"}]}
+            return SimpleNamespace(content="OK", usage={})
+
+    provider = Provider()
+    state["compaction"] = await prepare_turn(project(state), settings, provider)
+    assert len(provider.requests) == 1
+    assert state["compaction"]["covered"] == hashes(history)
+    projected = project(state)
+    assert projected["messages"][-1] == pending
+    assert projected["messages"][0]["_native_response"]["items"][0]["encrypted_content"] == "fresh"

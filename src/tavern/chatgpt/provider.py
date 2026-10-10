@@ -74,8 +74,9 @@ class ChatGPTProvider(ModelTransport):
         if effort != "default":
             body["reasoning"] = {"effort": effort}
         threshold = kwargs.get("_compact_threshold")
-        if threshold is None and cfg.context_strategy == "openai_compact" and cfg.compact_auto:
-            threshold = max(1024, int(cfg.context_tokens * cfg.full_agent_config.pressure_ratio))
+        # The runtime checks capacity once before a user-initiated turn. Only
+        # dedicated maintenance requests may compress; story/tool continuations
+        # must not trigger a second, server-side threshold policy mid-turn.
         if threshold is not None and not kwargs.get("_compact_disabled"):
             if cfg.runtime_mode != "full_agent":
                 raise ValueError("云端 compact 仅适用于官方渠道的 Full Agent")

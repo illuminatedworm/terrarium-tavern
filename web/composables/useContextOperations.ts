@@ -56,7 +56,12 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       if (ticket !== generation) return;
       operation.value = result;
       clearTimeout(timer);
-      void refresh();
+      if (result.status === 'completed') {
+        const value = await api(`/sessions/${sid}`);
+        if (ticket === generation && session()?.id === sid) updated(value);
+      } else {
+        void refresh();
+      }
     } catch (e: any) {
       if (ticket === generation) error.value = e.message;
     } finally {

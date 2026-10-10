@@ -180,16 +180,17 @@ class FullAgent:
                 "lore_injections": self.snapshot.get("lore_injections", [])})
             if self.resumed:
                 await self.resume_tools()
-            for _ in range(self.settings.full_agent_config.max_steps):
+            for step in range(self.settings.full_agent_config.max_steps):
                 compiled = self.compile()
-                if compiled.get("compact_requires_rebuild"):
-                    from tavern.full_agent.compaction import rebuild
+                if (step == 0 and self.settings.context_strategy == "openai_compact"
+                        and self.settings.compact_auto and compiled["estimated_tokens"] > self.settings.context_tokens):
+                    from tavern.full_agent.compaction import prepare_turn
                     async def save_replay(value):
                         self.state["compact_replay"] = value
                         self.event("context_replay", {key: value[key] for key in ("batches", "processed", "total")})
                         self.event("usage", {"usage": value["usage"][-1], "calls": 1, "context_maintenance": True})
                         await self.save_progress()
-                    checkpoint, _ = await rebuild(compiled, self.settings, provider,
+                    checkpoint = await prepare_turn(compiled, self.settings, provider,
                         progress=self.state.get("compact_replay"), save=save_replay)
                     self.state["compaction"] = checkpoint
                     self.state.pop("compact_replay", None)

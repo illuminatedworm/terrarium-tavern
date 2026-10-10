@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, getCurrentInstance, inject } from 'vue';
 import type { ContextOperations } from '../../composables/useContextOperations';
-const props = defineProps<{ session: any; disabled?: boolean; pressureRatio?: number }>();
+const props = defineProps<{ session: any; disabled?: boolean }>();
 const ops = inject<ContextOperations>('context-operations');
 const compact = computed(() => props.session.context_strategy === 'openai_compact');
 const working = computed(() => props.disabled || ops?.busy.value);
@@ -56,15 +56,14 @@ const usage = computed(() => {
             :checked="session.compact_auto"
             :disabled="working"
             @change="ops.automatic(($event.target as HTMLInputElement).checked)"
-          />自动压缩</label
+          /><span>自动压缩</span></label
         >
-        <span v-if="pressureRatio != null" class="inspector-note"
-          >达到窗口的 {{ Math.round(pressureRatio * 1000) / 10 }}% 时触发</span
+        <span class="inspector-note" title="用户发起一轮对话时，若上下文超过窗口上限，先压缩再继续本轮。"
+          >发送时超出窗口则先压缩</span
         >
       </div>
       <div class="context-actions">
         <button class="primary" :disabled="working" @click="ops.start('compact')">立即压缩</button>
-        <button :disabled="working" @click="ops.start('enable_local')">切回本地换窗</button>
       </div>
     </template>
     <div v-if="ops.operation.value" class="context-operation" role="status" aria-live="polite">
@@ -87,11 +86,13 @@ const usage = computed(() => {
       </template>
       <p v-else-if="ops.operation.value.status === 'completed'">
         {{
-          ops.operation.value.kind === 'enable_local'
-            ? '新的交接笔记已保存，已切回本地换窗。'
-            : ops.operation.value.compacted
-              ? '云端上下文已就绪。'
-              : '上下文已就绪，本次未发生压缩。'
+          !ops.operation.value.converted && !ops.operation.value.compacted
+            ? '上下文方式已切换，完整历史无需转换。'
+            : ops.operation.value.kind === 'enable_local'
+              ? '新的交接笔记已保存，已切回本地换窗。'
+              : ops.operation.value.compacted
+                ? '云端上下文已就绪。'
+                : '上下文已就绪，本次未发生压缩。'
         }}
       </p>
     </div>
@@ -131,6 +132,15 @@ const usage = computed(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: 0 16px;
+}
+.compact-auto-row .compact-auto,
+.compact-auto-row .inspector-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.compact-auto-row .compact-auto {
+  flex-direction: row;
 }
 .context-strategy input[type='radio'],
 .context-strategy input[type='checkbox'] {
