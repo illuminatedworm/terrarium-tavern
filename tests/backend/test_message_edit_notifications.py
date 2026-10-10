@@ -8,7 +8,8 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.application.service import RoleplayRuntime
-from tavern.conversation.message_editing import NOTIFICATIONS, edit_notification, review_snapshot
+from tavern.conversation.message_editing import NOTIFICATIONS, edit_notification
+from tavern.conversation.update_review import review_snapshot
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, uid
 from tests.backend.test_full_agent import Model, runtime, turn

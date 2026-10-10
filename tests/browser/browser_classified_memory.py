@@ -114,7 +114,7 @@ async def main():
                 await page.get_by_role('button', name='折叠右侧栏', exact=True).click()
                 for width, height, label in [(1440, 900, 'desktop'), (1280, 720, 'compact'), (390, 844, 'mobile'), (720, 450, 'zoom-200-equivalent')]:
                     await page.set_viewport_size({'width': width, 'height': height})
-                    await page.get_by_role('button', name='状态与记忆', exact=True).click()
+                    await page.get_by_role('button', name='变量与记忆', exact=True).click()
                     dialog = page.get_by_role('dialog')
                     await expect(dialog.locator('.classified-memory')).to_contain_text('当前进展')
                     await page.screenshot(path=str(screenshots / f'{label}.png'))

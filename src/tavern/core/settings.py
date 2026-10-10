@@ -24,6 +24,7 @@ from tavern.core.prompts import (
     DEFAULT_TRACKER_PROMPT,
     LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
 )
+from tavern.core.update_policy import Policy
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 
@@ -54,7 +55,7 @@ class AgentSettings(StrictSettings):
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
     # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
-    policy: Literal["directed", "evolving", "preview"] = "directed"
+    policy: Policy = "automatic"
     preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
     regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
     probe_system_prompt: str = DEFAULT_PROBE_PROMPT

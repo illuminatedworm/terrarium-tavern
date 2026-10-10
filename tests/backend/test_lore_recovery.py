@@ -12,6 +12,7 @@ from tavern.conversation.context import activate_lore, compile_context, lore_rec
 from tavern.core.models import ContextRecipe, SessionCreate, TurnRequest
 from tavern.core.models import Settings as AppSettings
 from tavern.storage.store import Store
+from tests.support.tracker_model import TrackerModel
 
 
 def Settings(**values):
@@ -275,6 +276,9 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
         initial = store.update_session(initial["id"], initial["revision"], policy="preview")
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["" if outcome == "failure" else "正文"])
+    service.tracker_provider_factory = lambda: TrackerModel(
+        ("revise_content", {"operations": [{"op": "add", "path": "/description", "value": "New setting"}],
+                            "reason": "Explicit request"}), "done")
     try:
         if outcome == "cancel":
             service.provider_factory = lambda: ScriptedLLM([
@@ -289,7 +293,7 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
             await service.cancel(turn["id"])
             assert store.turn(turn["id"])["status"] == "cancelled"
         else:
-            turn = await send(service, initial)
+            turn = await send(service, initial, allow_content_edit=outcome in ("reject", "accept"))
             if outcome == "failure":
                 assert turn["status"] == "error"
             else:

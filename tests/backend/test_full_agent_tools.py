@@ -279,7 +279,7 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
 
     data = {"name": "Guide", "description": "Before", "custom_field": "Custom"}
     document = {"spec": "chara_card_v2", "spec_version": "2.0", "data": data} if wrapped else data
-    definitions = tool_definitions(TurnRequest(operation_id="guidance", expected_revision=0),
+    definitions = tool_definitions(TurnRequest(operation_id="guidance", expected_revision=0, allow_content_edit=True),
                                    {"policy_effective": "auto"}, document=document)
     catalog = {item["function"]["name"]: item["function"] for item in definitions}
     assert "custom_field" not in json.dumps(catalog)

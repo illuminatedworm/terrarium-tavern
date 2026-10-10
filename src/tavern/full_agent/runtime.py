@@ -3,6 +3,7 @@ import asyncio
 import copy
 
 from tavern.character.cards import regex_scripts
+from tavern.conversation.update_review import finish_turn
 from tavern.core.cache_policy import fingerprint
 from tavern.core.models import TurnRequest
 from tavern.core.provider import require_model_connection
@@ -121,7 +122,6 @@ class FullAgentRuntime:
             from tavern.conversation.message_editing import (
                 NOTIFICATIONS,
                 inherit_edit_notifications,
-                review_snapshot,
             )
             inherit_edit_notifications(snapshot, session["snapshot"])
             card = self.store.session_card(session["id"])
@@ -171,7 +171,7 @@ class FullAgentRuntime:
             processed = await script.call("process", text, [], "")
             snapshot.update(state=processed["state"], scopes=processed["scopes"])
             if processed.get("loreModified"):
-                if session["policy_effective"] == "directed" and not request.allow_content_edit:
+                if not request.allow_content_edit:
                     raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
                 revised = copy.deepcopy(agent.document)
                 revised.get("data", revised).setdefault("character_book", {})["entries"] = processed["lore"]
@@ -191,11 +191,7 @@ class FullAgentRuntime:
             pending = {"messages": [output] if reused else [user, output], "before": before,
                        "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace,
                        "message_edit_notified": list(snapshot.get(NOTIFICATIONS, []))}
-            if session["policy_effective"] == "preview" and review_snapshot(snapshot) != review_snapshot(before):
-                self.store.set_turn(tid, status="awaiting_review", pending=dump(pending))
-                self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})
-            else:
-                self.store.commit_turn(tid, pending)
+            finish_turn(self.store, tid, session, pending, snapshot)
         except asyncio.CancelledError:
             self.store.set_turn(tid, status="cancelled", error="用户取消，草稿未提交")
             self.store.event(tid, "cancelled", {})

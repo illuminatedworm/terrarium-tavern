@@ -7,16 +7,15 @@ const number = (
   step: number | string = 1,
 ): SettingField => ({ path, label, min, max, step });
 export const policies = [
-  { value: 'directed', label: '设定需授权，状态自动保存' },
-  { value: 'evolving', label: '允许修改设定，自动保存' },
-  { value: 'preview', label: '状态与设定更新均需确认' },
-];
-export const policyField: SettingField[] = [
   {
-    path: 'policy',
-    label: '默认对话更新策略',
-    options: policies,
-    help: '未单独设置权限的同模式对话，从下一轮起采用此策略。',
+    value: 'automatic',
+    label: '自动保存',
+    description: '变量、角色设定和世界书的修改随本轮正文一起保存。',
+  },
+  {
+    value: 'review',
+    label: '审核后保存',
+    description: '变量、角色设定或世界书实际改变时，先展示修改；接受后整轮保存，拒绝则整轮不提交。',
   },
 ];
 export const loreFields: SettingField[] = [

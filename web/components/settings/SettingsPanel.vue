@@ -10,8 +10,6 @@ import {
   type SettingsObject,
 } from '../../lib/settingsDocument';
 import {
-  policies,
-  policyField,
   loreFields,
   retrievalFields,
   retrievalAdvanced,
@@ -21,6 +19,7 @@ import {
   networkFields,
 } from '../../lib/settingsFields';
 import SettingsFields from './SettingsFields.vue';
+import PolicySelect from './PolicySelect.vue';
 import ModelProfileEditor from './ModelProfileEditor.vue';
 import ProviderSettings from './ProviderSettings.vue';
 import LocalResourceSettings from './LocalResourceSettings.vue';
@@ -382,16 +381,7 @@ onMounted(async () => {
                 :effort-options="effortOptions"
                 :flush="editor.flush"
                 @checked="refreshAfterProbe"
-                ><template #common-extra
-                  ><label data-setting-path="policy"
-                    >默认对话更新策略<select v-model="draft.full_agent.policy">
-                      <option v-for="option in policies" :key="option.value" :value="option.value">
-                        {{ option.label }}
-                      </option>
-                    </select></label
-                  ></template
-                ></ModelProfileEditor
-              >
+              />
               <div v-else-if="scope === 'full_agent'" class="channel-empty">
                 <p>此渠道的 Full Agent 模型尚未配置。</p>
                 <button :disabled="!providersForChannel.length" @click="createChannelProfile('full_agent')">
@@ -422,10 +412,9 @@ onMounted(async () => {
                 </template>
               </template>
             </div>
-            <p v-if="scope === 'full_agent'" class="muted">
-              默认权限的修改，会从下一轮起影响同模式下继承默认值的对话。
-            </p>
-            <div v-else class="settings-policy"><SettingsFields :value="values" :fields="policyField" /></div>
+            <div class="settings-policy" data-setting-path="policy">
+              <PolicySelect v-model="values.policy" global compact />
+            </div>
           </template>
           <template v-else-if="page.key === 'retrieval'">
             <h4>世界书注入</h4>

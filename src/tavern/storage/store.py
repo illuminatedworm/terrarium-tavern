@@ -652,7 +652,9 @@ class Store(MessageAdapters):
         )
         settings = self.session_settings(result, require_origin=False)
         result["compact_auto"] = bool(result["compact_auto"])
-        result["policy_effective"] = result["policy"] or settings.policy
+        from tavern.core.update_policy import normalize_policy
+        result["policy"] = normalize_policy(result["policy"])
+        result["policy_effective"] = result["policy"] or normalize_policy(settings.policy)
         result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
         from tavern.conversation.cache_breakpoint import (
             advance_follow,
@@ -902,6 +904,11 @@ class Store(MessageAdapters):
         return result
 
     def update_session(self, sid, expected, **fields):
+        if "policy" in fields:
+            from pydantic import TypeAdapter
+
+            from tavern.core.update_policy import Policy
+            fields["policy"] = TypeAdapter(Policy | None).validate_python(fields["policy"])
         if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "title",
                                                   "cache_breakpoint_auto", "cache_breakpoint_message", "cache_breakpoint_follow", "compact_auto"}):
             raise ValueError("无效会话字段")
@@ -1121,6 +1128,12 @@ class Store(MessageAdapters):
         result["retry_head"] = anchor
         for key in ("request", "preview", "pending"):
             result[key] = json.loads(result[key]) if result[key] else None
+        if result["pending"] and "review_changes" not in result["pending"]:
+            from tavern.conversation.update_review import review_changes
+            pending = result["pending"]
+            after = (pending.get("scene") or (pending.get("messages") or [{}])[-1]).get("snapshot", {})
+            pending["review_changes"] = review_changes(pending.get("before", {}), after,
+                                                        self.session_card(result["session"])["document"])
         return result
 
     def edit_pending_input(self, tid, text, expected_revision):

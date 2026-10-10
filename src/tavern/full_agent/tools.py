@@ -178,7 +178,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         for write, read in READ_DEPENDENCIES.items():
             if read not in names:
                 names.discard(write)
-    if not catalog and session["policy_effective"] == "directed" and not request.allow_content_edit:
+    if not catalog and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
         "write_handoff": f" content limit: {config.handoff_tokens} tokens.",

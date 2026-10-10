@@ -66,7 +66,7 @@ async def main():
                             await toggle.click(position={"x": 3, "y": 16})
                     if await page.locator(".right-sidebar:not(.collapsed)").count():
                         await toggle.click()
-                    await page.get_by_role("button", name="状态与记忆", exact=True).click()
+                    await page.get_by_role("button", name="变量与记忆", exact=True).click()
                     await expect(page.get_by_role("dialog")).to_be_visible()
                     assert not await toggle.evaluate("""button => {
                         const r = button.getBoundingClientRect();

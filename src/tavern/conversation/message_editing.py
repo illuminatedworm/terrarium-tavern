@@ -16,11 +16,6 @@ def inherit_edit_notifications(snapshot, current):
         snapshot[NOTIFICATIONS] = copy.deepcopy(current[NOTIFICATIONS])
 
 
-def review_snapshot(snapshot):
-    """Operational notification metadata is not a proposed story mutation."""
-    return {key: value for key, value in snapshot.items() if key != NOTIFICATIONS}
-
-
 def edit_notification(snapshot, history, included=None, expand=None):
     """Supply short references only when their revised text is actually present.
 

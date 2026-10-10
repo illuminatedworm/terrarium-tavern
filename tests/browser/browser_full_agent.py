@@ -215,7 +215,7 @@ async def main():
                 await notes.get_by_label("交接笔记（handoff）", exact=True).fill("人工确认：明天去钟楼。")
                 await notes.get_by_role("button", name="保存并换新窗口", exact=True).click()
                 await expect(notes).to_contain_text("工作窗口 3")
-                await page.get_by_role("button", name="状态与记忆", exact=True).click()
+                await page.get_by_role("button", name="变量与记忆", exact=True).click()
                 modal = page.get_by_role("dialog")
                 await expect(modal.get_by_label("交接笔记（handoff）", exact=True)).to_have_value("人工确认：明天去钟楼。")
                 await page.set_viewport_size({"width": 390, "height": 844})

@@ -190,11 +190,11 @@ def test_modes_inherit_their_own_policy_and_card_editor_stays_independent(tmp_pa
     full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     half = store.new_session(SessionCreate(card_id=card["id"], agent_mode="half_agent"))
     doc = store.settings_document()
-    doc.full_agent.policy = "evolving"
+    doc.full_agent.policy = "review"
     doc.half_agent.background.model = "changed-background"
     store.save_settings(doc)
-    assert store.session(full["id"])["policy_effective"] == "evolving"
-    assert store.session(half["id"])["policy_effective"] == "directed"
+    assert store.session(full["id"])["policy_effective"] == "review"
+    assert store.session(half["id"])["policy_effective"] == "automatic"
     assert store.settings().for_role("card_editor").model != "changed-background"
 
 

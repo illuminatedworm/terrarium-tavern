@@ -29,9 +29,11 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
-| `full_agent` | 模型、工具与记忆、检索、提示词及默认权限 | `model` |
-| `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认权限 | `foreground`、`background` |
+| `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model` |
+| `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background` |
 | `shared` | 提供商与密钥、角色卡编辑模型、本地模型文件、网络和清理参数 | `card_editor` |
+
+两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，保存方式不再授予写入权限。
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围中的模型能力检查失效，因此一次响应可能包含多个范围的新修订号。客户端应合并响应中的实际值，不能只递增提交范围的本地计数。
 

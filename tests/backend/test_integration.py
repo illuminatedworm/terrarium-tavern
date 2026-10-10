@@ -261,8 +261,12 @@ async def test_preview_edit_and_cancel_are_atomic(tmp_path):
     s = store.new_session(SessionCreate(card_id=c["id"], policy="preview"))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["first draft"])
+    service.tracker_provider_factory = lambda: TrackerModel(
+        ("revise_content", {"operations": [{"op": "add", "path": "/description", "value": "New setting"}],
+                            "reason": "Explicit request"}), "done")
     try:
-        t = service.submit(s["id"], TurnRequest(text="hello", operation_id="one", expected_revision=0))
+        t = service.submit(s["id"], TurnRequest(text="hello", operation_id="one", expected_revision=0,
+                                               allow_content_edit=True))
         await service.tasks[t["id"]]
         assert store.turn(t["id"])["status"] == "awaiting_review"
         assert store.session(s["id"])["head"] == s["head"]

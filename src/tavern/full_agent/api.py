@@ -84,6 +84,8 @@ def register_full_agent_routes(app, store, context_operations=None):
                               update_variables=update_variables, allow_content_edit=allow_content_edit)
         available = {t["function"]["name"] for t in tool_definitions(
             request, session, settings.full_agent_config, settings=settings)}
+        # Keep the model's variable tool schema stable for prefix caching; the
+        # execution gate and this UI availability follow only the turn request.
         if not update_variables:
             available.discard("patch_state")
         document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])

@@ -253,7 +253,7 @@ def validate_package(store, package, blobs):
                 raise ValueError("上下文模式无效")
             if session.get("context_strategy") == "openai_compact" and (session.get("channel_origin") != "chatgpt" or session["agent_mode"] != "full_agent"):
                 raise ValueError("此渠道不能导入云端 compact 会话")
-            if session.get("policy") not in (None, "directed", "evolving", "preview"):
+            if session.get("policy") not in (None, "automatic", "review", "directed", "evolving", "preview"):
                 raise ValueError("对话更新策略无效")
             if not isinstance(session["persona_data"], dict):
                 raise ValueError("对话用户角色无效")

@@ -279,7 +279,10 @@ async def test_rejected_review_cannot_resume_and_keeps_audit(story, cancel_endpo
     service = runtime(store)
     try:
         result, current = await turn(service, session, Model(
-            ("write_note", {"key": "draft", "content": "Unapproved", "kind": "plan"}), "Narrative"))
+            ("write_note", {"key": "draft", "content": "Unapproved", "kind": "plan"}),
+            ("read_character", {"ref": "description"}),
+            ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Changed"}],
+                                "reason": "Requested edit"}), "Narrative"), allow_content_edit=True)
         assert result["status"] == "awaiting_review" and store.full_agent_progress(result["id"])
         if cancel_endpoint:
             await service.full.cancel(result["id"])

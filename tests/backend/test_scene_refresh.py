@@ -95,24 +95,18 @@ async def test_invalid_critical_source_blocks_refresh(story, kind):
 
 
 @pytest.mark.parametrize("kind", ["memory"])
-@pytest.mark.parametrize("accept", [True, False])
-async def test_refresh_respects_review_policy(story, kind, accept):
+async def test_memory_refresh_does_not_require_content_review(story, kind):
     app, before = story
     store, service = app.state.store, app.state.service
     before = store.update_session(before["id"], before["revision"], policy="preview")
     service.memory_provider_factory = lambda: MemoryModel([output(kind, before)])
     try:
         turn = await refresh(app, before, kind)
-        assert turn["status"] == "awaiting_review"
-        assert store.session(before["id"])["snapshot"] == before["snapshot"]
-        with pytest.raises(Conflict):
-            service.submit(before["id"], TurnRequest(operation_id=uid(), expected_revision=before["revision"],
-                                                    scene_refresh="memory"))
-        service.review(turn["id"], accept)
+        assert turn["status"] == "committed"
         after = store.session(before["id"])
         assert len(after["messages"]) == len(before["messages"])
-        assert (after["snapshot"] != before["snapshot"]) == accept
-        assert after["revision"] == before["revision"] + int(accept)
+        assert after["snapshot"] != before["snapshot"]
+        assert after["revision"] == before["revision"] + 1
     finally:
         await service.close()
 

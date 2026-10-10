@@ -80,7 +80,7 @@ async def after_story(store, tid, settings, session, history, snapshot, request,
         result = await run_task("post", document, history, snapshot,
             memory_start=archive.get("covered_count", 0) if due else None,
             variables=request.update_variables,
-            content=request.allow_content_edit or session["policy_effective"] != "directed",
+            content=request.allow_content_edit,
             user_input=request.text, narrative=history[-1]["model"], committed_history=committed_history)
     except Exception as error:
         if request.update_variables or request.allow_content_edit:

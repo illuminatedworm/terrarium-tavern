@@ -15,6 +15,7 @@ from tavern.core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TRACKER_PROMPT,
 )
+from tavern.core.update_policy import Policy
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import (
     LocalModels,
@@ -25,7 +26,6 @@ from tavern.search.retrieval_config import (
     api_root,
 )
 
-Policy = Literal["directed", "evolving", "preview"]
 LoreInjectionMode = Literal["conversation", "st_top"]
 ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -186,7 +186,7 @@ class Settings(BaseModel):
     prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
     context_tokens: int = Field(default=32768, ge=2048, le=2000000, strict=True)
     reply_tokens: int = Field(default=2048, ge=128, le=65536, strict=True)
-    policy: Policy = "directed"
+    policy: Policy = "automatic"
     lore_injection_mode: LoreInjectionMode = "conversation"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""

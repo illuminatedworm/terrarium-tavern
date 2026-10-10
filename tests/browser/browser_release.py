@@ -135,7 +135,7 @@ async def main():
             await page.locator('.work-turn').first.wait_for()
             await assert_viewport(page, label + ":work-records")
             await page.get_by_role("button", name="返回对话", exact=True).click()
-            for button, title in [("状态与记忆", "状态与记忆"), ("剧情分支", "新建对话"), ("上下文", "上下文预览")]:
+            for button, title in [("变量与记忆", "变量与记忆"), ("剧情分支", "新建对话"), ("上下文", "上下文预览")]:
                 await page.get_by_role("button", name=button, exact=False).first.click()
                 modal = page.get_by_role("dialog")
                 await modal.get_by_role("heading", name=title, exact=True).wait_for()

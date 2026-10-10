@@ -373,7 +373,7 @@ async def test_record_api_revision_fork_and_edit_preservation(tmp_path):
     await app.state.service.close()
 
 
-async def test_rebuild_cancel_and_review_are_atomic(tmp_path):
+async def test_rebuild_memory_saves_without_content_review(tmp_path):
     from tests.support.tracker_model import MemoryModel
     app = create_app(tmp_path)
     store = app.state.store
@@ -384,9 +384,8 @@ async def test_rebuild_cancel_and_review_are_atomic(tmp_path):
         rid="N1", content="她打了招呼", sources=["S1"]))])
     turn = app.state.service.submit(s["id"], TurnRequest(operation_id=uid(), expected_revision=s["revision"], scene_refresh="memory"))
     await app.state.service.tasks[turn["id"]]
-    assert store.turn(turn["id"])["status"] == "awaiting_review"
-    assert store.session(s["id"])["snapshot"] == s["snapshot"]
-    app.state.service.review(turn["id"], False)
-    assert store.session(s["id"])["snapshot"] == s["snapshot"]
+    assert store.turn(turn["id"])["status"] == "committed"
+    assert store.session(s["id"])["snapshot"]["memory_document"]["records"][0]["content"] == "她打了招呼"
+    assert not any(e["kind"] == "awaiting_review" for e in store.events(turn["id"]))
     assert estimate_batches(s["messages"], empty(), {}, "用户", store.settings().for_role("background")) == 1
     await app.state.service.close()

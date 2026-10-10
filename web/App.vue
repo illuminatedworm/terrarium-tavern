@@ -43,6 +43,7 @@ import { defaultReadingLayout } from './lib/dataTransfer';
 import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
 import EffortControl from './components/settings/EffortControl.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
+import TurnReview from './components/story/TurnReview.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
 import CharacterEditor from './components/character/CharacterEditor.vue';
@@ -225,12 +226,13 @@ const updatingTracker = computed(
 const retryNote = ref(''),
   retryIncludeReply = ref(false);
 watch(
-  () => activeTurn.value?.id,
+  () => [session.value?.id, activeTurn.value?.id, activeTurn.value?.status],
   () => {
     retryNote.value = activeTurn.value?.request?.regenerate_note || '';
     retryIncludeReply.value = !!activeTurn.value?.request?.regenerate_include_reply;
-    if (session.value?.agent_mode === 'full_agent' && retryableTurn.value)
-      updateVariables.value = !!activeTurn.value?.request?.update_variables;
+    const request = activeTurn.value?.status !== 'committed' ? activeTurn.value?.request : null;
+    updateVariables.value = !!request?.update_variables;
+    allowEdit.value = !!request?.allow_content_edit;
   },
 );
 const viewScope = createSessionController();
@@ -286,7 +288,9 @@ watch(
   },
 );
 const updateVariables = ref(false);
-watch(updateVariables, () => {
+const allowEdit = ref(false),
+  importInput = ref<HTMLInputElement>();
+watch([updateVariables, () => allowEdit.value], () => {
   if (!busy.value) void refreshContextStats();
 });
 watch(
@@ -301,8 +305,6 @@ watch(
     }
   },
 );
-const allowEdit = ref(false),
-  importInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>();
 const followLatest = ref(true);
 const readingPinned = ref(false);
@@ -1172,6 +1174,12 @@ function sessionLoreSaved(value: any) {
   session.value = value;
   activeTurn.value = value.turns.find((turn: any) => turn.status === 'awaiting_review') || null;
   pageMode.value = '';
+  if (activeTurn.value) {
+    const id = activeTurn.value.id;
+    void guarded(async () => {
+      activeTurn.value = await viewApi(`/turns/${id}`);
+    });
+  }
 }
 watch(pageMode, (value) => {
   if (value) abandonStoryLoad();
@@ -2208,7 +2216,7 @@ useTimedError(error);
           </div>
           <div class="story-tools">
             <button v-if="isFullAgent" @click="panel = 'context-management'">窗口与笔记</button>
-            <button @click="panel = 'state'">状态与记忆</button
+            <button @click="panel = 'state'">变量与记忆</button
             ><button
               :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
               @click="showForkPoints"
@@ -2458,15 +2466,11 @@ useTimedError(error);
                 </div>
               </template>
             </component>
-            <div v-if="activeTurn?.status === 'awaiting_review'" class="review">
-              <strong>本轮状态或设定有修改，等待你的决定</strong>
-              <details>
-                <summary>查看修改</summary>
-                <pre>{{ JSON.stringify(activeTurn.pending, null, 2) }}</pre>
-              </details>
-              <button class="primary" @click="review(true)">接受并继续</button
-              ><button @click="review(false)">保留草稿，取消修改</button>
-            </div>
+            <TurnReview
+              v-if="activeTurn?.status === 'awaiting_review'"
+              :changes="activeTurn.pending?.review_changes"
+              @decide="review"
+            />
           </div>
           <DialogueTools
             :key="session.id"
@@ -2587,7 +2591,7 @@ useTimedError(error);
                   </button>
                 </div>
                 <span class="turn-options"
-                  ><label
+                  ><label title="让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
                     ><input
                       v-model="updateVariables"
                       type="checkbox"
@@ -2603,10 +2607,15 @@ useTimedError(error);
                   ><label
                     :title="
                       session?.agent_mode === 'full_agent'
-                        ? '授权本轮修改对话级设定'
-                        : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 沉淀长期变化'
+                        ? '仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
+                        : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
                     "
-                    ><input v-model="allowEdit" type="checkbox" /> 本轮允许修改设定</label
+                    ><input
+                      v-model="allowEdit"
+                      type="checkbox"
+                      :disabled="busy || activeTurn?.status === 'awaiting_review'"
+                    />
+                    本轮允许修改设定</label
                   ></span
                 ><button v-if="busy" class="send" @click="stop">■ 停止</button
                 ><button
@@ -3058,9 +3067,9 @@ useTimedError(error);
               @saved="applyFullSession"
             /> </template
           ><template v-else-if="panel === 'state'"
-            ><h2>状态与记忆</h2>
-            <p class="muted">仅显示当前剧情分支。切换分支会一同恢复状态。</p>
-            <h3>当前状态</h3>
+            ><h2>变量与记忆</h2>
+            <p class="muted">仅显示当前剧情分支。切换分支会一同恢复变量与记忆。</p>
+            <h3>剧情变量</h3>
             <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
             <h3>记忆</h3>
             <FullAgentNotes

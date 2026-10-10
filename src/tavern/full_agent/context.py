@@ -49,7 +49,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     turn_instructions = {
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
-            f"允许修改设定：{allow_content_edit or session.get('policy_effective', 'directed') != 'directed'}。"
+            f"允许修改设定：{allow_content_edit}。"
             if require_state_patch or allow_content_edit else ""),
         "regenerate_instruction": instruction,
         "regenerate_reference": regeneration_reference(

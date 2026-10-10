@@ -446,11 +446,8 @@ def create_app(data_dir=None):
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
             pending = {"messages": [message],
                        "before": session["snapshot"], "reason": "手工编辑对话世界书"}
-            if session["policy_effective"] == "preview":
-                store.set_turn(tid, status="awaiting_review", pending=dump(pending))
-                store.event(tid, "awaiting_review", {"before": session["snapshot"], "after": snapshot})
-            else:
-                store.commit_turn(tid, pending)
+            from tavern.conversation.update_review import finish_turn
+            finish_turn(store, tid, session, pending, snapshot)
         except Exception as error:
             store.set_turn(tid, status="error", error=str(error))
             raise

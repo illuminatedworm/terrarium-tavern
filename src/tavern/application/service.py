@@ -6,6 +6,7 @@ import shutil
 
 from tavern.character.cards import regex_scripts
 from tavern.conversation.message_editing import editable_message_ids
+from tavern.conversation.update_review import finish_turn
 from tavern.core.models import TurnRequest
 from tavern.memories.memory import Tracker, completed_rounds
 from tavern.scripting.agent import Writer
@@ -155,11 +156,7 @@ class RoleplayRuntime:
                                       "fingerprint": fingerprint(session["messages"]), "last_round": rounds}
         pending = {"scene": {"message_id": session["head"], "snapshot": snapshot},
                    "before": before, "reason": "手动重新生成记忆"}
-        if session["policy_effective"] == "preview" and snapshot != before:
-            self.store.set_turn(tid, status="awaiting_review", pending=dump(pending))
-            self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})
-        else:
-            self.store.commit_turn(tid, pending)
+        finish_turn(self.store, tid, session, pending, snapshot)
 
     async def initialize_session(self, sid):
         session = self.store.session(sid)
@@ -315,7 +312,7 @@ class RoleplayRuntime:
                     raise ValueError("仅允许当前楼层编辑；历史编辑请使用剧情分支")
                 raw = str(messages[0].get("message", raw))
             elif method == "lore":
-                if session["policy_effective"] == "directed" and not req.allow_content_edit:
+                if not req.allow_content_edit:
                     raise ValueError("请启用本轮设定修改权限")
                 revised = copy.deepcopy(document)
                 revised.get("data", revised).setdefault("character_book", {})["entries"] = args["entries"]
@@ -341,11 +338,7 @@ class RoleplayRuntime:
                 "snapshot": snapshot,
             }
             pending = {"messages": [m], "before": before, "reason": "卡片界面交互"}
-            if session["policy_effective"] == "preview":
-                self.store.set_turn(tid, status="awaiting_review", pending=dump(pending), draft=raw)
-                self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})
-            else:
-                self.store.commit_turn(tid, pending)
+            finish_turn(self.store, tid, session, pending, snapshot, draft=raw)
             return self.store.session(sid)
         except BaseException as e:
             self.store.set_turn(tid, status="error", error=str(e))
@@ -412,7 +405,6 @@ class RoleplayRuntime:
             from tavern.conversation.message_editing import (
                 NOTIFICATIONS,
                 inherit_edit_notifications,
-                review_snapshot,
             )
             inherit_edit_notifications(snapshot, session["snapshot"])
             document = copy.deepcopy(
@@ -564,7 +556,7 @@ class RoleplayRuntime:
                 mirror = await runtime.call("snapshot")
                 snapshot["state"], snapshot["scopes"] = mirror["state"], mirror["scopes"]
                 if mirror.get("loreModified"):
-                    if session["policy_effective"] == "directed" and not req.allow_content_edit:
+                    if not req.allow_content_edit:
                         raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
                     script_document = merge_script_lore(agent.document, mirror["lore"], mirror, include_existing=True)
                     if script_document != agent.document:
@@ -597,7 +589,7 @@ class RoleplayRuntime:
                 ) from error
             snapshot["state"], snapshot["scopes"] = processed["state"], processed["scopes"]
             if processed.get("loreModified"):
-                if session["policy_effective"] == "directed" and not req.allow_content_edit:
+                if not req.allow_content_edit:
                     raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
                 revised = merge_script_lore(agent.document, initial_lore, processed)
                 snapshot["content"] = {"document": revised, "reason": "Tracker / 角色脚本修改世界书", "turn": tid}
@@ -639,12 +631,7 @@ class RoleplayRuntime:
             pending["half_agent_record"] = finalize_record(
                 agent.compiled["half_agent_record"], agent.native_response, agent.clean_response, output)
             self.store.set_turn(tid, draft=final_text)
-            changed = review_snapshot(snapshot) != review_snapshot(before)
-            if session["policy_effective"] == "preview" and changed:
-                self.store.set_turn(tid, status="awaiting_review", pending=dump(pending))
-                self.store.event(tid, "awaiting_review", {"before": before, "after": snapshot})
-            else:
-                self.store.commit_turn(tid, pending)
+            finish_turn(self.store, tid, session, pending, snapshot)
         except asyncio.CancelledError:
             self.store.set_turn(tid, status="cancelled", error="用户取消，状态未提交")
             self.store.event(tid, "cancelled", {})

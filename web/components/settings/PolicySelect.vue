@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { policies } from '../../lib/settingsFields';
 const props = defineProps<{
   modelValue: string | null;
   inheritedPolicy?: string;
@@ -7,24 +8,6 @@ const props = defineProps<{
   compact?: boolean;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string | null] }>();
-const policies = [
-  {
-    value: 'directed',
-    label: '设定需授权，状态自动保存',
-    description: '剧情状态、MVU 变量和记忆正常保存。修改对话内角色设定或世界书，需勾选“本轮允许修改设定”。',
-  },
-  {
-    value: 'evolving',
-    label: '允许修改设定，自动保存',
-    description:
-      '允许 Agent 或已获脚本权限的角色卡修改对话内角色设定与世界书。状态、记忆和设定更新自动保存；允许修改不代表每轮都会修改。',
-  },
-  {
-    value: 'preview',
-    label: '状态与设定更新均需确认',
-    description: '剧情状态、MVU 变量、记忆、摘要或设定有变化时，保留本轮草稿，等待你接受后再保存。',
-  },
-];
 const effective = computed(
   () =>
     policies.find((policy) => policy.value === (props.modelValue || props.inheritedPolicy)) || policies[0],
@@ -33,10 +16,10 @@ const effective = computed(
 <template>
   <div class="policy-control">
     <label
-      >{{ global ? '默认对话更新策略' : '对话更新策略' }}
+      >{{ global ? '默认修改保存方式' : '修改保存方式' }}
       <select
         :value="modelValue ?? ''"
-        :aria-label="global ? '默认对话更新策略' : '对话更新策略'"
+        :aria-label="global ? '默认修改保存方式' : '修改保存方式'"
         @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value || null)"
       >
         <option v-if="!global" value="">沿用全局默认</option>
@@ -48,18 +31,21 @@ const effective = computed(
     <div class="policy-help">
       <p v-if="!global && !modelValue" class="policy-effective">当前生效：{{ effective.label }}</p>
       <p>{{ effective.description }}</p>
+      <p>本轮开关决定是否更新变量、允许修改角色设定与世界书。保存方式不授予修改权限。</p>
+      <p>记忆与笔记自动随回合保存，不单独要求审核。</p>
       <dl v-if="!compact">
         <dt>影响对象</dt>
-        <dd>剧情状态 / MVU 变量、记忆 / 摘要，以及对话内角色设定和世界书。</dd>
+        <dd>剧情变量 / MVU 变量、脚本变量，以及对话内角色设定和世界书。</dd>
         <dt>作用层级</dt>
         <dd>
           {{
             global
-              ? '作为未单独设置策略的对话的默认值。更新保存在各对话的剧情进度中。'
+              ? '作为未单独选择保存方式的对话的默认值。修改保存在各对话的剧情进度中。'
               : '仅当前对话的剧情进度；继承进度时一并复制。'
           }}
         </dd>
       </dl>
+      <p v-if="global">未单独选择保存方式的同模式对话，从下一轮起沿用此默认值。</p>
       <p class="policy-scope">对话内设定和世界书保存为对话快照，不会覆盖书架中的原角色卡。</p>
     </div>
   </div>
