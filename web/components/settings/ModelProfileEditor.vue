@@ -7,6 +7,9 @@ import CacheSettingsEditor from './CacheSettingsEditor.vue';
 import MessageAdapterEditor from './MessageAdapterEditor.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
 import { useModelCatalog } from '../../lib/modelCatalog';
+import { modelEffortOptions } from '../../lib/reasoningEffort';
+import { loadChatGPTAccounts, subscriptionProvider } from '../../lib/chatgptAccounts';
+import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
@@ -21,6 +24,20 @@ const fetching = ref(false);
 const feedback = ref('');
 const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
+const subscription = computed(() => subscriptionProvider(provider.value));
+watch(
+  subscription,
+  async (enabled) => {
+    if (enabled) {
+      try {
+        await loadChatGPTAccounts();
+      } catch (error) {
+        feedback.value = String(error);
+      }
+    }
+  },
+  { immediate: true },
+);
 const {
   catalog,
   error: catalogError,
@@ -28,6 +45,7 @@ const {
 } = useModelCatalog(
   () => props.profile,
   () => provider.value,
+  props.flush,
 );
 const models = computed(() => catalog.value?.models || []);
 const defaultPath = computed(() => (props.profile.api_mode === 'gemini' ? 'v1beta' : 'v1'));
@@ -46,20 +64,35 @@ const errorPrefix = computed(() =>
 );
 const common = computed<SettingField[]>(() => [
   { path: 'context_tokens', label: '上下文窗口（tokens）', min: 2048, max: 2000000 },
-  { path: 'reply_tokens', label: '输出上限（tokens）', min: 128, max: 65536 },
+  {
+    path: 'reply_tokens',
+    label: subscription.value ? '输出预留预算（tokens）' : '输出上限（tokens）',
+    min: 128,
+    max: 65536,
+  },
   {
     path: 'reasoning_effort',
     label: '思考强度',
-    options: props.effortOptions.filter((item) => item.value !== 'inherit'),
+    options: modelEffortOptions(
+      props.effortOptions.filter((item) => item.value !== 'inherit'),
+      subscription.value
+        ? catalog.value?.model_details?.find((item) => item.id === props.profile.model)
+        : undefined,
+      props.profile.reasoning_effort,
+    ),
   },
-  { path: 'temperature', label: '温度 temperature', optional: true, min: 0, max: 2, step: 'any' },
-  { path: 'top_p', label: '核采样 top_p', optional: true, min: 0, max: 1, step: 'any' },
+  ...(!subscription.value
+    ? [
+        { path: 'temperature', label: '温度 temperature', optional: true, min: 0, max: 2, step: 'any' },
+        { path: 'top_p', label: '核采样 top_p', optional: true, min: 0, max: 1, step: 'any' },
+      ]
+    : []),
 ]);
 const advanced = computed<SettingField[]>(() => [
-  ...(props.profile.api_mode !== 'responses'
+  ...(!subscription.value && props.profile.api_mode !== 'responses'
     ? [{ path: 'top_k', label: '候选数 top_k', optional: true, min: 0 }]
     : []),
-  ...(props.profile.api_mode === 'chat_completions'
+  ...(!subscription.value && props.profile.api_mode === 'chat_completions'
     ? [
         { path: 'frequency_penalty', label: '频率惩罚', optional: true, min: -2, max: 2, step: 'any' },
         { path: 'presence_penalty', label: '重复惩罚', optional: true, min: -2, max: 2, step: 'any' },
@@ -119,11 +152,11 @@ async function action(check: boolean) {
     <div class="profile-connection-row">
       <div class="settings-field-grid profile-connection">
         <label
-          >提供商<select v-model="profile.provider_id" :disabled="busy">
+          >提供商<select v-model="profile.provider_id" aria-label="提供商" :disabled="busy">
             <option v-for="item in providers" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select></label
         >
-        <label
+        <label v-if="!subscription"
           >接口方式<select v-model="profile.api_mode" aria-label="接口方式" :disabled="busy">
             <option value="chat_completions">Chat Completions</option>
             <option value="responses">Responses</option>
@@ -131,13 +164,19 @@ async function action(check: boolean) {
             <option value="gemini">Gemini GenerateContent</option>
           </select></label
         >
-        <label
+        <label v-if="!subscription"
           >API 路径<input v-model="profile.api_path" :placeholder="`默认：${defaultPath}`" :disabled="busy"
         /></label>
+        <p v-else class="muted">ChatGPT 订阅 · Responses</p>
         <label
-          >模型名称<input v-model="profile.model" :list="'models-' + role" /><datalist :id="'models-' + role">
-            <option v-for="name in models" :key="name" :value="name" /></datalist
-        ></label>
+          >模型名称<input v-model="profile.model" aria-label="模型名称" :list="'models-' + role" /><datalist
+            :id="'models-' + role"
+          >
+            <option v-for="name in models" :key="name" :value="name">
+              {{ catalog?.model_details?.find((item) => item.id === name)?.display_name || name }}
+            </option>
+          </datalist></label
+        >
       </div>
       <div class="profile-actions">
         <button class="primary" :disabled="busy" @click="action(false)">
@@ -157,23 +196,32 @@ async function action(check: boolean) {
       }}
     </p>
     <p v-if="provider" class="muted">
-      请求地址：{{ modelEndpoint(provider.base_url, profile.api_mode, profile.model, profile.api_path) }}
+      请求地址：{{
+        subscription
+          ? 'https://api.openai.com/v1/responses'
+          : modelEndpoint(provider.base_url, profile.api_mode, profile.model, profile.api_path)
+      }}
     </p>
+    <ChatGPTUsage :active="subscription" />
     <h4>常用参数</h4>
     <SettingsFields :value="profile" :fields="common" :error-prefix="errorPrefix"
       ><slot name="common-extra"
     /></SettingsFields>
+    <p v-if="subscription" class="muted">
+      输出预留预算用于本地上下文计算，不是服务端输出上限。ChatGPT
+      订阅通道不支持温度、采样及显式缓存控制；原配置保留，切回 API Key 后可继续使用。
+    </p>
     <details class="settings-advanced">
       <summary>更多参数：采样细项、分词器与提示缓存</summary>
       <SettingsFields :value="profile" :fields="advanced" :error-prefix="errorPrefix" />
       <CacheSettingsEditor
-        v-if="profile.cache"
+        v-if="profile.cache && !subscription"
         :cache="profile.cache"
         :model="profile.model"
         :api="profile.api_mode"
         @validity="cacheValid = $event"
       />
-      <p class="muted">
+      <p v-if="!subscription" class="muted">
         采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
       </p>
     </details>
@@ -182,7 +230,7 @@ async function action(check: boolean) {
       <p class="muted">这里只影响新建的游玩或制卡对话。已有对话在自己的消息适配设置中修改。</p>
       <MessageAdapterEditor
         :model-value="profile.message_adapter"
-        :api-mode="profile.api_mode"
+        :api-mode="subscription ? 'responses' : profile.api_mode"
         :lane="role"
         @update:model-value="profile.message_adapter = $event"
       />

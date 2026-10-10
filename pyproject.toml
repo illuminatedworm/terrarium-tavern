@@ -22,6 +22,8 @@ dependencies = [
   "pillow>=11",
   "jsonpatch>=1.33",
   "httpx>=0.27",
+  "pyjwt[crypto]>=2.10,<3",
+  "filelock>=3.18,<4",
   "tiktoken>=0.12,<1",
 ]
 

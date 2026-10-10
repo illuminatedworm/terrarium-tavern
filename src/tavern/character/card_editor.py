@@ -1,13 +1,12 @@
 """Independent Card Editor service and durable, explicitly resumed operations."""
 import asyncio
 import json
-import os
 import time
 
 from tavern.character.card_editor_store import EditorStore
 from tavern.character.editor_config import SYSTEM as SYSTEM
 from tavern.character.editor_run import EditorRun
-from tavern.core.provider import make_provider
+from tavern.core.provider import make_provider, require_model_connection
 from tavern.storage.store import Conflict, dump, uid
 
 
@@ -42,8 +41,8 @@ class CardEditorService:
             elif not request.text.strip():
                 raise ValueError("请输入制卡要求")
             cfg = self.store.settings().for_role("card_editor")
-            if not self.provider_factory and (not cfg.model or not (cfg.api_key or os.environ.get("TAVERN_API_KEY"))):
-                raise ValueError("请先配置 Card Editor 模型")
+            if not self.provider_factory:
+                require_model_connection(cfg)
             if request.text.strip():
                 payload["_input_ref"] = self.edits.message(db, wid, "user", request.text, rid)
             db.execute("INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",

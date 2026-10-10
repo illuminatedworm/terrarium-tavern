@@ -1,26 +1,49 @@
 import { computed, reactive, watch } from 'vue';
 import { api } from './api';
 import type { ModelProfile, Provider } from './settingsDocument';
+import { chatgptGeneration, chatgptState, subscriptionProvider } from './chatgptAccounts';
 
+export interface ModelDetails {
+  id: string;
+  display_name: string;
+  supported_reasoning_levels?: Array<{ effort: string; description: string }>;
+  unavailable_reasoning_levels?: Array<{ effort: string; reason: string }>;
+  default_reasoning_level?: string;
+}
 interface Catalog {
   models: string[];
   updated_at: number | null;
+  model_details?: ModelDetails[];
 }
 const catalogs = reactive<Record<string, Catalog>>({});
 const generations = new Map<string, number>();
 const refreshes = new Map<string, Promise<Catalog>>();
 
-export function useModelCatalog(profile: () => ModelProfile, provider: () => Provider | undefined) {
+export function useModelCatalog(
+  profile: () => ModelProfile,
+  provider: () => Provider | undefined,
+  beforeRefresh?: () => Promise<unknown>,
+  enabled: () => boolean = () => true,
+) {
   const request = computed(() => ({
     provider_id: profile().provider_id,
-    api_mode: profile().api_mode,
-    api_path:
-      profile()
-        .api_path.trim()
-        .replace(/^\/+|\/+$/g, '') || (profile().api_mode === 'gemini' ? 'v1beta' : 'v1'),
+    api_mode: subscriptionProvider(provider()) ? 'responses' : profile().api_mode,
+    api_path: subscriptionProvider(provider())
+      ? 'v1'
+      : profile()
+          .api_path.trim()
+          .replace(/^\/+|\/+$/g, '') || (profile().api_mode === 'gemini' ? 'v1beta' : 'v1'),
   }));
   const key = computed(() =>
-    JSON.stringify([request.value, provider()?.base_url, provider()?.has_api_key, provider()?.api_key]),
+    JSON.stringify([
+      request.value,
+      provider()?.base_url,
+      provider()?.has_api_key,
+      provider()?.api_key,
+      provider()?.auth_mode,
+      provider()?.chatgpt_account_id,
+      chatgptGeneration(provider()),
+    ]),
   );
   const catalog = computed(() => catalogs[key.value]);
   const error = reactive({ message: '' });
@@ -49,12 +72,22 @@ export function useModelCatalog(profile: () => ModelProfile, provider: () => Pro
     }
   }
   watch(
-    key,
-    () => {
+    () => [enabled() ? key.value : '', enabled()],
+    async () => {
+      if (!enabled()) return;
       const target = key.value;
-      void load().catch((e) => {
+      try {
+        const connected =
+          subscriptionProvider(provider()) &&
+          chatgptState.accounts.some(
+            (account) => account.id === provider()?.chatgpt_account_id && account.plan_enabled,
+          );
+        if (connected) await beforeRefresh?.();
+        if (key.value !== target) return;
+        await load(connected);
+      } catch (e) {
         if (key.value === target) error.message = String(e);
-      });
+      }
     },
     { immediate: true },
   );

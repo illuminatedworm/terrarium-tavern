@@ -16,8 +16,9 @@ import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
+import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 
-const props = defineProps<{ conversationId: string; library: any[] }>();
+const props = defineProps<{ conversationId: string; library: any[]; chatgptSubscription?: boolean }>();
 const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
@@ -486,7 +487,8 @@ onBeforeUnmount(() => {
                   <CardWorkspaceIcon name="sliders" />工具与上下文
                 </button>
               </div>
-              <span class="cw-shortcut">Enter 发送 · Shift+Enter 换行</span>
+              <ChatGPTUsage :active="chatgptSubscription" :error="error" />
+              <span v-if="!chatgptSubscription" class="cw-shortcut">Enter 发送 · Shift+Enter 换行</span>
               <button v-if="active" class="cw-stop" type="button" :disabled="busy" @click="stop">
                 <span aria-hidden="true" />停止
               </button>

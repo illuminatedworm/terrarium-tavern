@@ -3,6 +3,11 @@ import { notification, notify } from './lib/notifications';
 import { useTimedError } from './composables/useTimedError';
 import { computed, defineAsyncComponent, h, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from './lib/api';
+import { usesChatGPT } from './lib/chatgptAccounts';
+import { canRetryTurn } from './lib/turnRetry';
+import { useModelCatalog } from './lib/modelCatalog';
+import { effortOptions, modelEffortOptions } from './lib/reasoningEffort';
+import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -115,6 +120,17 @@ function managePreferencePresets() {
 const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
 const activeModel = computed(() =>
   isFullAgent.value ? activeSettings.value.model : activeSettings.value.foreground,
+);
+const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value.shared?.providers));
+const trackerSubscription = computed(
+  () => !isFullAgent.value && usesChatGPT(activeSettings.value.background, settings.value.shared?.providers),
+);
+const storySubscriptionLabel = computed(() =>
+  activeSubscription.value
+    ? trackerSubscription.value || isFullAgent.value
+      ? '使用 ChatGPT 订阅'
+      : '正文使用 ChatGPT 订阅'
+    : '后台使用 ChatGPT 订阅',
 );
 function closePanel() {
   if (panel.value === 'settings' && settingsPanel.value) void settingsPanel.value.requestClose();
@@ -267,11 +283,22 @@ const writerResponseCache = computed(() => {
 });
 const writerCacheRetention = computed(() => {
   const profile = activeModel.value;
-  return cacheRetention(
+  const retention = cacheRetention(
     profile?.model || '',
     profile?.api_mode || 'chat_completions',
     profile?.cache || { mode: 'cloud', preset: 'auto', field: 'cache_control', value: {}, request: {} },
   );
+  return activeSubscription.value
+    ? {
+        ...retention,
+        apiLabel: 'ChatGPT 订阅 · Responses',
+        explicit: false,
+        enabled: false,
+        options: [],
+        protocolNote: '',
+        note: '缓存由服务端管理，此通道不支持显式缓存控制。',
+      }
+    : retention;
 });
 const cacheRequestState = computed(
   () =>
@@ -342,16 +369,21 @@ const regeneratingId = computed(() =>
 );
 let deleteTrigger: HTMLElement | null = null;
 watch(sidebarSection, (value) => localStorage.setItem('tavern-sidebar-section', value));
-const effortOptions = [
-  { value: 'inherit', label: '跟随设置' },
-  { value: 'default', label: '模型默认' },
-  { value: 'none', label: '关闭思考' },
-  { value: 'minimal', label: '最低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '最高' },
-];
+const { catalog: activeCatalog } = useModelCatalog(
+  () => activeModel.value,
+  () => settings.value.shared?.providers?.find((item: any) => item.id === activeModel.value?.provider_id),
+  undefined,
+  () => activeSubscription.value,
+);
+const quickEffortOptions = computed(() =>
+  modelEffortOptions(
+    effortOptions,
+    activeSubscription.value
+      ? activeCatalog.value?.model_details?.find((item) => item.id === activeModel.value.model)
+      : undefined,
+    quickEffort.value,
+  ),
+);
 const layout = ref({
   ...defaultReadingLayout(window.innerWidth),
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
@@ -443,12 +475,7 @@ watch(panel, async (value) => {
 });
 
 const retryableTurn = computed(() =>
-  activeTurn.value &&
-  ['error', 'cancelled', 'interrupted'].includes(activeTurn.value.status) &&
-  activeTurn.value.request?.expected_revision === session.value?.revision &&
-  !activeTurn.value.request?.scene_refresh
-    ? activeTurn.value
-    : null,
+  canRetryTurn(activeTurn.value, session.value) ? activeTurn.value : null,
 );
 function turnError(value: string) {
   return value?.includes('runtime.variableUpdate') || value?.includes('MVU_UPDATE_INVALID')
@@ -731,7 +758,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
     ) {
       const turn = await api(`/turns/${last.id}`);
       if (!viewScope.owns(token)) return;
-      if (active || turn.request.expected_revision === opened.revision) {
+      if (active || canRetryTurn(turn, opened)) {
         restored = turn;
         restoredDraft = turn.draft;
         if (turn.status === 'error') error.value = turnError(turn.error);
@@ -962,6 +989,7 @@ async function retryTurn() {
   const resumeFullAgent =
     session.value?.agent_mode === 'full_agent' &&
     retryableTurn.value.resumable === true &&
+    retryableTurn.value.request.expected_revision === session.value.revision &&
     allowEdit.value === !!retryableTurn.value.request.allow_content_edit &&
     updateVariables.value === !!retryableTurn.value.request.update_variables &&
     retryIncludeReply.value === !!retryableTurn.value.request.regenerate_include_reply;
@@ -971,6 +999,7 @@ async function retryTurn() {
     update_variables: updateVariables.value,
     regenerate_note: retryNote.value.trim(),
     regenerate_include_reply: retryIncludeReply.value,
+    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
     operation_id: crypto.randomUUID(),
     expected_revision: session.value.revision,
     ...(resumeFullAgent ? { resume_turn_id: retryableTurn.value.id } : { resume_turn_id: null }),
@@ -2025,6 +2054,7 @@ useTimedError(error);
         :key="editorConversationId"
         :conversation-id="editorConversationId"
         :library="cards"
+        :chatgpt-subscription="usesChatGPT(settings.shared?.card_editor, settings.shared?.providers)"
         @changed="refreshCardConversations"
         @saved="load"
         @deleted="cardConversationDeleted"
@@ -2411,9 +2441,11 @@ useTimedError(error);
             <AppNotification
               v-if="retryableTurn"
               :message="
-                activeTurn.status === 'cancelled'
-                  ? '本次生成已停止，草稿未提交。'
-                  : '本次生成失败，正文与状态未提交。'
+                activeTurn.request.expected_revision !== session.revision
+                  ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
+                  : activeTurn.status === 'cancelled'
+                    ? '本次生成已停止，草稿未提交。'
+                    : '本次生成失败，正文与状态未提交。'
               "
             />
             <div class="compose-box">
@@ -2443,11 +2475,11 @@ useTimedError(error);
                     @click="rewriteExpanded = !rewriteExpanded"
                   >
                     ↻ 重新生成</button
-                  ><EffortControl :value="quickEffort" :options="effortOptions" @change="setEffort" /><button
-                    class="quiet"
-                    @click="inspectContext"
-                  >
-                    ◫ 上下文</button
+                  ><EffortControl
+                    :value="quickEffort"
+                    :options="quickEffortOptions"
+                    @change="setEffort"
+                  /><button class="quiet" @click="inspectContext">◫ 上下文</button
                   ><button class="quiet" @click="storyView = 'work'">
                     ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
                   </button>
@@ -2486,6 +2518,11 @@ useTimedError(error);
               </div>
             </div>
             <p class="composer-meta">
+              <ChatGPTUsage
+                :active="activeSubscription || trackerSubscription"
+                :label="storySubscriptionLabel"
+                :error="error || activeTurn?.error"
+              />
               <span>Enter 发送 · Shift + Enter 换行</span><span>{{ actualInputLabel }}</span
               ><span>{{ contextLengthLabel }}</span
               ><span>缓存命中率 {{ cacheRateLabel }}</span

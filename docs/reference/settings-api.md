@@ -2,6 +2,27 @@
 
 本文供修改设置客户端、迁移逻辑和配置存储的开发者使用。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
+## ChatGPT 账号接口
+
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档仍为版本 2；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+
+以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/auth/chatgpt/accounts` | 返回账号 `id/label/email/status/plan_enabled/generation`、首次用量提示状态和管理用量链接 |
+| `POST /api/auth/chatgpt/login` | 接收 `provider_id`、可空 `account_id` 和 `enable_plan`；后端打开系统浏览器，返回事务摘要 |
+| `GET /api/auth/chatgpt/login` | 当前事务摘要，或 `status=idle` |
+| `GET /api/auth/chatgpt/login/{id}` | 查询 `pending/exchanging/completed/cancelled/expired/failed`、账号引用及安全错误信息 |
+| `DELETE /api/auth/chatgpt/login/{id}` | 取消待完成的登录 |
+| `POST /api/auth/chatgpt/accounts/{id}/logout` | 可传 `provider_id` 选择代理选项；停止请求、清除本地令牌，返回 `revocation_confirmed` |
+| `DELETE /api/auth/chatgpt/accounts/{id}` | 退出并删除未被提供商引用的注册；被引用时拒绝删除 |
+| `POST /api/auth/chatgpt/welcome` | 保存首次订阅用量说明已确认状态 |
+
+API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调由独立的 `127.0.0.1` 临时监听器处理，路径固定为 `/auth/callback`。`generation` 是授权会话的非秘密版本，仅用于账号切换后刷新客户端缓存。
+
+模型列表接口保持 `models: string[]`，订阅模式额外返回 `model_details`：每项包含 `id/display_name`，目录提供能力时还包含 `supported_reasoning_levels: [{effort, description}]`、`default_reasoning_level` 和 `unavailable_reasoning_levels: [{effort, reason}]`。支持档位为账号目录与当前订阅接口契约的交集，保留目录顺序。可操作的 ChatGPT 错误响应包含 `detail/code/upstream_status/request_id/usage_url`；不能从额度错误自行推算套餐重置时间，也不能回退至其他计费凭据。
+
 ## 配置范围与修订号
 
 数据库中的设置文档版本为 2，由三个独立范围组成：

@@ -2,21 +2,25 @@
 import copy
 import json
 
+from tavern.scripting.responses_stream import ResponsesOutput
+
 
 class StreamState:
     def __init__(self, api):
         self.api, self.done = api, False
         self.result, self.calls, self.blocks = {}, {}, {}
         self.text, self.reasoning, self.parts = "", "", []
+        self.response_output = ResponsesOutput() if api == "responses" else None
 
     def feed(self, event):
         api = self.api
         if api == "responses":
             kind = event.get("type")
+            self.response_output.accept(event)
             if kind == "response.output_text.delta":
                 return event.get("delta", "")
             if kind == "response.completed":
-                self.result, self.done = event["response"], True
+                self.result, self.done = self.response_output.finish(event["response"]), True
             elif kind in ("response.failed", "response.incomplete", "error"):
                 raise ValueError("Responses 流未完整结束")
             return ""

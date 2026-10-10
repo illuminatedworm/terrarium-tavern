@@ -16,6 +16,7 @@ from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 from tavern.full_agent.recovery import resume_progress
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
+from tavern.storage.turn_retry import can_retry, retry_head
 
 
 def uid():
@@ -387,7 +388,24 @@ class Store(MessageAdapters):
             )
 
     def settings(self, mode="half_agent"):
-        return self.settings_document().runtime(mode)
+        settings = self.settings_document().runtime(mode)
+        generations = {provider.chatgpt_account_id: self.chatgpt.generation(provider.chatgpt_account_id)
+                       for provider in settings.providers if provider.auth_mode == "chatgpt_subscription"
+                       and provider.chatgpt_account_id}
+        for config in (settings, settings._full_runtime):
+            if config is not None:
+                config._chatgpt = self.chatgpt
+                config._auth_generations = generations.copy()
+                if config.auth_mode == "chatgpt_subscription":
+                    config._auth_generation = generations.get(config.chatgpt_account_id, "")
+        return settings
+
+    @property
+    def chatgpt(self):
+        if not hasattr(self, "_chatgpt_accounts"):
+            from tavern.chatgpt.service import ChatGPTAccounts
+            self._chatgpt_accounts = ChatGPTAccounts(self.root, lambda: self.settings_document().shared.network)
+        return self._chatgpt_accounts
 
     def save_settings(self, settings):
         document = settings if isinstance(settings, SettingsDocument) else from_runtime(settings)
@@ -1045,8 +1063,10 @@ class Store(MessageAdapters):
                 raise KeyError("回合不存在")
             resumable = r["status"] in ("error", "cancelled", "interrupted") and bool(db.execute(
                 "SELECT 1 FROM full_agent_progress WHERE turn=?", (tid,)).fetchone())
+            anchor = retry_head(db, r)
         result = dict(r)
         result["resumable"] = resumable
+        result["retry_head"] = anchor
         for key in ("request", "preview", "pending"):
             result[key] = json.loads(result[key]) if result[key] else None
         return result
@@ -1060,14 +1080,12 @@ class Store(MessageAdapters):
             if row is None:
                 raise KeyError("回合不存在")
             request = json.loads(row["request"])
-            session = db.execute("SELECT revision FROM sessions WHERE id=?", (row["session"],)).fetchone()
-            latest = db.execute("SELECT id FROM turns WHERE session=? ORDER BY created DESC, rowid DESC LIMIT 1", (row["session"],)).fetchone()
-            if (row["status"] not in ("error", "cancelled", "interrupted")
-                    or request.get("mode", "send") != "send" or request.get("scene_refresh")
-                    or latest["id"] != tid or session["revision"] != expected_revision
-                    or request["expected_revision"] != expected_revision):
+            session = db.execute("SELECT revision,head FROM sessions WHERE id=?", (row["session"],)).fetchone()
+            if (request.get("mode", "send") != "send" or session["revision"] != expected_revision
+                    or not can_retry(db, row, session)):
                 raise Conflict("只能编辑当前会话最新的失败或取消发言")
             request["text"] = text
+            request["expected_revision"] = expected_revision
             db.execute("UPDATE turns SET request=?,draft='',pending=NULL WHERE id=?", (dump(request), tid))
             db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
         return self.turn(tid)

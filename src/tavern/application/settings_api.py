@@ -117,7 +117,10 @@ def invalidate_capabilities(old, new):
         before, after = getattr(getattr(old, scope), key), getattr(getattr(new, scope), key)
         old_provider = next(p for p in old.shared.providers if p.id == before.provider_id)
         provider = next(p for p in new.shared.providers if p.id == after.provider_id)
-        if (before.model, before.provider_id, old_provider.base_url, before.api_mode, before.api_path) != (after.model, after.provider_id, provider.base_url, after.api_mode, after.api_path):
+        if (before.model, before.provider_id, old_provider.base_url, before.api_mode, before.api_path,
+            old_provider.auth_mode, old_provider.chatgpt_account_id) != (
+                after.model, after.provider_id, provider.base_url, after.api_mode, after.api_path,
+                provider.auth_mode, provider.chatgpt_account_id):
             after.capability, after.capability_key = "unknown", ""
 
 
@@ -242,7 +245,9 @@ def save_probe(store, role, result, captured):
         doc = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
         current = doc.runtime("full_agent" if role == "full_agent" else "half_agent").for_role(role)
         before = captured.for_role(role)
-        if (current.model, current.base_url, current.api_mode, current.api_key) != (before.model, before.base_url, before.api_mode, before.api_key):
+        if (current.model, current.base_url, current.api_mode, current.api_key, current.auth_mode,
+            current.chatgpt_account_id) != (before.model, before.base_url, before.api_mode, before.api_key,
+                                          before.auth_mode, before.chatgpt_account_id):
             raise Conflict("检查期间模型连接已改变，请重新检查")
         profile = getattr(getattr(doc, scope), key)
         profile.capability, profile.capability_key = result.capability, result.capability_key

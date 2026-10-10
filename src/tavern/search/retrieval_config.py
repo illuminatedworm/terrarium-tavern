@@ -26,10 +26,14 @@ class Provider(BaseModel):
     base_url: str = "https://api.openai.com"
     api_key: str = ""
     use_proxy: bool = True
+    auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
+    chatgpt_account_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
     @model_validator(mode="after")
     def valid_url(self):
         from urllib.parse import urlparse
+        if self.auth_mode == "chatgpt_subscription":
+            self.base_url = "https://api.openai.com"
         parsed = urlparse(self.base_url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("模型地址必须为 HTTP(S)")
@@ -60,7 +64,7 @@ class ModelProfile(BaseModel):
     prompt_cache_key: str | None = Field(None, max_length=256, exclude=True)
     prompt_cache_mode: Literal["default", "no_write", "instructions"] = Field("default", exclude=True)
     prompt_cache_retention: Literal["default", "in_memory", "24h"] = Field("default", exclude=True)
-    reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh"] = "default"
+    reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""

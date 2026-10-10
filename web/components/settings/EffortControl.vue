@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 const props = defineProps<{
   value: string;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
 }>();
 const emit = defineEmits<{ change: [value: string] }>();
 const selected = computed(
@@ -36,7 +36,9 @@ const selected = computed(
       aria-label="本次思考强度"
       @change="emit('change', ($event.target as HTMLSelectElement).value)"
     >
-      <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
+      <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">
+        {{ option.label }}
+      </option>
     </select>
   </label>
 </template>

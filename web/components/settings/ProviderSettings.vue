@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import type { Provider } from '../../lib/settingsDocument';
-const props = defineProps<{ providers: Provider[] }>();
+import { loginPending, subscriptionProvider } from '../../lib/chatgptAccounts';
+import ChatGPTConnection from './ChatGPTConnection.vue';
+import ChatGPTWelcome from './ChatGPTWelcome.vue';
+const props = defineProps<{ providers: Provider[]; flush: () => Promise<unknown> }>();
 const emit = defineEmits<{ 'update:providers': [providers: Provider[]] }>();
 function add() {
   emit('update:providers', [
@@ -11,6 +14,8 @@ function add() {
       base_url: 'https://api.openai.com',
       api_key: '',
       use_proxy: true,
+      auth_mode: 'api_key',
+      chatgpt_account_id: null,
     },
   ]);
 }
@@ -18,7 +23,7 @@ function add() {
 <template>
   <div class="settings-section-heading">
     <p class="muted">
-      域名与密钥由两种模式共用，接口方式和 API 路径在各模型中设置。被引用的提供商需先解除引用才能删除。
+      提供商由各 Agent 共用。可配置 API Key 或连接 ChatGPT 订阅；各 Agent 分别选择提供商与模型。
     </p>
     <button @click="add">添加提供商</button>
   </div>
@@ -26,8 +31,20 @@ function add() {
     <h4>{{ provider.name || '新提供商' }}</h4>
     <div class="settings-field-grid">
       <label>名称<input v-model="provider.name" /></label>
-      <label>主域名<input v-model="provider.base_url" placeholder="https://api.example.com" /></label>
       <label
+        >认证方式<select
+          v-model="provider.auth_mode"
+          aria-label="认证方式"
+          :disabled="loginPending(provider.id)"
+        >
+          <option value="api_key">API Key</option>
+          <option value="chatgpt_subscription">ChatGPT 订阅</option>
+        </select></label
+      >
+      <label v-if="!subscriptionProvider(provider)"
+        >主域名<input v-model="provider.base_url" placeholder="https://api.example.com"
+      /></label>
+      <label v-if="!subscriptionProvider(provider)"
         >接口密钥<input
           v-model="provider.api_key"
           type="password"
@@ -38,9 +55,10 @@ function add() {
         ><span>使用接口代理</span><input v-model="provider.use_proxy" type="checkbox"
       /></label>
     </div>
+    <ChatGPTConnection v-if="subscriptionProvider(provider)" :provider="provider" :flush="flush" />
     <button
       class="danger-button"
-      :disabled="providers.length <= 1"
+      :disabled="providers.length <= 1 || loginPending(provider.id)"
       @click="
         emit(
           'update:providers',
@@ -51,4 +69,5 @@ function add() {
       删除提供商
     </button>
   </section>
+  <ChatGPTWelcome />
 </template>

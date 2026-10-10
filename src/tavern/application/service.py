@@ -65,13 +65,9 @@ class RoleplayRuntime:
         if self.store.session(sid).get("agent_mode", "half_agent") != "half_agent":
             raise ValueError("Full Agent 会话须由独立引擎执行")
         if (self.tracker_provider_factory or self.memory_provider_factory if request.scene_refresh else self.provider_factory) is None:
-            import os
-
             settings = self.store.settings().for_role("background" if request.scene_refresh else "foreground")
-            if not settings.model:
-                raise ValueError("请先在“模型与偏好”中设置模型名称")
-            if not (settings.api_key or os.environ.get("TAVERN_API_KEY", "")):
-                raise ValueError("请先在“模型与偏好”中设置 API Key；本地免密端点可填 local")
+            from tavern.core.provider import require_model_connection
+            require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
         if created:
             self.tasks[tid] = asyncio.create_task(self.run(tid))

@@ -4,7 +4,7 @@
 
 ## 连接与协议
 
-提供商保存主域名、密钥和是否使用 API 代理；模型分别保存提供商引用、模型名、接口协议与 API 路径。主域名包含协议，可带端口；模型页显示最终请求地址。切换模型名不自动切换协议。
+提供商保存认证方式、主域名、密钥或本地 ChatGPT 账号引用，以及是否使用 API 代理；模型分别保存提供商引用、模型名、接口协议与 API 路径。以下普通 API 规则适用于 `auth_mode=api_key`；订阅模式见下一节。
 
 | `api_mode` | 默认 API 路径 | 生成端点 |
 |---|---|---|
@@ -16,6 +16,21 @@
 显式填写的 API 路径按原值拼接。模型列表从本地持久缓存读取，只有点击“更新模型列表”才请求提供商；缓存按提供商、接口地址、协议和密钥隔离，更新失败保留原列表。
 
 请求使用提供商的密钥；缺少密钥时可从 `TAVERN_API_KEY` 读取。本地免密端点也需要非空占位值，例如 `local`。HTTP 客户端使用应用内 API 代理配置，不继承 shell 的代理环境变量。
+
+## ChatGPT 订阅模式
+
+`auth_mode=chatgpt_subscription` 通过独立账号服务取得访问令牌，固定使用 `https://api.openai.com/v1/responses`。不使用 `TAVERN_API_KEY`、自定义域名或 Codex backend-api。OAuth discovery、令牌交换、刷新和撤销均限制在已验证的 OpenAI 身份端点；HTTP 客户端不跟随携带凭据的重定向。
+
+- 所有推理请求采用 `store:false`、`stream:true`。完整结果接口在内部消费 SSE，仅在收到 `response.completed` 后返回成功；中断、失败、额度错误和不完整响应均不提交本轮剧情。
+- 按 `output_index` 汇集 `response.output_item.done` 的完整输出，与最终响应合并去重；完成事件中的空 `output` 不清除已接收的正文、工具调用和加密推理。仅收到未完成项时拒绝提交。
+- system 消息原位转为 developer，保留完整原文和顺序；输入包含全部需要的历史，不发送 `previous_response_id`。
+- 函数工具放入 `tavern` namespace，工具调用及结果保留命名空间；仅接收本轮允许的工具。指定单个工具时只暴露它，并使用 `tool_choice=required`。
+- 请求体由订阅分支的允许字段构建，不发送普通采样、最大输出 token、显式缓存及其他通道自定义参数。缓存由服务端管理，仅使用稳定的 `prompt_cache_key`；不发送 `session-id`、`thread-id` 或 `x-codex-turn-state`。
+- 原生回复归属由账号注册、授权会话代次和模型确定。正常刷新保持归属，重新授权／退出和切换账号会隔离旧的原生状态；操作内固定授权代次，不能中途切换到新登录。
+- 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
+- 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。订阅档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
+
+实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类；Writer、Tracker、Full Agent、Card Editor、脚本嵌套调用和探测共用同一入口。字段要求依据 [OpenAI 订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。后续章节的通用协议／缓存预设不覆盖订阅分支的限制。
 
 ## 请求身份
 

@@ -10,7 +10,7 @@ export type SettingField = {
   type?: 'text' | 'number' | 'checkbox';
   optional?: boolean;
   help?: string;
-  options?: Array<{ value: string | number; label: string }>;
+  options?: Array<{ value: string | number; label: string; disabled?: boolean }>;
 };
 const props = defineProps<{ value: SettingsObject; fields: SettingField[]; errorPrefix?: string }>();
 const errors = inject<ComputedRef<Record<string, string>>>('settings-field-errors');
@@ -49,10 +49,16 @@ function update(field: SettingField, event: Event) {
       <select
         v-if="field.options"
         :value="getPath(value, field.path)"
+        :aria-label="field.label"
         :aria-invalid="!!fieldError(field)"
         @change="update(field, $event)"
       >
-        <option v-for="option in field.options" :key="option.value" :value="option.value">
+        <option
+          v-for="option in field.options"
+          :key="option.value"
+          :value="option.value"
+          :disabled="option.disabled"
+        >
           {{ option.label }}
         </option>
       </select>

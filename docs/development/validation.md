@@ -56,6 +56,15 @@ npm.cmd run build
 
 完整后端检查使用开发依赖中的 pytest-xdist，以 4 个独立进程运行并动态分配剩余测试；每个用例继续使用各自的临时数据，不共享可变数据库或浏览器会话。依赖由 `uv sync --frozen` 安装。资源受限时将 `-n 4` 改为 `-n 2`；执行少量用例或定位顺序问题时不加并行参数，避免启动多个进程的额外开销。
 
+ChatGPT 订阅专项检查：
+
+```powershell
+.venv/Scripts/python.exe -m pytest -q tests/backend/test_chatgpt_auth.py tests/backend/test_chatgpt_provider.py tests/backend/test_chatgpt_integration.py
+.venv/Scripts/python.exe -m tests.browser.browser_chatgpt
+```
+
+专项使用合成签名的 OAuth 响应、隔离凭据目录和受控 HTTP 响应，覆盖真实本地回调、Terrarium／Chromium 和应用界面，不读取或消耗开发者的真实账号额度。浏览器入口自动选择本地空闲端口，检查 2560×1440、1920×1080、移动端 1080×2376（DPR 3）和桌面 200% 等效 CSS 视口；截图与报告存于被忽略的 `.agents/.local/chatgpt-validation/`。此结果不能代替用户在系统浏览器真实授权后进行的文本／工具推理验收。
+
 排查耗时使用 `--durations=20`。并行与串行对比时使用同一套测试，避免同时运行两套测试互相争用资源。若本机继承的 SOCKS 代理导致 SDK 初始化报缺少 socksio，在当前测试进程改用已配置的 HTTP 代理；本地模拟测试不需要真实模型服务。
 
 发行浏览器检查覆盖设置、角色编辑、故事、重生成、工作记录、上下文、分支与 MVU，并使用 1440×900、1280×720、390×844 和 720×450 视口。最后一种模拟 200% 等效 CSS 视口，不代替所有浏览器的原生缩放检查。

@@ -27,7 +27,7 @@ from tavern.search.retrieval_config import (
 
 Policy = Literal["directed", "evolving", "preview"]
 LoreInjectionMode = Literal["conversation", "st_top"]
-ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 class ContextBlock(BaseModel):
@@ -95,6 +95,9 @@ class Settings(BaseModel):
     _settings_mode: str = PrivateAttr(default="half_agent")
     _adapter_loader: Any = PrivateAttr(default=None)
     _adapter_lane: str = PrivateAttr(default="foreground")
+    _chatgpt: Any = PrivateAttr(default=None)
+    _auth_generation: str = PrivateAttr(default="")
+    _auth_generations: dict[str, str] = PrivateAttr(default_factory=dict)
     runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
@@ -122,7 +125,14 @@ class Settings(BaseModel):
             "cache": profile.cache.model_copy(deep=True),
             "message_adapter": profile.message_adapter.model_copy(deep=True),
             "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path), "api_key": provider.api_key,
-            "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy})
+            "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy,
+            "auth_mode": provider.auth_mode, "chatgpt_account_id": provider.chatgpt_account_id})
+        if provider.auth_mode == "chatgpt_subscription":
+            result.base_url, result.api_mode, result.api_path = "https://api.openai.com/v1", "responses", "v1"
+            result.api_key = ""
+            result._auth_generation = (self._auth_generations[provider.chatgpt_account_id]
+                if provider.chatgpt_account_id in self._auth_generations else
+                self._chatgpt.generation(provider.chatgpt_account_id) if self._chatgpt else "")
         result._adapter_lane = "full_agent" if self.runtime_mode == "full_agent" and role in ("foreground", "background") else role
         return result
 
@@ -130,6 +140,8 @@ class Settings(BaseModel):
     model: str = ""
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     api_key: str = Field(default="", exclude=True)
+    auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
+    chatgpt_account_id: str | None = None
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     # Compatibility fields for old flat profiles; production Tracker uses the
     # unified prompt below. Persisted HalfSettings migrates these fields away.

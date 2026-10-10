@@ -29,6 +29,8 @@ export interface Provider {
   api_key?: string;
   has_api_key?: boolean;
   use_proxy: boolean;
+  auth_mode?: 'api_key' | 'chatgpt_subscription';
+  chatgpt_account_id?: string | null;
 }
 export interface PreferencePreset {
   id: string;

@@ -1,11 +1,11 @@
 """Thin Full Agent host: authorization, script IO, cancellation, atomic commit."""
 import asyncio
 import copy
-import os
 
 from tavern.character.cards import regex_scripts
 from tavern.core.cache_policy import fingerprint
 from tavern.core.models import TurnRequest
+from tavern.core.provider import require_model_connection
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
 from tavern.scripting.runtime import ScriptRuntime
@@ -32,10 +32,7 @@ class FullAgentRuntime:
                     raise ValueError(f"本轮要求更新 MVU 变量，请先在 Full Agent 工具页启用 {name}")
         settings = self.store.settings().for_role("full_agent")
         if self.provider_factory is None:
-            if not settings.model:
-                raise ValueError("请先配置 Full Agent 模型，或配置其沿用的 Writer 模型")
-            if not (settings.api_key or os.environ.get("TAVERN_API_KEY", "")):
-                raise ValueError("请先配置 API Key；本地免密端点可填 local")
+            require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
         if created:
             self.tasks[tid] = asyncio.create_task(self.run(tid))

@@ -495,7 +495,11 @@ onMounted(async () => {
             :text-busy="textBusy"
             :text-errors="textErrors"
           />
-          <ProviderSettings v-else-if="page.key === 'providers'" v-model:providers="draft.shared.providers" />
+          <ProviderSettings
+            v-else-if="page.key === 'providers'"
+            v-model:providers="draft.shared.providers"
+            :flush="editor.flush"
+          />
           <template v-else-if="page.key === 'editor'">
             <ModelProfileEditor
               :profile="draft.shared.card_editor"

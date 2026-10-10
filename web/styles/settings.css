@@ -1,4 +1,42 @@
 /* Settings use one scrollable workspace; shared typography and colors remain authoritative. */
+.chatgpt-connection {
+  margin: 12px 0;
+  min-width: 0;
+}
+.chatgpt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.chatgpt-actions a {
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+.chatgpt-status,
+.chatgpt-pending {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.chatgpt-signin {
+  background: #f5f5f5;
+  color: #171717;
+  border-color: #f5f5f5;
+}
+.chatgpt-signin:hover:not(:disabled) {
+  background: #dedede;
+}
+.chatgpt-welcome {
+  z-index: 1500;
+}
+.chatgpt-welcome .modal {
+  height: min(380px, calc(100dvh - 32px));
+}
+.chatgpt-welcome p {
+  line-height: 1.8;
+}
 .data-transfer .transfer-description {
   margin: 8px 0 16px;
   color: var(--text-muted);

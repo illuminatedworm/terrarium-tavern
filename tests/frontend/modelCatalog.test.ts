@@ -4,6 +4,7 @@ import { useModelCatalog } from '../../web/lib/modelCatalog';
 import { modelEndpoint } from '../../web/lib/cachePolicy';
 import type { ModelProfile, Provider } from '../../web/lib/settingsDocument';
 import { api } from '../../web/lib/api';
+import { chatgptState } from '../../web/lib/chatgptAccounts';
 
 vi.mock('../../web/lib/api', () => ({ api: vi.fn() }));
 
@@ -131,5 +132,117 @@ describe('persistent model catalog UI', () => {
     expect(modelEndpoint('https://fixture.test', 'gemini', 'model', '')).toBe(
       'https://fixture.test/v1beta/models/model:generateContent',
     );
+  });
+
+  it('uses the subscription catalogue without rewriting saved API parameters and refreshes on account change', async () => {
+    chatgptState.accounts = [
+      {
+        id: 'account-a',
+        label: 'A',
+        email: 'fixture@example.test',
+        status: 'connected',
+        plan_enabled: true,
+        generation: 'session-a',
+      },
+      {
+        id: 'account-b',
+        label: 'B',
+        email: 'fixture@example.test',
+        status: 'connected',
+        plan_enabled: true,
+        generation: 'session-b',
+      },
+    ];
+    const calls: string[] = [];
+    vi.mocked(api)
+      .mockReset()
+      .mockImplementation(async () => {
+        calls.push('fetch');
+        return { models: ['z', 'a'], model_details: [{ id: 'z', display_name: '首选' }], updated_at: 100 };
+      });
+    const profile = reactive({
+      provider_id: 'subscription-catalogue',
+      api_mode: 'gemini',
+      api_path: 'v9',
+      temperature: 0.9,
+    } as ModelProfile);
+    const provider = reactive({
+      id: profile.provider_id,
+      auth_mode: 'chatgpt_subscription',
+      chatgpt_account_id: 'account-a',
+    } as Provider);
+    const scope = effectScope();
+    const catalog = scope.run(() =>
+      useModelCatalog(
+        () => profile,
+        () => provider,
+        async () => {
+          calls.push('save');
+        },
+      ),
+    )!;
+    await nextTick();
+    await nextTick();
+    expect(calls.slice(0, 2)).toEqual(['save', 'fetch']);
+    expect(api).toHaveBeenCalledWith('/settings/models', {
+      provider_id: profile.provider_id,
+      api_mode: 'responses',
+      api_path: 'v1',
+    });
+    expect(catalog.catalog.value?.models).toEqual(['z', 'a']);
+    expect(profile.api_mode).toBe('gemini');
+    expect(profile.api_path).toBe('v9');
+    expect(profile.temperature).toBe(0.9);
+    vi.mocked(api).mockResolvedValue({ models: ['other-account'], updated_at: 200 });
+    provider.chatgpt_account_id = 'account-b';
+    await nextTick();
+    await nextTick();
+    expect(catalog.catalog.value?.models).toEqual(['other-account']);
+    scope.stop();
+    chatgptState.accounts = [];
+  });
+
+  it('does not reuse a signed-out account catalogue or initiate subscription inference', async () => {
+    chatgptState.accounts = [
+      {
+        id: 'logout-account',
+        label: 'A',
+        email: '',
+        status: 'connected',
+        plan_enabled: true,
+        generation: 'before',
+      },
+    ];
+    vi.mocked(api)
+      .mockReset()
+      .mockResolvedValue({ models: ['connected-model'], updated_at: 100 });
+    const profile = { provider_id: 'logout-catalogue', api_mode: 'responses', api_path: '' } as ModelProfile;
+    const provider = { auth_mode: 'chatgpt_subscription', chatgpt_account_id: 'logout-account' } as Provider;
+    const scope = effectScope();
+    const catalog = scope.run(() =>
+      useModelCatalog(
+        () => profile,
+        () => provider,
+      ),
+    )!;
+    await nextTick();
+    await nextTick();
+    expect(catalog.catalog.value?.models).toEqual(['connected-model']);
+    vi.mocked(api).mockResolvedValue({ models: [], updated_at: null });
+    chatgptState.accounts[0] = {
+      ...chatgptState.accounts[0],
+      status: 'signed_out',
+      plan_enabled: false,
+      generation: 'after',
+    };
+    await nextTick();
+    await nextTick();
+    expect(api).toHaveBeenLastCalledWith(
+      '/settings/models?provider_id=logout-catalogue&api_mode=responses&api_path=v1',
+    );
+    expect(catalog.catalog.value?.models).toEqual([]);
+    expect(vi.mocked(api).mock.calls.every(([path]) => path.startsWith('/settings/models'))).toBe(true);
+    scope.stop();
+    chatgptState.accounts = [];
   });
 });

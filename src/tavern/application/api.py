@@ -59,11 +59,19 @@ def create_app(data_dir=None):
             await asyncio.gather(maintenance, return_exceptions=True)
             await editor.close()
             await service.close()
+            await store.chatgpt.close()
 
     app = FastAPI(title="Terrarium Tavern", version="0.3.0", lifespan=lifespan)
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
+    from tavern.chatgpt.api import register_chatgpt_routes
+    from tavern.chatgpt.errors import ChatGPTError
+    register_chatgpt_routes(app, store)
+
+    @app.exception_handler(ChatGPTError)
+    async def chatgpt_error(request, error):
+        return JSONResponse(error.public(), status_code=400)
     from tavern.character.card_editor_api import register_editor_routes
     register_editor_routes(app, editor)
     from tavern.full_agent.api import register_full_agent_routes
@@ -210,7 +218,8 @@ def create_app(data_dir=None):
                 ]
             )
             preserved = bool(captured and (config.api_mode in ("anthropic", "gemini") or
-                             captured[-1]["messages"][3]["role"] == "system"))
+                             captured[-1]["messages"][3]["role"] == (
+                                 "developer" if config.auth_mode == "chatgpt_subscription" else "system")))
             config.capability = (
                 "accepted" if preserved and "TAVERN_MID_42" in result.content else "unsupported"
             )

@@ -197,6 +197,9 @@ class FullAgent:
                 try:
                     response = await provider.chat_complete(provider_messages(provider, model_messages(compiled), self.settings), extra_body=tool_options)
                 except Exception as error:
+                    record = getattr(provider, "last_response_record", {})
+                    if record.get("error"):
+                        self.event("provider_response", record)
                     raise TurnError("PROVIDER_ERROR", str(error) or type(error).__name__) from error
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
