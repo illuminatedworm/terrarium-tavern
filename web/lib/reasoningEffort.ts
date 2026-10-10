@@ -21,6 +21,7 @@ export function modelEffortOptions(
   options: EffortOption[],
   details: ModelDetails | undefined,
   selected: string,
+  descriptions = false,
 ): EffortOption[] {
   if (!details?.supported_reasoning_levels) return options;
   const label = (effort: string) => options.find((item) => item.value === effort)?.label || effort;
@@ -34,7 +35,10 @@ export function modelEffortOptions(
           : item.label,
     }));
   result.push(
-    ...details.supported_reasoning_levels.map(({ effort }) => ({ value: effort, label: label(effort) })),
+    ...details.supported_reasoning_levels.map(({ effort, description }) => ({
+      value: effort,
+      label: `${label(effort)}${descriptions && description ? ' · ' + description : ''}`,
+    })),
   );
   result.push(
     ...(details.unavailable_reasoning_levels || []).map(({ effort, reason }) => ({

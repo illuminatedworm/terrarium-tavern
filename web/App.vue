@@ -19,6 +19,7 @@ import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { useModelCatalog } from './lib/modelCatalog';
 import { effortOptions, modelEffortOptions } from './lib/reasoningEffort';
+import { useApiReasoning } from './lib/apiReasoning';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
@@ -428,13 +429,18 @@ const { catalog: activeCatalog } = useModelCatalog(
   undefined,
   () => activeSubscription.value,
 );
+const { details: activeApiReasoning } = useApiReasoning(
+  () => activeModel.value,
+  () => !activeSubscription.value,
+);
 const quickEffortOptions = computed(() =>
   modelEffortOptions(
     effortOptions,
     activeSubscription.value
       ? activeCatalog.value?.model_details?.find((item) => item.id === activeModel.value.model)
-      : undefined,
+      : activeApiReasoning.value,
     quickEffort.value,
+    !activeSubscription.value,
   ),
 );
 const layout = ref({

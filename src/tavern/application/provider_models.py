@@ -5,10 +5,16 @@ import time
 import httpx
 
 from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.scripting.reasoning import reasoning_capabilities
 from tavern.search.retrieval_config import ApiMode, ModelProfile
 
 
 def register_model_routes(app, store):
+    @app.get("/api/settings/reasoning")
+    async def reasoning_options(api_mode: ApiMode, model: str = ""):
+        # This reads local protocol rules only, without refreshing a paid provider.
+        return reasoning_capabilities(api_mode, model)
+
     def connection(profile):
         config = store.settings_document().shared
         provider = next((p for p in config.providers if p.id == profile.provider_id), None)

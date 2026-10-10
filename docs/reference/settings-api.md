@@ -45,6 +45,8 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。
 
+`GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。不联网、不修改设置或模型列表缓存；`description` 在 Gemini 原生预算档位中包含对应思考 tokens。设置页和输入框共用此接口，ChatGPT 官方仍使用账号模型目录。
+
 `PATCH /api/settings/{scope}` 接受：
 
 | 字段 | 必填 | 含义 |

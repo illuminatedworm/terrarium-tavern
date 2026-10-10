@@ -1,4 +1,4 @@
-"""Model capabilities for native thinking, separate from the shared UI effort."""
+"""Protocol thinking capabilities shared by settings and request compilation."""
 import re
 from dataclasses import dataclass
 
@@ -37,11 +37,64 @@ ANTHROPIC_THINKING = {
 }
 
 
-def anthropic_thinking(model, effort):
+def anthropic_policy(model):
     name = model.lower().replace(".", "-")
-    policy = next((p for key, p in ANTHROPIC_THINKING.items()
-                   if re.search(r"claude-" + re.escape(key) + r"(?=$|:|-(?:[a-z]|\d{8}(?:$|[-:])))", name)),
-                  AnthropicThinking(mode="effort", sampling=True))
+    return next((p for key, p in ANTHROPIC_THINKING.items()
+                 if re.search(r"claude-" + re.escape(key) + r"(?=$|:|-(?:[a-z]|\d{8}(?:$|[-:])))", name)),
+                AnthropicThinking(mode="effort", sampling=True))
+
+
+GEMINI_BUDGETS = {"none": 0, "minimal": 128, "low": 1024, "medium": 4096, "high": 8192, "xhigh": 16384}
+OPENAI_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+def gemini_levels(model, *, native=True):
+    name = model.lower()
+    if re.search(r"gemini-3(?=$|[.-])", name):
+        if re.search(r"gemini-3\.1-flash-lite-image(?=$|[-:])", name):
+            return ["minimal", "high"]
+        if re.search(r"gemini-3-pro(?=$|[-:])", name):
+            return ["low", "high"]
+        if "pro" in name or re.search(r"gemini-3\.[78]-flash(?=$|[-:])", name):
+            return ["low", "medium", "high"]
+        return ["minimal", "low", "medium", "high"]
+    levels = list(GEMINI_BUDGETS) if native else ["none", "low", "medium", "high"]
+    if re.search(r"gemini-2\.5-pro(?=$|[-:])", name):
+        levels.remove("none")
+    if native and re.search(r"gemini-2\.5-flash-lite(?=$|[-:])", name):
+        levels.remove("minimal")
+    return levels
+
+
+def reasoning_capabilities(api, model):
+    """Local presets, not a claim about arbitrary relay model capabilities."""
+    descriptions = {}
+    if api == "anthropic":
+        policy = anthropic_policy(model)
+        levels = ["none"] if policy.can_disable else []
+        if policy.mode != "unsupported":
+            levels += ["low", "medium", "high"]
+            if policy.mode == "adaptive":
+                levels += (["xhigh"] if policy.xhigh else []) + ["max"]
+        note = ("此模型不支持文字思考档位；默认不发送思考参数。" if policy.mode == "unsupported" else
+                "思考档位按 Anthropic Messages 及当前模型匹配；默认不发送思考参数。")
+    elif api == "gemini" or (api == "chat_completions" and "gemini" in model.lower()):
+        levels = gemini_levels(model, native=api == "gemini")
+        if api == "gemini" and not re.search(r"gemini-3(?=$|[.-])", model.lower()):
+            descriptions = {effort: f"{GEMINI_BUDGETS[effort]} 思考 tokens" for effort in levels}
+            note = "此接口使用思考 token 预算，各档位显示对应预算；默认不发送思考参数。"
+        else:
+            note = "思考档位按 Gemini 模型支持的级别匹配；默认不发送思考参数。"
+    else:
+        levels = OPENAI_EFFORTS
+        note = "思考档位按当前接口提供，具体模型支持范围由服务商决定；默认不发送思考参数。"
+    return {"id": model, "display_name": model,
+            "supported_reasoning_levels": [{"effort": effort, "description": descriptions.get(effort, "")}
+                                           for effort in levels], "note": note}
+
+
+def anthropic_thinking(model, effort):
+    policy = anthropic_policy(model)
     if effort == "default":
         return policy, {}
     if effort == "none":
@@ -70,6 +123,8 @@ def gemini_effort(model, effort):
             return "high"
         if effort == "minimal" and "pro" in name:
             return "low"
+        if effort not in ["default", *gemini_levels(model)]:
+            raise ValueError(f"{model} 不支持 {effort} 思考档位；请选择默认或其他思考档位")
     return effort
 
 
@@ -79,5 +134,7 @@ def gemini_thinking(model, effort):
         return {}
     if re.search(r"gemini-3(?=$|[.-])", model.lower()):
         return {"thinkingLevel": selected.upper(), "includeThoughts": True}
-    budget = {"none": 0, "minimal": 128, "low": 1024, "medium": 4096, "high": 8192, "xhigh": 16384}[selected]
+    if selected not in gemini_levels(model):
+        raise ValueError(f"{model} 不支持 {effort} 思考档位；请选择默认或其他思考档位")
+    budget = GEMINI_BUDGETS[selected]
     return {"thinkingBudget": budget, "includeThoughts": True}

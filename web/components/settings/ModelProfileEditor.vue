@@ -8,6 +8,7 @@ import MessageAdapterEditor from './MessageAdapterEditor.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
 import { useModelCatalog } from '../../lib/modelCatalog';
 import { modelEffortOptions } from '../../lib/reasoningEffort';
+import { useApiReasoning } from '../../lib/apiReasoning';
 import { loadChatGPTAccounts, subscriptionProvider } from '../../lib/chatgptAccounts';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 import { blankChannelProfile, channelProviders, providerChannel, type Channel } from '../../lib/channels';
@@ -28,6 +29,10 @@ const feedback = ref('');
 const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
+const { details: apiReasoning, note: reasoningNote } = useApiReasoning(
+  () => props.profile,
+  () => !subscription.value,
+);
 const editorChannel = ref<Channel>(providerChannel(provider.value));
 const visibleProviders = computed(() =>
   props.role === 'card_editor' ? channelProviders(props.providers, editorChannel.value) : props.providers,
@@ -88,8 +93,9 @@ const common = computed<SettingField[]>(() => [
       props.effortOptions.filter((item) => item.value !== 'inherit'),
       subscription.value
         ? catalog.value?.model_details?.find((item) => item.id === props.profile.model)
-        : undefined,
+        : apiReasoning.value,
       props.profile.reasoning_effort,
+      !subscription.value,
     ),
   },
   ...(!subscription.value
@@ -226,6 +232,7 @@ async function action(check: boolean) {
     <SettingsFields :value="profile" :fields="common" :error-prefix="errorPrefix"
       ><slot name="common-extra"
     /></SettingsFields>
+    <p v-if="!subscription" class="muted">{{ reasoningNote }}</p>
     <p v-if="subscription" class="muted">
       输出预留预算用于本地上下文计算，不是服务端输出上限。ChatGPT
       订阅通道不支持温度、采样及显式缓存控制；普通渠道的模型配置独立保存。

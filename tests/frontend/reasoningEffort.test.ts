@@ -38,4 +38,16 @@ describe('account reasoning capabilities', () => {
     });
     expect(modelEffortOptions(effortOptions, undefined, 'xhigh')).toBe(effortOptions);
   });
+  it('shows native budget descriptions only for ordinary API options', () => {
+    const native = {
+      id: 'gemini-2.5-flash',
+      display_name: 'gemini-2.5-flash',
+      supported_reasoning_levels: [{ effort: 'low', description: '1024 思考 tokens' }],
+    };
+    const options = modelEffortOptions(effortOptions, native, 'max', true);
+    expect(options.map((option) => option.value)).toEqual(['inherit', 'default', 'low', 'max']);
+    expect(options.find((option) => option.value === 'low')?.label).toContain('1024 思考 tokens');
+    expect(options.at(-1)).toMatchObject({ value: 'max', disabled: true });
+    expect(modelEffortOptions(effortOptions, native, 'low')[2].label).toBe('低（low）');
+  });
 });

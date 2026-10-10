@@ -45,16 +45,24 @@ Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作
 
 “默认”表示不发送思考控制字段。其他选项由 [reasoning.py](../../src/tavern/scripting/reasoning.py) 按协议及模型匹配规则编译。
 
-| 接口 | 发送方式 |
-|---|---|
-| Chat Completions | `reasoning_effort` 或 `reasoning.effort`，由模型高级设置选择 |
-| Responses | `reasoning.effort` |
-| Anthropic Messages | 匹配 adaptive 的模型使用 `thinking.type=adaptive` 和 `output_config.effort` |
-| Gemini | 匹配 Gemini 3 的模型使用 `generationConfig.thinkingConfig.thinkingLevel`；2.5 使用 `thinkingBudget` |
+普通 API 的设置页与输入框从同一套后端规则读取可选档位，切换接口或模型后立即重新匹配。已选但不适用的档位保留显示并禁用，提示重选，不自动改写设置。规则只在本机读取，不向服务商请求能力目录。
+
+| 接口 | 可选档位（均另含模型默认） | 发送方式 |
+|---|---|---|
+| Chat Completions | none、minimal、low、medium、high、xhigh、max；Gemini 名称按 Gemini 兼容规则收窄 | `reasoning_effort` 或 `reasoning.effort`，由模型高级设置选择 |
+| Responses | none、minimal、low、medium、high、xhigh、max | `reasoning.effort` |
+| Anthropic Messages | low、medium、high；匹配 adaptive 的型号另有 max，支持时另有 xhigh；可关闭的型号另有 none | 匹配 adaptive 的模型使用 `thinking.type=adaptive` 和 `output_config.effort` |
+| Gemini 3 | 按型号提供 minimal、low、medium、high 的子集；3.8/3.7 Flash 仅 low、medium、high | `generationConfig.thinkingConfig.thinkingLevel` |
+| Gemini 2.5 原生 | minimal=128、low=1024、medium=4096、high=8192、xhigh=16384 思考 tokens；支持关闭时另有 none=0；Flash-Lite 不提供 minimal | `generationConfig.thinkingConfig.thinkingBudget`，界面显示对应预算 |
+| Gemini 2.5 Chat 兼容 | low、medium、high；支持关闭时另有 none | 使用 Chat 的思考字段，由服务商将文字档位转换为预算 |
+
+OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支持范围仍由服务商决定；不会仅凭非 OpenAI 名称将 Responses 切为其他协议。已知旧 Claude 不提供文字档位，仍可选择默认或其支持的关闭思考。未知 Anthropic 中转别名提供 low、medium、high 与关闭思考，由服务商校验。
 
 应用将 Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos 名称归入 adaptive 路线。Opus 4.5 仅单独发送 effort；已知旧模型不能接受文字档位时，在请求前提示。未知中转别名采用标准字段，由服务商校验。
 
-共用档位会发生映射：Claude 的 `minimal` 映射为 `low`；不支持 `xhigh` 而支持 `max` 的匹配型号映射为 `max`，Opus 4.5 映射为 `high`。Gemini 3 的 `xhigh` 映射为 `HIGH`，Pro 的 `minimal` 映射为 `LOW`。被标记为不能关闭思考的型号选择 `none` 时会报错。
+旧配置中的兼容映射保留：Claude 的 `minimal` 映射为 `low`；不支持 `xhigh` 而支持 `max` 的匹配型号映射为 `max`，Opus 4.5 映射为 `high`。Gemini 3 的 `xhigh` 映射为 `HIGH`，Pro 的 `minimal` 映射为 `LOW`。这些重复档位不再作为对应接口的新选项提供。被标记为不能关闭思考的型号选择 `none` 时会报错；Gemini 原生不支持的档位会在请求前提示重选。
+
+协议依据见 [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking) 与 [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai.md)。预算数值为本项目预设。
 
 模型映射还控制采样参数和强制工具选择。不能强制指定工具时，传输层使用 `auto` 并仅暴露目标工具；Full Agent 的换窗要求仍由运行时校验。维护模型匹配规则时，应同时核对参数编译与运行时权限，不只修改界面选项。
 
