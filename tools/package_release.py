@@ -32,7 +32,7 @@ def publishable(relative):
     ):
         return True
     return relative.suffix.lower() in {
-        ".py", ".ts", ".vue", ".css", ".js", ".mjs", ".html", ".md", ".json", ".ttf",
+        ".py", ".ts", ".vue", ".css", ".js", ".mjs", ".html", ".md", ".json", ".ttf", ".svg", ".ico",
     } or name in {"license", "copying", "notice", "cl100k_base.tiktoken.gz", "o200k_base.tiktoken.gz"}
 
 

@@ -609,6 +609,11 @@ def create_app(data_dir=None):
 
     static = Path(__file__).parents[1] / "static"
     static.mkdir(exist_ok=True)
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        return FileResponse(static / "favicon.ico", media_type="image/x-icon")
+
     app.mount("/static", StaticFiles(directory=static), name="static")
     dist = Path(__file__).resolve().parents[3] / "dist"
     if not dist.exists():
