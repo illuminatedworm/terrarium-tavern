@@ -66,12 +66,12 @@ DEFAULT_PROBE_PROMPT = """Follow the latest scene marker provided in a system me
 DEFAULT_PROBE_MARKER_PROMPT = """The current scene marker is TAVERN_MID_42. Reply with exactly TAVERN_MID_42."""
 
 FULL_AGENT_SYSTEM_PROMPT_DEFINITION = {
-    "path": "system_prompt", "label": "应用系统提示词",
+    "path": "system_prompt", "label": "顶级规则/引导",
     "description": "前台主代理：负责 RP 与文学创作，并自主查阅资料、维护记忆和剧情状态。",
     "default": FULL_AGENT_PROMPT,
 }
 HALF_AGENT_SYSTEM_PROMPT_DEFINITION = {
-    "path": "system_prompt", "label": "应用系统提示词",
+    "path": "system_prompt", "label": "顶级规则/引导",
     "description": "前台 Writer：负责 RP 与文学创作。",
     "default": DEFAULT_SYSTEM_PROMPT,
 }

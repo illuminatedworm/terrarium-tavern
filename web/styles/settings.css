@@ -513,6 +513,10 @@
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
+.settings-detail .settings-prompt-warning {
+  color: var(--danger);
+  font-weight: 600;
+}
 .settings-prompt-editor {
   min-width: 0;
 }

@@ -513,6 +513,9 @@ onMounted(async () => {
                 </button>
               </div>
               <div class="settings-prompt-editor">
+                <p v-if="prompt.path === 'system_prompt'" class="settings-prompt-warning">
+                  除非你知道自己在做什么，否则不要修改。
+                </p>
                 <SavedText
                   :key="prompt.path"
                   :label="prompt.label"

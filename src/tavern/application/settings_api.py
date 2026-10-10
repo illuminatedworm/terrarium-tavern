@@ -52,7 +52,7 @@ def prompt_catalog():
             if scope == "full_agent" and path in {"tracker_system_prompt", "retrieval.query_prompt", "retrieval.protocol_prompt"}:
                 continue
             result.append({**prompt, "scope": scope, "path": path,
-                           "label": "系统提示词" if path == "system_prompt" else prompt["label"].replace("Reranker", "重排模型"),
+                           "label": prompt["label"].replace("Reranker", "重排模型"),
                            "default": get_path(defaults, path)})
     return result
 
