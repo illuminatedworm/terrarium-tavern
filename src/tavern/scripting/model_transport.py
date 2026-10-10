@@ -227,6 +227,8 @@ class ModelTransport(BaseLLMProvider):
         if api != "gemini" and temperature is not None:
             body["temperature"] = temperature
         body.update(copy.deepcopy(params))
+        if cfg.auth_mode != "chatgpt_subscription" and "context_management" in body:
+            raise ValueError("普通渠道使用本地上下文机制，不能通过自定义请求参数启用云端 compact")
         if self.request_context:
             self.request_context.apply(body, cfg)
         if api in APIS and marker and marker.get("field") == FIELD:

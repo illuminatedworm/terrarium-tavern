@@ -71,6 +71,10 @@ class Store(MessageAdapters):
                     migrated = validated_settings
                 elif validated_settings.model_dump() != raw:
                     migrated = validated_settings
+                    if "default_channel" not in raw.get("full_agent", {}):
+                        backup_path = root / f"settings-before-channels-{uuid.uuid4().hex[:12]}.sqlite3"
+                        with closing(sqlite3.connect(backup_path)) as backup_db:
+                            db.backup(backup_db)
         (root / "blobs").mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             db.executescript("""
@@ -110,6 +114,17 @@ class Store(MessageAdapters):
             if migrated is not None:
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
             db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','2')")
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "channel_origin" not in columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN channel_origin TEXT")
+            if "context_strategy" not in columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN context_strategy TEXT NOT NULL DEFAULT 'new_context'")
+                db.execute("ALTER TABLE sessions ADD COLUMN compact_auto INTEGER NOT NULL DEFAULT 1")
+            db.execute("""CREATE TABLE IF NOT EXISTS context_operations (
+                id TEXT PRIMARY KEY, session TEXT NOT NULL, operation TEXT NOT NULL,
+                kind TEXT NOT NULL, status TEXT NOT NULL, expected_revision INTEGER NOT NULL,
+                payload TEXT NOT NULL DEFAULT '{}', error TEXT, created REAL NOT NULL,
+                UNIQUE(session, operation))""")
             if "title" not in {row[1] for row in db.execute("PRAGMA table_info(sessions)")}:
                 db.execute("ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''")
                 db.execute("""UPDATE sessions SET title=COALESCE(
@@ -387,8 +402,8 @@ class Store(MessageAdapters):
                 db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
             )
 
-    def settings(self, mode="half_agent"):
-        settings = self.settings_document().runtime(mode)
+    def settings(self, mode="half_agent", channel=None):
+        settings = self.settings_document().runtime(mode, channel)
         generations = {provider.chatgpt_account_id: self.chatgpt.generation(provider.chatgpt_account_id)
                        for provider in settings.providers if provider.auth_mode == "chatgpt_subscription"
                        and provider.chatgpt_account_id}
@@ -400,6 +415,23 @@ class Store(MessageAdapters):
                     config._auth_generation = generations.get(config.chatgpt_account_id, "")
         return settings
 
+    def session_settings(self, session, *, require_origin=True):
+        if isinstance(session, str):
+            with self.connection() as db:
+                row = db.execute("SELECT agent_mode,channel_origin,context_strategy,compact_auto FROM sessions WHERE id=?", (session,)).fetchone()
+            if row is None:
+                raise KeyError("对话不存在")
+            session = dict(row)
+        channel = session.get("channel_origin")
+        if not channel and require_origin:
+            raise ValueError("请先确认此旧对话的渠道归属")
+        settings = self.settings(session["agent_mode"], channel or "standard")
+        settings.context_strategy = session.get("context_strategy", "new_context")
+        settings.compact_auto = bool(session.get("compact_auto", True))
+        if settings.context_strategy == "openai_compact" and (channel != "chatgpt" or session["agent_mode"] != "full_agent"):
+            raise ValueError("只有 ChatGPT 官方渠道的 Full Agent 对话可以使用云端 compact")
+        return settings
+
     @property
     def chatgpt(self):
         if not hasattr(self, "_chatgpt_accounts"):
@@ -409,6 +441,7 @@ class Store(MessageAdapters):
 
     def save_settings(self, settings):
         document = settings if isinstance(settings, SettingsDocument) else from_runtime(settings)
+        document = SettingsDocument.model_validate(document.model_dump())
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             current = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
@@ -418,6 +451,7 @@ class Store(MessageAdapters):
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
 
     def new_session(self, options):
+        channel = options.channel_origin or getattr(self.settings_document(), options.agent_mode).default_channel
         card = self.card(options.card_id)
         data = normalize(card["document"])
         greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
@@ -467,6 +501,7 @@ class Store(MessageAdapters):
                        (options.agent_mode, "conversation" if options.agent_mode == "full_agent"
                          else self.settings().lore_injection_mode, sid))
             self.create_message_adapter(db, "story", sid, options.agent_mode)
+            db.execute("UPDATE sessions SET channel_origin=? WHERE id=?", (channel, sid))
         return self.session(sid)
 
     def fork_session(self, sid, head, expected_revision):
@@ -476,6 +511,8 @@ class Store(MessageAdapters):
         new_sid = uid()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             source = db.execute("SELECT * FROM sessions WHERE id=?", (sid,)).fetchone()
             if source is None:
                 raise KeyError("会话不存在")
@@ -554,6 +591,8 @@ class Store(MessageAdapters):
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
+            db.execute("UPDATE sessions SET channel_origin=?,context_strategy=?,compact_auto=? WHERE id=?",
+                       (source["channel_origin"], source["context_strategy"], source["compact_auto"], new_sid))
             self.copy_message_adapter(db, "story", sid, new_sid)
             db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             db.execute("UPDATE sessions SET tool_result_options=? WHERE id=?",
@@ -611,8 +650,8 @@ class Store(MessageAdapters):
             if result["messages"]
             else {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}, "scopes": {}, "content": None}
         )
-        settings = self.settings()
-        settings = self.settings(result["agent_mode"])
+        settings = self.session_settings(result, require_origin=False)
+        result["compact_auto"] = bool(result["compact_auto"])
         result["policy_effective"] = result["policy"] or settings.policy
         result["cache_breakpoint_auto"] = bool(result["cache_breakpoint_auto"])
         from tavern.conversation.cache_breakpoint import (
@@ -659,6 +698,7 @@ class Store(MessageAdapters):
             db.execute("DELETE FROM events WHERE turn IN (SELECT id FROM turns WHERE session=?)", (sid,))
             db.execute("DELETE FROM turns WHERE session=?", (sid,))
             db.execute("DELETE FROM full_agent_trace WHERE session=?", (sid,))
+            db.execute("DELETE FROM context_operations WHERE session=?", (sid,))
             db.execute("DELETE FROM messages WHERE session=?", (sid,))
             db.execute("DELETE FROM sessions WHERE id=?", (sid,))
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (sid,))
@@ -712,6 +752,8 @@ class Store(MessageAdapters):
     def remove_lore_injection(self, sid, anchor_id, entry_id, expected_revision):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             session = db.execute("SELECT head,revision FROM sessions WHERE id=?", (sid,)).fetchone()
             if session is None:
                 raise KeyError("会话不存在")
@@ -773,6 +815,8 @@ class Store(MessageAdapters):
         affected = {m["id"] for m in branch[next(i for i, m in enumerate(branch) if m["id"] == mid):]}
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             active = db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')",
                 (sid,),
@@ -859,13 +903,15 @@ class Store(MessageAdapters):
 
     def update_session(self, sid, expected, **fields):
         if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "title",
-                                                  "cache_breakpoint_auto", "cache_breakpoint_message", "cache_breakpoint_follow"}):
+                                                  "cache_breakpoint_auto", "cache_breakpoint_message", "cache_breakpoint_follow", "compact_auto"}):
             raise ValueError("无效会话字段")
         if "title" in fields:
             title = fields["title"].strip()
             if not title or len(title) > 100:
                 raise ValueError("对话标题须为 1 到 100 个字符")
             fields["title"] = title
+        if "channel_origin" in fields or "context_strategy" in fields:
+            raise ValueError("渠道归属不可修改；上下文模式必须通过整理操作切换")
         if fields.get("head"):
             self.history(sid, fields["head"])
         with self.connection() as db:
@@ -875,6 +921,8 @@ class Store(MessageAdapters):
             ).fetchone()
             if active:
                 raise Conflict("请先完成或取消当前回合")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             assignments = ",".join(f"{k}=?" for k in fields)
             r = db.execute(
                 f"UPDATE sessions SET {assignments},revision=revision+1 WHERE id=? AND revision=?",
@@ -938,6 +986,8 @@ class Store(MessageAdapters):
     def _save_memory_snapshot(self, sid, session, snapshot, expected_revision):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN "
                           "('queued','running','awaiting_review')", (sid,)).fetchone():
                 raise Conflict("请先完成或取消当前回合")
@@ -952,6 +1002,8 @@ class Store(MessageAdapters):
     def create_turn(self, sid, request):
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("上下文正在整理，请先完成或取消整理")
             existing = db.execute(
                 "SELECT id,request FROM turns WHERE session=? AND operation=?", (sid, request.operation_id)
             ).fetchone()

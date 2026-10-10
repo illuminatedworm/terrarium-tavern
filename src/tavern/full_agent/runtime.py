@@ -19,6 +19,8 @@ class FullAgentRuntime:
         self.runtime = ScriptRuntime()
         self.tasks, self.agents = {}, {}
         self.provider_factory = None
+        from tavern.full_agent.context_operations import ContextOperations
+        self.context_operations = ContextOperations(store)
 
     def submit(self, sid, request):
         session = self.store.session(sid)
@@ -30,7 +32,7 @@ class FullAgentRuntime:
             for name in ("patch_state", "read_state"):
                 if name in session["disabled_tools"]:
                     raise ValueError(f"本轮要求更新 MVU 变量，请先在 Full Agent 工具页启用 {name}")
-        settings = self.store.settings().for_role("full_agent")
+        settings = self.store.session_settings(session).for_role("full_agent")
         if self.provider_factory is None:
             require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
@@ -43,6 +45,7 @@ class FullAgentRuntime:
         return self.store.turn(tid)
 
     async def close(self):
+        await self.context_operations.close()
         for task in self.tasks.values():
             if not task.done():
                 task.cancel()
@@ -94,7 +97,7 @@ class FullAgentRuntime:
             request = TurnRequest.model_validate(turn["request"])
             session = self.store.session(turn["session"])
             from tavern.core.message_adapter import bind_adapter
-            settings = bind_adapter(self.store.settings().for_role("full_agent").model_copy(deep=True),
+            settings = bind_adapter(self.store.session_settings(session).for_role("full_agent").model_copy(deep=True),
                                     self.store, "story", session["id"])
             if request.reasoning_effort is not None:
                 settings.reasoning_effort = request.reasoning_effort

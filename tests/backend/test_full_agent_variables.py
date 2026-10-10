@@ -120,7 +120,7 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
         result, session = await turn(service, session, regenerated, mode="regenerate", update_variables=True)
         assert result["status"] == "committed", result["error"]
         assert len(frames(regenerated.requests[0]["messages"])) == 1
-        switched = Model(("new_context", {"content": "Keep current facts", "keep_recent": 0}),
+        switched = Model(("new_context", {"handoff": "Keep current facts", "keep_recent": 0}),
                          ("read_state", {}), empty_patch(), "After rollover")
         result, session = await turn(service, session, switched, update_variables=True)
         assert result["status"] == "committed", result["error"]
@@ -164,7 +164,7 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
             ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 5}], "reason": "Injury"}),
             ("read_lore_entry", {"ref": "L1"}),
             ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": "NEW_NARRATIVE_SETTING"}}], "reason": "Narrative setting"}),
-            ("new_context", {"content": "Injury applied, continue narrative", "keep_recent": 0}),
+            ("new_context", {"handoff": "Injury applied, continue narrative", "keep_recent": 0}),
             RuntimeError("Disconnected"))
         failed, unchanged = await turn(service, session, model, update_variables=True, allow_content_edit=True)
         assert failed["status"] == "error", failed

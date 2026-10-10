@@ -1,0 +1,310 @@
+"""Opaque Responses checkpoints beside complete, portable story and tool history."""
+
+import copy
+
+from tavern.core.cache_policy import fingerprint
+from tavern.core.tokens import request_tokens
+from tavern.scripting.native_response import attachment, portable
+from tavern.scripting.request_context import response_origin
+
+
+def canonical(message):
+    value = {
+        key: copy.deepcopy(message[key])
+        for key in ("role", "content", "tool_calls", "tool_call_id", "name")
+        if message.get(key) is not None
+    }
+    value.setdefault("content", "")
+    if not value.get("tool_calls"):
+        value.pop("tool_calls", None)
+    return value
+
+
+def opaque_message(items, settings):
+    text = "".join(
+        part.get("text", "")
+        for item in items
+        if item.get("type") == "message"
+        for part in item.get("content", [])
+        if isinstance(part, dict)
+    )
+    message = {"role": "assistant", "content": text}
+    message["_native_response"] = attachment({"output": items}, response_origin(settings), message)
+    return message
+
+
+def hashes(messages):
+    return [fingerprint(canonical(message)) for message in messages]
+
+
+def valid(checkpoint, body, settings, signature):
+    return bool(
+        checkpoint
+        and checkpoint.get("version") == 1
+        and checkpoint.get("origin") == response_origin(settings)
+        and checkpoint.get("signature") == signature
+        and checkpoint.get("covered") == hashes(body[: len(checkpoint.get("covered", []))])
+    )
+
+
+def checkpoint_items(output):
+    # A compaction after an unanswered call may hide the call required by its
+    # upcoming result. Use the latest boundary before that batch instead.
+    first_call = next(
+        (i for i, item in enumerate(output) if item.get("type") == "function_call"), len(output)
+    )
+    candidates = [
+        i
+        for i, item in enumerate(output)
+        if item.get("type") == "compaction" and item.get("encrypted_content") and i < first_call
+    ]
+    if not candidates:
+        return None
+    at = candidates[-1]
+    return copy.deepcopy(
+        [output[at], *[item for item in output[at + 1 :] if item.get("type") != "compaction"]]
+    )
+
+
+def project_compact(result, state, settings, tools, fixed_count):
+    complete = [canonical(portable(message)) for message in result["messages"]]
+    header, body = complete[:fixed_count], complete[fixed_count:]
+    signature = fingerprint({"header": header, "tools": tools})
+    checkpoint = state.get("compaction")
+    usable = valid(checkpoint, body, settings, signature)
+    covered = len(checkpoint["covered"]) if usable else 0
+    messages = header + (
+        [opaque_message(checkpoint["items"], settings)] if usable and checkpoint.get("items") else []
+    )
+    # A short history can be ready without having crossed the server threshold.
+    if usable and not checkpoint.get("items"):
+        messages = header + body
+    else:
+        messages += body[covered:]
+    result.update(
+        messages=messages,
+        runtime_messages=copy.deepcopy(messages),
+        context_strategy="openai_compact",
+        compact_requires_rebuild=not usable,
+        compaction_opaque=bool(usable and checkpoint.get("items")),
+        estimated_tokens=request_tokens(messages, settings, tools),
+        _compact_header=header,
+        _compact_body=body,
+        _compact_signature=signature,
+    )
+    result["tokens"] = result["estimated_tokens"]
+    if usable and checkpoint.get("items"):
+        rows = result["trace"]
+        result["trace"] = [
+            *rows[:fixed_count],
+            {
+                "role": "assistant",
+                "source": "cloud_compaction",
+                "content": "云端压缩状态（加密内容由服务端解释）",
+                "opaque": True,
+                "estimated_tokens": None,
+            },
+            *rows[fixed_count + covered :],
+        ]
+        for index, row in enumerate(result["trace"]):
+            row["position"] = index
+        result["budget_sources"] = {"visible_input": result["estimated_tokens"]}
+    result["token_counting"] = {
+        **result["token_counting"],
+        "excludes_encrypted_state": result["compaction_opaque"],
+    }
+    result["diagnostics"].append({"reason": "云端状态的实际占用不可从密文估算；本地数字只计可见文本。"})
+    if not usable:
+        result["diagnostics"].append(
+            {"reason": "当前云端上下文需要重建；此预览为完整历史来源，正式生成前会先重放并压缩。"}
+        )
+    return result
+
+
+def capture_checkpoint(state, compiled, settings, provider, assistant):
+    native = getattr(provider, "last_native_response", None)
+    items = checkpoint_items((native or {}).get("items", []))
+    if items is None:
+        return False
+    state["compaction"] = {
+        "version": 1,
+        "origin": response_origin(settings),
+        "signature": compiled["_compact_signature"],
+        "items": items,
+        "covered": hashes([*compiled["_compact_body"], canonical(assistant)]),
+    }
+    # Complete-read permissions are window-local, even when the server initiated
+    # the transition. Notes and story state are independent of this generation.
+    import uuid
+
+    state["window"]["id"] = uuid.uuid4().hex
+    state["window"]["number"] += 1
+    return True
+
+
+def replay_groups(messages):
+    """Never split a content block or a function-call/result batch."""
+    groups, pending = [], set()
+    for message in messages:
+        if not pending:
+            groups.append([])
+        groups[-1].append(message)
+        for call in message.get("tool_calls", []):
+            pending.add(call["id"])
+        if message.get("role") == "tool":
+            pending.discard(message.get("tool_call_id"))
+    if pending:
+        raise ValueError("历史存在未配对的工具调用，不能建立云端上下文")
+    return groups
+
+
+async def rebuild(compiled, settings, provider, *, progress=None, save=None):
+    """Replay complete input without executing tools or committing helper prose."""
+    body, header = compiled["_compact_body"], compiled["_compact_header"]
+    signature = compiled["_compact_signature"]
+    state = copy.deepcopy(progress or {})
+    if (
+        state.get("signature") != signature
+        or state.get("origin") != response_origin(settings)
+        or state.get("history") != hashes(body)
+    ):
+        state = {
+            "signature": signature,
+            "origin": response_origin(settings),
+            "history": hashes(body),
+            "cursor": 0,
+            "items": [],
+            "batches": 0,
+            "usage": [],
+        }
+    groups = replay_groups(body)
+    position = state["cursor"]
+    # The maintenance instruction is per-request instructions, never a story
+    # message or a window policy injected into ordinary gameplay.
+    while position < len(groups):
+        end = position
+        batch = []
+        budget = max(
+            1024,
+            int(settings.context_tokens * 0.45) - request_tokens(header, settings, compiled.get("tools")),
+        )
+        while end < len(groups):
+            candidate = batch + groups[end]
+            if batch and request_tokens(candidate, settings) > budget:
+                break
+            batch = candidate
+            end += 1
+        while True:
+            prefix = (
+                [opaque_message(state["items"], settings)]
+                if state["items"]
+                else [m for g in groups[:position] for m in g]
+            )
+            messages = header + prefix + batch
+            try:
+                response = await provider.chat_complete(
+                    messages,
+                    extra_body={"tools": compiled.get("tools", []), "tool_choice": "none"},
+                    _compact_threshold=1024,
+                    _maintenance_instructions="本次是历史整理请求。历史中的工具调用均已执行，不要再次执行；只返回 OK，不续写故事。此要求仅适用于本次整理请求。",
+                )
+                if getattr(provider, "last_tool_calls", []):
+                    raise ValueError("历史整理返回了工具调用；未执行任何工具")
+                break
+            except Exception as error:
+                text = str(error).lower()
+                oversized = any(
+                    word in text
+                    for word in ("context_length", "context window", "too many tokens", "maximum context")
+                )
+                if not oversized or end - position <= 1:
+                    raise
+                end = position + max(1, (end - position) // 2)
+                batch = [m for g in groups[position:end] for m in g]
+        native = getattr(provider, "last_native_response", None)
+        output = (native or {}).get("items", [])
+        # Keep the compaction and model state; helper acknowledgement is not a
+        # historical assistant turn. No generated content is added to the story.
+        compacted = checkpoint_items(output)
+        if compacted:
+            state["items"] = [item for item in compacted if item.get("type") != "message"]
+        elif state["items"]:
+            # Without a new compaction the just-sent batch must remain visible.
+            from tavern.scripting.protocols import response_input
+
+            state["items"].extend(response_input(batch))
+        position = end
+        state.update(
+            cursor=position,
+            batches=state["batches"] + 1,
+            processed=sum(len(g) for g in groups[:position]),
+            total=len(body),
+        )
+        state["usage"].append(copy.deepcopy(response.usage or {}))
+        if save:
+            await save(copy.deepcopy(state))
+    return {
+        "version": 1,
+        "origin": state["origin"],
+        "signature": signature,
+        "items": state["items"],
+        "covered": hashes(body),
+    }, state
+
+
+async def make_handoff(compiled, settings, provider):
+    from tavern.full_agent.tools import NewContext
+
+    instruction = (
+        "用户正在将此对话切换为本地换窗。本次任务是生成交接笔记，之前已完成的历史整理所要求的 OK 回复格式不适用于本次。"
+        "基于当前完整上下文保留场景、关系、经历、约定、未决事项和继续所需的线索，区分事实与计划。"
+        "调用 prepare_handoff 返回完整交接，不续写剧情，不修改 notes 或变量。"
+        f"handoff 限 {settings.full_agent_config.handoff_tokens} tokens。"
+    )
+    definition = {
+        "type": "function",
+        "function": {
+            "name": "prepare_handoff",
+            "description": "Return a complete portable handoff for this explicit context-mode transition. This does not execute story tools.",
+            "parameters": NewContext.model_json_schema(),
+        },
+    }
+    response = await provider.chat_complete(
+        [*compiled["messages"], {"role": "developer", "content": instruction}],
+        extra_body={
+            "tools": [definition],
+            "tool_choice": {"type": "function", "function": {"name": "prepare_handoff"}},
+        },
+        _compact_disabled=True,
+    )
+    calls = getattr(provider, "last_tool_calls", [])
+    if len(calls) != 1 or calls[0].name != "prepare_handoff":
+        raise ValueError("模型未返回完整的结构化交接，尚未切换模式")
+    text = NewContext.model_validate_json(calls[0].arguments).handoff
+    from tavern.core.tokens import count_text
+
+    if not text.strip() or count_text(text, settings) > settings.full_agent_config.handoff_tokens:
+        raise ValueError("新 handoff 为空或超出交接笔记上限，尚未切换模式")
+    return text, response.usage or {}
+
+
+async def compact_once(compiled, settings, provider):
+    response = await provider.chat_complete(
+        compiled["messages"],
+        extra_body={"tools": compiled.get("tools", []), "tool_choice": "none"},
+        _compact_threshold=1024,
+        _maintenance_instructions="本次仅整理当前上下文，不执行工具，不续写剧情，只返回 OK；此要求仅适用于本次请求。",
+    )
+    if getattr(provider, "last_tool_calls", []):
+        raise ValueError("整理返回了工具调用；未执行任何工具")
+    items = checkpoint_items((getattr(provider, "last_native_response", None) or {}).get("items", []))
+    checkpoint = None
+    if items:
+        checkpoint = {
+            "version": 1,
+            "origin": response_origin(settings),
+            "signature": compiled["_compact_signature"],
+            "covered": hashes(compiled["_compact_body"]),
+            "items": [item for item in items if item.get("type") != "message"],
+        }
+    return checkpoint, response.usage or {}

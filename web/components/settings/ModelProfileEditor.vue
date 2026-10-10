@@ -10,6 +10,8 @@ import { useModelCatalog } from '../../lib/modelCatalog';
 import { modelEffortOptions } from '../../lib/reasoningEffort';
 import { loadChatGPTAccounts, subscriptionProvider } from '../../lib/chatgptAccounts';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
+import { blankChannelProfile, channelProviders, providerChannel, type Channel } from '../../lib/channels';
+import ChannelSwitch from '../common/ChannelSwitch.vue';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
@@ -17,6 +19,7 @@ const props = defineProps<{
   label: string;
   effortOptions: Array<{ value: string; label: string }>;
   flush: () => Promise<unknown>;
+  channel?: Channel;
 }>();
 const emit = defineEmits<{ checked: [] }>();
 const busy = ref(false);
@@ -25,6 +28,14 @@ const feedback = ref('');
 const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
+const editorChannel = ref<Channel>(providerChannel(provider.value));
+const visibleProviders = computed(() =>
+  props.role === 'card_editor' ? channelProviders(props.providers, editorChannel.value) : props.providers,
+);
+function switchEditorChannel(channel: Channel) {
+  editorChannel.value = channel;
+  Object.assign(props.profile, blankChannelProfile(props.profile, props.providers, channel));
+}
 watch(
   subscription,
   async (enabled) => {
@@ -57,10 +68,10 @@ watch(
 );
 const errorPrefix = computed(() =>
   props.role === 'full_agent'
-    ? 'full_agent.model.'
+    ? `full_agent.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
     : props.role === 'card_editor'
       ? 'shared.card_editor.'
-      : 'half_agent.' + props.role + '.',
+      : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
 );
 const common = computed<SettingField[]>(() => [
   { path: 'context_tokens', label: '上下文窗口（tokens）', min: 2048, max: 2000000 },
@@ -128,7 +139,10 @@ async function action(check: boolean) {
   try {
     await props.flush();
     if (check) {
-      const result = await api(`/settings/probe?role=${props.role}`, {});
+      const result = await api(
+        `/settings/probe?role=${props.role}${props.channel ? '&channel=' + props.channel : ''}`,
+        {},
+      );
       feedback.value =
         result.capability === 'accepted'
           ? '连接检查通过，测试上下文已传达。'
@@ -148,12 +162,17 @@ async function action(check: boolean) {
 </script>
 <template>
   <section class="profile-editor" :aria-label="label">
+    <ChannelSwitch
+      v-if="role === 'card_editor'"
+      :model-value="editorChannel"
+      @update:model-value="switchEditorChannel"
+    />
     <h4 v-if="label">{{ label }}</h4>
     <div class="profile-connection-row">
       <div class="settings-field-grid profile-connection">
         <label
           >提供商<select v-model="profile.provider_id" aria-label="提供商" :disabled="busy">
-            <option v-for="item in providers" :key="item.id" :value="item.id">{{ item.name }}</option>
+            <option v-for="item in visibleProviders" :key="item.id" :value="item.id">{{ item.name }}</option>
           </select></label
         >
         <label v-if="!subscription"
@@ -209,7 +228,7 @@ async function action(check: boolean) {
     /></SettingsFields>
     <p v-if="subscription" class="muted">
       输出预留预算用于本地上下文计算，不是服务端输出上限。ChatGPT
-      订阅通道不支持温度、采样及显式缓存控制；原配置保留，切回 API Key 后可继续使用。
+      订阅通道不支持温度、采样及显式缓存控制；普通渠道的模型配置独立保存。
     </p>
     <details class="settings-advanced">
       <summary>更多参数：采样细项、分词器与提示缓存</summary>

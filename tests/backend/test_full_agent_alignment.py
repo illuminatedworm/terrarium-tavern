@@ -244,7 +244,7 @@ async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
     model = Model(("read_state", {}),
                   ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
                   ("archive_note", {"key": "plan"}),
-                  ("new_context", {"content": "已归档计划，继续当前故事", "keep_recent": 0}),
+                  ("new_context", {"handoff": "已归档计划，继续当前故事", "keep_recent": 0}),
                   ("read_state", {}), "narrative")
     try:
         result, current = await turn(service, session, model)
@@ -264,13 +264,13 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
     store, service, session = game(tmp_path)
     model = Model(
         ("write_note", {"key": "线索/钟楼", "content": "初版笔记", "kind": "plan"}),
-        ("new_context", {"content": "继续当前场景", "keep_recent": 0}),
+        ("new_context", {"handoff": "继续当前场景", "keep_recent": 0}),
         ("write_note", {"key": "线索/钟楼", "content": "更新笔记正文", "kind": "hypothesis"}),
         ("write_note", {"key": "计划/港口", "content": "新计划", "kind": "plan"}),
         ("archive_note", {"key": "线索/钟楼"}),
         ("write_note", {"key": "线索/钟楼", "content": "重新启用笔记", "kind": "plan"}),
         ("read_note", {"key": "计划/港口"}),
-        ("new_context", {"content": "继续下一段场景", "keep_recent": 0}),
+        ("new_context", {"handoff": "继续下一段场景", "keep_recent": 0}),
         "narrative",
     )
     try:
@@ -581,7 +581,7 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
     session = set_handoff(store, session, "MEMORY_A")
     try:
         _, session = await turn(service, session, Model("first"))
-        model = Model(("new_context", {"content": "MEMORY_B", "keep_recent": 0}), "after rollover")
+        model = Model(("new_context", {"handoff": "MEMORY_B", "keep_recent": 0}), "after rollover")
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         messages = model.requests[-1]["messages"]

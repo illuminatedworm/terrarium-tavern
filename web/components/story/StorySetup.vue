@@ -7,9 +7,13 @@ import StoryLoading from './StoryLoading.vue';
 import { openingProse } from '../../lib/storyText';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
+import ChannelSwitch from '../common/ChannelSwitch.vue';
+import { channelLabels, type Channel } from '../../lib/channels';
 
-const props = defineProps<{ card: any }>();
-const emit = defineEmits<{ started: [session: any]; back: [] }>();
+const props = defineProps<{ card: any; settings?: any }>();
+const emit = defineEmits<{ started: [session: any]; back: []; settings: [channel: Channel, mode: string] }>();
+const channel = ref<Channel>('standard');
+const settings = ref<any>(null);
 const personas = ref<any[]>([]),
   personaId = ref(''),
   personaName = ref('用户');
@@ -17,6 +21,14 @@ const greeting = ref(0),
   busy = ref(false),
   error = ref('');
 const agentMode = ref('half_agent');
+const models = computed(() => {
+  const scope = (props.settings || settings.value)?.[agentMode.value];
+  const prefix = channel.value === 'chatgpt' ? 'official_' : '';
+  return agentMode.value === 'full_agent'
+    ? [scope?.[prefix + 'model']]
+    : [scope?.[prefix + 'foreground'], scope?.[prefix + 'background']];
+});
+const modelLabel = computed(() => models.value.map((model) => model?.model || '待配置').join(' / '));
 const data = computed(() => props.card.document.data || props.card.document);
 const greetings = computed(() => [data.value.first_mes || '', ...(data.value.alternate_greetings || [])]);
 const opening = computed(() =>
@@ -45,6 +57,7 @@ async function start() {
       persona: personaName.value,
       persona_id: personaId.value || null,
       agent_mode: agentMode.value,
+      channel_origin: channel.value,
     });
     emit('started', session);
   } catch (e: any) {
@@ -53,7 +66,12 @@ async function start() {
   }
 }
 onMounted(async () => {
-  personas.value = await api('/personas');
+  try {
+    [personas.value, settings.value] = await Promise.all([api('/personas'), api('/settings')]);
+    channel.value = settings.value?.[agentMode.value]?.default_channel || 'standard';
+  } catch (e: any) {
+    error.value = e.message;
+  }
 });
 useTimedError(error);
 </script>
@@ -68,7 +86,6 @@ useTimedError(error);
     <div class="character-heading">
       <CharacterPortrait :src="cardPortraitUrl(card)" :name="data.name" size="detail" fit="contain" />
       <div>
-        <div class="eyebrow">START A NEW STORY</div>
         <h1>进入 {{ data.name }}</h1>
         <p class="muted">每次进入都会创建独立会话</p>
       </div>
@@ -76,6 +93,15 @@ useTimedError(error);
     <AppNotification :message="error" />
     <div class="story-setup-grid">
       <div class="story-setup-options">
+        <h3>对话渠道</h3>
+        <ChannelSwitch v-model="channel" label="对话渠道" />
+        <p class="muted">创建后渠道固定；可在同一渠道内更换模型。</p>
+        <div class="story-channel-model">
+          <span>当前模型</span><strong>{{ modelLabel }}</strong>
+          <button class="quiet" @click="emit('settings', channel, agentMode)">
+            配置{{ channelLabels[channel] }}模型
+          </button>
+        </div>
         <label
           >运行模式<select v-model="agentMode" aria-label="运行模式">
             <option value="half_agent">Half Agent · Writer 与 Tracker</option>
@@ -88,6 +114,9 @@ useTimedError(error);
               ? '由 Agent 自行检索、维护笔记和切换工作窗口。需要支持原生工具调用的模型。'
               : 'Writer 负责正文，Tracker 负责后台整理，运行时管理上下文。'
           }}
+        </p>
+        <p v-if="agentMode === 'full_agent'" class="muted">
+          上下文方式：本地换窗{{ channel === 'chatgpt' ? '（创建后可切换云端 compact）' : '' }}
         </p>
         <label
           >用户角色<select v-model="personaId">

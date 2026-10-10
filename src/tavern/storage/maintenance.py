@@ -102,6 +102,11 @@ def cleanup(store, *, vacuum=False):
             raise Conflict("请先结束角色卡编辑任务，再清理存储")
         if db.execute("SELECT 1 FROM turns WHERE status IN ('queued','running','awaiting_review')").fetchone():
             raise Conflict("请先结束运行或待审核回合，再清理存储")
+        if db.execute("SELECT 1 FROM context_operations WHERE status IN ('queued','running')").fetchone():
+            raise Conflict("请先完成或取消上下文整理，再清理存储")
+        # Completed operations contain only diagnostics; resumable checkpoints
+        # and story-owned compaction snapshots are never log-cleanup targets.
+        db.execute("DELETE FROM context_operations WHERE status='completed' AND created<?", (time.time() - store.settings().log_retention_days * 86400,))
         from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
         prune_orphan_retrieval(db)
         _, selected, cached, report = _plan(store, db, time.time())

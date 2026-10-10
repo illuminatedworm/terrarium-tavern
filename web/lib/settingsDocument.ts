@@ -53,8 +53,18 @@ export interface PromptDefinition {
 }
 export interface SettingsDocument {
   version: 2;
-  full_agent: SettingsObject & { model: ModelProfile };
-  half_agent: SettingsObject & { foreground: ModelProfile; background: ModelProfile };
+  full_agent: SettingsObject & {
+    model: ModelProfile;
+    official_model: ModelProfile | null;
+    default_channel: 'standard' | 'chatgpt';
+  };
+  half_agent: SettingsObject & {
+    foreground: ModelProfile;
+    background: ModelProfile;
+    official_foreground: ModelProfile | null;
+    official_background: ModelProfile | null;
+    default_channel: 'standard' | 'chatgpt';
+  };
   shared: SettingsObject & {
     providers: Provider[];
     card_editor: ModelProfile;

@@ -30,7 +30,8 @@ def test_defaults_and_custom_prompts():
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
     assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
     assert "用户对行动结果的描述，不自动决定其他人物的反应" in DEFAULT_SYSTEM_PROMPT
-    assert "用户的输入是其角色的尝试，不是结果" in FULL_AGENT_PROMPT
+    assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
+    assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
 
 
 def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):

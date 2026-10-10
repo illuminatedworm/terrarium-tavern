@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
+from tavern.core.channels import Channel, provider_channel
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -27,6 +28,7 @@ from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 
 LEGACY_FULL_AGENT_PROMPT_HASHES = {
+    "d72b35768688226ad359f3fdc8dcb04286633b4da808a8ee6aa70f7f47e8e00b",
     "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e",
     "7ee23c619af1a6cb406489c4c9316a8457e2161d68d1ef5feba332c8fdb267ea",
 }
@@ -44,6 +46,7 @@ class RetrievalRuntime(StrictSettings):
 
 
 class AgentSettings(StrictSettings):
+    default_channel: Channel = "standard"
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_runtime: RetrievalRuntime = Field(default_factory=RetrievalRuntime)
     lore_recursive: bool = Field(default=True, strict=True)
@@ -60,6 +63,7 @@ class AgentSettings(StrictSettings):
 
 class FullSettings(AgentSettings):
     model: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
+    official_model: ModelProfile | None = None
     tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
     system_prompt: str = FULL_AGENT_PROMPT
 
@@ -75,6 +79,8 @@ class FullSettings(AgentSettings):
 class HalfSettings(AgentSettings):
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    official_foreground: ModelProfile | None = None
+    official_background: ModelProfile | None = None
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
     tracker_max_steps: int = Field(default=8, ge=2, le=100, strict=True)
@@ -158,24 +164,56 @@ class SettingsDocument(StrictSettings):
     shared: SharedSettings = Field(default_factory=SharedSettings)
     revisions: dict[str, int] = Field(default_factory=lambda: {k: 0 for k in ("full_agent", "half_agent", "shared")})
 
+    def profiles(self):
+        for scope, keys in (("full_agent", ("model", "official_model")),
+                            ("half_agent", ("foreground", "background", "official_foreground", "official_background")),
+                            ("shared", ("card_editor",))):
+            for key in keys:
+                profile = getattr(getattr(self, scope), key)
+                if profile is not None:
+                    yield scope, key, profile
+
     @model_validator(mode="after")
     def references(self):
         ids = [p.id for p in self.shared.providers]
         if not ids or len(ids) != len(set(ids)):
             raise ValueError("提供商不能为空或重复")
-        for profile in (self.full_agent.model, self.half_agent.foreground, self.half_agent.background, self.shared.card_editor):
+        for scope, key, profile in self.profiles():
+            if not profile.provider_id and not profile.model:
+                continue  # An unconfigured channel never borrows another channel's connection.
             if profile.provider_id not in ids:
                 raise ValueError("提供商仍被模型配置引用，请先切换对应模型的提供商")
+            provider = next(p for p in self.shared.providers if p.id == profile.provider_id)
+            if scope != "shared" and provider_channel(provider) != ("chatgpt" if key.startswith("official_") else "standard"):
+                raise ValueError("模型配置与渠道不一致，请在对应渠道中选择供应商")
         return self
 
-    def runtime(self, mode="half_agent") -> Settings:
+    def runtime(self, mode="half_agent", channel=None) -> Settings:
         """Each projection is a deep operation snapshot, including its role changes."""
-        agent = getattr(self, mode)
-        data = agent.model_dump(exclude={"model", "tools", "local_runtime"})
+        agent = getattr(self, mode).model_copy(deep=True)
+        channel = channel or agent.default_channel
+        providers = [p.model_copy(deep=True) for p in self.shared.providers]
+        def selected(owner, key):
+            profile = getattr(owner, ("official_" if channel == "chatgpt" else "") + key)
+            if profile is not None and profile.provider_id:
+                return profile.model_copy(deep=True)
+            missing = "unconfigured-" + channel
+            if not any(p.id == missing for p in providers):
+                providers.append(Provider(id=missing, name="未配置", auth_mode=(
+                    "chatgpt_subscription" if channel == "chatgpt" else "api_key")))
+            return ModelProfile(provider_id=missing, model="")
+        full_profile = selected(self.full_agent, "model")
+        if mode == "full_agent":
+            agent.model = full_profile
+        else:
+            agent.foreground, agent.background = selected(agent, "foreground"), selected(agent, "background")
+        data = agent.model_dump(exclude={"model", "tools", "local_runtime", "official_model",
+                                        "official_foreground", "official_background", "default_channel"})
         data["runtime_mode"] = mode
         data.update(self.shared.model_dump())
+        data.update(providers=providers, channel_origin=channel)
         data["local_models"].update(agent.local_runtime.model_dump())
-        data.update(full_agent=self.full_agent.model.model_dump(),
+        data.update(full_agent=full_profile.model_dump(),
                     full_agent_config=self.full_agent.tools.model_dump(),
                     full_agent_system_prompt=self.full_agent.system_prompt)
         if mode == "full_agent":
@@ -190,8 +228,9 @@ class SettingsDocument(StrictSettings):
         value = Settings.model_validate(data)
         value._settings_source = self.model_copy(deep=True)
         value._settings_mode = mode
+        value._settings_channel = channel
         if mode == "half_agent":
-            value._full_runtime = self.runtime("full_agent")
+            value._full_runtime = self.runtime("full_agent", channel)
         return value.for_role("full_agent" if mode == "full_agent" else "foreground")
 
 
@@ -259,6 +298,20 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
+        providers = {p["id"]: p for p in raw.get("shared", {}).get("providers", [])}
+        standard = next((p["id"] for p in providers.values() if provider_channel(p) == "standard"), "")
+        for scope, keys in (("full_agent", ("model",)), ("half_agent", ("foreground", "background"))):
+            agent = raw.setdefault(scope, {})
+            if "default_channel" not in agent:
+                agent["default_channel"] = "standard"
+                for key in keys:
+                    profile = agent.get(key, {})
+                    if provider_channel(providers.get(profile.get("provider_id"), {})) == "chatgpt":
+                        agent["official_" + key] = deepcopy(profile)
+                        agent[key] = ModelProfile(provider_id=standard, model="").model_dump()
+                        if key in ("model", "foreground"):
+                            agent["default_channel"] = "chatgpt"
+                changed_scopes.add(scope)
         if migrate_tracker_settings(raw.setdefault("half_agent", {})):
             changed_scopes.add("half_agent")
         # Only application prompt settings use the human participant terminology.
@@ -345,13 +398,21 @@ def from_runtime(value: Settings) -> SettingsDocument:
             agent[key] = deepcopy(data[key])
     agent["local_runtime"] = {key: deepcopy(data["local_models"][key]) for key in RetrievalRuntime.model_fields}
     if mode == "full_agent":
-        agent.update(model=data["full_agent"], tools=data["full_agent_config"], system_prompt=data["full_agent_system_prompt"])
+        key = "official_model" if value._settings_channel == "chatgpt" else "model"
+        agent.update({key: data["full_agent"], "tools": data["full_agent_config"], "system_prompt": data["full_agent_system_prompt"]})
     else:
-        doc.full_agent.model = value.full_agent.model_copy(deep=True)
+        for role in ("foreground", "background"):
+            key = "official_" + role if value._settings_channel == "chatgpt" else role
+            agent[key] = data[role]
+            if value._settings_channel == "chatgpt":
+                agent[role] = getattr(doc.half_agent, role).model_dump()
+        setattr(doc.full_agent, "official_model" if value._settings_channel == "chatgpt" else "model",
+                value.full_agent.model_copy(deep=True))
         doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
         doc.full_agent.system_prompt = value.full_agent_system_prompt
     setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
     shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields}
+    shared["providers"] = [p for p in shared["providers"] if not p["id"].startswith("unconfigured-")]
     shared["local_models"] = {key: deepcopy(data["local_models"][key]) for key in LocalResources.model_fields}
     doc.shared = SharedSettings.model_validate(shared)
     return SettingsDocument.model_validate(doc.model_dump())

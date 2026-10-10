@@ -31,9 +31,12 @@ import SavedText from './SavedText.vue';
 import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
+import ChannelSwitch from '../common/ChannelSwitch.vue';
+import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
 const props = defineProps<{
   initialMode?: string;
   initialPage?: string;
+  initialChannel?: Channel;
   effortOptions: Array<{ value: string; label: string }>;
 }>();
 const emit = defineEmits<{
@@ -46,6 +49,20 @@ const transferBusy = ref(false);
 const editor = useSettingsEditor((settings) => emit('updated', settings));
 const { saved, draft, error, busy, textBusy, textDirty, textErrors, pending } = editor;
 const pageId = ref('');
+const channel = ref<Channel>(props.initialChannel || 'standard');
+const providersForChannel = computed(() =>
+  channelProviders(draft.value?.shared.providers || [], channel.value),
+);
+function createChannelProfile(role: string) {
+  if (!draft.value) return;
+  const owner = role === 'full_agent' ? draft.value.full_agent : draft.value.half_agent;
+  const base = role === 'full_agent' ? owner.model : owner[role];
+  owner[profileKey(role, channel.value)] = blankChannelProfile(
+    base,
+    draft.value.shared.providers,
+    channel.value,
+  );
+}
 const localErrors = ref<Record<string, string>>({});
 provide('settings-local-errors', localErrors);
 const query = ref('');
@@ -344,11 +361,22 @@ onMounted(async () => {
           :aria-label="groupLabel(scope) + ' ' + page.label"
         >
           <template v-if="page.key === 'model'">
+            <ChannelSwitch v-model="channel" />
+            <p class="muted">两类渠道的模型独立保存；已有对话始终使用创建时的渠道。</p>
+            <label class="settings-check"
+              ><span>新建对话默认使用此渠道</span
+              ><input
+                type="checkbox"
+                :checked="values.default_channel === channel"
+                @change="values.default_channel = channel"
+            /></label>
             <div :class="['settings-profiles', { 'dual-profiles': scope === 'half_agent' }]">
               <ModelProfileEditor
-                v-if="scope === 'full_agent'"
-                :profile="draft.full_agent.model"
-                :providers="draft.shared.providers"
+                v-if="scope === 'full_agent' && draft.full_agent[profileKey('full_agent', channel)]"
+                :key="'full-' + channel"
+                :profile="draft.full_agent[profileKey('full_agent', channel)]"
+                :providers="providersForChannel"
+                :channel="channel"
                 role="full_agent"
                 label="模型连接"
                 :effort-options="effortOptions"
@@ -364,18 +392,35 @@ onMounted(async () => {
                   ></template
                 ></ModelProfileEditor
               >
-              <template v-else
-                ><ModelProfileEditor
-                  v-for="role in ['foreground', 'background'] as const"
-                  :key="role"
-                  :profile="draft.half_agent[role]"
-                  :providers="draft.shared.providers"
-                  :role="role"
-                  :label="role === 'foreground' ? '正文生成' : '后台整理'"
-                  :effort-options="effortOptions"
-                  :flush="editor.flush"
-                  @checked="refreshAfterProbe"
-              /></template>
+              <div v-else-if="scope === 'full_agent'" class="channel-empty">
+                <p>此渠道的 Full Agent 模型尚未配置。</p>
+                <button :disabled="!providersForChannel.length" @click="createChannelProfile('full_agent')">
+                  配置模型连接
+                </button>
+                <button class="quiet" @click="navigate('shared.providers')">管理本渠道供应商</button>
+              </div>
+              <template v-else>
+                <template v-for="role in ['foreground', 'background'] as const" :key="role + channel">
+                  <ModelProfileEditor
+                    v-if="draft.half_agent[profileKey(role, channel)]"
+                    :profile="draft.half_agent[profileKey(role, channel)]"
+                    :providers="providersForChannel"
+                    :channel="channel"
+                    :role="role"
+                    :label="role === 'foreground' ? '正文生成' : '后台整理'"
+                    :effort-options="effortOptions"
+                    :flush="editor.flush"
+                    @checked="refreshAfterProbe"
+                  />
+                  <div v-else class="channel-empty">
+                    <p>{{ role === 'foreground' ? '正文生成' : '后台整理' }}尚未配置。</p>
+                    <button :disabled="!providersForChannel.length" @click="createChannelProfile(role)">
+                      配置模型连接
+                    </button>
+                    <button class="quiet" @click="navigate('shared.providers')">管理本渠道供应商</button>
+                  </div>
+                </template>
+              </template>
             </div>
             <p v-if="scope === 'full_agent'" class="muted">
               默认权限的修改，会从下一轮起影响同模式下继承默认值的对话。
@@ -480,6 +525,17 @@ onMounted(async () => {
                   @save="editor.saveText(scope, prompt.path)"
                 />
                 <p class="muted">{{ prompt.description }}</p>
+                <p
+                  v-if="
+                    scope === 'full_agent' &&
+                    prompt.path === 'system_prompt' &&
+                    /handoff|new_context|tavern_memory/.test(editor.textValue(scope, prompt.path))
+                  "
+                  class="muted"
+                >
+                  此自定义主规则包含本地换窗要求；使用云端 compact
+                  前请移除其中的换窗命令，或恢复通用默认文本。
+                </p>
                 <button @click="editor.editText(scope, prompt.path, prompt.default)">恢复默认文本</button>
               </div>
             </div>
@@ -498,6 +554,8 @@ onMounted(async () => {
           <ProviderSettings
             v-else-if="page.key === 'providers'"
             v-model:providers="draft.shared.providers"
+            :initial-channel="channel"
+            @channel="channel = $event"
             :flush="editor.flush"
           />
           <template v-else-if="page.key === 'editor'">

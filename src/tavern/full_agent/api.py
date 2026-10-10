@@ -37,11 +37,49 @@ def require_full(store, sid):
     return session
 
 
-def register_full_agent_routes(app, store):
+def register_full_agent_routes(app, store, context_operations=None):
+    from tavern.full_agent.context_operations import ContextOperationRequest
+
+    @app.get("/api/sessions/{sid}/context-operation")
+    def context_operation(sid: str):
+        store.session(sid)
+        return context_operations.latest(sid)
+
+    @app.post("/api/sessions/{sid}/context-operations", status_code=202)
+    async def start_context_operation(sid: str, request: ContextOperationRequest):
+        return context_operations.start(sid, request)
+
+    @app.post("/api/sessions/{sid}/context-operations/{oid}/{action}")
+    async def change_context_operation(sid: str, oid: str, action: Literal["cancel", "resume"]):
+        if context_operations.get(oid)["session"] != sid:
+            raise ValueError("上下文操作不属于此对话")
+        return await context_operations.cancel(oid) if action == "cancel" else context_operations.resume(oid)
+
+    @app.put("/api/sessions/{sid}/compact-auto")
+    def compact_auto(sid: str, edit: dict):
+        session = require_full(store, sid)
+        if session["channel_origin"] != "chatgpt" or type(edit.get("enabled")) is not bool:
+            raise ValueError("自动压缩仅适用于官方渠道，请提供有效开关")
+        return store.update_session(sid, edit.get("expected_revision"), compact_auto=int(edit["enabled"]))
+
+    @app.put("/api/sessions/{sid}/channel-origin")
+    def classify_legacy(sid: str, edit: dict):
+        from tavern.core.channels import CHANNELS
+        if edit.get("channel_origin") not in CHANNELS:
+            raise ValueError("未知渠道")
+        with store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消当前回合")
+            result = db.execute("UPDATE sessions SET channel_origin=?,revision=revision+1 WHERE id=? AND revision=? AND channel_origin IS NULL",
+                                (edit["channel_origin"], sid, edit.get("expected_revision")))
+            if result.rowcount != 1:
+                raise Conflict("渠道归属已经确定或会话已改变，不能跨渠道修改")
+        return store.session(sid)
     @app.get("/api/sessions/{sid}/full-agent/tools")
     def list_tools(sid: str, update_variables: bool = False, allow_content_edit: bool = False):
         session = require_full(store, sid)
-        settings = store.settings().for_role("full_agent")
+        settings = store.session_settings(session).for_role("full_agent")
         request = TurnRequest(operation_id="tools", expected_revision=session["revision"],
                               update_variables=update_variables, allow_content_edit=allow_content_edit)
         available = {t["function"]["name"] for t in tool_definitions(
@@ -74,6 +112,8 @@ def register_full_agent_routes(app, store):
             raise ValueError("未知的工具返回选项")
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
                           (sid,)).fetchone():
                 raise Conflict("请先完成或取消当前回合")
@@ -110,7 +150,11 @@ def register_full_agent_routes(app, store):
     def full_agent_state(sid: str):
         session = require_full(store, sid)
         state = full_state(session["snapshot"])
+        settings = store.session_settings(session, require_origin=False)
         return {"window": {k: v for k, v in state["window"].items() if k != "id"},
+                "pressure_ratio": settings.full_agent_config.pressure_ratio,
+                "context_strategy": session["context_strategy"], "channel_origin": session["channel_origin"],
+                "compact_auto": session["compact_auto"], "context_operation": context_operations.latest(sid),
                 "handoff": state["handoff"],
                 "notes": [note_view(n, session["messages"]) for n in state["notes"].values()],
                 "history_messages": len(session["messages"])}
@@ -120,7 +164,9 @@ def register_full_agent_routes(app, store):
         session = require_full(store, sid)
         if not session["head"]:
             raise ValueError("空白故事还没有可保存交接笔记的剧情节点；请先发送一条消息")
-        settings = store.settings().for_role("full_agent")
+        settings = store.session_settings(session).for_role("full_agent")
+        if session["context_strategy"] == "openai_compact":
+            raise ValueError("云端 compact 模式不使用 handoff；请先切回本地换窗")
         if not edit.content.strip() or count_text(edit.content, settings) > settings.full_agent_config.handoff_tokens:
             raise ValueError("handoff 不能为空且不能超过配置的 token 上限")
         snapshot = copy.deepcopy(session["snapshot"])
@@ -133,6 +179,8 @@ def register_full_agent_routes(app, store):
         state.pop("edited_sources", None)
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
             if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
                           (sid,)).fetchone():
                 raise Conflict("请先完成或取消当前回合")

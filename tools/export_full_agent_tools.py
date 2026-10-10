@@ -31,7 +31,7 @@ EXAMPLES = {
     "read_history": ({"ref": "H1"}, {"ref": "H1", "role": "user", "text": "我明天去港口。"}),
     "write_handoff": ({"content": "明天去港口，相关笔记：计划/港口。"},
                       {"saved_to_draft": True, "window": 1, "notice": NOTICE}),
-    "new_context": ({"content": "明天去港口，相关笔记：计划/港口。", "keep_recent": 0},
+    "new_context": ({"handoff": "明天去港口，相关笔记：计划/港口。", "keep_recent": 0},
                     {"saved_to_draft": True, "window": 2, "notice": NOTICE}),
     "search_notes": ({"query": "港口"}, {
         "matches": [{**NOTE_META, "preview": "明天去港口。"}], "notice": "使用 read 工具读取完整原文。"}),
@@ -47,7 +47,7 @@ EXAMPLES = {
         "saved_to_draft": True, "added_refs": [], "characters": [{"ref": "description", "text": "新的角色描述。"}],
         "entries": [], "removed_refs": []}),
     "read_character": ({"ref": "description"}, {"ref": "description", "exists": True, "text": "角色描述。"}),
-    "set_retrieval_query": ({"query": ""}, {"saved_to_draft": True, "query": ""}),
+    "set_retrieval_query": ({"query": ""}, {"saved_to_draft": True}),
 }
 
 
@@ -68,7 +68,8 @@ def descriptions():
     parts.extend(["### 运行时追加的描述", "",
         "以下文本以一个空格追加在工具描述末尾；占位符发送前替换为配置值。", "",
         "| 工具 | 追加文本全文 | 条件 |", "|---|---|---|",
-        "| `write_handoff`、`new_context` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |",
+        "| `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |",
+        "| `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |",
         "| `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |",
         "| `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |",
         "| `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |", "",

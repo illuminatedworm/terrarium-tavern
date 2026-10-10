@@ -33,11 +33,17 @@ def connected_store(root):
     store._chatgpt_accounts = identity.service(root)
     account_id, _ = seed_account(store.chatgpt)
     doc = store.settings_document()
-    provider = doc.shared.providers[0]
+    provider = doc.shared.providers[0].model_copy(deep=True, update={"id": "official"})
+    doc.shared.providers.append(provider)
     provider.auth_mode, provider.chatgpt_account_id, provider.use_proxy = "chatgpt_subscription", account_id, False
     doc.shared.network.api_proxy = False
-    for profile, name in ((doc.full_agent.model, "fixture-full"), (doc.half_agent.foreground, "fixture-writer"),
-                          (doc.half_agent.background, "fixture-tracker"), (doc.shared.card_editor, "fixture-editor")):
+    doc.full_agent.default_channel = doc.half_agent.default_channel = "chatgpt"
+    doc.full_agent.official_model = doc.full_agent.model.model_copy(deep=True)
+    doc.half_agent.official_foreground = doc.half_agent.foreground.model_copy(deep=True)
+    doc.half_agent.official_background = doc.half_agent.background.model_copy(deep=True)
+    for profile, name in ((doc.full_agent.official_model, "fixture-full"), (doc.half_agent.official_foreground, "fixture-writer"),
+                          (doc.half_agent.official_background, "fixture-tracker"), (doc.shared.card_editor, "fixture-editor")):
+        profile.provider_id = provider.id
         profile.model = name
     doc.full_agent.tools.auto_retrieval = False
     doc.half_agent.chunk_mode = "off"
@@ -84,6 +90,14 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
             assert (store.root / "runs" / f"{turn['id']}.kohakutr").exists()  # Real Terrarium, not ScriptedLLM.
         else:
             assert len(calls) == 2
+            for body in calls:
+                assert [item["role"] for item in body["input"][:3]] == ["developer"] * 3
+                assert body["input"][0]["content"] == store.settings().full_agent_system_prompt
+                assert body["input"][1]["content"].startswith("Full Agent 工具协议")
+                assert body["input"][2]["content"].startswith("本次上下文窗口上限为")
+                assert body["tools"][0]["type"] == "namespace"
+                assert body["tools"][0]["name"] == "tavern"
+                assert all("tools" not in item for item in body["input"])
             assert any(item.get("type") == "function_call_output" and item.get("namespace") == "tavern" for item in calls[1]["input"])
         fail = True
         failed = runtime.submit(session["id"], TurnRequest(text="下一步。", operation_id="failure", expected_revision=current["revision"]))
@@ -169,10 +183,12 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
     account_id, _ = seed_account(accounts)
     store = app.state.store
     doc = store.settings_document()
-    provider = doc.shared.providers[0]
+    provider = doc.shared.providers[0].model_copy(deep=True, update={"id": "official"})
+    doc.shared.providers.append(provider)
     provider.auth_mode, provider.chatgpt_account_id, provider.use_proxy = "chatgpt_subscription", account_id, False
     doc.shared.network.api_proxy = False
-    doc.half_agent.foreground.model = "fixture"
+    doc.half_agent.official_foreground = doc.half_agent.foreground.model_copy(update={"provider_id":"official", "model":"fixture"})
+    doc.half_agent.default_channel = "chatgpt"
     store.save_settings(doc)
     identity.catalog = [{"slug": "z-last-alphabetically", "display_name": "首选模型", "visibility": "list"},
                         {"slug": "hidden", "display_name": "隐藏", "visibility": "hide"},
@@ -185,16 +201,16 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
         return await identity(request)
     accounts.http_transport = httpx.MockTransport(route)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
-        assert (await api.post("/api/auth/chatgpt/login", json={"provider_id": "default"},
+        assert (await api.post("/api/auth/chatgpt/login", json={"provider_id": "official"},
                               headers={"sec-fetch-site": "cross-site"})).status_code == 403
         public = (await api.get("/api/auth/chatgpt/accounts")).json()
         assert public["accounts"][0]["plan_enabled"] is True
         before = (await api.get("/api/settings")).json()
-        catalog = await api.post("/api/settings/models", json={"provider_id": "default", "api_mode": "anthropic", "api_path": "untrusted"})
+        catalog = await api.post("/api/settings/models", json={"provider_id": "official", "api_mode": "anthropic", "api_path": "untrusted"})
         assert catalog.status_code == 200, catalog.text
         assert catalog.json()["models"] == ["z-last-alphabetically", "a-first-alphabetically"]
         assert catalog.json()["model_details"][0]["display_name"] == "首选模型"
-        assert (await api.get("/api/settings/models", params={"provider_id": "default"})).json() == catalog.json()
+        assert (await api.get("/api/settings/models", params={"provider_id": "official"})).json() == catalog.json()
         probe = await api.post("/api/settings/probe?role=foreground", json={})
         assert probe.status_code == 200, probe.text
         assert probe.json()["capability"] == "accepted"
@@ -203,7 +219,7 @@ async def test_catalog_probe_and_local_api_do_not_leak_credentials(tmp_path):
             assert all(secret not in json.dumps(value) for secret in (ACCESS, REFRESH, CLIENT, "fixture-id-token-only"))
         assert (await api.delete(f"/api/auth/chatgpt/accounts/{account_id}")).status_code == 400
         assert (await api.post(f"/api/auth/chatgpt/accounts/{account_id}/logout", json={})).status_code == 200
-        assert (await api.get("/api/settings/models", params={"provider_id": "default"})).json()["models"] == []
+        assert (await api.get("/api/settings/models", params={"provider_id": "official"})).json()["models"] == []
         assert (await api.post("/api/settings/probe?role=foreground", json={})).json()["code"] == "sign_in_required"
     await accounts.close()
 
@@ -265,8 +281,8 @@ async def test_account_bound_in_another_window_during_logout_cannot_be_deleted(t
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         deleting = asyncio.create_task(client.delete(f"/api/auth/chatgpt/accounts/{account_id}"))
         await asyncio.wait_for(revoking.wait(), 3)
-        config.shared.providers[0].auth_mode = "chatgpt_subscription"
-        config.shared.providers[0].chatgpt_account_id = account_id
+        config.shared.providers.append(config.shared.providers[0].model_copy(update={
+            "id": "official", "auth_mode": "chatgpt_subscription", "chatgpt_account_id": account_id}))
         store.save_settings(config)
         release.set()
         response = await asyncio.wait_for(deleting, 3)

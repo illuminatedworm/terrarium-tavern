@@ -2592,15 +2592,12 @@ header {
 }
 .story-setup-grid {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1fr);
+  gap: 36px;
   margin-top: 24px;
 }
 .story-setup-options {
-  padding: 0 22px 24px;
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  background: var(--surface-panel);
+  padding: 0 0 24px;
   height: fit-content;
 }
 .story-setup-options > .primary {
@@ -2608,10 +2605,8 @@ header {
   margin-top: 18px;
 }
 .story-opening {
-  padding: 24px;
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  background: var(--surface-panel);
+  padding: 0 0 24px 36px;
+  border-left: 1px solid var(--border-control);
 }
 .story-opening p {
   font-size: 16px;
@@ -2624,9 +2619,15 @@ header {
   font-size: 12px;
   margin-right: 10px;
 }
-@media (max-width: 760px) {
+@media (max-width: 1000px) {
   .story-setup-grid {
     grid-template-columns: 1fr;
+  }
+  .story-opening {
+    padding-left: 0;
+    padding-top: 24px;
+    border-left: 0;
+    border-top: 1px solid var(--border-control);
   }
 }
 
@@ -4403,4 +4404,66 @@ main,
   min-height: 0;
   padding: 0;
   overflow: hidden;
+}
+
+/* Channel identity is visible before connection selection and story creation. */
+.channel-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.channel-notice span {
+  flex: 1;
+  min-width: 180px;
+}
+.story-channel-label {
+  white-space: nowrap;
+}
+.story-channel-model {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.story-channel-model strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.channel-provider-note {
+  padding-top: 20px;
+  border-top: 1px solid var(--border-subtle);
+}
+.channel-empty {
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+}
+
+.modal.context-management-modal {
+  width: min(1040px, 94vw);
+  height: min(870px, 90dvh);
+}
+.context-management-modal .full-agent-notes {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.context-management-modal .full-agent-notes h3 {
+  font-size: 20px;
+}
+.context-management-modal .full-agent-notes .inspector-note {
+  font-size: 14px;
+  margin: 12px 0;
+}
+.context-management-modal .full-agent-notes label {
+  font-size: 15px;
 }

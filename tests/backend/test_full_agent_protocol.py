@@ -152,8 +152,23 @@ async def test_note_key_and_retrieval_clues_replace_and_clear(owner):
         await call(owner, "read_note", ref="plan")
     assert error.value.result["error"]["code"] == "INVALID_ARGUMENTS"
     for query in ("port", "lighthouse", ""):
-        assert (await call(owner, "set_retrieval_query", query=query))["query"] == query
+        assert await call(owner, "set_retrieval_query", query=query) == {"saved_to_draft": True}
         assert owner.retrieval_query == query
+
+
+async def test_retrieval_clues_are_committed_without_echo_in_tool_response(story):
+    store, session = story
+    service = runtime(store)
+    query = "灯塔旁的旧港；待确认钟楼约定"
+    model = Model(("set_retrieval_query", {"query": query}), "她指向灯塔。")
+    try:
+        result, current = await turn(service, session, model)
+        assert result["status"] == "committed", result["error"]
+        outputs = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert outputs == [{"ok": True, "data": {"saved_to_draft": True}}]
+        assert current["messages"][-1]["retrieval_query"] == query
+    finally:
+        await service.close()
 
 
 async def test_content_returns_final_complete_targets_and_renews_new_entries(content_owner):
@@ -182,7 +197,7 @@ async def test_content_returns_final_complete_targets_and_renews_new_entries(con
 async def test_mixed_rollover_batch_has_no_side_effects(story, rollover_first):
     store, session = story
     service = runtime(store)
-    calls = [("new_context", {"content": "Must not replace memory"}),
+    calls = [("new_context", {"handoff": "Must not replace memory"}),
              ("write_note", {"key": "forbidden", "content": "Must not save", "kind": "plan"})]
     if not rollover_first:
         calls.reverse()
@@ -290,7 +305,7 @@ async def test_call_limits_stay_out_of_context_with_custom_prompt_and_rollover(s
     store.save_settings(settings)
     service = runtime(store)
     try:
-        model = Model(("read_state", {}), ("new_context", {"content": "Continue", "keep_recent": 0}), "Narrative")
+        model = Model(("read_state", {}), ("new_context", {"handoff": "Continue", "keep_recent": 0}), "Narrative")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         for request in model.requests:

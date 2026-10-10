@@ -93,12 +93,16 @@ class Settings(BaseModel):
     _full_runtime: Any = PrivateAttr(default=None)
     _settings_source: Any = PrivateAttr(default=None)
     _settings_mode: str = PrivateAttr(default="half_agent")
+    _settings_channel: str = PrivateAttr(default="standard")
     _adapter_loader: Any = PrivateAttr(default=None)
     _adapter_lane: str = PrivateAttr(default="foreground")
     _chatgpt: Any = PrivateAttr(default=None)
     _auth_generation: str = PrivateAttr(default="")
     _auth_generations: dict[str, str] = PrivateAttr(default_factory=dict)
     runtime_mode: Literal["half_agent", "full_agent"] = "half_agent"
+    channel_origin: Literal["standard", "chatgpt"] | None = None
+    context_strategy: Literal["new_context", "openai_compact"] = "new_context"
+    compact_auto: bool = True
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
@@ -120,7 +124,11 @@ class Settings(BaseModel):
                    self.foreground if role == "full_agent" and self.full_agent is None else getattr(self, role))
         if profile is None:
             return self.model_copy(deep=True)
-        provider = next(p for p in self.providers if p.id == profile.provider_id)
+        provider = next((p for p in self.providers if p.id == profile.provider_id), None)
+        if provider is None and not profile.provider_id and not profile.model:
+            return self.model_copy(deep=True, update={"model": "", "api_key": "", "channel_origin": None if role == "card_editor" else self.channel_origin})
+        if provider is None:
+            raise ValueError("所选模型引用了不存在的提供商")
         result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
             "cache": profile.cache.model_copy(deep=True),
             "message_adapter": profile.message_adapter.model_copy(deep=True),
@@ -133,6 +141,8 @@ class Settings(BaseModel):
             result._auth_generation = (self._auth_generations[provider.chatgpt_account_id]
                 if provider.chatgpt_account_id in self._auth_generations else
                 self._chatgpt.generation(provider.chatgpt_account_id) if self._chatgpt else "")
+        if role == "card_editor":
+            result.channel_origin = None
         result._adapter_lane = "full_agent" if self.runtime_mode == "full_agent" and role in ("foreground", "background") else role
         return result
 
@@ -211,7 +221,7 @@ class Settings(BaseModel):
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
         for profile in (self.foreground, self.background, self.card_editor, self.full_agent):
-            if profile and profile.provider_id not in {p.id for p in self.providers}:
+            if profile and (profile.provider_id or profile.model) and profile.provider_id not in {p.id for p in self.providers}:
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
             raise ValueError("模型上下文窗口必须大于单次输出上限/维护输出预算加 2048 tokens 的安全余量")
@@ -227,6 +237,7 @@ class Settings(BaseModel):
 class SessionCreate(BaseModel):
     card_id: str
     agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
+    channel_origin: Literal["standard", "chatgpt"] | None = None
     greeting: int = 0
     persona: str = "用户"
     policy: Policy | None = None

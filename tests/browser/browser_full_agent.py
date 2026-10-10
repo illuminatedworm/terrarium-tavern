@@ -26,7 +26,7 @@ async def main():
             ("read_history", {"ref": "H2"}),
             ("read_history", {"reason": "核对编辑后的H2内容"}),
             ("write_note", {"key": "约定/钟楼", "content": "玩家答应明天见面", "kind": "fact", "sources": ["H2"]}),
-            ("new_context", {"content": "约定明天钟楼见面，继续当前对话。", "keep_recent": 0}),
+            ("new_context", {"handoff": "约定明天钟楼见面，继续当前对话。", "keep_recent": 0}),
             "她点头应下，钟声从远处传来。",
         )
         sock = socket.socket()

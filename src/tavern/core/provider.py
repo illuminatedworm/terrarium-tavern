@@ -7,6 +7,9 @@ from tavern.scripting.model_transport import ModelTransport
 
 
 def require_model_connection(settings):
+    if settings.channel_origin:
+        from tavern.core.channels import require_channel
+        require_channel(settings, settings.channel_origin)
     if not settings.model:
         raise ValueError("请先设置模型名称")
     if settings.auth_mode == "chatgpt_subscription":

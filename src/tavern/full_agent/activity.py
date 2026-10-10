@@ -20,7 +20,7 @@ def tool_item(key, order, name, arguments):
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
     except (ValueError, TypeError):
         args = {}
-    summary = next((str(args[k]) for k in ("query", "key", "ref", "path", "reason", "content")
+    summary = next((str(args[k]) for k in ("query", "key", "ref", "path", "reason", "handoff", "content")
                     if isinstance(args, dict) and args.get(k)), "")
     return {"id": key, "order": order, "kind": "tool", "name": name,
             "summary": " ".join(summary.split())[:140], "status": "running",

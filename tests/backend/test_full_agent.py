@@ -134,7 +134,7 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
     model = Model(
         ("read_history", {"ref": "H2"}),
         ("write_note", {"key": "约定/钟楼", "content": "玩家约定明天见面", "kind": "fact", "sources": ["H2"]}),
-        ("new_context", {"content": "正在约定明天钟楼见面，保持温和叙事。", "keep_recent": 0}),
+        ("new_context", {"handoff": "正在约定明天钟楼见面，保持温和叙事。", "keep_recent": 0}),
         ("search_history", {"query": "我答应明天"}),
         "她点头应下，钟声从远处传来。",
     )
@@ -152,6 +152,13 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
         assert any("正在约定明天钟楼" in m.get("content", "") for m in after_rollover)
         assert any(m["role"] == "user" and "我答应明天" in m["content"] for m in after_rollover)
         assert any(m["role"] == "tool" and "H2" in m["content"] for m in model.requests[-1]["messages"])
+        for request in model.requests:
+            assert request["messages"][0]["content"] == store.settings().full_agent_system_prompt
+            assert request["messages"][1]["content"].startswith("Full Agent 工具协议")
+            assert request["messages"][2]["role"] == "system"
+            assert request["messages"][2]["content"].startswith("本次上下文窗口上限为")
+            assert sum(m.get("content", "").startswith("本次上下文窗口上限为")
+                       for m in request["messages"]) == 1
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM full_agent_trace WHERE json_extract(payload,'$.role')='tool'").fetchone()[0] == 4
         follow = Model("第二天如约而至。")
@@ -281,7 +288,7 @@ async def test_failed_request_after_rollover_resumes_new_window_without_replayin
     service = runtime(store)
     try:
         failed, _ = await turn(service, session, Model(
-            ("new_context", {"content": "钟楼约定已经发生", "keep_recent": 0}),
+            ("new_context", {"handoff": "钟楼约定已经发生", "keep_recent": 0}),
             RuntimeError("model disconnected")))
         assert failed["status"] == "error"
         model = Model("第二天，她如约而至。")
@@ -383,7 +390,7 @@ async def test_budget_step_limit_and_invalid_tools_roll_back(story):
     store.save_settings(config)
     try:
         model = Model(("patch_state", {"operations": [], "reason": "unauthorized"}),
-                      ("new_context", {"content": "不能重置本回合调用额度"}))
+                      ("new_context", {"handoff": "不能重置本回合调用额度"}))
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and "上限" in result["error"]
         for request in model.requests:
@@ -440,7 +447,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
         if api_mode == "responses":
             if len(calls) == 1:
                 output = [{"type": "function_call", "id": "fc_x", "call_id": "x", "name": "new_context",
-                           "arguments": '{"content":"handoff", "keep_recent":99}', "status": "completed"}]
+                           "arguments": '{"handoff":"handoff", "keep_recent":99}', "status": "completed"}]
             else:
                 output = [{"type": "message", "id": "msg_x", "role": "assistant", "status": "completed",
                            "content": [{"type": "output_text", "text": "正文", "annotations": []}]}]
@@ -449,7 +456,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
                 "usage": {"input_tokens": 100, "output_tokens": 10, "total_tokens": 110}})
         if len(calls) == 1:
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "x", "type": "function",
-                "function": {"name": "new_context", "arguments": '{"content":"handoff", "keep_recent":99}'}}]}
+                "function": {"name": "new_context", "arguments": '{"handoff":"handoff", "keep_recent":99}'}}]}
             finish = "tool_calls"
         else:
             message, finish = {"role": "assistant", "content": "正文"}, "stop"
@@ -869,8 +876,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         result, _ = await turn(service, session, model, update_variables=False, allow_content_edit=False)
         assert result["status"] == "committed", result["error"]
         wire = model.requests[-1]
-        assert "Full Agent 工具协议" in wire["messages"][0]["content"]
-        assert wire["messages"][1]["content"] == FULL_AGENT_PROMPT
+        assert wire["messages"][0]["content"] == FULL_AGENT_PROMPT
+        assert "Full Agent 工具协议" in wire["messages"][1]["content"]
+        assert wire["messages"][2]["content"].startswith("本次上下文窗口上限为")
         assert all(name not in FULL_AGENT_PROMPT for name in SPECS)
         assert any(m.get("content", "").startswith("<user_character>\n用户：")
                    and m["content"].endswith("\n</user_character>") for m in wire["messages"])
@@ -886,6 +894,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call alone" in definitions["new_context"]["description"]
+        assert set(definitions["new_context"]["parameters"]["properties"]) == {"handoff", "keep_recent"}
+        assert definitions["new_context"]["parameters"]["required"] == ["handoff"]
+        assert "content" in definitions["write_handoff"]["parameters"]["properties"]
         assert "offset" not in definitions["read_history"]["parameters"]["properties"]
         assert "Note contents are not automatically injected" in definitions["search_notes"]["description"]
     finally:
@@ -956,6 +967,8 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
     def compile_current():
         return compile_window(document, session, history, copy.deepcopy(session["snapshot"]), "继续", settings, [])
     low = compile_current()
+    assert [m["source"] for m in low["trace"][:3]] == ["rules", "tool_protocol", "context_policy"]
+    assert "20000 tokens" in low["messages"][2]["content"] and "70%" in low["messages"][2]["content"]
     assert not low["rollover_required"]
     assert not any(m["source"] == "context_budget" for m in low["trace"])
     base = low["estimated_tokens"]
@@ -966,6 +979,9 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
     sources = [m["source"] for m in warning["trace"]]
     assert sources.index("context_budget") == sources.index("handoff") + 2
     assert "当前仍可正常调用工具和回复" in warning["trace"][sources.index("context_budget")]["content"]
+    warning_text = warning["trace"][sources.index("context_budget")]["content"]
+    assert f"{warning['estimated_tokens']} / {settings.context_tokens} tokens" in warning_text
+    assert f"{warning['estimated_tokens'] / settings.context_tokens:.1%}" in warning_text
     settings.reply_tokens = settings.context_tokens
     near_full = compile_current()
     assert near_full["estimated_tokens"] + settings.reply_tokens > settings.context_tokens
@@ -1025,14 +1041,21 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
     settings.context_tokens = overflow["estimated_tokens"] * 3
     cleared = compile_current()
     assert not cleared["rollover_required"]
-    assert [m["content"] for m in cleared["context_additions"]] == ["此前的窗口压力提醒已解除。"]
+    # Capacity is now declared in the fixed window header. Updating it rebuilds
+    # that prefix and retires obsolete warnings, while retaining tool exchanges.
+    assert cleared["context_ledger"]["rebuild_reason"] == "context_sources_changed"
+    assert f"{settings.context_tokens} tokens" in cleared["messages"][2]["content"]
+    assert not any(m["source"] == "context_budget" for m in cleared["trace"])
+    assert complete_text in next(m["content"] for m in cleared["messages"]
+                                 if m.get("tool_call_id") == "long-read")
     assert compile_current()["messages"] == cleared["messages"]
 
     settings.context_tokens = int(cleared["estimated_tokens"] / .72)
     pressure_again = compile_current()
     assert not pressure_again["rollover_required"]
-    assert len(pressure_again["context_additions"]) == 1
-    assert "窗口预算提醒" in pressure_again["context_additions"][0]["content"]
+    assert pressure_again["context_ledger"]["rebuild_reason"] == "context_sources_changed"
+    notices = [m for m in pressure_again["context_additions"] if m.get("source") == "context_budget"]
+    assert len(notices) == 1 and "窗口预算提醒" in notices[0]["content"]
     assert compile_current()["messages"] == pressure_again["messages"]
 
 
@@ -1050,8 +1073,8 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
     model = Model(
         "这条正文必须被否决",
         ("write_handoff", {"content": "这个操作也必须被否决"}),
-        ("new_context", {"content": "换窗参数错误", "keep_recent": 99}),
-        ("new_context", {"content": "新交接保留必要经历", "keep_recent": 0}),
+        ("new_context", {"handoff": "换窗参数错误", "keep_recent": 99}),
+        ("new_context", {"handoff": "新交接保留必要经历", "keep_recent": 0}),
         "换窗后继续回应玩家。",
     )
     try:
@@ -1141,7 +1164,7 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
         assert first.requests[0]["extra_body"]["tool_choice"] == "auto"
         assert current["messages"][-1]["raw"] == reply
         assert current["snapshot"]["full_agent"]["window"]["number"] == 1
-        follow = Model(("new_context", {"content": "上一轮场景发展已记录", "keep_recent": 0}), "继续新的对话。")
+        follow = Model(("new_context", {"handoff": "上一轮场景发展已记录", "keep_recent": 0}), "继续新的对话。")
         result, current = await turn(service, current, follow)
         assert result["status"] == "committed", result["error"]
         assert follow.requests[0]["extra_body"]["tool_choice"]["function"]["name"] == "new_context"

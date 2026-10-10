@@ -5,7 +5,7 @@ defineEmits<{ close: [] }>();
 function trapFocus(event: KeyboardEvent) {
   const nodes = Array.from(
     (event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(
-      'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]',
+      'button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex="0"]',
     ),
   ).filter((node) => node.getClientRects().length);
   const first = nodes[0],

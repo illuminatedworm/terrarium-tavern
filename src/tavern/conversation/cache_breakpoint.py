@@ -101,7 +101,7 @@ def context_breakpoint_index(trace, message_id):
 
 def is_static(entry):
     source = entry.get("context_source", entry.get("source"))
-    return source in {"rules", "tool_protocol", "system", "character", "system_prompt", "description", "personality", "scenario",
+    return source in {"rules", "tool_protocol", "context_policy", "system", "character", "system_prompt", "description", "personality", "scenario",
                       "persona", "examples", "custom", "session_preference"} or entry.get("lore_region") == "constant"
 
 

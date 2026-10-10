@@ -54,6 +54,9 @@ class ModeRuntime:
         await self.engine(self.store.turn(tid)["session"]).cancel(tid)
 
     async def delete_session(self, sid):
+        for oid, task in list(self.full.context_operations.tasks.items()):
+            if self.full.context_operations.get(oid)["session"] == sid:
+                await self.full.context_operations.cancel(oid)
         for tid in self.store.session_turn_ids(sid):
             if tid in self.full.tasks:
                 await self.full.cancel(tid)
@@ -71,7 +74,7 @@ class ModeRuntime:
         async def prepare(record):
             s = self.store.session(sid)
             document = (s["snapshot"].get("content") or {}).get("document", self.store.session_card(sid)["document"])
-            await self.full.retrieval.prepare(document, [], "", s["snapshot"], self.store.settings("full_agent"), s,
+            await self.full.retrieval.prepare(document, [], "", s["snapshot"], self.store.session_settings(s), s,
                                              "prepare", index_only=True)
         try:
             return self.local_models.job("prepare:" + sid, prepare)

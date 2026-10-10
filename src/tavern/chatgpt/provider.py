@@ -61,6 +61,8 @@ class ChatGPTProvider(ModelTransport):
         cfg = self.settings
         body = {"model": cfg.model, "input": items, "store": False, "stream": True,
                 "include": ["reasoning.encrypted_content"]}
+        if kwargs.get("_maintenance_instructions"):
+            body["instructions"] = kwargs["_maintenance_instructions"]
         effort = cfg.reasoning_effort
         capabilities = self.accounts.model_capabilities(self.account_id, self.generation, cfg.model)
         if capabilities and "supported_reasoning_levels" in capabilities:
@@ -71,6 +73,15 @@ class ChatGPTProvider(ModelTransport):
                 effort = capabilities.get("default_reasoning_level", "default")
         if effort != "default":
             body["reasoning"] = {"effort": effort}
+        threshold = kwargs.get("_compact_threshold")
+        if threshold is None and cfg.context_strategy == "openai_compact" and cfg.compact_auto:
+            threshold = max(1024, int(cfg.context_tokens * cfg.full_agent_config.pressure_ratio))
+        if threshold is not None and not kwargs.get("_compact_disabled"):
+            if cfg.runtime_mode != "full_agent":
+                raise ValueError("云端 compact 仅适用于官方渠道的 Full Agent")
+            if type(threshold) is not int or threshold < 1024:
+                raise ValueError("云端压缩阈值必须为至少 1024 tokens 的整数")
+            body["context_management"] = [{"type": "compaction", "compact_threshold": threshold}]
         # No custom cache fields, routing headers or ordinary Responses extras can reach this route.
         if self.request_context:
             body["prompt_cache_key"] = self.request_context.session_id

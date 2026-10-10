@@ -1,7 +1,19 @@
 <script setup lang="ts">
 import { notification, notify } from './lib/notifications';
 import { useTimedError } from './composables/useTimedError';
-import { computed, defineAsyncComponent, h, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import {
+  computed,
+  defineAsyncComponent,
+  h,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  provide,
+  ref,
+  watch,
+} from 'vue';
+import { useContextOperations } from './composables/useContextOperations';
+import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
@@ -80,6 +92,24 @@ const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 function applyFullSession(updated: any) {
   if (session.value?.id === updated.id) session.value = updated;
 }
+const contextOps = useContextOperations(() => session.value, applyFullSession);
+const contextBusy = contextOps.busy;
+provide('context-operations', contextOps);
+const settingsChannel = ref<Channel>();
+async function classifyChannel(channel: Channel) {
+  const sid = session.value?.id;
+  try {
+    const updated = await api(
+      `/sessions/${sid}/channel-origin`,
+      { channel_origin: channel, expected_revision: session.value.revision },
+      'PUT',
+    );
+    applyFullSession(updated);
+    sessions.value = await api('/sessions');
+  } catch (e: any) {
+    notify(e.message);
+  }
+}
 const dialogue = ref<{
   jumpTo: (id: string) => Promise<void> | undefined;
   jumpBoundary: (edge: 'start' | 'end') => Promise<void> | undefined;
@@ -111,19 +141,42 @@ const previewMessagesBusy = ref(false);
 const settingsPanel = ref<InstanceType<typeof SettingsPanel>>();
 const settingsInitialPage = ref('');
 watch(panel, (value) => {
-  if (value !== 'settings') settingsInitialPage.value = '';
+  if (value !== 'settings') {
+    settingsInitialPage.value = '';
+    settingsChannel.value = undefined;
+  }
 });
 function managePreferencePresets() {
   settingsInitialPage.value = 'shared.preference_presets';
   panel.value = 'settings';
 }
 const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
-const activeModel = computed(() =>
-  isFullAgent.value ? activeSettings.value.model : activeSettings.value.foreground,
+const activeModel = computed(
+  () =>
+    (isFullAgent.value
+      ? activeSettings.value[session.value?.channel_origin === 'chatgpt' ? 'official_model' : 'model']
+      : activeSettings.value[
+          session.value?.channel_origin === 'chatgpt' ? 'official_foreground' : 'foreground'
+        ]) || {},
 );
 const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value.shared?.providers));
+const channelModelsReady = computed(
+  () =>
+    !!activeModel.value.model &&
+    (isFullAgent.value ||
+      !!activeSettings.value[
+        session.value?.channel_origin === 'chatgpt' ? 'official_background' : 'background'
+      ]?.model),
+);
 const trackerSubscription = computed(
-  () => !isFullAgent.value && usesChatGPT(activeSettings.value.background, settings.value.shared?.providers),
+  () =>
+    !isFullAgent.value &&
+    usesChatGPT(
+      activeSettings.value[
+        session.value?.channel_origin === 'chatgpt' ? 'official_background' : 'background'
+      ],
+      settings.value.shared?.providers,
+    ),
 );
 const storySubscriptionLabel = computed(() =>
   activeSubscription.value
@@ -276,9 +329,7 @@ const memoryProgress = computed(() => {
 const sourceHighlight = ref<{ id: string; excerpt: string; fallback: boolean } | null>(null);
 const cacheBreakpointBusy = ref(false);
 const writerResponseCache = computed(() => {
-  const profile = isFullAgent.value
-    ? settings.value?.full_agent?.model
-    : settings.value?.half_agent?.foreground;
+  const profile = activeModel.value;
   return !!session.value && profile?.cache?.mode === 'runtime' && writerCacheRetention.value.explicit;
 });
 const writerCacheRetention = computed(() => {
@@ -535,6 +586,8 @@ const contextLabels: Record<string, string> = {
   note_list: '长期笔记目录',
   agent_tools: '当前窗口工具记录',
   context_status: '窗口与记忆状态',
+  context_policy: '上下文窗口机制',
+  cloud_compaction: '云端压缩状态',
   context_budget: '窗口预算提示',
   context_warning: '原文编辑提醒',
   mvu_rules: 'MVU 变量规则',
@@ -645,7 +698,7 @@ const contextLengthLabel = computed(() =>
     ? '本次 token 计数不可用'
     : contextStats.value?.estimated_tokens == null
       ? '计算中'
-      : `本次预计输入 ${Number(contextStats.value.estimated_tokens).toLocaleString()} tokens`,
+      : `${contextStats.value.compaction_opaque ? '可见文本估算' : '本次预计输入'} ${Number(contextStats.value.estimated_tokens).toLocaleString()} tokens${contextStats.value.compaction_opaque ? '（不含加密状态）' : ''}`,
 );
 const tokenizerLabel = computed(() => {
   if (contextEstimateError.value) return contextEstimateError.value;
@@ -1165,6 +1218,16 @@ function setEffort(value: string) {
   if (session.value) localStorage.setItem(`tavern-effort-${session.value.id}`, value);
 }
 async function send(mode = 'send', message?: any, text?: string, note = '') {
+  if (contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
+    notify(
+      contextBusy.value
+        ? '请先完成或取消上下文整理。'
+        : !session.value?.channel_origin
+          ? '请先确认此对话的渠道归属。'
+          : '请先配置此渠道的模型连接。',
+    );
+    return;
+  }
   if (!session.value || busy.value || sceneSubmitting.value) return;
   const value = text ?? input.value;
   if (mode === 'send' && !value.trim()) return;
@@ -1902,7 +1965,8 @@ useTimedError(error);
                 <span
                   >{{ s.title || s.name
                   }}<small
-                    >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }}</small
+                    >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
+                    {{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small
                   ></span
                 ></button
               ><button
@@ -2086,7 +2150,15 @@ useTimedError(error);
       <StoryWizard
         v-else-if="pageMode === 'start'"
         :cards="cards"
+        :settings="settings"
         @started="cardStarted"
+        @settings="
+          (channel, mode) => {
+            settingsChannel = channel;
+            settingsInitialPage = mode + '.model';
+            panel = 'settings';
+          }
+        "
         @back="pageMode = ''"
       /><PersonaEditor v-else-if="pageMode === 'personas'" @back="pageMode = ''" />
       <StoryLoading
@@ -2128,7 +2200,11 @@ useTimedError(error);
         <div class="story-heading">
           <h1>{{ name }}</h1>
           <span class="muted">{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
+          <span class="muted story-channel-label">{{
+            channelLabels[session.channel_origin as Channel] || '渠道待确认'
+          }}</span>
           <div class="story-tools">
+            <button v-if="isFullAgent" @click="panel = 'context-management'">窗口与笔记</button>
             <button @click="panel = 'state'">状态与记忆</button
             ><button
               :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
@@ -2162,6 +2238,29 @@ useTimedError(error);
             <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span>
           </button>
         </nav>
+        <div v-if="!session.channel_origin" class="channel-notice" role="status">
+          <span>此旧对话需要确认渠道归属，确认后不可跨渠道更改。</span>
+          <button @click="classifyChannel('standard')">归入普通 API</button>
+          <button @click="classifyChannel('chatgpt')">归入 ChatGPT 官方</button>
+        </div>
+        <div v-if="contextBusy" class="channel-notice" role="status">
+          <span
+            >正在整理上下文 · 已处理 {{ contextOps.operation.value?.progress?.processed || 0 }} 条记录</span
+          >
+          <button @click="contextOps.control('cancel')">取消整理</button>
+        </div>
+        <div v-if="session.channel_origin && !channelModelsReady" class="channel-notice" role="status">
+          <span>此渠道的模型尚未配置。</span
+          ><button
+            @click="
+              settingsChannel = session.channel_origin;
+              settingsInitialPage = session.agent_mode + '.model';
+              panel = 'settings';
+            "
+          >
+            配置{{ channelLabels[session.channel_origin as Channel] }}模型
+          </button>
+        </div>
         <WorkRecords
           v-if="storyView === 'work'"
           :key="session.id"
@@ -2510,7 +2609,13 @@ useTimedError(error);
                 ><button
                   v-else
                   class="send"
-                  :disabled="!input.trim() || activeTurn?.status === 'awaiting_review'"
+                  :disabled="
+                    contextBusy ||
+                    !channelModelsReady ||
+                    !session?.channel_origin ||
+                    !input.trim() ||
+                    activeTurn?.status === 'awaiting_review'
+                  "
                   @click="send()"
                 >
                   发送
@@ -2821,6 +2926,7 @@ useTimedError(error);
       <div v-if="panel" class="modal-backdrop">
         <AppModal
           :label="panel === 'settings' ? '设置' : '酒馆面板'"
+          :class="{ 'context-management-modal': panel === 'context-management' }"
           :size="
             ['settings', 'context', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
               ? 'large'
@@ -2840,6 +2946,7 @@ useTimedError(error);
             v-if="panel === 'settings'"
             ref="settingsPanel"
             :initial-mode="session?.agent_mode"
+            :initial-channel="settingsChannel || session?.channel_origin || undefined"
             :initial-page="settingsInitialPage"
             :effort-options="effortOptions"
             @updated="settings = $event"
@@ -2936,6 +3043,17 @@ useTimedError(error);
               </button>
               <button @click="panel = ''">取消</button>
             </div></template
+          ><template v-else-if="panel === 'context-management'">
+            <h2>窗口与笔记</h2>
+            <p class="muted">
+              {{ channelLabels[session.channel_origin as Channel] || '渠道待确认' }} ·
+              {{ activeModel.model || '模型待配置' }}
+            </p>
+            <FullAgentNotes
+              :session="session"
+              :disabled="busy || activeTurn?.status === 'awaiting_review'"
+              @saved="applyFullSession"
+            /> </template
           ><template v-else-if="panel === 'state'"
             ><h2>状态与记忆</h2>
             <p class="muted">仅显示当前剧情分支。切换分支会一同恢复状态。</p>
@@ -3073,7 +3191,10 @@ useTimedError(error);
                       }}</strong
                       ><span class="badge">{{ item.role }}</span
                       ><span class="context-entry-position">位置 {{ item.position }}</span
-                      ><small>预计 {{ Number(item.estimated_tokens || 0).toLocaleString() }} tokens</small>
+                      ><small v-if="item.opaque">加密状态 · 占用未知</small
+                      ><small v-else
+                        >预计 {{ Number(item.estimated_tokens || 0).toLocaleString() }} tokens</small
+                      >
                     </summary>
                     <pre>{{ contextMessageContent(item) }}</pre>
                   </details>

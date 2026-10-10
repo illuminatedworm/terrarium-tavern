@@ -75,7 +75,7 @@ def create_app(data_dir=None):
     from tavern.character.card_editor_api import register_editor_routes
     register_editor_routes(app, editor)
     from tavern.full_agent.api import register_full_agent_routes
-    register_full_agent_routes(app, store)
+    register_full_agent_routes(app, store, service.full.context_operations)
 
     @app.post("/api/shutdown")
     async def shutdown(payload: dict):
@@ -175,7 +175,7 @@ def create_app(data_dir=None):
         session = store.session(sid)
         document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
         async def rebuild(record):
-            config = store.settings(session["agent_mode"])
+            config = store.session_settings(session)
             if "embedding" in config.retrieval.channels and not service.local_models.status(config)["models"]["embedding"]["ready"]:
                 raise ValueError("请先下载并预热 Embedding 模型，再准备向量索引")
             record["phase"] = "preparing"
@@ -195,10 +195,11 @@ def create_app(data_dir=None):
         return service.local_models.job("rebuild", rebuild)
 
     @app.post("/api/settings/probe")
-    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent"] = "foreground"):
+    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent"] = "foreground",
+                    channel: Literal["standard", "chatgpt"] | None = None):
         from tavern.scripting.agent import make_provider
 
-        saved_config = store.settings()
+        saved_config = store.settings("full_agent" if role == "full_agent" else "half_agent", channel)
         config = saved_config.for_role(role)
         captured = []
         from tavern.scripting.cloud_cache import reset_capability
@@ -488,7 +489,7 @@ def create_app(data_dir=None):
             from tavern.core.message_adapter import bind_adapter
             from tavern.full_agent.context import compile_window, load_trace
             from tavern.full_agent.tools import tool_definitions
-            full_settings = bind_adapter(store.settings().for_role("full_agent"), store, "story", sid)
+            full_settings = bind_adapter(store.session_settings(s).for_role("full_agent"), store, "story", sid)
             preview_request = TurnRequest(operation_id="preview", expected_revision=s["revision"],
                                           update_variables=update_variables, allow_content_edit=allow_content_edit)
             result = compile_window(document, s, s["messages"], s["snapshot"], text,
@@ -500,7 +501,7 @@ def create_app(data_dir=None):
             return result, s
         from tavern.conversation.half_context import load_trace as load_half_trace
         from tavern.core.message_adapter import bind_adapter
-        writer_settings = bind_adapter(store.settings().for_role("foreground"), store, "story", sid)
+        writer_settings = bind_adapter(store.session_settings(s).for_role("foreground"), store, "story", sid)
         result = compile_context(
             document, s, s["messages"], s["snapshot"], text, writer_settings, "preview",
             replay_records=load_half_trace(store, sid, s["messages"]),
@@ -548,7 +549,7 @@ def create_app(data_dir=None):
         from tavern.memories.memory_engine import estimate_batches
         from tavern.memories.memory_records import read_memory
         session = store.session(sid)
-        cfg = store.settings().for_role("background")
+        cfg = store.session_settings(session).for_role("background")
         document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
         base = {"version": 1, "records": [r for r in read_memory(session["snapshot"])["records"] if r.get("manual")]}
         import asyncio

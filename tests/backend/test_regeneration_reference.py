@@ -134,7 +134,7 @@ async def test_repeated_rewrite_references_current_candidate_and_restores_same_b
 async def test_full_rollover_retains_one_reference_without_carrying_it_to_next_turn(story):
     store, session, text = story
     service = service_for(store, session)
-    model = Model(("new_context", {"content": "本轮新交接", "keep_recent": 0}),
+    model = Model(("new_context", {"handoff": "本轮新交接", "keep_recent": 0}),
                   ("read_state", {}), "replacement")
     try:
         result, current = await run(service, session, model, mode="regenerate", regenerate_include_reply=True)

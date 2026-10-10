@@ -106,7 +106,7 @@ class FullAgent:
         return lore_references(self.document, self.state)
 
     def retain(self):
-        visible = self.history[self.state["window"]["start"]:]
+        visible = self.history if self.settings.context_strategy == "openai_compact" else self.history[self.state["window"]["start"]:]
         self.exiting |= retain_lore(self.document, self.snapshot, visible, self.user_message["id"],
                                   sum(m["role"] == "user" for m in self.history) + 1)
         return visible
@@ -182,6 +182,19 @@ class FullAgent:
                 await self.resume_tools()
             for _ in range(self.settings.full_agent_config.max_steps):
                 compiled = self.compile()
+                if compiled.get("compact_requires_rebuild"):
+                    from tavern.full_agent.compaction import rebuild
+                    async def save_replay(value):
+                        self.state["compact_replay"] = value
+                        self.event("context_replay", {key: value[key] for key in ("batches", "processed", "total")})
+                        self.event("usage", {"usage": value["usage"][-1], "calls": 1, "context_maintenance": True})
+                        await self.save_progress()
+                    checkpoint, _ = await rebuild(compiled, self.settings, provider,
+                        progress=self.state.get("compact_replay"), save=save_replay)
+                    self.state["compaction"] = checkpoint
+                    self.state.pop("compact_replay", None)
+                    await self.save_progress()
+                    compiled = self.compile()
                 if self.must_rollover and not any(t["function"]["name"] == "new_context" for t in self.definitions):
                     raise ValueError("上下文已满，但 new_context 已关闭。请在工具页启用它，或在场景页手动保存并换新窗口。")
                 started = time.perf_counter()
@@ -204,6 +217,11 @@ class FullAgent:
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
+                if self.settings.context_strategy == "openai_compact":
+                    from tavern.full_agent.compaction import capture_checkpoint
+                    if capture_checkpoint(self.state, compiled, self.settings, provider,
+                                          self.response_message(response, provider, calls)):
+                        self.event("context_compacted", {"message": "云端已压缩上下文", "window": self.state["window"]["number"]})
                 self.event("full_agent_response", {"content": response.content or "",
                     "finish_reason": getattr(response, "finish_reason", None),
                     "tool_calls": [{"id": c.id, "name": c.name, "arguments": c.arguments} for c in calls],

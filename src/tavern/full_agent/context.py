@@ -1,4 +1,4 @@
-"""A transparent working window: no legacy recipe, compactor, or memory engine."""
+"""Compile complete source context for local windows or official server compaction."""
 import copy
 import json
 
@@ -40,9 +40,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                    trace=(), continuation=(), input_id="pending", instruction="", force_rollover=False,
                    require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply=""):
     state = full_state(snapshot)
+    compact = settings.context_strategy == "openai_compact"
     window = state["window"]
     card = normalize(document)
-    visible = history[window["start"]:]
+    visible = history if compact else history[window["start"]:]
     turn_instructions = {
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
@@ -60,8 +61,14 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         if content:
             items.append({"role": role, "content": content, "source": source, **metadata})
 
-    add("system", tool_protocol(settings.full_agent_config), "tool_protocol")
     add("system", settings.full_agent_system_prompt, "rules")
+    add("system", tool_protocol(settings.full_agent_config, compact=compact), "tool_protocol")
+    # Keep the window policy in the fixed prefix, once per compiled window;
+    # live token counts belong in append-only pressure notices below.
+    if not compact:
+        add("system", f"本次上下文窗口上限为 {settings.context_tokens} tokens；"
+            f"占用达到 {settings.full_agent_config.pressure_ratio * 100:g}% 时预警，提示占用百分比和当前估算 tokens / 窗口上限；"
+            "达到上限须单独调用 new_context 保存 handoff 并换窗，随后继续本轮。", "context_policy")
     if session.get("turn_preference"):
         add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")
     constants = [e for e in lore_entries(document, "writer") if e["enabled"] and e.get("constant")
@@ -75,17 +82,18 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
-    if window["number"] >= 2:
+    if compact or window["number"] >= 2:
         # Keep the current directory after fixed settings so key changes preserve
         # their cache prefix. Note bodies and metadata remain tool-only.
         note_keys = "\n".join(key for key, note in state["notes"].items()
                               if note.get("status", "active") == "active")
         add("system", "<tavern_note_list>\n" + note_keys + "\n</tavern_note_list>", "note_list")
     handoff = state["handoff"]
+    fixed_count = len(items)
 
     by_owner = {}
     for item in trace:
-        if item["window_id"] == window["id"]:
+        if compact or item["window_id"] == window["id"]:
             by_owner.setdefault(item["message_id"], []).append(item["message"])
 
     # Filter a single chronological sequence so native state after a retired
@@ -93,7 +101,11 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     records = [{**message, "_content_owner": owner["id"]}
                for owner in visible for message in by_owner.get(owner["id"], [])]
     records.extend({**message, "_content_owner": None} for message in continuation)
-    records, _ = content_history(records)
+    if compact:
+        from tavern.scripting.native_response import portable
+        records = [portable(message) for message in records]
+    else:
+        records, _ = content_history(records)
     by_owner, continuation = {}, []
     for message in records:
         owner = message.pop("_content_owner")
@@ -113,6 +125,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
 
     def replay(message, *, current_turn=False):
         source = message.get("source")
+        if compact and source in ("handoff", "context_budget", "context_policy", "context_status", "context_warning"):
+            return
         # Turn requirements must not leak into later turns.
         if source in turn_instructions and (not current_turn or not turn_instructions[source]):
             return
@@ -140,7 +154,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             replay(record)
         add(message["role"], history_text[message["id"]], "history", message_id=message["id"])
         final = next((m for m in records if m.get("_full_agent_final")), None)
-        if final and items and items[-1].get("message_id") == message["id"]:
+        if not compact and final and items and items[-1].get("message_id") == message["id"]:
             items[-1].update({k: copy.deepcopy(final[k]) for k in (
                 "_native_response", "_response_origin", "_response_digest", "reasoning_content",
                 "reasoning_details", "reasoning", "_context_epoch", "_native_epoch") if k in final})
@@ -163,10 +177,11 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         update(source, content)
     # Staleness remains truthful in the user's notes and source checks. Proactive
     # edit instructions now come only from the user's explicit notification queue.
-    update("context_warning", "")
-    update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
-        + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
-        value=handoff["text"])
+    if not compact:
+        update("context_warning", "")
+        update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
+            + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
+            value=handoff["text"])
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
                       "reasoning_content", "reasoning_details", "reasoning",
@@ -189,10 +204,11 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     status = (f"上下文窗口：当前第 {window['number']} 个。\n"
               f"{history_status}；当前用户输入引用 H{len(history)+1}；{visible_status}。\n"
               f"{memory_status}")
-    update("context_status", status)
+    if not compact:
+        update("context_status", status)
     tokens = request_tokens(wire(), settings, tools) + reasoning_cost
-    rollover_required = force_rollover or tokens >= settings.context_tokens
-    if rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio:
+    rollover_required = not compact and (force_rollover or tokens >= settings.context_tokens)
+    if not compact and (rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio):
         budget_item = None
         # Compare actionable pressure states, not the changing token estimate.
         # Include a new notice itself when checking whether it forces rollover.
@@ -201,7 +217,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             value = {"level": "rollover" if rollover_required else "pressure",
                      "context_tokens": settings.context_tokens, "reply_tokens": settings.reply_tokens}
             content = (
-                f"本次提醒时上下文估算 {tokens}/{settings.context_tokens} tokens（含工具定义）；"
+                f"本次提醒时上下文估算 {tokens} / {settings.context_tokens} tokens"
+                f"（{tokens / settings.context_tokens:.1%}，含工具定义）；"
                 f"本轮回复额度 {settings.reply_tokens} tokens。\n"
                 + ("当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
                    "必须单独调用 new_context 保存完整交接笔记并换窗；运行时否决其他一切工具调用和正文回复。"
@@ -219,7 +236,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             if updated == tokens:
                 break
             tokens = updated
-    else:
+    elif not compact:
         update("context_budget", "")
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
@@ -237,4 +254,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     result["context_ledger"] = ledger.audit()
     result["context_additions"] = copy.deepcopy(ledger.additions)
     project_context(result, settings, tools=tools, reasoning_cost=reasoning_cost, managed=True)
+    if compact:
+        from tavern.full_agent.compaction import project_compact
+        return project_compact(result, state, settings, tools, fixed_count)
     return prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

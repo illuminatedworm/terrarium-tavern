@@ -47,7 +47,7 @@ class RoleplayRuntime:
             from tavern.memories.memory import window_history
             visible, _ = window_history(session["messages"], session["snapshot"])
             await self.retrieval.prepare(document, visible, "", session["snapshot"],
-                                         self.store.settings(), session, "prepare", index_only=True)
+                                         self.store.session_settings(session), session, "prepare", index_only=True)
         try:
             return self.local_models.job("prepare:" + sid, prepare)
         except ValueError:
@@ -65,7 +65,7 @@ class RoleplayRuntime:
         if self.store.session(sid).get("agent_mode", "half_agent") != "half_agent":
             raise ValueError("Full Agent 会话须由独立引擎执行")
         if (self.tracker_provider_factory or self.memory_provider_factory if request.scene_refresh else self.provider_factory) is None:
-            settings = self.store.settings().for_role("background" if request.scene_refresh else "foreground")
+            settings = self.store.session_settings(sid).for_role("background" if request.scene_refresh else "foreground")
             from tavern.core.provider import require_model_connection
             require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
@@ -377,7 +377,7 @@ class RoleplayRuntime:
             turn = self.store.turn(tid)
             req = TurnRequest.model_validate(turn["request"])
             from tavern.core.message_adapter import bind_adapter
-            settings = bind_adapter(self.store.settings().for_role("foreground").model_copy(deep=True),
+            settings = bind_adapter(self.store.session_settings(turn["session"]).for_role("foreground").model_copy(deep=True),
                                     self.store, "story", turn["session"])
             session = self.store.session(turn["session"])
             contexts = OperationContexts(self.store, session["id"], tid)

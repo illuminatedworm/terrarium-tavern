@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from tavern.core.channels import profile_key
 from tavern.core.prompts import (
     FULL_AGENT_SYSTEM_PROMPT_DEFINITION,
     HALF_AGENT_SYSTEM_PROMPT_DEFINITION,
@@ -65,7 +66,8 @@ def page_catalog():
         retrieval = [f"retrieval.{key}" for key in fields["retrieval"] if not key.endswith("prompt")]
         retrieval += [f"local_runtime.{key}" for key in ("reranker_enabled", "rerank_fragments")]
         retrieval += [key for key in fields if key.startswith("lore_")]
-        pages = [("model", "模型与生成", ["model", "policy"] if scope == "full_agent" else ["foreground", "background", "policy"]),
+        pages = [("model", "模型与生成", ["model", "official_model", "default_channel", "policy"] if scope == "full_agent" else
+                  ["foreground", "background", "official_foreground", "official_background", "default_channel", "policy"]),
                  ("retrieval", "检索与世界书", retrieval),
                  ("memory", "工具与记忆" if scope == "full_agent" else "历史与记忆",
                   ["tools"] if scope == "full_agent" else [key for key in fields if key.startswith(("chunk_", "history_", "memory_", "context_pressure_", "daily_", "tracker_")) and not key.endswith("prompt")]),
@@ -113,8 +115,11 @@ def validate_document(raw):
 
 
 def invalidate_capabilities(old, new):
-    for scope, key in (("full_agent", "model"), ("half_agent", "foreground"), ("half_agent", "background"), ("shared", "card_editor")):
-        before, after = getattr(getattr(old, scope), key), getattr(getattr(new, scope), key)
+    for scope, key, after in new.profiles():
+        before = getattr(getattr(old, scope), key)
+        if before is None or not before.provider_id or not after.provider_id:
+            after.capability, after.capability_key = "unknown", ""
+            continue
         old_provider = next(p for p in old.shared.providers if p.id == before.provider_id)
         provider = next(p for p in new.shared.providers if p.id == after.provider_id)
         if (before.model, before.provider_id, old_provider.base_url, before.api_mode, before.api_path,
@@ -180,13 +185,16 @@ def register_settings_routes(app, store):
                     value = deepcopy(value)
                     for provider in value:
                         provider.pop("has_api_key", None)
+                        previous = existing.get(provider.get("id"))
+                        if previous and provider.get("auth_mode", "api_key") != previous.get("auth_mode", "api_key"):
+                            raise ValueError("供应商渠道创建后不可修改；请在另一渠道新建连接")
                         if not provider.get("api_key"):
                             provider["api_key"] = existing.get(provider.get("id"), {}).get("api_key", "")
                 if isinstance(value, dict):
                     # Parent profile writes cannot forge server-owned capability fields either.
                     def protect(v, o):
                         for k, child in v.items():
-                            if k in {"capability", "capability_key"} and child != o.get(k):
+                            if k in {"capability", "capability_key"} and child != o.get(k, "unknown" if k == "capability" else ""):
                                 raise ValueError("模型能力只能通过连接检查更新")
                             if isinstance(child, dict):
                                 protect(child, o.get(k, {}))
@@ -243,7 +251,9 @@ def save_probe(store, role, result, captured):
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         doc = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
-        current = doc.runtime("full_agent" if role == "full_agent" else "half_agent").for_role(role)
+        channel = captured._settings_channel
+        key = profile_key(role, channel)
+        current = doc.runtime("full_agent" if role == "full_agent" else "half_agent", channel).for_role(role)
         before = captured.for_role(role)
         if (current.model, current.base_url, current.api_mode, current.api_key, current.auth_mode,
             current.chatgpt_account_id) != (before.model, before.base_url, before.api_mode, before.api_key,

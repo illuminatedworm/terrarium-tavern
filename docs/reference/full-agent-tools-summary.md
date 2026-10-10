@@ -18,7 +18,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
 | `read_history` | 完整读取一条剧情原文 | `ref: string`（如 `H1`） | 可读取当前用户输入，引用须在当前分支有效。 |
 | `write_handoff` | 完整替换交接笔记 | `content: string` | 保留有效场景、关系、约束和未决事项；以最新运行时记忆或成功写入为基础。 |
-| `new_context` | 保存交接笔记并换窗 | `content: string`；`keep_recent: integer=2` | 必须单独调用，混合批次全部不执行；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；调用额度不重置。 |
+| `new_context` | 保存交接笔记并换窗 | `handoff: string`；`keep_recent: integer=2` | 必须单独调用，混合批次全部不执行；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型、H 来源和 `stale`；过时来源应核对。 |
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；无需预读，覆盖归档键会激活。 |
@@ -174,7 +174,7 @@ Replace the complete handoff and switch windows. The handoff is a summary of all
 请求：
 
 ```json
-{"content":"明天去港口，相关笔记：计划/港口。","keep_recent":0}
+{"handoff":"明天去港口，相关笔记：计划/港口。","keep_recent":0}
 ```
 
 成功返回：
@@ -342,7 +342,7 @@ Replace this turn's clues for next-turn automatic worldbook retrieval; the last 
 成功返回：
 
 ```json
-{"ok":true,"data":{"saved_to_draft":true,"query":""}}
+{"ok":true,"data":{"saved_to_draft":true}}
 ```
 
 ### 运行时追加的描述
@@ -351,7 +351,8 @@ Replace this turn's clues for next-turn automatic worldbook retrieval; the last 
 
 | 工具 | 追加文本全文 | 条件 |
 |---|---|---|
-| `write_handoff`、`new_context` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |
+| `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |
+| `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |
 | `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |
 | `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |
 | `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |

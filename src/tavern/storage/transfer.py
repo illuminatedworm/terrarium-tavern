@@ -247,6 +247,12 @@ def validate_package(store, package, blobs):
             card(session["card_data"])
             if session["agent_mode"] not in ("half_agent", "full_agent") or session["lore_injection_mode"] not in ("conversation", "st_top"):
                 raise ValueError("对话运行模式无效")
+            if session.get("channel_origin") not in (None, "standard", "chatgpt"):
+                raise ValueError("对话渠道无效")
+            if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
+                raise ValueError("上下文模式无效")
+            if session.get("context_strategy") == "openai_compact" and (session.get("channel_origin") != "chatgpt" or session["agent_mode"] != "full_agent"):
+                raise ValueError("此渠道不能导入云端 compact 会话")
             if session.get("policy") not in (None, "directed", "evolving", "preview"):
                 raise ValueError("对话更新策略无效")
             if not isinstance(session["persona_data"], dict):

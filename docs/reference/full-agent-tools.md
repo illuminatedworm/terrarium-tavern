@@ -18,7 +18,7 @@ recall_lore 使用自动检索的索引与准入规则，返回完整命中正�
 
 find_lore_for_edit 按标题、关键词和正文做字面定位，包括停用普通条目；query=* 列出最多 limit 项。read_lore_entry 一次返回完整 title/content/keys/secondary_keys/enabled，并登记该条目的读取记录。历史与笔记搜索也支持 *，但不搜索旧工具过程。
 
-set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最后一次成功调用生效，query="" 清空本轮线索。它随最终正文提交，不清除旧回合线索，不进入正文。
+set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最后一次成功调用生效，query="" 清空本轮线索。它随最终正文提交，不清除旧回合线索，不进入正文。成功结果只返回 saved_to_draft 确认，不回传刚写入的 query 文本。
 
 ## 变量路径与唯一成功提交
 
@@ -63,7 +63,7 @@ write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 
 
 write_note 完整替换内容，无先读要求；覆盖归档键重新激活。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
 
-handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 只替换笔记；new_context 同时换窗，keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
+handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 的 content 参数只替换笔记；new_context 使用 handoff 参数保存交接并同时换窗，不再接受 content 参数。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
 
 new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
 

@@ -51,7 +51,8 @@ class Handoff(Arguments):
     content: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text; must contain non-whitespace text.")
 
 
-class NewContext(Handoff):
+class NewContext(Arguments):
+    handoff: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text for the new window; must contain non-whitespace text.")
     keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain (0-12; default 2), normally up to 6 user/assistant exchanges. Expanded to complete exchanges; current user input is retained separately.")
 
 
@@ -170,6 +171,8 @@ SPECS = {
 def tool_definitions(request, session, config=None, *, settings=None, catalog=False, document=None):
     config = config or FullAgentConfig()
     names = set(SPECS)
+    if session.get("context_strategy") == "openai_compact":
+        names.difference_update({"new_context", "write_handoff"})
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
         for write, read in READ_DEPENDENCIES.items():
@@ -179,7 +182,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         names.discard("revise_content")
     limits = {
         "write_handoff": f" content limit: {config.handoff_tokens} tokens.",
-        "new_context": f" content limit: {config.handoff_tokens} tokens.",
+        "new_context": f" handoff limit: {config.handoff_tokens} tokens.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
     }
     if settings is not None:
@@ -287,12 +290,13 @@ class AgentTools:
                         if result_field(owner.session, name, "include_metadata") else {})
             return self.read(row["text"], **metadata)
         if name in ("write_handoff", "new_context"):
-            self.cap_text(args.content, owner.settings.full_agent_config.handoff_tokens, "handoff")
+            handoff = args.handoff if name == "new_context" else args.content
+            self.cap_text(handoff, owner.settings.full_agent_config.handoff_tokens, "handoff")
             if name == "new_context":
-                rollover(state, owner.history, args.content, args.keep_recent)
+                rollover(state, owner.history, handoff, args.keep_recent)
                 owner.rolled = True
             else:
-                state["handoff"] = {"text": args.content, "revision": state["handoff"]["revision"] + 1, "stale": False}
+                state["handoff"] = {"text": handoff, "revision": state["handoff"]["revision"] + 1, "stale": False}
             state.pop("edited_sources", None)
             return {"saved_to_draft": True, "window": state["window"]["number"],
                     "notice": "正文完成后与本回合统一提交。"}
@@ -396,5 +400,5 @@ class AgentTools:
             return self.content.revise(args)
         if name == "set_retrieval_query":
             owner.retrieval_query = args.query
-            return {"saved_to_draft": True, "query": args.query}
+            return {"saved_to_draft": True}
         raise ToolError("UNKNOWN_TOOL", "未知工具")
