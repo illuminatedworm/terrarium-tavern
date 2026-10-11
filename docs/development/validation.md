@@ -42,6 +42,8 @@ npm.cmd test -- tests/frontend/storyHistory.test.ts
 
 ## 完整验证
 
+角色卡顶层字段调整时，运行 `test_card_context_blocks.py` 与 `test_tracker.py`：检查两种模式经四类 API 消息投影后的字段顺序、标签、宏展开、长字段完整性、旧配方与禁用配置，以及示例／未选开场不进入事实来源。结合 `test_half_agent_alignment.py`、`test_full_agent_alignment.py`、`test_full_agent.py` 和压缩专项，验证固定前缀、动态后置要求、工具续答与换窗。同时检查请求中没有额外的角色字段用途说明，字段文本仅展开宏并加标签。合成测试验证程序注入，实际语义理解与叙事效果仍需游玩验收。
+
 ```powershell
 npm.cmd test
 npm.cmd run format:check

@@ -6,7 +6,7 @@
 
 上下文配方控制文本块的顺序、角色、深度、预算提示阈值和条件。新会话复制全局配方，已有会话及分支独立保存。深度留空按列表顺序，0 放在末尾，正整数从最后一条剧情消息向前定位。
 
-运行时补充检索协议、当前对话偏好和常驻世界书，默认跟在应用系统提示词之后。角色字段分别使用 `<card_system_prompt>`、`<card_description>`、`<card_personality>`、`<card_scenario>`、`<card_mes_example>` 和 `<card_post_history_instructions>` 包裹。世界书统一使用 `<lorebook>`，记忆投影使用 `<tavern_memory>`，剧情状态使用 `<tavern_state>`，作者注使用 `<author_note>`。作者注、角色后置要求和状态的动态更新说明与撤销消息也包在各自标签内。
+运行时补充检索协议、当前对话偏好和常驻世界书，默认跟在应用系统提示词之后。世界书统一使用 `<lorebook>`，记忆投影使用 `<tavern_memory>`，剧情状态使用 `<tavern_state>`，作者注使用 `<author_note>`。作者注、角色后置要求和状态的动态更新说明与撤销消息也包在各自标签内。
 
 应用系统提示词本身不加资料标签，开场白及备选开场作为普通剧情。新配方将角色系统提示、描述、性格和场景拆成独立块；仍使用合并块的配方可在编辑器拆分，保留角色、深度及条件。
 
@@ -24,6 +24,27 @@
 ```
 
 这份片段有四条协议消息，其中三条是剧情。世界书影响 token 占用，不增加历史剧情条数。
+
+## 角色卡顶层字段（两种模式共用）
+
+以下为 Half Agent 默认配方与 Full Agent 固定编排的字段顺序。Full Agent 的角色资料也拆成独立消息，可分别预览和计数。
+
+| 字段 | 默认位置 | 包裹标签 |
+|---|---|---|
+| `system_prompt` | 固定角色资料区第一块 | `<card_system_prompt>` |
+| `description` | 角色系统要求之后 | `<card_description>` |
+| `personality` | 描述之后 | `<card_personality>` |
+| `scenario` | 性格之后 | `<card_scenario>` |
+| `mes_example` | 用户角色资料之后、真实剧情之前 | `<card_mes_example>` |
+| `post_history_instructions` | 历史和当前输入之后的动态要求区 | `<card_post_history_instructions>` |
+
+字段非空才注入，完整展开受支持的宏后发送，不按长度裁剪。Half Agent 仍尊重已保存配方的启用、顺序、条件和深度；旧 `character` 合并块继续包含系统要求、描述、性格、场景，不自动改写旧配方或叠加一份独立字段。Full Agent 不消费 Half Agent 配方，固定字段随工作窗口恢复。
+
+运行时用字段标签标识来源，不额外注入字段用途说明，也不根据字段名限定作者实际写入的内容。具体含义由模型结合卡片原文和上下文理解。固定字段改变时按现有机制重建基线；后置要求继续按下述动态记录规则更新或撤销。
+
+其他顶层字段的去向：`name`／`nickname` 用于身份及宏；`first_mes`／`alternate_greetings` 只将用户选中的一个开场作为普通 assistant 剧情，未选开场不注入。`creator_notes`、`creator`、`tags`、`character_version` 留在卡片信息中，作者备注不等于运行时作者注。`character_book` 沿用世界书准入机制；`extensions` 仅按已支持的扩展解释，不整包注入。
+
+Half Agent 的 Tracker 使用独立维护上下文：`name`、`description`、`personality`、`scenario` 位于 `tavern_tracker_input` 的结构化 `character` 资料中。卡内系统要求、后置要求和示例不作为维护指令注入，需要编辑时通过工具读取。记忆参考池仅选取描述、性格、场景等设定资料，示例与未选开场不进入剧情证据。资料与剧情的区别由现有维护契约处理，不另加字段用途说明。
 
 ## 动态上下文记录
 

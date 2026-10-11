@@ -5,7 +5,6 @@ import json
 from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import (
-    character_content,
     macros,
     wrap_card_field,
     wrap_lorebook,
@@ -80,7 +79,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         role = {0: "system", 1: "user", 2: "assistant"}.get(role, role)
         add(role, wrap_lorebook(expand(entry["content"])), "lore:" + entry["id"],
             lore_ids=[entry["id"]], lore_region="constant")
-    add("system", expand(character_content(card)), "character")
+    for field in ("system_prompt", "description", "personality", "scenario"):
+        add("system", expand(wrap_card_field(field, card.get(field, ""))), field)
     add("system", "<user_character>\n用户：" + session["persona"] + "\n"
         + session.get("persona_data", {}).get("description", "") + "\n</user_character>", "persona")
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")

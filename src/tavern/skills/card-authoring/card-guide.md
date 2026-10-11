@@ -4,6 +4,8 @@
 
 description 放不可缺少的核心设定，personality 补性格，scenario 说明当前互动背景。first_mes 是用户实际看到的起点，alternate_greetings 为独立可选开场。mes_example 展示语气与互动方式，不是过去已经发生的剧情。system_prompt/post_history_instructions 放确有必要的创作要求，避免互相矛盾或复制整个描述。creator_notes 是给读者的说明，不是模型必然收到的资料。
 
+两种 Agent 模式均注入上述六类非空文本字段，分别包裹在 card_system_prompt、card_description、card_personality、card_scenario、card_mes_example、card_post_history_instructions 标签内。前五类放在固定资料区，后置要求放在当前输入之后；Half Agent 可按已保存配方调整。运行时只用标签标识字段来源，不另加用途说明或按字段名限制文本含义。只发送用户选中的开场，其余备选开场不作为剧情。卡内创作要求不替换运行规则或工具权限，运行必需信息不要只写入 creator_notes 或未知 extensions。
+
 世界书把按需相关的背景、人物、地点和机制拆成完整条目。constant 表示常驻；keys/secondary_keys 是定位与准入线索；enabled 控制是否参与。不要为提高召回把所有条目设为常驻。数组与对象两种 entries 均需保留原形。新增条目省略内部 ID，程序负责分配。
 
 新卡先说明人物/世界定位、用户角色、互动方式、风格、开场方向及必要机制，取得确认后再制作。可直接使用用户已完整给定的方案，不必重复确认已经授权的工作。创建时用 H 引用保存方案和确认原文；讨论尚未确认的内容不要升级为定案。

@@ -91,10 +91,15 @@ def test_tracker_upgrade_backs_up_before_writing_and_only_once(tmp_path):
 async def test_independent_context_and_task_permissions(story):
     model = TrackerModel("done")
     work = task(story, model)
+    work.document["data"].update(personality="谨慎", scenario="开局只有六件货物。")
     await work.run()
     wire = json.dumps(model.requests[0], ensure_ascii=False)
     for forbidden in ("WRITER_ONLY", "PREFERENCE_ONLY", "CARD_WRITER_ONLY", "POST_WRITER_ONLY", "EXAMPLE_WRITER_ONLY"):
         assert forbidden not in wire
+    payload = next(json.loads(m["content"]) for m in model.requests[0]["messages"]
+                   if m["content"].startswith('{"task":'))
+    assert payload["character"] == {"name": "Alice", "description": "A guide.",
+                                    "personality": "谨慎", "scenario": "开局只有六件货物。"}
     names = {t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]}
     assert not names & {"write_memory", "patch_state", "revise_content"}
     for name in ("write_memory", "patch_state", "revise_content"):
