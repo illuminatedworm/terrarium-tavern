@@ -3430,6 +3430,7 @@ select:not([multiple]) {
   align-items: start;
 }
 .lore-entry-grid > .lore-editor {
+  position: relative;
   min-width: 0;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -3447,6 +3448,17 @@ select:not([multiple]) {
   border-color: var(--border-strong);
   background: var(--surface-hover);
   transform: translateY(-1px);
+}
+.lore-entry-grid > .mvu-lore-entry {
+  padding-bottom: 38px;
+}
+.mvu-entry-label {
+  position: absolute;
+  bottom: 10px;
+  left: 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: normal;
 }
 .lore-entry-grid > .lore-editor > summary {
   display: -webkit-box;

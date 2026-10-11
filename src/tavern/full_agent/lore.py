@@ -66,7 +66,7 @@ def inject_lore(document, session, history, snapshot, query, settings, seed, inp
         turn_number=sum(m["role"] == "user" for m in session["messages"]) + 1,
         retained=retained | exiting, recursive=False,
         max_entries=settings.lore_max_entries,
-        expand_content=lambda text: macros(text, card, session["persona"], snapshot["state"]),
+        expand_content=lambda text: macros(text, card, session["persona"], snapshot["state"], snapshot.get("scopes")),
     )
     first_turn = not any(m["role"] == "user" for m in session["messages"])
     anchor = history[0]["id"] if first_turn and history else input_id
@@ -74,7 +74,7 @@ def inject_lore(document, session, history, snapshot, query, settings, seed, inp
     for entry in entries:
         if entry.get("constant") or entry["id"] in retained:
             continue
-        content = macros(entry["content"], card, session["persona"], snapshot["state"])
+        content = macros(entry["content"], card, session["persona"], snapshot["state"], snapshot.get("scopes"))
         if not content.strip():
             continue
         record = {"id": entry["id"], "title": entry.get("comment") or entry.get("name") or "世界书",

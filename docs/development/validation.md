@@ -21,7 +21,7 @@ npm.cmd run dev
 | Full Agent | `test_full_agent.py`、`test_full_agent_tools.py`、`test_full_agent_alignment.py`；浏览器 `browser_full_agent` |
 | 工具过程和事件 | `test_full_agent_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts` |
 | 检索和窗口 | `test_hybrid_retrieval.py`、`test_conversation_lore.py`、`test_tokens.py` |
-| 角色编辑与脚本 | `test_card_authoring.py`、`test_card_editor.py`、`test_card_editor_alignment.py`、`test_runtime.py`；浏览器 `browser_card_editor`、`browser_card_scripts` |
+| 角色编辑与脚本 | `test_card_authoring.py`、`test_card_editor.py`、`test_card_editor_alignment.py`、`test_runtime.py`、`test_script_permissions.py`、`test_mvu_compatibility.py`、`test_variable_macros.py`；`storyPresentation.test.ts`、`variableMacros.test.ts`；浏览器 `browser_card_editor`、`browser_card_scripts`、`browser_mvu_panel`、`browser_mvu_formats` |
 | 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py` |
 | 历史界面 | `storyHistory.test.ts`；浏览器 `browser_history_navigation`、`browser_history_rendering` |
 | 存储与发行 | `test_backup.py`、`test_session_fork.py`、`test_repository_hygiene.py`、`test_release_quality.py` |
@@ -37,6 +37,8 @@ npm.cmd test -- tests/frontend/storyHistory.test.ts
 重点保护协议、存储、权限、事务及资源生命周期。代表性边界包括失败、取消、版本冲突、分支、重生成和回调顺序；已解决的专用复现应在通用覆盖充分后收拢，避免无目的地枚举全部模型别名组合。
 
 控制测试增长：参数化只展开会改变被测行为的维度，不在共享夹具上默认叠加所有格式或协议组合。格式适配集中验证读写往返、增删和身份映射；独立于格式的参数校验、状态、笔记与脚本拦截使用单一基准夹具，并保留各自不同的边界样本。纯工具测试直接构造内存数据，需要验证持久化或完整回合时才创建数据库。
+
+面板资源生命周期变更运行 `test_script_resources.py`、`storyResources.test.ts`、`storyRuntime.test.ts` 与 `python -m tests.browser.browser_story_resources`。这些检查验证按需历史、稀疏回滚、取消清理、分支隔离、共享资源、按需核心、实际提交后的 iframe 复用，以及旧卡保留和新面板未提交表单的离屏恢复；不是硬件性能基准。浏览器场景使用 2560×1440、1920×1080、360×792/DPR3（1080×2376 设备像素）、960×540/DPR2（200% 等效 CSS 视口）。后两项属于等效视口，不代替真实手机和浏览器原生缩放测量。
 
 新增回归前先检查能否补充既有场景；统计时区分测试函数数与参数展开后的用例数，同时看耗时。不通过隐藏用例、跳过测试或把独立场景塞进大循环来压低数字。
 

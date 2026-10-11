@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { renderStoryText } from '../../lib/storyText';
-import { storyHtml } from '../../lib/storyHtml';
+import DOMPurify from 'dompurify';
 import { textMatches } from '../../lib/dialogueSearch';
 import type { HistoryMessage } from '../../lib/storyHistory';
+import { snapshotMacros } from '../../../compat/variable-macros';
 const props = defineProps<{
   messages: HistoryMessage[];
   persona?: string;
@@ -33,15 +34,26 @@ const indexed = computed(() => {
   const ids = new Set(props.messages.map((message) => message.id));
   for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id);
   return props.messages.map((message) => {
-    const raw = (message.display || message.raw || '').replace(
-      /\{\{user\}\}/g,
-      () => props.persona || '用户',
+    const parts = (message.presentation?.body || [{ format: 'markdown', text: message.raw || '' }]).map(
+      (part) => ({
+        ...part,
+        text: snapshotMacros(part.text, message.snapshot?.state, message.snapshot?.scopes).replace(
+          /\{\{user\}\}/g,
+          () => props.persona || '用户',
+        ),
+      }),
     );
-    const source = storyHtml(raw) || raw;
+    const source = JSON.stringify(parts);
     let entry = cache.get(message.id);
     if (!entry || entry.source !== source) {
       const root = document.createElement('div');
-      root.innerHTML = renderStoryText(source, message.role === 'user');
+      root.innerHTML = parts
+        .map((content) =>
+          content.format === 'html'
+            ? DOMPurify.sanitize(content.text)
+            : renderStoryText(content.text, message.role === 'user'),
+        )
+        .join('\n');
       root.querySelectorAll('script, style, template').forEach((node) => node.remove());
       entry = { source, text: root.textContent || '' };
       cache.set(message.id, entry);

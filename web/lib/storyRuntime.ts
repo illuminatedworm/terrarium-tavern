@@ -1,20 +1,23 @@
-/** Share immutable SDK sources across message frames; each frame remains isolated. */
+/** Downloads are shared; the MVU execution core is fetched only on demand. */
 export function createRuntimeLoader(request: typeof fetch = fetch) {
-  let pending: Promise<string[]> | undefined;
-  return () => {
-    if (!pending) {
-      pending = Promise.all(
-        ['/static/runtime.js', '/static/mvu-core.js'].map(async (url) => {
-          const response = await request(url);
-          if (!response.ok) throw new Error(`角色运行时加载失败：${response.status}`);
-          return response.text();
-        }),
-      ).catch((error) => {
-        pending = undefined;
-        throw error;
-      });
+  const pending = new Map<string, Promise<string>>();
+  return (kind: 'sdk' | 'core' = 'sdk') => {
+    const url = kind === 'sdk' ? '/static/runtime.js' : '/static/mvu-core.js';
+    if (!pending.has(url)) {
+      pending.set(
+        url,
+        request(url)
+          .then((response) => {
+            if (!response.ok) throw new Error(`角色运行时加载失败：${response.status}`);
+            return response.text();
+          })
+          .catch((error) => {
+            pending.delete(url);
+            throw error;
+          }),
+      );
     }
-    return pending;
+    return pending.get(url)!;
   };
 }
 

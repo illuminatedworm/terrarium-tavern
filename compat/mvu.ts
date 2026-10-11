@@ -11,6 +11,7 @@ export const events = {
   COMMAND_PARSED: 'mag_command_parsed',
   VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended',
   BEFORE_MESSAGE_UPDATE: 'mag_before_message_update',
+  SINGLE_VARIABLE_UPDATED: 'mag_variable_updated',
 };
 export function safePath(path: string) {
   const parts = _.toPath(path);
@@ -76,7 +77,12 @@ function validate(node: any, val: any, path = ''): any {
     for (const [k, child] of Object.entries<any>(node.properties || {})) if (child.required && !(k in val)) throw Error(`缺少变量 ${path}.${k}`);
   } else if (node.type === 'array') {
     if (!Array.isArray(val)) throw Error(`变量 ${path} 需要数组`);
-    val = val.map((v, i) => validate(node.elementType, v, `${path}.${i}`));
+    // Upstream represents legacy [value, description] with the value's element
+    // schema. Validate the value but preserve the description as a string;
+    // checking it as a number incorrectly rejects every JSON Patch to that card.
+    val = val.length === 2 && typeof val[1] === 'string'
+      ? [validate(node.elementType, val[0], `${path}.0`), val[1]]
+      : val.map((v, i) => validate(node.elementType, v, `${path}.${i}`));
   } else if (node.type !== 'any' && typeof val !== node.type) {
     if (node.type === 'number' && typeof val === 'string' && val.trim() && Number.isFinite(Number(val))) return Number(val);
     throw Error(`变量 ${path} 类型不匹配`);

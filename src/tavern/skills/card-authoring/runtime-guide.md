@@ -25,3 +25,9 @@ Half Agent 在正文生成后向 Tracker 提供变量规则。Full Agent 在当�
 遇到模型逐轮生成 HTML、Markdown 或固定标签状态栏，读取 references/status-display.md，将有依据的状态迁入独立变量，并按 references/regex-display.md 把原 HTML 前端写入 extensions.regex_scripts，绑定 stat_data 后由项目变量区展示。项目只提供变量树兜底，不会从补丁日志自动重建原界面；除非用户明确仅要变量树，否则保留原视觉设计。用户明确要求迁移正文状态栏时也处理相关开场示范；普通排版和已有程序展示不因此迁移。诊断无警告不代表完整适配。
 
 制作或补全正则、HTML/MVU 前端时必须读取 references/regex-display.md，使用其中的真实字段、可用 SDK 和 test_draft 展示断言；普通 patch_state 更新不要求用户提供额外 patch note 格式。
+
+MVU 变量与 UI 分开：已有程序化文字、Markdown、纯 HTML/CSS 状态栏不必改为 JavaScript 面板。get_message_variable / format_message_variable 等 Helper 宏可直接读取 stat_data；旧式 [值, 描述] 与普通数组均保留，取旧值需显式索引 0，JSON Patch 也指向该值的位置。不要把所有两项数组自动压成单值。多种展示形式均需用同一 test_draft 检查完整内容和补丁后的变化。
+
+新建纯展示面板优先采用 `<meta name="tavern-capabilities" content="display-only live-state">`，启动时绘制一次，并监听 `tavern_state_updated` 更新 DOM；这样无需每轮在后台重建展示脚本，也无需前端重载页面。仅在确认没有服务端变量回调或初始化副作用后才给已有卡添加 `display-only`，不根据代码关键词猜测。通过公开 `Mvu` API 访问变量，执行核心在 `Mvu.parseMessage` 时按需加载，不直接引用内部 `MVUReference`。
+
+需要离屏释放的面板再声明 `suspend`，实现 `window.TavernPanel.save()` / `restore(saved)`，保存全部临时表单与界面状态；持久变量仍通过原 API 提交。允许复用资源时声明 `shared-assets`，避免依赖匿名 style 节点或内联 URL 身份。四种声明是本项目扩展，不代表原生酒馆能力；未适配的旧卡继续保留完整执行和交互生命周期。除 test_draft 外，必须在实际界面验证状态更新、未提交输入和离屏恢复。

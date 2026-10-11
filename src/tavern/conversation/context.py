@@ -10,6 +10,7 @@ from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
 from tavern.core.tokens import REPLY_PRIMING, count_text, counting_info, message_tokens
+from tavern.core.variable_macros import replace_variable_macros
 
 
 def get_path(value, path, default=None):
@@ -41,7 +42,7 @@ def search(items, query, field="content", limit=8):
     return sorted(scored, key=lambda x: -x["score"])[:limit]
 
 
-def macros(text, character, persona, state):
+def macros(text, character, persona, state, scopes=None):
     text = str(text)
     if "{{" not in text:
         return text
@@ -59,7 +60,7 @@ def macros(text, character, persona, state):
             return str(value) if value is not None else m[0]
         return m[0]
 
-    return re.sub(r"\{\{([^{}]+)}}", sub, text)
+    return replace_variable_macros(re.sub(r"\{\{([^{}]+)}}", sub, text), state, scopes)
 
 
 def wrap_lorebook(content):
@@ -365,14 +366,14 @@ def compile_context(
         max_entries=settings.lore_max_entries,
         recursive=False,
         timeline=get_path(state, "世界.当前时间线", ""),
-        expand_content=lambda text: macros(text, card, persona, state),
+        expand_content=lambda text: macros(text, card, persona, state, snapshot.get("scopes")),
     )
     diagnostics.extend(retrieval.get("diagnostics", []))
     diagnostics.extend({"id": eid, "reason": "条目离开本次正文请求，开始冷却；本次不重新注入", "removed_at": turn_number}
                        for eid in sorted(exiting_ids))
 
     def expand(text):
-        return macros(text, card, persona, state)
+        return macros(text, card, persona, state, snapshot.get("scopes"))
 
     sources = {
         "rules": settings.system_prompt,

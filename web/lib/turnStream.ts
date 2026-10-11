@@ -1,4 +1,4 @@
-import { visibleLoreData } from './loreRecords';
+import { responseData } from './storyPresentation';
 
 /** Events are replayable. A subscription belongs to one view, never global state. */
 export interface TurnEvent {
@@ -35,7 +35,7 @@ export function observeTurn(
   const accept = eventCursor();
   stream.onmessage = (message) => {
     if (!owns()) return;
-    const event = visibleLoreData(JSON.parse(message.data)) as TurnEvent;
+    const event = responseData(JSON.parse(message.data)) as TurnEvent;
     if (accept(event)) receive(event);
   };
   stream.addEventListener('end', () => {

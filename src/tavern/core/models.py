@@ -346,6 +346,11 @@ class SessionOptions(BaseModel):
     turn_preference: str = ""
 
 
+class SessionScriptPermission(BaseModel):
+    expected_revision: int = Field(ge=0)
+    enabled: bool
+
+
 class PersonaEdit(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""

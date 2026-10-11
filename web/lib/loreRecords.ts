@@ -8,18 +8,23 @@ export type LoreRecord = {
 
 // Also hide internal markers in review/diagnostic trees, not just the transcript.
 export function visibleLoreData<T>(value: T): T {
-  if (Array.isArray(value)) return value.map(visibleLoreData) as T;
   if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [
-      key,
-      visibleLoreData(
-        (key === 'lore_injections' || key === 'next_lore_injections') && Array.isArray(item)
-          ? item.filter((record) => !record?.manually_removed)
-          : item,
-      ),
-    ]),
-  ) as T;
+  let result: any = value;
+  for (const [key, item] of Object.entries(value)) {
+    let selected = item;
+    if (
+      (key === 'lore_injections' || key === 'next_lore_injections') &&
+      Array.isArray(item) &&
+      item.some((record) => record?.manually_removed)
+    )
+      selected = item.filter((record) => !record?.manually_removed);
+    const next = visibleLoreData(selected);
+    if (next !== item) {
+      if (result === value) result = Array.isArray(value) ? [...value] : { ...value };
+      result[key] = next;
+    }
+  }
+  return result;
 }
 
 export function dialogueLoreRecords(messages: any[]): Map<string, LoreRecord[]> {

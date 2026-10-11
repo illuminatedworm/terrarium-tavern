@@ -653,6 +653,7 @@ useTimedError(error);
                 v-for="item in group.items"
                 :key="item.entry.id ?? item.entry.uid ?? item.index"
                 class="lore-editor"
+                :class="{ 'mvu-lore-entry': /\[initvar\]/i.test(item.entry.comment || '') }"
                 :data-lore-id="String(item.entry.id ?? item.entry.uid ?? item.index)"
                 @click.prevent="openLore(item)"
               >
@@ -660,6 +661,9 @@ useTimedError(error);
                   {{ item.entry.comment || item.entry.name || '条目 ' + (item.index + 1) }}
                   <small>{{ audiences[entryAudience(item.entry)] }}</small>
                   <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
+                  <span v-if="/\[initvar\]/i.test(item.entry.comment || '')" class="mvu-entry-label">
+                    已识别 MVU 条目
+                  </span>
                 </summary>
               </details>
             </div>

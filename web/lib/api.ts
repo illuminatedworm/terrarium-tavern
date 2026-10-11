@@ -1,4 +1,4 @@
-import { visibleLoreData } from './loreRecords';
+import { responseData } from './storyPresentation';
 
 /** Debug views need the exact persisted payload, including removed lore records. */
 export async function rawApi(path: string, data?: any, method?: string) {
@@ -15,5 +15,5 @@ export async function rawApi(path: string, data?: any, method?: string) {
 }
 
 export async function api(path: string, data?: any, method?: string) {
-  return visibleLoreData(await rawApi(path, data, method));
+  return responseData(await rawApi(path, data, method));
 }

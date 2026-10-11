@@ -19,6 +19,6 @@ def archive_history(history, document=None, persona=None):
         snapshot = message.get("snapshot", {})
         source_document = (snapshot.get("content") or {}).get("document", document)
         text = macros(message.get("model", message["raw"]), normalize(source_document),
-                      persona, snapshot.get("state", {}))
+                      persona, snapshot.get("state", {}), snapshot.get("scopes"))
         result.append({**message, "model": text})
     return result

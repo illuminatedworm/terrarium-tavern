@@ -10,21 +10,56 @@
 | 世界书 | 内嵌、独立 JSON；保守关键词准入、辅助逻辑、常驻、概率、受原始查询约束的递归、深度、滚动注入及离开请求后概率冷却（旧持续字段保留但不执行） |
 | 正则 | 原生 JavaScript RegExp；显示/模型阶段、placement 与 min/max depth |
 | 原始提示词 | 角色正文、system、post history、开场与示例映射到配方 |
-| 宏 | char、user、getvar / getglobalvar 常用读取；未知宏保留 |
-| HTML 美化 | 独立 sandbox iframe；HTML/CSS/JS，尺寸通知；图片等依赖须缓存/内嵌；CSS 的 url()/@import 递归缓存，字体内嵌后离线显示图标，旧对话在打开时补齐 |
+| 宏 | 模型文本保留 char、user、getvar / getglobalvar 读取；Helper 的 get / format / format_quoted 变量宏支持 message、chat、character、preset、global，用于模型上下文和文字、Markdown、HTML 展示；未知宏保留 |
+| HTML 美化 | 原始 HTML 和代码块共用结构解析器，统一为正文／面板内容块，保留多个 HTML 界面及前、中、后的剧情；完整 head/body 不再二次按 Markdown 解析；每个界面独立 sandbox iframe；CSS 的 url()/@import 和字体递归缓存后离线使用 |
 | 角色脚本 | 固定 SDK、无宿主密钥；按回合重新建立，变量持久化 |
 | 消息变量回调 | 在服务端重建消息 DOM realm，顺序执行 MVU 回调并等待完成 |
-| MVU | 使用固定提交的上游更新和 Schema 核心；InitVar、stat_data、更新事件、旧事件名别名 |
+| MVU | 使用固定提交的上游更新和 Schema 核心；InitVar、stat_data、更新事件、旧事件名别名；保留直接值、嵌套对象、普通数组及旧式 [值, 描述]，不统一压平数组 |
 | MVU 命令 | 上游 set/add/insert/delete/move 与 JSON Patch 解析；上游错误通知提升为回合失败 |
-| 变量 API | chat、message、character、script、global、preset、extension 镜像；所有 scope 隔离在会话分支中 |
-| 消息读取 | 楼层号、负索引、latest、简单范围；返回角色、正文、变量和 ID |
+| 变量 API | 全局函数及 TavernHelper 命名空间；chat、message、character、script、global、preset、extension 镜像；getAllVariables 按顶层键覆盖作用域，数组赋值整体替换，避免复活旧字段；所有 scope 隔离在会话分支中 |
+| 消息读取 | 楼层号、负索引、latest、简单范围；返回角色、正文、variables 和 ID，旧 HTML 示例的 data 读取别名保留；message_id 省略时为 latest，取当前界面楼层需显式传 getCurrentMessageId() |
 | 消息写入 | 回合脚本镜像；界面写入仅支持当前楼层，历史操作需先切换分支 |
 | 世界书写入 | 受设定修改策略控制，保存为当前分支的内容草稿 |
 | generate / generateRaw | Half Agent 支持当前模型、文本、取消、流式通知、覆盖和有序内容块；不加载 ST 预设 |
 | 外部模块 | 下载和哈希缓存，离线 esbuild 打包静态可解析的浏览器模块 |
 | 中途 system | 所有端点原位发送；能力检查仅诊断，不支持时显示实际错误 |
 
+## 脚本权限
+
+书架角色的脚本权限用于新建对话；已有对话保存自己的脚本权限，前端面板和后端执行器均以该记录为准。可以在右侧 MVU 页启用，或在会话设置中开启、关闭；操作即时保存，不重演初始化、不改写剧情与变量。关闭时带脚本的界面显示“面板已暂停”；纯 HTML/CSS 仍可在禁止脚本的 iframe 中展示，文字与 Markdown 状态栏也不需要开启脚本。继承进度时复制当前权限，之后各对话独立修改。编辑 Agent 另存副本时继承源卡当前的用户权限，不沿用旧草稿里过期的权限。
+
+## MVU 数据与显示的分工
+
+MVU 管理 `stat_data`，HTML 只是可选的展示方式。文字或 Markdown 可直接写 `生命：{{format_message_variable::stat_data.hp.0}}`；此例针对 `[45, "生命说明"]`，直接值用 `stat_data.hp`。访问数组整体会得到完整数组，不会猜测它是说明对还是物品列表。JSON Patch 对说明对中的数值使用 `/hp/0`；说明保留，数值类型仍校验。
+
+`get_*_variable` 对字符串直接返回原文，其他值输出 JSON；`format_*_variable` 对字符串直接返回原文，其他值输出 YAML，并保留所在行的缩进前缀。支持点路径与带引号的方括号路径；缺失值为 `null`，`0`、`false` 和空数组不会被当成缺失。宏递归隐藏 `$` 前缀字段，模型侧额外过滤初始化账本、schema 和内部缓存。界面宏读取该消息的快照，右侧独立面板读取最新快照；原始数据与宏模板不改写。
+
+普通文字、Markdown 和无 MVU 脚本的 HTML 留在消息原位置。含已识别 MVU 读取脚本的界面单独放到右栏；这个布局约定不意味着所有 MVU 显示都必须是 HTML。实际页面、消息脚本回调和制卡 `test_draft` 使用同一内容拆分规则，代码示例不作为脚本执行。
+
+项目仍采用 Writer 生成正文、Tracker／Full Agent 工具提交 JSON Patch 的流程；不会为了模拟酒馆而重新让 Writer 输出变量更新命令。现有开场初始化和受支持的脚本回调继续由 Runtime 校验并原子提交。
+
+接口依据：[MVU 教程](https://github.com/MagicalAstrogy/MagVarUpdate/blob/master/doc/tutorial.md)、[酒馆助手变量 API](https://github.com/N0VI028/JS-Slash-Runner/blob/c0196caee03955aa39e00db1a2623b2591bd3c6f/src/function/variables.ts)、[变量宏契约](https://github.com/N0VI028/JS-Slash-Runner/blob/c0196caee03955aa39e00db1a2623b2591bd3c6f/src/function/macro_like.ts)。这些接口是独立适配，不等于完整 ST 插件环境；EJS、父页面 DOM 和未编译框架源码仍须另外适配。
+
 ## 运行环境限制
+
+### 面板资源与生命周期
+
+纯 HTML/CSS 面板始终使用禁用脚本的沙箱，不加载兼容 SDK 或 MVU 核心。脚本面板先加载共享 SDK，调用异步 `Mvu.parseMessage` 时才加载固定上游核心；后端主运行时仍使用完整核心。面板通过公开 `Mvu` API 工作，不应直接依赖内部 `MVUReference` 全局对象。
+
+完整历史仍可同步查询，没有裁剪正文或快照。后端消息脚本按需读取当前操作内的历史记录，前端共享不可变历史源并延迟解析记录；每个环境中的写入与事务回滚保持独立。`getAllVariables` 的常规读取直接取得按楼层覆盖的变量视图，不必先物化所有历史正文。展示解析缓存最多 128 项、16 MiB 估算字符串存储，后端 HTML 拆分缓存最多 128 项、16 MiB UTF-8 源文本；均只缓存派生展示内容，不缓存跨回合的脚本闭包或权威状态。
+
+复杂面板可在 HTML 中明确声明项目扩展能力，各项独立生效：
+
+```html
+<meta name="tavern-capabilities" content="display-only live-state suspend shared-assets">
+```
+
+- `display-only`：该文档只负责前端显示和用户交互，不参与服务端变量回调、初始化或其他副作用；后台无需重建它。包含业务回调的旧卡不能添加此项。
+- `live-state`：模板不变时复用 iframe，快照更新后触发 `eventOn('tavern_state_updated', (state, previous) => ...)`。处理器应重新读取变量并更新界面，不能再依赖每轮重跑顶层脚本。宏展开后 HTML 改变、切换会话或更新处理器失败时仍重建文档。
+- `suspend`：离开阅读区域一段距离并稳定后，可销毁 iframe。必须提供 `window.TavernPanel.save()` 和 `restore(saved)`，保存／恢复完整的临时 UI 状态；支持返回 Promise。`save` 应停止不应继续运行的后台活动，不发起新的宿主操作；`restore` 在同步脚本与 jQuery-ready 初始化后调用。保存结果须为可 JSON 序列化数据。聚焦或有宿主请求未完成时不挂起；全局临时状态预算为 4 MiB，超限保留运行实例，不丢弃输入。恢复数据只在当前页面生命周期内保存，不代替正式存档。
+- `shared-assets`：允许把匿名样式块和较大的内联图片／字体变为共享 Blob 资源。不得依赖原始 `src` 字符串、匿名 `<style>` 元素或其 CSSOM 身份。带属性的样式元素保留。Blob 对象共享底层内容，各沙箱自行生成本地 URL，仍无父页面 DOM 或网络访问权限。
+
+没有声明的旧卡仍重建后台脚本环境，并在前端保留访问过的交互面板，以保护闭包、定时器与未提交输入；基础历史读取、按需核心和解析缓存优化仍生效。不能通过自动猜测“看起来只用于展示”而省略旧卡回调，也不保证任意重型旧卡的资源占用恒定。
 
 - 不提供完整 ST DOM、内部模块、完整 `SillyTavern.getContext()` 或通用 STscript。
 - `global`、`character`、`preset` 等兼容变量目前是**会话分支内的命名空间**，不会跨角色或跨会话共享，避免分支外副作用。

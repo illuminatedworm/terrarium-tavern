@@ -25,6 +25,7 @@ from tavern.core.models import (
     SessionCreate,
     SessionFork,
     SessionOptions,
+    SessionScriptPermission,
     SessionTitle,
     TurnRequest,
 )
@@ -404,6 +405,10 @@ def create_app(data_dir=None):
     @app.get("/api/sessions/{sid}/card")
     async def session_card(sid: str):
         return store.session_card(sid)
+
+    @app.put("/api/sessions/{sid}/script-permission")
+    async def session_script_permission(sid: str, change: SessionScriptPermission):
+        return store.set_session_script_permission(sid, change.expected_revision, change.enabled)
 
     @app.post("/api/sessions/{sid}/fork", status_code=201)
     async def fork_session(sid: str, payload: SessionFork):

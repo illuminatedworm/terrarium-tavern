@@ -17,26 +17,29 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
     Use real document parsing so DOMContentLoaded, inline scripts and ready handlers
     execute in order. The existing runtime context denies all network requests.
     """
-    frame = await session.context.new_page()
-    errors = []
-    frame.on("pageerror", lambda error: errors.append(str(error)))
+    presentation = await session.call("parseStoryDisplay", html)
+    parts = presentation["panel"] or presentation["body"]
+    frames, errors = [], []
     try:
-        await frame.expose_function("__tavernHost", host)
         data = {**mirror, "ui": True, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1}
         bootstrap = "TavernRuntime.install(" + json.dumps(data) + ", (m,a)=>__tavernHost(m,a));"
         scripts = [SDK.read_text(encoding="utf-8"), (SDK.parent / "mvu-core.js").read_text(encoding="utf-8"), bootstrap]
-        # Match the supported HTML code-fence form; otherwise preserve all narrative/HTML.
-        for fenced in re.finditer(r"```(?:html)?\s*\n([\s\S]*?)\n```", html, re.I):
-            if re.search(r"<(?:html|!doctype|script|style|div|section)\b", fenced[1], re.I):
-                html = fenced[1]
-                break
         head = "".join("<script>" + re.sub(r"</script", r"<\\/script", code, flags=re.I) + "</script>" for code in scripts)
-        await frame.set_content(
-            '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" '
-            'content="default-src \'none\'; script-src \'unsafe-inline\' \'unsafe-eval\'; '
-            'style-src \'unsafe-inline\' data:; img-src data: blob:; connect-src \'none\'">'
-            + head + "</head><body>" + html + "</body></html>", wait_until="load")
-        await frame.evaluate("async () => { await new Promise(resolve => $(resolve)); await TavernRuntime.flush(); }")
+        for part in parts:
+            markup = await session.call("snapshotMacros", part["text"], mirror["state"], mirror.get("scopes", {}))
+            markup = markup.replace("{{user}}", mirror.get("persona", "测试用户")).replace("{{char}}", mirror.get("character", ""))
+            if part["format"] == "markdown":
+                markup = await session.call("renderMarkdown", markup)
+            frame = await session.context.new_page()
+            frames.append(frame)
+            frame.on("pageerror", lambda error: errors.append(str(error)))
+            await frame.expose_function("__tavernHost", host)
+            await frame.set_content(
+                "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" "
+                "content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
+                "style-src 'unsafe-inline' data:; img-src data: blob:; connect-src 'none'\">"
+                + head + "</head><body>" + markup + "</body></html>", wait_until="load")
+            await frame.evaluate("async () => { await new Promise(resolve => $(resolve)); await TavernRuntime.flush(); }")
         if errors:
             raise ValueError("展示脚本执行失败：" + "\n".join(errors))
         observed = []
@@ -44,15 +47,17 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
             expected = assertion.get("after_text") if after else assertion["text"]
             if expected is None:
                 continue
-            locator = frame.locator(assertion["selector"])
-            count = await locator.count()
-            actual = (await locator.text_content()).strip() if count == 1 else None
+            locators = [frame.locator(assertion["selector"]) for frame in frames]
+            counts = [await locator.count() for locator in locators]
+            count = sum(counts)
+            actual = (await locators[counts.index(1)].text_content()).strip() if count == 1 else None
             observed.append({"selector": assertion["selector"], "expected": expected,
                              "actual": actual, "matches": count,
                              "status": "passed" if count == 1 and actual == expected else "failed"})
         return observed
     finally:
-        await frame.close()
+        for frame in frames:
+            await frame.close()
 
 
 async def test_card(store, item, index=0, samples=(), display_assertions=(), state_patch=()):

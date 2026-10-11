@@ -3,9 +3,9 @@ from tavern.character.cards import lore_entries, normalize
 from tavern.conversation.context import macros
 
 
-def collect_variable_rules(document, persona, state):
+def collect_variable_rules(document, persona, state, scopes=None):
     card = normalize(document)
-    return [macros(entry.get("content", ""), card, persona, state)
+    return [macros(entry.get("content", ""), card, persona, state, scopes)
             for entry in lore_entries(document, "tracker_mvu") if entry["enabled"]]
 
 

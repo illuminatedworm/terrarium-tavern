@@ -56,7 +56,7 @@ class FullAgent:
         # failed-request resumes. The next turn takes a fresh rule snapshot.
         self.variable_rules = (copy.deepcopy(progress["variable_rules"])
             if progress is not None and "variable_rules" in progress else
-            collect_variable_rules(document, session["persona"], snapshot["state"])
+            collect_variable_rules(document, session["persona"], snapshot["state"], snapshot.get("scopes"))
             if request.update_variables else None)
         self.resumed = progress is not None
         self.final_response = None
@@ -100,7 +100,7 @@ class FullAgent:
         self.store.event(self.tid, kind, {"purpose": "full_agent", **payload})
 
     def expand(self, text):
-        return macros(text, normalize(self.document), self.session["persona"], self.snapshot["state"])
+        return macros(text, normalize(self.document), self.session["persona"], self.snapshot["state"], self.snapshot.get("scopes"))
 
     def lore_refs(self):
         return lore_references(self.document, self.state)

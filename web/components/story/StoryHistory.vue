@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import { HistoryHeights, needsVirtualHistory, type HistoryMessage } from '../../lib/storyHistory';
-import { storyHtml } from '../../lib/storyHtml';
 
 const props = defineProps<{
   messages: HistoryMessage[];
@@ -193,6 +192,11 @@ async function jumpBoundary(edge: 'start' | 'end') {
 watch(
   () => [props.messages, props.messages.length],
   async () => {
+    // Branch changes and deleted messages must release retained components and caches.
+    const ids = indices.value;
+    retained.value = new Set([...retained.value].filter((id) => ids.has(id)));
+    for (const id of interactiveChecks.keys()) if (!ids.has(id)) interactiveChecks.delete(id);
+    for (const id of measured.keys()) if (!ids.has(id)) measured.delete(id);
     if (pinned && !indices.value.has(pinned.id)) releaseAnchor();
     const previousTop = props.scroller?.scrollTop || 0;
     let readingId: string | undefined;
@@ -240,13 +244,16 @@ watch(
         const text = message.display || message.raw || '';
         let checked = interactiveChecks.get(message.id);
         if (!checked || checked.text !== text) {
-          checked = { text, interactive: !!storyHtml(text) };
+          checked = {
+            text,
+            interactive: !!message.presentation?.body.some((part) => part.format === 'html'),
+          };
           interactiveChecks.set(message.id, checked);
         }
         if (checked.interactive) next.add(message.id);
       }
       if (next.size !== retained.value.size) retained.value = next;
-    }
+    } else if (retained.value.size) retained.value = new Set();
     emit('visible', messages);
   },
   { immediate: true },

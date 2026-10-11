@@ -79,13 +79,19 @@ async def main():
                         await rail.press('Home')
                         await expect(page.locator(f'[data-message-id="{session["head"]}"]')).to_be_visible()
                         box = await rail.bounding_box()
-                        await page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] * 200 / 299)
+                        # Use the visible tick range; the slider's padded edges are not history positions.
+                        ticks = rail.locator('.rail-tick:not(.current):not(.cached):not(.hovered)')
+                        first_tick, last_tick = await ticks.first.bounding_box(), await ticks.last.bounding_box()
+                        top = first_tick['y'] + first_tick['height'] / 2
+                        bottom = last_tick['y'] + last_tick['height'] / 2
+                        await page.mouse.click(box['x'] + box['width'] / 2, top + (bottom - top) * 200 / 299)
                         await expect(page.locator('[data-message-id="fixture-200"] iframe')).to_be_visible()
                         await rail.focus()
                         await rail.press('End')
                         await expect(last).to_be_visible()
                         await expect(page.locator('.messages iframe')).to_have_count(1)
-                        await last.get_by_role('button', name='编辑', exact=True).click()
+                        # Activate normally, without the pointer's long-press choice menu.
+                        await last.get_by_role('button', name='编辑', exact=True).press('Enter')
                         await last.locator('textarea').fill('Changed paragraph\n' * 20)
                         await rail.focus()
                         await rail.press('Home')

@@ -52,10 +52,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             if require_state_patch or allow_content_edit else ""),
         "regenerate_instruction": instruction,
         "regenerate_reference": regeneration_reference(
-            macros(regenerate_reply, card, session["persona"], snapshot.get("state", {}))),
+            macros(regenerate_reply, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))),
     }
     def expand(value):
-        return macros(value, card, session["persona"], snapshot.get("state", {}))
+        return macros(value, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))
     items = []
 
     def add(role, content, source, **metadata):
@@ -185,7 +185,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     if require_state_patch:
         # Actual turns supply a durable, frozen snapshot. Read-only previews
         # collect the same rules without marking them as already injected.
-        rules = (collect_variable_rules(document, session["persona"], snapshot.get("state", {}))
+        rules = (collect_variable_rules(document, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))
                  if variable_rules is None else variable_rules)
         update("mvu_rules", variable_rules_message(rules), value=rules)
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))

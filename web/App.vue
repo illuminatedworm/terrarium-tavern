@@ -559,16 +559,46 @@ const editableMessageIds = computed(() => {
   return ids;
 });
 const mvuPanel = computed(() => {
-  const m = session.value?.messages
-    .slice()
-    .reverse()
-    .find(
-      (m: any) =>
-        /<script/i.test(m.display || '') &&
-        /stat_data|getAllVariables|getMvuData|StatusPlaceHolder/i.test(m.display || ''),
-    );
-  return m ? { ...m, id: session.value.head, snapshot: session.value.snapshot } : null;
+  for (const message of [...(session.value?.messages || [])].reverse()) {
+    if (message.presentation?.panel.length)
+      return {
+        ...message,
+        id: session.value.head,
+        snapshot: session.value.snapshot,
+      };
+  }
+  return null;
 });
+const scriptPermissionBusy = ref(false);
+async function setSessionScriptPermission(enabled: boolean) {
+  const token = viewScope.current();
+  const sid = session.value?.id;
+  if (!sid || busy.value || scriptPermissionBusy.value) return;
+  scriptPermissionBusy.value = true;
+  try {
+    const result = await viewApi(
+      `/sessions/${sid}/script-permission`,
+      { enabled, expected_revision: session.value.revision },
+      'PUT',
+    );
+    if (!viewScope.owns(token)) return;
+    sessionCard.value = result.card;
+    session.value.revision = result.session.revision;
+    // Reload resolved display assets without reinitializing variables or replacing
+    // unsaved identity/preferences in the settings form.
+    if (enabled) {
+      const updated = await viewApi(`/sessions/${sid}`);
+      if (!viewScope.owns(token)) return;
+      session.value.messages = updated.messages;
+      session.value.snapshot = updated.snapshot;
+      session.value.revision = updated.revision;
+    }
+  } catch (e: any) {
+    if (viewScope.owns(token)) notify(e.message);
+  } finally {
+    scriptPermissionBusy.value = false;
+  }
+}
 let events: EventSource | undefined;
 const currentCard = computed(
   () =>
@@ -2350,7 +2380,7 @@ useTimedError(error);
               :scroller="chat"
               :following="followLatest"
               :editing-id="editingMessageId"
-              :retain-interactive="!!currentCard?.permission"
+              :retain-interactive="!!sessionCard?.permission"
               @reading="readingMessageId = $event"
               v-bind="
                 isFullAgent
@@ -2393,8 +2423,7 @@ useTimedError(error);
                   :saving-edit="savingMessageEdit"
                   v-model:editing-message-text="editingMessageText"
                   :reviewing="activeTurn?.status === 'awaiting_review'"
-                  :hide-panel="!!mvuPanel"
-                  :enabled="!!currentCard?.permission"
+                  :enabled="!!sessionCard?.permission"
                   @cancel-edit="cancelMessageEdit"
                   @save-edit="saveMessageEdit"
                   @edit="beginMessageEdit"
@@ -2807,12 +2836,22 @@ useTimedError(error);
           <StoryMessage
             v-if="mvuPanel"
             :message="mvuPanel"
+            panel-only
             expand-first-level
             :session="session"
-            :enabled="!!currentCard?.permission"
+            :enabled="!!sessionCard?.permission"
             @action="frameAction"
           />
-          <p v-else class="state-empty">此角色卡暂无渲染面板，可展开查看变量。</p>
+          <p v-else class="state-empty">此角色卡没有独立状态面板，可展开查看变量。</p>
+          <button
+            v-if="mvuPanel && !sessionCard?.permission"
+            :disabled="
+              busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
+            "
+            @click="setSessionScriptPermission(true)"
+          >
+            启用此对话的脚本
+          </button>
           <details :key="session.id">
             <summary>查看 MVU 变量</summary>
             <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
@@ -2896,6 +2935,16 @@ useTimedError(error);
               <button class="primary" @click="saveOptions">保存</button>
             </div>
           </div>
+          <label class="check">
+            <input
+              type="checkbox"
+              :checked="!!sessionCard?.permission"
+              :disabled="
+                busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
+              "
+              @change="setSessionScriptPermission(($event.target as HTMLInputElement).checked)"
+            />启用此对话的角色卡脚本
+          </label>
           <label>你的身份<input v-model="session.persona" /></label
           ><label
             >用户完整描述<ExpandableTextarea

@@ -926,6 +926,24 @@ class Store(MessageAdapters):
         result["edit_affected_memory"] = affected_memory
         return result
 
+    def set_session_script_permission(self, sid, expected, enabled):
+        """Change the story-owned permission without replacing its card or replaying initialization."""
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT revision,card_data FROM sessions WHERE id=?", (sid,)).fetchone()
+            if row is None:
+                raise KeyError("会话不存在")
+            if row["revision"] != expected:
+                raise Conflict("会话已改变，请刷新后重试")
+            if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消当前回合")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
+            card = json.loads(row["card_data"])
+            card["permission"] = int(enabled)
+            db.execute("UPDATE sessions SET card_data=?,revision=revision+1 WHERE id=?", (dump(card), sid))
+        return {"session": self.session(sid), "card": card}
+
     def update_session(self, sid, expected, **fields):
         if "policy" in fields:
             from pydantic import TypeAdapter

@@ -19,7 +19,6 @@ const props = defineProps<{
   editingNotifyChoice: boolean | null;
   savingEdit: boolean;
   reviewing: boolean;
-  hidePanel: boolean;
   enabled: boolean;
   writerResponseCache: boolean;
   cacheEligible: boolean;
@@ -105,7 +104,6 @@ function forwardAction(
       <StoryMessage
         v-else
         find-in-dialogue
-        :hide-panel="hidePanel"
         :message="message"
         :session="session"
         :enabled="enabled"

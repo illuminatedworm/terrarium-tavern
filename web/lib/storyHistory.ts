@@ -1,3 +1,5 @@
+import type { StoryPresentation } from './storyPresentation';
+
 export const DIRECT_MESSAGE_LIMIT = 120;
 export const DIRECT_TEXT_LIMIT = 200_000;
 
@@ -8,6 +10,8 @@ export type HistoryMessage = {
   display?: string;
   raw?: string;
   created?: number;
+  presentation?: StoryPresentation;
+  snapshot?: { state?: Record<string, any>; scopes?: Record<string, any> };
 };
 export type HistoryRound = {
   id: string;

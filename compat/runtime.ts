@@ -2,11 +2,23 @@ import _ from 'lodash';
 import $ from 'jquery';
 import { z } from 'zod';
 import YAML from 'yaml';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 import * as mvu from './mvu';
+import { replaceVariableMacros } from './variable-macros';
+import { lazyHistory, type HistorySource } from './history';
+export { frameCapabilities } from './frame-capabilities';
+export { mountFrame } from './frame-client';
+export { parseStoryDisplay, htmlDocuments } from './presentation';
+export { snapshotMacros } from './variable-macros';
+export function renderMarkdown(text: string) { return DOMPurify.sanitize(marked.parse(text, {async:false}) as string); }
 
 type Host = (method: string, args: any) => Promise<any>;
 const w = globalThis as any;
 let mirror: any = {}, bridge: Host, scriptId = 'card', currentMessage: number | undefined;
+let history: ReturnType<typeof lazyHistory> | undefined;
+let coreLoader: (() => Promise<void>) | undefined;
+let corePending: Promise<void> | undefined;
 const listeners = new Map<string, Set<(...args: any[]) => any>>();
 const pending: Promise<any>[] = [];
 const canonical = (name: string) => name === 'mag_variable_initiailized' ? 'mag_variable_initialized' : name;
@@ -42,7 +54,7 @@ function messageIndex(index: any) {
 }
 function scope(option: any = {type: 'chat'}) {
   const type = option.type || 'chat';
-  if (type === 'message') return `message:${messageIndex(option.message_id ?? currentMessage)}`;
+  if (type === 'message') return `message:${messageIndex(option.message_id)}`;
   if (type === 'script') return `script:${option.script_id || scriptId}`;
   if (!['chat','character','global','preset','extension'].includes(type)) throw Error('不支持的变量范围');
   return type === 'extension' ? `extension:${option.extension_id}` : type;
@@ -53,16 +65,63 @@ function getVariables(option?: any) {
   if (key.startsWith('message:')) return _.cloneDeep(mirror.messages[Number(key.split(':')[1])].variables || {});
   return _.cloneDeep(mirror.scopes[key] || {});
 }
+function getAllVariables() {
+  // Tavern Helper combines scopes by top-level assignment. A later stat_data
+  // object replaces the earlier one; deep merge resurrects removed fields.
+  const sources = [getVariables({type:'global'}), getVariables({type:'character'})];
+  if (currentMessage === undefined) sources.push(getVariables({type:'script'}));
+  sources.push(getVariables({type:'chat'}));
+  if (currentMessage !== undefined) {
+    if (history && !history.dirty) sources.push(history.source.variables(currentMessage));
+    else sources.push(...mirror.messages.slice(0, currentMessage + 1).map((message:any) => message.variables || {}));
+  }
+  return _.cloneDeep(Object.assign({}, ...sources));
+}
+function chatMessages(messages: any[]) {
+  return messages.map(message => {
+    const copy = _.cloneDeep(message);
+    // Older MVU HTML examples call the message variable bag `data`.
+    return {...copy, data: copy.variables || {}};
+  });
+}
+function substitudeMacros(text: string) {
+  return replaceVariableMacros(text, type => getVariables({type}))
+    .replace(/\{\{(user|char)}}/gi, (macro, name) => name.toLowerCase() === 'user' ? mirror.persona ?? macro : mirror.character ?? macro)
+    .replace(/\$\{([^}]+)}/g, (macro, path) => String(_.get(mirror.state.stat_data, path, macro)));
+}
 function replaceVariables(variables: any, option?: any) {
   const key = scope(option);
   if (key === 'chat') mirror.state = _.cloneDeep(variables);
-  else if (key.startsWith('message:')) mirror.messages[Number(key.split(':')[1])].variables = _.cloneDeep(variables);
+  else if (key.startsWith('message:')) {
+    mirror.messages[Number(key.split(':')[1])].variables = _.cloneDeep(variables);
+    if (history) history.dirty = true;
+  }
   else mirror.scopes[key] = _.cloneDeep(variables);
   if (mirror.ui) pending.push(bridge('variables', {variables, option}));
 }
 export async function flush() { await Promise.all(pending.splice(0)); }
 export function snapshot() { return _.cloneDeep(mirror); }
-export async function update(data: any) { mirror = _.cloneDeep(data); }
+export async function update(data: any) { history = undefined; mirror = _.cloneDeep(data); }
+// Transaction checkpoints must not materialize untouched historical records in every realm.
+export function checkpoint() {
+  if (!history) return {mirror: snapshot()};
+  const {messages: _messages, ...rest} = mirror;
+  return {mirror: _.cloneDeep(rest), loaded: _.cloneDeep([...history.loaded]), dirty: history.dirty};
+}
+export function restore(saved: any) {
+  if (!history || !saved.loaded) { history = undefined; mirror = _.cloneDeep(saved.mirror); return; }
+  history.loaded.clear();
+  for (const [index, value] of saved.loaded) history.loaded.set(index, _.cloneDeep(value));
+  history.dirty = saved.dirty;
+  mirror = {..._.cloneDeep(saved.mirror), messages: history.messages};
+}
+export async function refresh(data: any, source?: HistorySource) {
+  const previous = _.cloneDeep(mirror.state);
+  Object.assign(mirror, _.cloneDeep(data));
+  currentMessage = data.currentMessage;
+  if (source) { history = lazyHistory(source); mirror.messages = history.messages; }
+  await emit('tavern_state_updated', _.cloneDeep(mirror.state), previous);
+}
 export function transform(text: string, rules: any[], placement: number, target: 'display' | 'model', depth = 0) {
   let result = text;
   for (const rule of rules) {
@@ -79,16 +138,18 @@ export function transform(text: string, rules: any[], placement: number, target:
   }
   return result;
 }
-export function install(data: any, host: Host) {
+export function install(data: any, host: Host, options?: {history?: HistorySource; loadCore?: () => Promise<void>}) {
   mirror = _.cloneDeep(data); bridge = host;
+  history = options?.history ? lazyHistory(options.history) : undefined;
+  if (history) mirror.messages = history.messages;
+  coreLoader = options?.loadCore; corePending = undefined;
   currentMessage = data.currentMessage;
   mirror.messages ||= []; mirror.state ||= {}; mirror.scopes ||= {};
   const notify = (level: string) => (...args: any[]) => pending.push(bridge('log', {level, message: args.map(String).join(' ')}));
   const api: any = {
     _, $, jQuery: $, z, YAML, klona: _.cloneDeep,
     errorCatched: (fn:any) => function(this:any,...args:any[]) {try{const result=fn.apply(this,args);if(result&&typeof result.then==='function')return result.catch((error:any)=>{notify('error')(error?.message||error);throw error;});return result;}catch(error:any){notify('error')(error?.message||error);throw error;}},
-    getAllVariables: () => _.merge({},getVariables({type:'global'}),getVariables({type:'character'}),mirror.state, mirror.messages.length?getVariables({type:'message',message_id:currentMessage ?? 'latest'}):{}),
-    substitudeMacros: (text:string) => text.replace(/\$\{([^}]+)}/g, (_m:string,path:string)=>String(_.get(mirror.state.stat_data,path,_m))),
+    getAllVariables, substitudeMacros,
     eventOn, eventOff: (name: string, cb: any) => listeners.get(canonical(name))?.delete(cb),
     eventOnce: (name: string, cb: any) => { const listener = eventOn(name, async (...args) => {listener.stop(); return cb(...args);}); return listener; },
     eventEmit: emit, eventEmitAndWait: emit, getScriptId: () => scriptId,
@@ -96,19 +157,19 @@ export function install(data: any, host: Host) {
     getLastMessageId: () => mirror.messages.length - 1,
     getVariables, replaceVariables,
     updateVariablesWith: (fn: any, option: any) => {const out = fn(getVariables(option)); if (out instanceof Promise) return out.then(v => {replaceVariables(v, option); return v;}); replaceVariables(out, option); return out;},
-    insertOrAssignVariables: (value: any, option: any) => {const out = _.merge(getVariables(option), value); replaceVariables(out,option); return out;},
-    insertVariables: (value: any, option: any) => {const out = _.defaultsDeep(getVariables(option), value); replaceVariables(out,option); return out;},
+    insertOrAssignVariables: (value: any, option: any) => {const out = _.mergeWith(getVariables(option), value, (_old:any,next:any)=>Array.isArray(next)?_.cloneDeep(next):undefined); replaceVariables(out,option); return out;},
+    insertVariables: (value: any, option: any) => {const out = _.mergeWith({}, value, getVariables(option), (_old:any,next:any)=>Array.isArray(next)?_.cloneDeep(next):undefined); replaceVariables(out,option); return out;},
     deleteVariable: (path: string, option: any) => {const out = getVariables(option); const deleted = _.has(out,path); _.unset(out,mvu.safePath(path)); replaceVariables(out,option); return {variables: out, delete_occurred: deleted};},
     registerVariableSchema: (schema: any, option: any) => { mirror.schemas ||= {}; mirror.schemas[scope(option)] = z.toJSONSchema(schema,{unrepresentable:'any'}); },
     getChatMessages: (range: any = '0-{{lastMessageId}}') => {
-      if (typeof range === 'number' || range === 'latest') return [_.cloneDeep(mirror.messages[messageIndex(range)])];
+      if (typeof range === 'number' || range === 'latest') return chatMessages([mirror.messages[messageIndex(range)]]);
       const found = String(range).match(/^(-?\d+)(?:-(\d+|\{\{lastMessageId}}))?$/);
       if (!found) throw Error('不支持的消息范围');
       const start = messageIndex(Number(found[1]));
       const end = found[2] ? messageIndex(found[2].startsWith('{') ? 'latest' : Number(found[2])) : start;
-      return _.cloneDeep(mirror.messages.slice(start,end+1));
+      return chatMessages(mirror.messages.slice(start,end+1));
     },
-    setChatMessages: async (messages: any[]) => {for (const m of messages) Object.assign(mirror.messages[messageIndex(m.message_id)], m); if (mirror.ui) await bridge('messages', {messages});},
+    setChatMessages: async (messages: any[]) => {for (const m of messages) Object.assign(mirror.messages[messageIndex(m.message_id)], m); if (history) history.dirty = true; if (mirror.ui) await bridge('messages', {messages});},
     getWorldbookNames: () => [mirror.bookName || 'character'],
     getCharWorldbookNames: () => ({primary: mirror.bookName || 'character', additional: []}),
     getWorldbook: async (_name: string) => _.cloneDeep(mirror.lore || []),
@@ -141,6 +202,7 @@ export function install(data: any, host: Host) {
   api.Mvu = {events: {...mvu.events,...w.MVUReference?.variable_events}, getMvuData: getVariables, replaceMvuData: async (data: any, option: any) => replaceVariables(data,option),
     parseMessage: async (text: string, old: any) => (await applyMvu(text,old)).data, isDuringExtraAnalysis: () => false};
   Object.assign(w, api);
+  w.TavernHelper = api;
   return api;
 }
 export async function runScripts(scripts: any[]) {
@@ -187,6 +249,11 @@ export async function initializeUpdates(text: string, openingId: string) {
 }
 
 async function applyMvu(text:string,old:any,extra:any[]=[]):Promise<{text:string,data:any}> {
+  if (!w.MVUReference && coreLoader) {
+    corePending ||= coreLoader().catch(error => { corePending = undefined; throw error; });
+    await corePending;
+    if (!w.MVUReference) throw Error('MVU 核心未加载');
+  }
   if (!w.MVUReference) return mvu.apply(text,old,emit,extra);
   const data=_.cloneDeep(old);
   data.stat_data ||= {};

@@ -307,8 +307,12 @@ class Conversations:
                         name, index = f"{base} {index}", index + 1
                     data["name"] = name
                 original = source.get("original") or self.store.blob(dump(document).encode())
+                # Permission is a current user setting, not an editable draft field.
+                # A long-lived editor source may predate either approval or revocation.
+                live_source = db.execute("SELECT permission FROM cards WHERE id=?", (source.get("id"),)).fetchone()
+                permission = live_source["permission"] if live_source else source.get("permission", 0)
                 db.execute("INSERT INTO cards(id,name,original,container,resources,permission,document,report) VALUES (?,?,?,?,?,?,?,?)",
-                           (cid, normalize(document)["name"], original, source.get("container", "json"), dump(source.get("resources", {})), source.get("permission", 0), dump(document), dump(diagnose(document))))
+                           (cid, normalize(document)["name"], original, source.get("container", "json"), dump(source.get("resources", {})), permission, dump(document), dump(diagnose(document))))
                 path = self.store.card_manifest_path({"id": cid})
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(dump(dependencies), encoding="utf-8")
