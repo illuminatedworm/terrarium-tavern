@@ -79,10 +79,11 @@ async def main():
                     await expect(composer).to_have_value("保存时保留我的未发送输入")
                     assert len(store.cards()) == 3
                     await composer.fill("@")
-                    picker = page.get_by_role("dialog", name="引用角色卡", exact=True)
+                    picker = page.get_by_role("listbox", name="引用角色", exact=True)
                     await expect(picker).to_be_visible()
-                    await picker.get_by_role("button", name="测试卡", exact=True).click()
-                    await expect(composer).to_have_value("@C2 ")
+                    await composer.fill("@测试卡")
+                    await composer.press("Tab")
+                    await expect(composer).to_have_value("")
                     editor.provider_factory = lambda: ToolLLM([
                         ("read_field", {"card_ref": "C2", "path": "/description"}),
                         ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "UI 修改结果"}], "reason": "修改"})])
@@ -102,7 +103,7 @@ async def main():
                     skills = page.get_by_role("dialog", name="内置技能", exact=True)
                     await expect(skills).to_contain_text("适配项目工作流")
                     await skills.locator('.skill-choice').filter(has_text="迁移正文状态栏").get_by_role("button", name="填入请求").click()
-                    await expect(composer).to_have_value(re.compile("保留我的额外要求.*@C2.*状态栏", re.S))
+                    await expect(composer).to_have_value(re.compile("保留我的额外要求.*关于角色卡「测试卡」.*状态栏", re.S))
                     await expect(page.locator(".cw-message")).to_have_count(6)
                     await composer.fill("")
                     await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name=re.compile("修改")).click()
@@ -224,8 +225,11 @@ async def main():
                     await expect(form).to_be_visible()
                     await expect(form.get_by_role("button", name="恢复原稿状态", exact=True)).to_be_disabled()
                     await form.get_by_role("button", name="关闭", exact=True).click()
-                    await page.get_by_role("button", name="工具与上下文", exact=True).click()
-                    await expect(page.get_by_role("dialog")).to_contain_text("只读预览")
+                    await expect(page.get_by_role("button", name="工具与上下文", exact=True)).to_have_count(0)
+                    await expect(page.get_by_label("制卡上下文用量")).to_contain_text("tokens")
+                    await expect(page.get_by_label("制卡上下文用量")).to_contain_text("缓存命中率")
+                    await expect(page.get_by_label("本次模型", exact=True)).to_be_visible()
+                    await expect(page.get_by_label("本次思考强度", exact=True)).to_be_visible()
                     mobile = await browser.new_page(viewport={"width": 360, "height": 792}, device_scale_factor=3)
                     await mobile.add_init_script("localStorage.setItem('tavern-sidebar-section','editor');"
                                                  + f"localStorage.setItem('tavern-active-card-conversation','{wid}');")

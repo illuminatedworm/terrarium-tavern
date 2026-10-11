@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { editorTimeline, mentionCard, type EditorMessage, type EditorRun } from '../../web/lib/cardEditor';
+import { editorTimeline, type EditorMessage, type EditorRun } from '../../web/lib/cardEditor';
 import { appendSkillRequest, editorSkillPresets } from '../../web/lib/cardEditorSkills';
 import { previewCardData, previewLore } from '../../web/lib/cardPreview';
-
-describe('explicit card references', () => {
-  it('replaces only the active mention and preserves earlier prose', () => {
-    expect(mentionCard('保留 @C1 的人设，参考 @', 'C2')).toBe('保留 @C1 的人设，参考 @C2 ');
-    expect(mentionCard('根据这两张卡', 'C3')).toBe('根据这两张卡 @C3 ');
-    expect(mentionCard('@书店', 'C1')).toBe('@C1 ');
-  });
-});
 
 const run = (id: string, status = 'completed'): EditorRun => ({
   id,
@@ -81,10 +73,12 @@ describe('editor conversation chronology', () => {
 
 describe('built-in skill requests', () => {
   it('targets the selected card and preserves unsent requirements verbatim', () => {
-    const input = '保留 @C1 的外貌。\n不要修改玩家身份。';
-    const result = appendSkillRequest(input, 'C2', editorSkillPresets[1]);
-    expect(result).toBe(`${input}\n\n@C2 ${editorSkillPresets[1].prompt}`);
-    expect(appendSkillRequest('', 'C1', editorSkillPresets[0])).toBe(`@C1 ${editorSkillPresets[0].prompt}`);
+    const input = '保留雪山书店的外貌。\n不要修改玩家身份。';
+    const result = appendSkillRequest(input, '河畔旅人', editorSkillPresets[1]);
+    expect(result).toBe(`${input}\n\n关于角色卡「河畔旅人」：${editorSkillPresets[1].prompt}`);
+    expect(appendSkillRequest('', '雪山书店', editorSkillPresets[0])).toBe(
+      `关于角色卡「雪山书店」：${editorSkillPresets[0].prompt}`,
+    );
   });
 });
 

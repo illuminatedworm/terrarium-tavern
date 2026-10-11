@@ -21,13 +21,13 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
         @change="$emit('select', ($event.target as HTMLSelectElement).value)"
       >
         <option v-for="card in cards" :key="card.ref" :value="card.ref">
-          {{ card.ref }} · {{ cardName(card) }}
+          {{ cardName(card) }}
         </option>
       </select></label
     >
     <p v-else class="skills-reference">
       先引用一张角色卡，再选择适合的编辑流程。<button :disabled="disabled" @click="$emit('reference')">
-        引用角色卡
+        引用角色
       </button>
     </p>
     <article v-for="preset in editorSkillPresets" :key="preset.id" class="skill-choice">

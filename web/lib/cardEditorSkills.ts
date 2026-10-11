@@ -24,6 +24,6 @@ export const editorSkillPresets = [
 
 export type EditorSkillPreset = (typeof editorSkillPresets)[number];
 
-export function appendSkillRequest(input: string, cardRef: string, preset: EditorSkillPreset): string {
-  return `${input}${input ? '\n\n' : ''}@${cardRef} ${preset.prompt}`;
+export function appendSkillRequest(input: string, name: string, preset: EditorSkillPreset): string {
+  return `${input}${input ? '\n\n' : ''}关于角色卡「${name}」：${preset.prompt}`;
 }

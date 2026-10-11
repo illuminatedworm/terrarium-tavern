@@ -68,6 +68,7 @@ TYPES = {item.id: item for item in (
     *[MessageType("editor_" + name, label, "tavern_editor_" + name, True, True,
                   scopes=("card_editor",)) for name, label in (
         ("overview", "草稿概览"), ("briefs", "确认资料"), ("handoff", "交接笔记"),
+        ("persona_attachments", "引用用户角色"),
         ("persona_changes", "待保存用户角色"), ("adapt", "适配要求"), ("pressure", "窗口压力"),
         ("final_ref", "已保存回复引用"))],
 )}

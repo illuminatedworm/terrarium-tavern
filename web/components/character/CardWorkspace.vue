@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { compare } from 'fast-json-patch';
 import { api } from '../../lib/api';
 import {
   cardName,
   editorTimeline,
-  mentionCard,
   type EditorCard,
   type EditorConversation,
+  type EditorPersona,
 } from '../../lib/cardEditor';
+import type { CardReferenceOption } from '../../lib/cardReferences';
+import type { ModelProfile, Provider } from '../../lib/settingsDocument';
+import { editorCacheRate, type EditorContextStats } from '../../lib/editorContextStats';
+import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
 import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardEditorSkills';
 import { eventCursor } from '../../lib/turnStream';
@@ -20,13 +24,38 @@ import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardRunActivity from './CardRunActivity.vue';
 import CardDraftPreview from './CardDraftPreview.vue';
 import CardSkills from './CardSkills.vue';
+import CardReferencePicker from './CardReferencePicker.vue';
+import ReferenceTag from './ReferenceTag.vue';
+import CardModelControls from './CardModelControls.vue';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 
-const props = defineProps<{ conversationId: string; library: any[]; chatgptSubscription?: boolean }>();
+const props = defineProps<{
+  conversationId: string;
+  library: any[];
+  chatgptSubscription?: boolean;
+  modelProfile: ModelProfile;
+  provider?: Provider;
+}>();
 const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
+const personaLibrary = ref<EditorPersona[]>([]);
+const personaAttachments = computed(() => workspace.value?.state.persona_attachments || {});
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
+const quickModel = ref(localStorage.getItem(`tavern-editor-model-${props.conversationId}`) || '');
+const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
+const contextStats = ref<EditorContextStats | null>(null);
+const statsError = ref('');
+const cacheRate = computed(() => editorCacheRate(contextStats.value?.usage));
+const contextLabel = computed(
+  () =>
+    `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens`,
+);
+const contextTitle = computed(
+  () =>
+    statsError.value ||
+    `${contextStats.value?.token_counting?.source === 'reference_fallback' ? '参考分词器' : '计数分词器'} ${contextStats.value?.token_counting?.tokenizer || ''}；当前上下文含输入与工具的本地估算，实际用量以服务商为准。`,
+);
 const error = ref(''),
   notice = ref(''),
   busy = ref(false),
@@ -36,12 +65,10 @@ const selected = ref(''),
   inspectorOpen = ref(false),
   pendingView = ref(false);
 const modal = ref(''),
-  search = ref(''),
   title = ref(''),
-  jsonPreview = ref<any>(null),
   probe = ref<any>(null);
 const composer = ref<HTMLTextAreaElement>(),
-  searchInput = ref<HTMLInputElement>(),
+  composerFrame = ref<HTMLElement>(),
   dialogInput = ref<HTMLInputElement>();
 const chat = ref<HTMLElement>(),
   shell = ref<HTMLElement>(),
@@ -56,6 +83,8 @@ let alive = true;
 let refreshVersion = 0;
 let stream: EventSource | undefined;
 let modalTrigger: HTMLElement | null = null;
+let statsTimer: ReturnType<typeof setTimeout> | undefined;
+let statsVersion = 0;
 const base = `/card-editor/conversations/${props.conversationId}`;
 const active = computed(() => workspace.value?.runs.find((r) => ['queued', 'running'].includes(r.status)));
 const locked = computed(() => busy.value || !!active.value || !!workspace.value?.pending);
@@ -86,8 +115,18 @@ const draftStatus = computed(() =>
           ? '与已保存版本一致'
           : '独立草稿 · 尚未保存',
 );
-const filtered = computed(() =>
-  props.library.filter((card) => card.name.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())),
+const referencePicker = reactive(
+  useCardReferencePicker({
+    input,
+    composer,
+    frame: composerFrame,
+    cards: computed(() => workspace.value?.cards || []),
+    library: computed(() => props.library),
+    personas: personaLibrary,
+    attachedPersonas: personaAttachments,
+    disabled: locked,
+    choose: chooseReference,
+  }),
 );
 const lastError = computed(() => workspace.value?.runs.at(-1)?.error);
 const formCard = computed(
@@ -105,10 +144,12 @@ watch(
   input,
   (value) => {
     sessionStorage.setItem(`tavern-editor-input-${props.conversationId}`, value);
-    if (/(?:^|\s)@$/.test(value) && !locked.value && !modal.value) void openModal('references');
   },
   { flush: 'sync' },
 );
+watch(quickModel, (value) => localStorage.setItem(`tavern-editor-model-${props.conversationId}`, value));
+watch(quickEffort, (value) => localStorage.setItem(`tavern-editor-effort-${props.conversationId}`, value));
+watch([input, quickModel, quickEffort, () => props.modelProfile], () => scheduleStats());
 watch(items, (value) => {
   if (!value.some((c) => c.ref === selected.value)) selected.value = value[0]?.ref || '';
 });
@@ -135,6 +176,30 @@ async function refresh() {
   workspace.value = value;
   if (!value.pending) pendingView.value = false;
   emit('changed');
+  scheduleStats();
+}
+function modelOptions() {
+  return {
+    model: quickModel.value || null,
+    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
+  };
+}
+function scheduleStats() {
+  const version = ++statsVersion;
+  clearTimeout(statsTimer);
+  if (!workspace.value) return;
+  statsTimer = setTimeout(async () => {
+    try {
+      const value = await api(base + '/stats', { text: input.value, ...modelOptions() });
+      if (!alive || version !== statsVersion) return;
+      contextStats.value = value;
+      statsError.value = '';
+    } catch (error: any) {
+      if (!alive || version !== statsVersion) return;
+      contextStats.value = null;
+      statsError.value = `上下文计数不可用：${error.message}`;
+    }
+  }, 250);
 }
 function scroll(force = false) {
   if (force) followingLatest.value = true;
@@ -157,6 +222,12 @@ function observe(id: string) {
     if (!accept(event)) return;
     if (event.kind === 'text') partial.value += event.payload.text;
     if (event.kind === 'model_call') partial.value = '';
+    if (event.kind === 'context_stats') {
+      ++statsVersion;
+      clearTimeout(statsTimer);
+      contextStats.value = { ...contextStats.value, ...event.payload } as EditorContextStats;
+      statsError.value = '';
+    }
     if (event.kind === 'context_warning') notice.value = event.payload.message;
     if (['model_call', 'tool_started', 'tool_finished'].includes(event.kind))
       activities.value[id] = mergeEditorEvents(activities.value[id] || [], [event]);
@@ -186,13 +257,21 @@ function observe(id: string) {
   });
 }
 async function send(resume = false) {
-  if (!workspace.value || busy.value || active.value || (!resume && !input.value.trim())) return;
+  if (
+    !workspace.value ||
+    busy.value ||
+    active.value ||
+    referencePicker.open ||
+    (!resume && !input.value.trim())
+  )
+    return;
   await guard(async () => {
     const run = await api(base + '/runs', {
       text: input.value,
       expected_revision: workspace.value!.revision,
       operation_id: crypto.randomUUID(),
       resume_run_id: resume ? workspace.value!.pending!.run : null,
+      ...modelOptions(),
     });
     if (!alive) return;
     input.value = '';
@@ -218,13 +297,13 @@ async function discard() {
   });
 }
 async function openModal(name: string) {
+  referencePicker.close();
   if (!modal.value) modalTrigger = document.activeElement as HTMLElement | null;
   modal.value = name;
   if (name === 'rename') title.value = workspace.value?.title || '';
   await nextTick();
   const target =
-    (name === 'references' ? searchInput.value : dialogInput.value) ||
-    modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
+    dialogInput.value || modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
   target?.focus({ preventScroll: true });
 }
 function closeModal() {
@@ -238,30 +317,87 @@ function confirmCardAction() {
   closeModal();
   void action(kind);
 }
-async function attach(card: any) {
+async function chooseReference(option: CardReferenceOption) {
+  if (!workspace.value || locked.value) return;
+  const original = input.value;
+  const range = referencePicker.query;
+  let attached = false;
   await guard(async () => {
-    const value = await api(base + '/references', {
-      card_id: card.id,
-      expected_revision: workspace.value!.revision,
-      expected_card_revision: card.revision,
-    });
+    if (option.persona) {
+      if (!option.personaRef) {
+        const value = await api(base + '/persona-references', {
+          persona_id: option.persona.id,
+          expected_revision: workspace.value!.revision,
+          expected_persona_version: option.persona.version,
+        });
+        if (!alive) return;
+        workspace.value = value;
+        emit('changed');
+      }
+      attached = true;
+      scheduleStats();
+      return;
+    }
+    let item = option.attached;
+    if (!item && option.source) {
+      const value = await api(base + '/references', {
+        card_id: option.source.id,
+        expected_revision: workspace.value!.revision,
+        expected_card_revision: option.source.revision,
+      });
+      if (!alive) return;
+      workspace.value = value;
+      item = value.cards.find((card: EditorCard) => card.card === option.source!.id);
+      emit('changed');
+    }
+    if (!alive) return;
+    if (!item) throw new Error('角色卡引用未完成，请重试。');
+    selected.value = item.ref;
+    attached = true;
+    scheduleStats();
+  });
+  if (alive && attached) await referencePicker.complete(original, range);
+  else if (alive) {
+    await nextTick();
+    composer.value?.focus({ preventScroll: true });
+  }
+}
+function inspectReference(item: EditorCard) {
+  referencePicker.close();
+  selected.value = item.ref;
+  inspectorOpen.value = true;
+}
+async function removeReference(kind: 'card' | 'persona', ref: string) {
+  if (locked.value) return;
+  await guard(async () => {
+    const value = await api(
+      base + `/${kind === 'persona' ? 'persona-references' : 'references'}/${ref}`,
+      {
+        expected_revision: workspace.value!.revision,
+      },
+      'DELETE',
+    );
     if (!alive) return;
     workspace.value = value;
-    const item = value.cards.find((c: EditorCard) => c.card === card.id);
-    selected.value = item.ref;
-    closeModal();
-    input.value = mentionCard(input.value, item.ref);
     emit('changed');
+    scheduleStats();
   });
 }
-function mention(item: EditorCard) {
+function composerKeydown(event: KeyboardEvent) {
+  if (referencePicker.keydown(event)) return;
+  if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    event.preventDefault();
+    void send(!!workspace.value?.pending);
+  }
+}
+async function referenceFromSkills() {
   closeModal();
-  input.value = mentionCard(input.value, item.ref);
-  selected.value = item.ref;
+  await nextTick();
+  await referencePicker.show();
 }
 function useSkill(preset: EditorSkillPreset) {
   if (!current.value || busy.value || active.value) return;
-  input.value = appendSkillRequest(input.value, current.value.ref, preset);
+  input.value = appendSkillRequest(input.value, cardName(current.value), preset);
   closeModal();
   void nextTick(() => composer.value?.focus({ preventScroll: true }));
 }
@@ -320,15 +456,6 @@ async function testCard() {
     }
   });
 }
-async function showPreview() {
-  await guard(async () => {
-    const value = await api(base + '/preview', { text: input.value });
-    if (alive) {
-      jsonPreview.value = value;
-      void openModal('preview');
-    }
-  });
-}
 async function rename() {
   await guard(async () => {
     await api(base, { title: title.value.trim(), expected_revision: workspace.value!.revision }, 'PUT');
@@ -353,10 +480,15 @@ onMounted(() => {
     if (!alive) return;
     if (active.value) observe(active.value.id);
     scroll(true);
+    const personas = await api('/personas');
+    if (!alive) return;
+    personaLibrary.value = personas;
   });
 });
 onBeforeUnmount(() => {
   alive = false;
+  ++statsVersion;
+  clearTimeout(statsTimer);
   stream?.close();
   window.removeEventListener('resize', onResize);
   const background = shell.value?.closest<HTMLElement>('.shell');
@@ -397,7 +529,7 @@ onBeforeUnmount(() => {
               <div v-if="workspace && !workspace.messages.length" class="cw-empty">
                 <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span>
                 <h2>从一个想法开始</h2>
-                <p>讨论人物、世界或互动情境，也可以引用书架中的角色卡来分析和修改。</p>
+                <p>讨论人物、世界或互动情境，也可以引用角色卡和用户角色作为资料。</p>
                 <p>制作新卡时，先讨论方案，确认后生成可审阅的草稿。</p>
                 <p>适配导入卡或迁移状态栏，可使用输入区的“内置技能”。</p>
               </div>
@@ -467,40 +599,65 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <form class="cw-composer" @submit.prevent="send(!!workspace?.pending)">
-          <div class="cw-composer-frame">
-            <div class="cw-references">
+          <div ref="composerFrame" class="cw-composer-frame">
+            <CardReferencePicker
+              v-if="referencePicker.open"
+              :id="referencePicker.id"
+              :options="referencePicker.options"
+              :active-index="referencePicker.activeIndex"
+              :max-height="referencePicker.maxHeight"
+              :busy="busy"
+              @highlight="referencePicker.activeIndex = $event"
+              @choose="chooseReference"
+            />
+            <div class="cw-references" role="group" aria-label="本对话引用">
               <button
                 class="cw-reference-add cw-quiet"
                 type="button"
                 :disabled="locked"
-                @click="openModal('references')"
+                :aria-expanded="referencePicker.open"
+                :aria-controls="referencePicker.open ? referencePicker.id : undefined"
+                @click="referencePicker.show()"
               >
-                <CardWorkspaceIcon name="plus" />引用角色卡
+                <CardWorkspaceIcon name="plus" />引用角色
               </button>
-              <button
+              <ReferenceTag
                 v-for="item in workspace?.cards"
                 :key="item.ref"
-                class="cw-reference-chip"
-                type="button"
-                :disabled="busy || !!active"
-                :title="`引用 ${cardName(item)}`"
-                @click="mention(item)"
-              >
-                <span>@{{ item.ref }}</span
-                ><span class="cw-reference-name">{{ cardName(item) }}</span>
-              </button>
+                :name="cardName(item)"
+                kind="card"
+                :disabled="locked"
+                @inspect="inspectReference(item)"
+                @remove="removeReference('card', item.ref)"
+              />
+              <ReferenceTag
+                v-for="(persona, ref) in personaAttachments"
+                :key="ref"
+                :name="persona.name"
+                kind="persona"
+                :disabled="locked"
+                @remove="removeReference('persona', ref)"
+              />
             </div>
             <textarea
               ref="composer"
               v-model="input"
               aria-label="制卡要求"
+              aria-autocomplete="list"
+              :aria-controls="referencePicker.open ? referencePicker.id : undefined"
+              :aria-activedescendant="referencePicker.open ? referencePicker.activeId : undefined"
               :disabled="busy || !!active"
               :placeholder="
                 workspace?.pending
                   ? '可补充新要求后继续，例如：保留 A 的改动，恢复 B…'
-                  : '描述想法，或输入 @ 引用角色卡…'
+                  : '描述想法，或输入 @ 引用角色卡、用户角色…'
               "
-              @keydown.enter.exact.prevent="!$event.isComposing && send(!!workspace?.pending)"
+              @input="referencePicker.update()"
+              @click="referencePicker.update()"
+              @keyup="referencePicker.keyup"
+              @compositionend="referencePicker.update()"
+              @keydown="composerKeydown"
+              @blur="!busy && referencePicker.close()"
             />
             <div class="cw-composer-actions">
               <div class="cw-composer-tools">
@@ -510,25 +667,32 @@ onBeforeUnmount(() => {
                 <button class="cw-quiet" type="button" @click="openModal('adapter')">
                   <CardWorkspaceIcon name="message" />消息适配
                 </button>
-                <button class="cw-quiet" type="button" :disabled="busy" @click="showPreview">
-                  <CardWorkspaceIcon name="sliders" />工具与上下文
-                </button>
               </div>
-              <ChatGPTUsage :active="chatgptSubscription" :error="error" />
-              <span v-if="!chatgptSubscription" class="cw-shortcut">Enter 发送 · Shift+Enter 换行</span>
+              <CardModelControls
+                v-model:model="quickModel"
+                v-model:effort="quickEffort"
+                :profile="modelProfile"
+                :provider="provider"
+                :disabled="busy || !!active"
+              />
               <button v-if="active" class="cw-stop" type="button" :disabled="busy" @click="stop">
                 <span aria-hidden="true" />停止
               </button>
               <button
                 v-else
                 class="primary cw-send"
-                :disabled="busy || (!input.trim() && !workspace?.pending)"
+                :disabled="busy || referencePicker.open || (!input.trim() && !workspace?.pending)"
               >
                 {{ workspace?.pending ? (input.trim() ? '补充要求并继续' : '继续本轮') : '发送' }}
                 <CardWorkspaceIcon name="up" />
               </button>
             </div>
           </div>
+          <p class="composer-meta cw-composer-meta" aria-label="制卡上下文用量">
+            <ChatGPTUsage :active="chatgptSubscription" :error="error" />
+            <span :title="contextTitle" :class="{ 'cw-stats-error': statsError }">{{ contextLabel }}</span>
+            <span title="最近一次模型响应的缓存用量；未提供时不推测命中率">缓存命中率 {{ cacheRate }}</span>
+          </p>
         </form>
       </div>
       <aside class="cw-inspector" :class="{ open: inspectorOpen }" aria-label="卡片与修改">
@@ -540,7 +704,7 @@ onBeforeUnmount(() => {
             ><select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
               <option v-if="!items.length" value="">暂无卡片</option>
               <option v-for="item in items" :key="item.ref" :value="item.ref">
-                {{ item.ref }} · {{ cardName(item) }}
+                {{ cardName(item) }}
               </option>
             </select></label
           >
@@ -665,7 +829,13 @@ onBeforeUnmount(() => {
             </div>
           </footer>
         </template>
-        <p v-else class="cw-empty">还没有引用或草稿。可以直接开始讨论。</p>
+        <p v-else class="cw-empty">
+          {{
+            Object.keys(personaAttachments).length
+              ? '已引用用户角色，可以直接开始讨论。'
+              : '还没有角色卡草稿。可以引用角色或直接开始讨论。'
+          }}
+        </p>
       </aside>
     </div>
   </section>
@@ -673,42 +843,18 @@ onBeforeUnmount(() => {
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
         :class="{ 'cw-skills-modal': modal === 'skills' }"
-        :label="
-          modal === 'form'
-            ? '编辑角色卡草稿'
-            : modal === 'references'
-              ? '引用角色卡'
-              : modal === 'skills'
-                ? '内置技能'
-                : '制卡对话操作'
-        "
-        :size="
-          ['form', 'preview', 'adapter'].includes(modal)
-            ? 'large'
-            : ['references', 'skills'].includes(modal)
-              ? 'medium'
-              : 'small'
-        "
+        :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'skills' ? '内置技能' : '制卡对话操作'"
+        :size="['form', 'adapter'].includes(modal) ? 'large' : modal === 'skills' ? 'medium' : 'small'"
         @close="closeModal"
       >
-        <template v-if="modal === 'references'"
-          ><h2>引用角色卡</h2>
-          <label>搜索书架<input ref="searchInput" v-model="search" /></label>
-          <div class="cw-picker">
-            <button v-for="card in filtered" :key="card.id" :disabled="busy" @click="attach(card)">
-              {{ card.name }}
-            </button>
-          </div>
-          <p v-if="!filtered.length" class="muted">没有匹配的书架角色卡。也可以直接描述想制作的新卡。</p>
-        </template>
         <CardSkills
-          v-else-if="modal === 'skills'"
+          v-if="modal === 'skills'"
           :cards="items"
           :selected="current?.ref || ''"
           :disabled="busy || !!active"
           @select="selected = $event"
           @use="useSkill"
-          @reference="openModal('references')"
+          @reference="referenceFromSkills"
         />
         <CharacterEditor
           v-else-if="modal === 'form' && formCard"
@@ -719,12 +865,6 @@ onBeforeUnmount(() => {
           @back="closeModal"
         />
         <ConversationMessageAdapter v-else-if="modal === 'adapter'" :endpoint="base + '/message-adapter'" />
-        <template v-else-if="modal === 'preview'"
-          ><h2>工具与上下文</h2>
-          <p>{{ jsonPreview?.note }}</p>
-          <p>估算 {{ jsonPreview?.estimated_tokens }} / {{ jsonPreview?.context_limit }} tokens</p>
-          <JsonDataTree :value="jsonPreview"
-        /></template>
         <template v-else-if="modal === 'rename'"
           ><h2>对话名称</h2>
           <input ref="dialogInput" v-model="title" maxlength="100" @keydown.enter="rename" /><button

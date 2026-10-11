@@ -1138,6 +1138,8 @@ async function manageCardAgent() {
 }
 async function cardConversationDeleted(id: string) {
   sessionStorage.removeItem(`tavern-editor-input-${id}`);
+  localStorage.removeItem(`tavern-editor-model-${id}`);
+  localStorage.removeItem(`tavern-editor-effort-${id}`);
   if (localStorage.getItem('tavern-active-card-conversation') === id)
     localStorage.removeItem('tavern-active-card-conversation');
   const wasCurrent = editorConversationId.value === id;
@@ -2073,7 +2075,7 @@ useTimedError(error);
               <span
                 >{{ conversation.title
                 }}<small
-                  >{{ conversation.card_count }} 张资料 ·
+                  >{{ conversation.reference_count ?? conversation.card_count }} 份资料 ·
                   {{
                     ['queued', 'running'].includes(conversation.status)
                       ? '运行中'
@@ -2142,6 +2144,12 @@ useTimedError(error);
         :key="editorConversationId"
         :conversation-id="editorConversationId"
         :library="cards"
+        :model-profile="settings.shared.card_editor"
+        :provider="
+          settings.shared.providers.find(
+            (provider: any) => provider.id === settings.shared.card_editor.provider_id,
+          )
+        "
         :chatgpt-subscription="usesChatGPT(settings.shared?.card_editor, settings.shared?.providers)"
         @changed="refreshCardConversations"
         @saved="load"

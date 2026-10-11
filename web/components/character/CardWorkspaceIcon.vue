@@ -1,6 +1,18 @@
 <script setup lang="ts">
 defineProps<{
-  name: 'pen' | 'plus' | 'up' | 'down' | 'message' | 'sliders' | 'file' | 'chevron' | 'book' | 'trash';
+  name:
+    | 'pen'
+    | 'plus'
+    | 'up'
+    | 'down'
+    | 'message'
+    | 'sliders'
+    | 'file'
+    | 'chevron'
+    | 'book'
+    | 'trash'
+    | 'person'
+    | 'close';
 }>();
 </script>
 
@@ -16,7 +28,12 @@ defineProps<{
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <template v-if="name === 'pen'">
+    <path v-if="name === 'close'" d="m6 6 12 12M18 6 6 18" />
+    <template v-else-if="name === 'person'">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
+    </template>
+    <template v-else-if="name === 'pen'">
       <path d="m15 4 5 5M4 20l5-1L20 8a2.1 2.1 0 0 0-5-5L4 14Z" />
       <path d="m4 14 5 5" />
     </template>

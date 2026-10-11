@@ -221,6 +221,7 @@
   padding: 8px var(--cw-gutter) 16px;
 }
 .cw-composer-frame {
+  position: relative;
   max-width: var(--cw-reading-width);
   margin: 0 auto;
   padding: 8px 10px 10px;
@@ -268,11 +269,12 @@
 .cw-skills-button svg {
   color: var(--accent-hover);
 }
-.cw-shortcut {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
+.cw-composer-meta {
+  max-width: var(--cw-reading-width);
+  margin: 7px auto 0;
+}
+.cw-stats-error {
+  color: var(--warning);
 }
 .cw-send,
 .cw-stop {
@@ -283,10 +285,6 @@
   margin-left: auto;
   min-height: 34px;
   padding: 7px 12px;
-}
-.cw-shortcut + .cw-send,
-.cw-shortcut + .cw-stop {
-  margin-left: 4px;
 }
 .cw-send {
   flex-direction: row-reverse;
@@ -307,25 +305,6 @@
 }
 .cw-reference-add svg {
   color: var(--accent-hover);
-}
-.cw-reference-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: min(100%, 260px);
-  padding: 4px 9px;
-  border-radius: 6px;
-  background: var(--surface-hover);
-  border-color: var(--border-control);
-}
-.cw-reference-chip > span:first-child {
-  color: var(--accent-hover);
-}
-.cw-reference-name {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .cw-notice {
   padding: 9px 20px;
@@ -520,11 +499,6 @@ pre {
 .cw-close-inspector {
   display: none;
 }
-.cw-picker {
-  display: grid;
-  gap: 8px;
-  padding-top: 16px;
-}
 .cw-overlay :deep(.editor-page) {
   height: min(70vh, 800px);
 }
@@ -542,15 +516,6 @@ pre {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
-}
-@media (max-width: 1450px) {
-  .cw-shortcut {
-    display: none;
-  }
-  .cw-shortcut + .cw-send,
-  .cw-shortcut + .cw-stop {
-    margin-left: auto;
-  }
 }
 @media (max-width: 1100px) {
   .card-workspace {
@@ -662,8 +627,18 @@ pre {
     gap: 6px;
   }
   .cw-composer-tools {
-    width: 100%;
-    justify-content: space-between;
+    order: 2;
+    flex: 1;
+    width: auto;
+    justify-content: flex-start;
+  }
+  .cw-composer-actions > :deep(.model-controls) {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .cw-composer-actions > .cw-send,
+  .cw-composer-actions > .cw-stop {
+    order: 3;
   }
   .cw-composer-tools .cw-quiet {
     gap: 4px;

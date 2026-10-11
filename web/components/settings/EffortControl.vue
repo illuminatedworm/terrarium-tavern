@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 const props = defineProps<{
   value: string;
+  disabled?: boolean;
   options: Array<{ value: string; label: string; disabled?: boolean }>;
 }>();
 const emit = defineEmits<{ change: [value: string] }>();
@@ -33,6 +34,7 @@ const selected = computed(
     </svg>
     <select
       :value="value"
+      :disabled="disabled"
       aria-label="本次思考强度"
       @change="emit('change', ($event.target as HTMLSelectElement).value)"
     >

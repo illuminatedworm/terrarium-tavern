@@ -1,14 +1,17 @@
 """Public conversation-oriented authoring API; all mutations check a revision."""
 import copy
+import json
 from types import SimpleNamespace
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.character.editor_context import EditorContext
+from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_sandbox import test_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
-from tavern.core.models import CardEditorRequest
+from tavern.core.models import CardEditorModelOptions, CardEditorRequest
+from tavern.core.tokens import counting_info
 
 
 class Body(BaseModel):
@@ -38,6 +41,11 @@ class Document(Revision):
     target_mode: Literal["half_agent", "full_agent"] | None = None
 
 
+class PersonaReference(Revision):
+    persona_id: str
+    expected_persona_version: int = Field(ge=0)
+
+
 class Save(Revision):
     mode: Literal["overwrite", "copy", "create"]
     operation_id: str = Field(min_length=1, max_length=100)
@@ -48,7 +56,7 @@ class Probe(Revision):
     samples: list[str] = Field(default_factory=list, max_length=10)
 
 
-class Preview(Body):
+class Preview(CardEditorModelOptions, Body):
     text: str = ""
 
 
@@ -83,6 +91,14 @@ def register_conversation_routes(app, editor):
     @app.delete(base + "/{wid}/references/{ref}")
     async def detach(wid: str, ref: str, payload: Revision):
         return editor.edits.remove_card(wid, ref, payload.expected_revision)
+
+    @app.post(base + "/{wid}/persona-references")
+    async def attach_persona(wid: str, payload: PersonaReference):
+        return editor.edits.attach_persona(wid, payload.persona_id, payload.expected_revision, payload.expected_persona_version)
+
+    @app.delete(base + "/{wid}/persona-references/{ref}")
+    async def detach_persona(wid: str, ref: str, payload: Revision):
+        return editor.edits.detach_persona(wid, ref, payload.expected_revision)
 
     @app.put(base + "/{wid}/drafts/{ref}")
     async def edit(wid: str, ref: str, payload: Document):
@@ -128,18 +144,38 @@ def register_conversation_routes(app, editor):
                 "pending": workspace["pending"] is not None,
                 "confirmed_briefs": [{"card_ref": c["ref"], "text": c["brief"]} for c in workspace["cards"] if c.get("brief")]}
 
-    @app.post(base + "/{wid}/preview")
-    async def preview(wid: str, payload: Preview):
+    def preview_owner(wid, payload):
         workspace = editor.edits.conversation(wid)
-        from tavern.core.message_adapter import bind_adapter
+        progress = editor.edits.progress(wid)
+        working = progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
         owner = SimpleNamespace(store=editor.store, edits=editor.edits, wid=wid, rid="preview", legacy=False,
-            working=copy.deepcopy({"cards": workspace["cards"], "state": workspace["state"]}),
-            cfg=bind_adapter(editor.store.settings().for_role("card_editor"), editor.store, "editor", wid), definitions=tool_definitions(),
-            current_refs=[], pending_calls=None, request={}, reads={})
-        owner.context = EditorContext(editor.edits.context(wid), owner)
+            working=copy.deepcopy(working), cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
+            definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
+            pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
+            persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {}, request={}, reads={})
+        owner.context = EditorContext(copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner)
         owner.tools = EditorTools(owner)
         if payload.text:
             owner.context.messages.append({"role": "user", "content": owner.context.view.text(payload.text)})
+        return owner
+
+    @app.post(base + "/{wid}/stats")
+    async def stats(wid: str, payload: Preview):
+        owner = preview_owner(wid, payload)
+        owner.context.prepare()
+        with editor.store.connection() as db:
+            # The newest usage-bearing call wins, including failed/resumable
+            # turns; an omitted cache counter must never reuse an older value.
+            row = db.execute("""SELECT e.payload FROM card_edit_events e JOIN card_edit_runs r ON r.id=e.run
+                WHERE r.workspace=? AND e.kind IN ('context_stats','completed')
+                AND json_type(e.payload,'$.usage')='object' ORDER BY e.seq DESC LIMIT 1""", (wid,)).fetchone()
+        return {"estimated_tokens": owner.context.tokens(), "context_limit": owner.cfg.context_tokens,
+                "model": owner.cfg.model, "token_counting": counting_info(owner.cfg),
+                "usage": json.loads(row[0]).get("usage") if row else None}
+
+    @app.post(base + "/{wid}/preview")
+    async def preview(wid: str, payload: Preview):
+        owner = preview_owner(wid, payload)
         messages = owner.context.prepare()
         from tavern.core.message_adapter import WIRE_FIELDS, adapt_messages, adapter_snapshot
         messages = [{k: v for k, v in message.items() if k in WIRE_FIELDS} for message in adapt_messages(messages, owner.cfg)[0]]

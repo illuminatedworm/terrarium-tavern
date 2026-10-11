@@ -309,7 +309,19 @@ class CardEditorCreate(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
-class CardEditorRequest(BaseModel):
+class CardEditorModelOptions(BaseModel):
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    reasoning_effort: ReasoningEffort | None = None
+
+    @field_validator("model")
+    @classmethod
+    def nonblank_model(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("模型名称不能为空白")
+        return value.strip() if value is not None else None
+
+
+class CardEditorRequest(CardEditorModelOptions):
     text: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=0)

@@ -6,6 +6,7 @@ import time
 from tavern.character.card_editor_store import EditorStore
 from tavern.character.editor_config import SYSTEM as SYSTEM
 from tavern.character.editor_run import EditorRun
+from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.core.provider import make_provider, require_model_connection
 from tavern.storage.store import Conflict, dump, uid
 
@@ -40,7 +41,7 @@ class CardEditorService:
                 raise Conflict("请先继续或丢弃本轮未完成进度")
             elif not request.text.strip():
                 raise ValueError("请输入制卡要求")
-            cfg = self.store.settings().for_role("card_editor")
+            cfg = editor_runtime_config(self.store, wid, payload)
             if not self.provider_factory:
                 require_model_connection(cfg)
             if request.text.strip():

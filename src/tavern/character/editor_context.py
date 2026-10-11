@@ -82,6 +82,14 @@ class EditorContext:
     def prepare(self):
         owner = self.owner
         self.update("overview", owner.tools.overview(), "当前草稿概览（取代此前概览；内容以最新读取/修改为准）：")
+        # UI selection grants use of this exact snapshot, not write permission
+        # or access to the rest of the persona library. Keep storage metadata out.
+        personas = owner.working["state"].get("persona_attachments", {})
+        if personas or "persona_attachments" in self.frames:
+            self.update("persona_attachments", [
+                {"persona_ref": ref, "name": item["name"], "description": item["description"]}
+                for ref, item in personas.items()
+            ], "用户主动引用的用户角色完整快照（仅供本对话参考，不授权修改用户角色库；空列表表示已移除）：")
         self.update("briefs", [{"card_ref": c["ref"], "text": c["brief"]} for c in owner.working["cards"] if c.get("brief")], "已确认的创作资料原文：")
         self.update("handoff", owner.working["state"].get("handoff", ""), "当前交接笔记（空值表示已清空）：")
         changes = getattr(owner, "persona_changes", {})

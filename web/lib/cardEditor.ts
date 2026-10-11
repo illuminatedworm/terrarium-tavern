@@ -31,10 +31,17 @@ export interface EditorConversation {
   title: string;
   revision: number;
   cards: EditorCard[];
-  state: { handoff?: string; window?: number };
+  state: { handoff?: string; window?: number; persona_attachments?: Record<string, EditorPersona> };
   messages: EditorMessage[];
   runs: EditorRun[];
   pending: { run: string; cards: EditorCard[]; state: Record<string, any>; calls: number } | null;
+}
+
+export interface EditorPersona {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
 }
 
 export type EditorTimelineItem =
@@ -73,9 +80,4 @@ export function editorTimeline(messages: EditorMessage[], runs: EditorRun[]): Ed
 }
 export function cardName(card: EditorCard) {
   return (card.document.spec ? card.document.data : card.document)?.name || '未命名角色';
-}
-export function mentionCard(input: string, ref: string) {
-  return /(?:^|\s)@[^\s@]*$/.test(input)
-    ? input.replace(/@[^\s@]*$/, `@${ref} `)
-    : `${input}${input && !/\s$/.test(input) ? ' ' : ''}@${ref} `;
 }

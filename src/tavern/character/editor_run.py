@@ -8,6 +8,7 @@ from kohakuterrarium.llm.base import ToolSchema
 
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
+from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.core.message_adapter import provider_messages
 from tavern.scripting.native_response import message_digest
@@ -20,8 +21,7 @@ class EditorRun:
         self.service, self.store, self.edits, self.rid = service, service.store, service.edits, rid
         run = self.edits.run(rid)
         self.wid, self.request = run["workspace"], run["request"]
-        from tavern.core.message_adapter import bind_adapter
-        self.cfg = bind_adapter(self.store.settings().for_role("card_editor"), self.store, "editor", self.wid)
+        self.cfg = editor_runtime_config(self.store, self.wid, self.request)
         with self.store.connection() as db:
             workspace = self.edits.load(db, self.wid)
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
@@ -59,6 +59,13 @@ class EditorRun:
 
     def event(self, kind, payload):
         self.edits.event(self.rid, kind, payload)
+
+    @staticmethod
+    def usage(provider):
+        # last_usage supplies numeric zeros for legacy accounting; the transport
+        # history preserves unknown cache counters for truthful UI statistics.
+        history = getattr(provider, "usage_history", [])
+        return copy.deepcopy(history[-1] if history else getattr(provider, "last_usage", {}) or {})
 
     def save(self):
         self.edits.save_progress(self.wid, self.rid, {"working": self.working, "base": self.base,
@@ -164,7 +171,7 @@ class EditorRun:
             db.execute("UPDATE card_edit_runs SET status='completed',response=? WHERE id=?", (response, self.rid))
         reports = [{"card_ref": c["ref"], **validation_report(c["document"])} for c in self.working["cards"]]
         self.event("completed", {"validation": reports[0] if len(reports) == 1 else reports,
-                                 "usage": getattr(provider, "last_usage", {}) or {}, "calls": self.calls})
+                                 "usage": self.usage(provider), "calls": self.calls})
 
     async def run(self, provider):
         configure_operation(provider, self.request_context, self.event, "card_editor")
@@ -182,7 +189,9 @@ class EditorRun:
             definitions = self.definitions
             schemas = [ToolSchema(name=d["function"]["name"], description=d["function"]["description"], parameters=d["function"]["parameters"]) for d in definitions]
             self.save()
+            tokens = self.context.tokens()
             self.event("model_call", {"call": self.calls, "model": self.cfg.model})
+            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens, "model": self.cfg.model})
             text = ""
             options = {"parallel_tool_calls": False}
             if self.context.must_rollover:
@@ -191,6 +200,8 @@ class EditorRun:
                 if chunk:
                     text += chunk
                     self.event("text", {"text": chunk})
+            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
+                                         "model": self.cfg.model, "usage": self.usage(provider)})
             calls = getattr(provider, "last_tool_calls", []) or []
             if len(calls) > 16 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
                 raise ValueError("无效的工具调用序列，本轮进度保留")

@@ -93,10 +93,12 @@ class Conversations:
                 FROM card_editor_conversations c ORDER BY updated DESC,rowid DESC""").fetchall()
         result = []
         for row in rows:
-            items = json.loads(row["payload"])["cards"]
+            payload = json.loads(row["payload"])
+            items = payload["cards"]
             if cid is None or any(c["card"] == cid for c in items):
                 result.append({key: row[key] for key in ("id", "revision", "created", "updated", "status", "turn_count", "resumable")} | {
-                    "title": row["title"] or row["first_input"] or "新制卡对话", "card_count": len(items), "card": cid})
+                    "title": row["title"] or row["first_input"] or "新制卡对话", "card_count": len(items),
+                    "reference_count": len(items) + len(payload["state"].get("persona_attachments", {})), "card": cid})
         return result
 
     def messages(self, wid, db=None):
@@ -165,6 +167,38 @@ class Conversations:
                     "base_revision": source["revision"], "base_document": source["document"], "document": document, "brief": ""})
                 db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
                 self.write(db, workspace)
+        return self.conversation(wid)
+
+    def attach_persona(self, wid, pid, revision, expected_version):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            workspace = self.check(db, wid, revision)
+            attachments = workspace["state"].setdefault("persona_attachments", {})
+            if not any(item["id"] == pid for item in attachments.values()):
+                row = db.execute("SELECT * FROM personas WHERE id=?", (pid,)).fetchone()
+                if row is None:
+                    raise KeyError("用户角色不存在")
+                if row["version"] != expected_version:
+                    raise Conflict("用户角色已改变，请刷新后引用")
+                refs = workspace["state"].setdefault("persona_refs", {})
+                ref = next((ref for ref, value in refs.items() if value == pid), None)
+                if ref is None:
+                    ref = f"P{workspace['next_ref']}"
+                    db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+                    refs[ref] = pid
+                attachments[ref] = {key: row[key] for key in ("id", "name", "description", "version")}
+                self.write(db, workspace)
+        return self.conversation(wid)
+
+    def detach_persona(self, wid, ref, revision):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            workspace = self.check(db, wid, revision)
+            attachments = workspace["state"].get("persona_attachments", {})
+            if ref not in attachments:
+                raise KeyError("用户角色引用不存在")
+            del attachments[ref]
+            self.write(db, workspace)
         return self.conversation(wid)
 
     def update_card(self, wid, ref, document, revision, reason="手工修改", target_mode=...):
