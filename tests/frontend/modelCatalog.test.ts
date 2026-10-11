@@ -122,6 +122,37 @@ describe('persistent model catalog UI', () => {
     scope.stop();
   });
 
+  it('restores an official provider cache when the automatic refresh is offline', async () => {
+    chatgptState.accounts = [
+      {
+        id: 'offline',
+        label: 'Offline',
+        email: '',
+        status: 'connected',
+        plan_enabled: true,
+        generation: 'saved',
+      },
+    ];
+    vi.mocked(api)
+      .mockReset()
+      .mockResolvedValueOnce({ models: ['saved-model'], updated_at: 100 })
+      .mockRejectedValueOnce(new Error('offline'));
+    const scope = effectScope();
+    const result = scope.run(() =>
+      useModelCatalog(
+        () => ({ provider_id: 'offline-provider', api_mode: 'responses', api_path: '' }) as ModelProfile,
+        () => ({ auth_mode: 'chatgpt_subscription', chatgpt_account_id: 'offline' }) as Provider,
+      ),
+    )!;
+    await nextTick();
+    await nextTick();
+    await nextTick();
+    expect(result.catalog.value?.models).toEqual(['saved-model']);
+    await vi.waitFor(() => expect(result.error.message).toContain('offline'));
+    scope.stop();
+    chatgptState.accounts = [];
+  });
+
   it('previews explicit native paths without rewriting them', () => {
     expect(modelEndpoint('https://fixture.test', 'gemini', 'model', 'v1')).toBe(
       'https://fixture.test/v1/models/model:generateContent',
@@ -184,11 +215,13 @@ describe('persistent model catalog UI', () => {
     await nextTick();
     await nextTick();
     expect(calls.slice(0, 2)).toEqual(['save', 'fetch']);
-    expect(api).toHaveBeenCalledWith('/settings/models', {
-      provider_id: profile.provider_id,
-      api_mode: 'responses',
-      api_path: 'v1',
-    });
+    await vi.waitFor(() =>
+      expect(api).toHaveBeenCalledWith('/settings/models', {
+        provider_id: profile.provider_id,
+        api_mode: 'responses',
+        api_path: 'v1',
+      }),
+    );
     expect(catalog.catalog.value?.models).toEqual(['z', 'a']);
     expect(profile.api_mode).toBe('gemini');
     expect(profile.api_path).toBe('v9');

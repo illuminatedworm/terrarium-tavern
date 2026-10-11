@@ -27,14 +27,26 @@ def register_model_routes(app, store):
                 provider.chatgpt_account_id, store.chatgpt.generation(provider.chatgpt_account_id)])
             return config, provider, url, key
         url = endpoint(provider.base_url, profile.api_mode, resource="models", api_path=profile.api_path)
-        key = "provider_models:" + fingerprint([provider.id, url, profile.api_mode, fingerprint(provider.api_key)])
+        # Chat Completions and Responses use the same authenticated /models
+        # endpoint. Changing the generation protocol must not hide its catalogue.
+        family = "openai" if profile.api_mode in ("chat_completions", "responses") else profile.api_mode
+        key = "provider_models:" + fingerprint([provider.id, url, family, fingerprint(provider.api_key)])
         return config, provider, url, key
 
     @app.get("/api/settings/models")
     async def cached_models(provider_id: str, api_mode: ApiMode = "chat_completions", api_path: str = ""):
-        _, provider, _, key = connection(ModelProfile(provider_id=provider_id, api_mode=api_mode, api_path=api_path))
+        _, provider, url, key = connection(ModelProfile(provider_id=provider_id, api_mode=api_mode, api_path=api_path))
         with store.connection() as db:
             row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            if row is None and provider.auth_mode != "chatgpt_subscription" and api_mode in ("chat_completions", "responses"):
+                # Read pre-migration caches without a network call. Never borrow
+                # a list from another provider, endpoint or credential.
+                old_keys = ["provider_models:" + fingerprint([provider.id, url, mode, fingerprint(provider.api_key)])
+                            for mode in ("chat_completions", "responses")]
+                rows = db.execute("SELECT value FROM meta WHERE key IN (?,?)", old_keys).fetchall()
+                if rows:
+                    row = max(rows, key=lambda item: json.loads(item[0]).get("updated_at") or 0)
+                    db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (key, row[0]))
         result = json.loads(row[0]) if row else {"models": [], "updated_at": None}
         if provider.auth_mode == "chatgpt_subscription" and row:
             store.chatgpt.remember_models(provider.chatgpt_account_id, store.chatgpt.generation(provider.chatgpt_account_id),
@@ -77,6 +89,8 @@ def register_model_routes(app, store):
         except json.JSONDecodeError:
             raise ValueError("模型接口未返回有效的 JSON") from None
         # Only a successful refresh replaces the previous list (including an empty list).
+        if connection(profile)[3] != key:
+            raise ValueError("供应商连接已改变，请重新更新模型列表")
         with store.connection() as db:
             db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
                        (key, json.dumps(result, ensure_ascii=False)))

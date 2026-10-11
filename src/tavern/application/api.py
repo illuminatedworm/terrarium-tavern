@@ -141,6 +141,8 @@ def create_app(data_dir=None):
 
     from tavern.application.provider_models import register_model_routes
     register_model_routes(app, store)
+    from tavern.application.model_selection_api import register_model_selection_routes
+    register_model_selection_routes(app, store, editor)
 
     @app.get("/api/local-models")
     async def local_model_status():

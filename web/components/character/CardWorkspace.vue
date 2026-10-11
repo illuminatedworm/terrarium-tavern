@@ -10,7 +10,7 @@ import {
   type EditorPersona,
 } from '../../lib/cardEditor';
 import type { CardReferenceOption } from '../../lib/cardReferences';
-import type { ModelProfile, Provider } from '../../lib/settingsDocument';
+import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
 import { editorCacheRate, type EditorContextStats } from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
@@ -26,24 +26,50 @@ import CardDraftPreview from './CardDraftPreview.vue';
 import CardSkills from './CardSkills.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
 import ReferenceTag from './ReferenceTag.vue';
-import CardModelControls from './CardModelControls.vue';
+import ConversationModelControls from '../settings/ConversationModelControls.vue';
+import { type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 
 const props = defineProps<{
   conversationId: string;
   library: any[];
-  chatgptSubscription?: boolean;
   modelProfile: ModelProfile;
-  provider?: Provider;
+  providers: Provider[];
 }>();
 const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
 const personaLibrary = ref<EditorPersona[]>([]);
 const personaAttachments = computed(() => workspace.value?.state.persona_attachments || {});
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
-const quickModel = ref(localStorage.getItem(`tavern-editor-model-${props.conversationId}`) || '');
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
+const selectedProfile = computed(() => ({
+  ...props.modelProfile,
+  ...workspace.value?.model_selection,
+}));
+async function selectModel(selection: ConversationModelSelection) {
+  if (busy.value || active.value) return;
+  await guard(async () => {
+    workspace.value = await api(
+      base + '/model',
+      { expected_revision: workspace.value!.revision, selection },
+      'PUT',
+    );
+    localStorage.removeItem(`tavern-editor-model-${props.conversationId}`);
+    scheduleStats();
+  });
+}
+async function classifyChannel(channel_origin: Channel) {
+  await guard(async () => {
+    workspace.value = await api(
+      base + '/channel-origin',
+      { expected_revision: workspace.value!.revision, channel_origin },
+      'PUT',
+    );
+    emit('changed');
+    scheduleStats();
+  });
+}
 const contextStats = ref<EditorContextStats | null>(null);
 const statsError = ref('');
 const cacheRate = computed(() => editorCacheRate(contextStats.value?.usage));
@@ -147,9 +173,8 @@ watch(
   },
   { flush: 'sync' },
 );
-watch(quickModel, (value) => localStorage.setItem(`tavern-editor-model-${props.conversationId}`, value));
 watch(quickEffort, (value) => localStorage.setItem(`tavern-editor-effort-${props.conversationId}`, value));
-watch([input, quickModel, quickEffort, () => props.modelProfile], () => scheduleStats());
+watch([input, quickEffort, () => props.modelProfile], () => scheduleStats());
 watch(items, (value) => {
   if (!value.some((c) => c.ref === selected.value)) selected.value = value[0]?.ref || '';
 });
@@ -180,14 +205,13 @@ async function refresh() {
 }
 function modelOptions() {
   return {
-    model: quickModel.value || null,
     reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
   };
 }
 function scheduleStats() {
   const version = ++statsVersion;
   clearTimeout(statsTimer);
-  if (!workspace.value) return;
+  if (!workspace.value?.channel_origin) return;
   statsTimer = setTimeout(async () => {
     try {
       const value = await api(base + '/stats', { text: input.value, ...modelOptions() });
@@ -258,7 +282,7 @@ function observe(id: string) {
 }
 async function send(resume = false) {
   if (
-    !workspace.value ||
+    !workspace.value?.channel_origin ||
     busy.value ||
     active.value ||
     referencePicker.open ||
@@ -582,6 +606,13 @@ onBeforeUnmount(() => {
             <CardWorkspaceIcon name="down" />
           </button>
         </div>
+        <div v-if="workspace && !workspace.channel_origin" class="cw-pending" role="status">
+          <strong>请确认此旧制卡对话的渠道归属，确认后不能更换渠道。</strong>
+          <div class="cw-toolbar">
+            <button :disabled="busy" @click="classifyChannel('standard')">普通 API</button>
+            <button :disabled="busy" @click="classifyChannel('chatgpt')">ChatGPT 官方</button>
+          </div>
+        </div>
         <div v-if="workspace?.pending && !active" class="cw-pending" role="status">
           <strong>本轮尚未完成，进度已保留</strong>
           <p v-if="lastError">{{ lastError }}</p>
@@ -668,11 +699,13 @@ onBeforeUnmount(() => {
                   <CardWorkspaceIcon name="message" />消息适配
                 </button>
               </div>
-              <CardModelControls
-                v-model:model="quickModel"
+              <ConversationModelControls
+                v-if="workspace?.channel_origin"
                 v-model:effort="quickEffort"
-                :profile="modelProfile"
-                :provider="provider"
+                :profile="selectedProfile"
+                :providers="providers"
+                :channel="workspace.channel_origin"
+                @select="selectModel"
                 :disabled="busy || !!active"
               />
               <button v-if="active" class="cw-stop" type="button" :disabled="busy" @click="stop">
@@ -681,7 +714,12 @@ onBeforeUnmount(() => {
               <button
                 v-else
                 class="primary cw-send"
-                :disabled="busy || referencePicker.open || (!input.trim() && !workspace?.pending)"
+                :disabled="
+                  busy ||
+                  !workspace?.channel_origin ||
+                  referencePicker.open ||
+                  (!input.trim() && !workspace?.pending)
+                "
               >
                 {{ workspace?.pending ? (input.trim() ? '补充要求并继续' : '继续本轮') : '发送' }}
                 <CardWorkspaceIcon name="up" />
@@ -689,7 +727,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p class="composer-meta cw-composer-meta" aria-label="制卡上下文用量">
-            <ChatGPTUsage :active="chatgptSubscription" :error="error" />
+            <ChatGPTUsage :active="workspace?.channel_origin === 'chatgpt'" :error="error" />
             <span :title="contextTitle" :class="{ 'cw-stats-error': statsError }">{{ contextLabel }}</span>
             <span title="最近一次模型响应的缓存用量；未提供时不推测命中率">缓存命中率 {{ cacheRate }}</span>
           </p>

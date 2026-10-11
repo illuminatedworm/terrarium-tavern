@@ -115,6 +115,8 @@ class Store(MessageAdapters):
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
             db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','2')")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "model_selection" not in columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN model_selection TEXT NOT NULL DEFAULT '{}'")
             if "channel_origin" not in columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN channel_origin TEXT")
             if "context_strategy" not in columns:
@@ -418,7 +420,7 @@ class Store(MessageAdapters):
     def session_settings(self, session, *, require_origin=True):
         if isinstance(session, str):
             with self.connection() as db:
-                row = db.execute("SELECT agent_mode,channel_origin,context_strategy,compact_auto FROM sessions WHERE id=?", (session,)).fetchone()
+                row = db.execute("SELECT agent_mode,channel_origin,context_strategy,compact_auto,model_selection FROM sessions WHERE id=?", (session,)).fetchone()
             if row is None:
                 raise KeyError("对话不存在")
             session = dict(row)
@@ -430,6 +432,12 @@ class Store(MessageAdapters):
         settings.compact_auto = bool(session.get("compact_auto", True))
         if settings.context_strategy == "openai_compact" and channel != "chatgpt":
             raise ValueError("只有 ChatGPT 官方渠道的对话可以使用云端 compact")
+        selection = session.get("model_selection") or {}
+        if isinstance(selection, str):
+            selection = json.loads(selection)
+        if selection:
+            from tavern.core.model_selection import select_runtime
+            settings = select_runtime(settings, "full_agent" if session["agent_mode"] == "full_agent" else "foreground", selection, channel)
         return settings
 
     @property
@@ -595,6 +603,7 @@ class Store(MessageAdapters):
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
             db.execute("UPDATE sessions SET channel_origin=?,context_strategy=?,compact_auto=? WHERE id=?",
                        (source["channel_origin"], source["context_strategy"], source["compact_auto"], new_sid))
+            db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (source["model_selection"], new_sid))
             self.copy_message_adapter(db, "story", sid, new_sid)
             db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             db.execute("UPDATE sessions SET tool_result_options=? WHERE id=?",
@@ -641,6 +650,7 @@ class Store(MessageAdapters):
             ]
             result = dict(row)
             result["recipe"] = recipe_types(ContextRecipe.model_validate_json(result["recipe"]).model_dump())
+            result["model_selection"] = json.loads(result["model_selection"])
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])

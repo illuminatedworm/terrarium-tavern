@@ -84,7 +84,10 @@ export function useModelCatalog(
           );
         if (connected) await beforeRefresh?.();
         if (key.value !== target) return;
-        await load(connected);
+        // Restore the durable catalogue before any optional network refresh.
+        // An offline subscription must keep its last successfully saved list too.
+        await load(false);
+        if (connected && key.value === target) await load(true);
       } catch (e) {
         if (key.value === target) error.message = String(e);
       }

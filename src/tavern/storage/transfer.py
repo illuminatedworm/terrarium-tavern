@@ -19,6 +19,7 @@ from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.models import ContextRecipe, PersonaEdit
 from tavern.core.settings import SettingsDocument
 from tavern.memories.memory import fingerprint, window_valid
+from tavern.search.retrieval_config import ModelProfile
 from tavern.storage.store import Conflict, dump, uid
 
 MAX_UPLOAD = 256 * 1024 * 1024
@@ -26,7 +27,7 @@ MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
 JSON_FIELDS = {
     "cards": {"resources", "document", "report"},
-    "sessions": {"recipe", "persona_data", "card_data", "disabled_tools", "tool_result_options", "cache_breakpoint_follow"},
+    "sessions": {"model_selection", "recipe", "persona_data", "card_data", "disabled_tools", "tool_result_options", "cache_breakpoint_follow"},
     "messages": {"snapshot"},
     "full_agent_trace": {"payload"},
     "half_agent_trace": {"payload"},
@@ -247,6 +248,9 @@ def validate_package(store, package, blobs):
             card(session["card_data"])
             if session["agent_mode"] not in ("half_agent", "full_agent") or session["lore_injection_mode"] not in ("conversation", "st_top"):
                 raise ValueError("对话运行模式无效")
+            if session.get("model_selection"):
+                from tavern.core.model_selection import ModelSelection
+                ModelSelection.model_validate(session["model_selection"]).profile(ModelProfile())
             if session.get("channel_origin") not in (None, "standard", "chatgpt"):
                 raise ValueError("对话渠道无效")
             if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
@@ -409,6 +413,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
             for bundle in package["sessions"]:
                 source = bundle["session"]
                 row = remap(source, ids)
+                row["model_selection"] = copy.deepcopy(source.get("model_selection", {}))
                 # A session owns its pinned card even when the library card was deleted.
                 row["card"] = ids.get(source["card"], uid())
                 row["card_data"]["id"] = row["card"]

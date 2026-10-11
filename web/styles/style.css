@@ -4180,11 +4180,14 @@ main,
   .compose-actions {
     grid-column: 1 / -1;
     max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
+    flex-wrap: wrap;
+    overflow: visible;
     padding-bottom: 2px;
-    scrollbar-width: none;
-    white-space: nowrap;
+    white-space: normal;
+  }
+  .compose-actions > .model-controls {
+    order: -1;
+    flex: 1 0 100%;
   }
   .compose-actions::-webkit-scrollbar {
     display: none;

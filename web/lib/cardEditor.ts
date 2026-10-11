@@ -27,6 +27,8 @@ export interface EditorMessage {
   run: string;
 }
 export interface EditorConversation {
+  channel_origin?: 'standard' | 'chatgpt' | null;
+  model_selection?: { provider_id: string; model: string };
   id: string;
   title: string;
   revision: number;

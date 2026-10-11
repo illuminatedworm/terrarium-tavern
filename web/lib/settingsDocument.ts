@@ -22,6 +22,7 @@ export interface ModelProfile {
   capability: string;
   capability_key: string;
 }
+export type ConversationModelSelection = Pick<ModelProfile, 'provider_id' | 'model'>;
 export interface Provider {
   id: string;
   name: string;

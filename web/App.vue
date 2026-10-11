@@ -15,11 +15,10 @@ import {
 import { useContextOperations } from './composables/useContextOperations';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import type { ConversationModelSelection } from './lib/settingsDocument';
 import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
-import { useModelCatalog } from './lib/modelCatalog';
-import { effortOptions, modelEffortOptions } from './lib/reasoningEffort';
-import { useApiReasoning } from './lib/apiReasoning';
+import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
@@ -43,7 +42,7 @@ import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
 import { defaultReadingLayout } from './lib/dataTransfer';
 import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
-import EffortControl from './components/settings/EffortControl.vue';
+import ConversationModelControls from './components/settings/ConversationModelControls.vue';
 import PolicySelect from './components/settings/PolicySelect.vue';
 import TurnReview from './components/story/TurnReview.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
@@ -157,7 +156,7 @@ function managePreferencePresets() {
   panel.value = 'settings';
 }
 const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
-const activeModel = computed(
+const configuredModel = computed(
   () =>
     (isFullAgent.value
       ? activeSettings.value[session.value?.channel_origin === 'chatgpt' ? 'official_model' : 'model']
@@ -165,6 +164,29 @@ const activeModel = computed(
           session.value?.channel_origin === 'chatgpt' ? 'official_foreground' : 'foreground'
         ]) || {},
 );
+const activeModel = computed(() => ({ ...configuredModel.value, ...session.value?.model_selection }));
+const modelSaving = ref(false);
+async function selectStoryModel(selection: ConversationModelSelection) {
+  if (!session.value || modelSaving.value) return;
+  const sid = session.value.id;
+  const token = viewScope.current();
+  modelSaving.value = true;
+  try {
+    const result = await viewApi(
+      `/sessions/${sid}/model`,
+      { expected_revision: session.value.revision, selection },
+      'PUT',
+    );
+    if (viewScope.owns(token) && session.value?.id === sid) {
+      session.value = result;
+      await refreshContextStats();
+    }
+  } catch (e: any) {
+    if (viewScope.owns(token)) error.value = e.message;
+  } finally {
+    modelSaving.value = false;
+  }
+}
 const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value.shared?.providers));
 const channelModelsReady = computed(
   () =>
@@ -427,26 +449,6 @@ const regeneratingId = computed(() =>
 );
 let deleteTrigger: HTMLElement | null = null;
 watch(sidebarSection, (value) => localStorage.setItem('tavern-sidebar-section', value));
-const { catalog: activeCatalog } = useModelCatalog(
-  () => activeModel.value,
-  () => settings.value.shared?.providers?.find((item: any) => item.id === activeModel.value?.provider_id),
-  undefined,
-  () => activeSubscription.value,
-);
-const { details: activeApiReasoning } = useApiReasoning(
-  () => activeModel.value,
-  () => !activeSubscription.value,
-);
-const quickEffortOptions = computed(() =>
-  modelEffortOptions(
-    effortOptions,
-    activeSubscription.value
-      ? activeCatalog.value?.model_details?.find((item) => item.id === activeModel.value.model)
-      : activeApiReasoning.value,
-    quickEffort.value,
-    !activeSubscription.value,
-  ),
-);
 const layout = ref({
   ...defaultReadingLayout(window.innerWidth),
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
@@ -1244,7 +1246,7 @@ function setEffort(value: string) {
   if (session.value) localStorage.setItem(`tavern-effort-${session.value.id}`, value);
 }
 async function send(mode = 'send', message?: any, text?: string, note = '') {
-  if (contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
+  if (modelSaving.value || contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
     notify(
       contextBusy.value
         ? '请先完成或取消上下文整理。'
@@ -2082,7 +2084,8 @@ useTimedError(error);
                       : conversation.resumable
                         ? '可继续'
                         : '已保存对话'
-                  }}</small
+                  }}
+                  · {{ channelLabels[conversation.channel_origin as Channel] || '渠道待确认' }}</small
                 ></span
               >
             </button>
@@ -2145,12 +2148,7 @@ useTimedError(error);
         :conversation-id="editorConversationId"
         :library="cards"
         :model-profile="settings.shared.card_editor"
-        :provider="
-          settings.shared.providers.find(
-            (provider: any) => provider.id === settings.shared.card_editor.provider_id,
-          )
-        "
-        :chatgpt-subscription="usesChatGPT(settings.shared?.card_editor, settings.shared?.providers)"
+        :providers="settings.shared.providers"
         @changed="refreshCardConversations"
         @saved="load"
         @deleted="cardConversationDeleted"
@@ -2614,10 +2612,15 @@ useTimedError(error);
                     @click="rewriteExpanded = !rewriteExpanded"
                   >
                     ↻ 重新生成</button
-                  ><EffortControl
-                    :value="quickEffort"
-                    :options="quickEffortOptions"
-                    @change="setEffort"
+                  ><ConversationModelControls
+                    v-if="session?.channel_origin"
+                    :profile="activeModel"
+                    :providers="settings.shared.providers"
+                    :channel="session.channel_origin"
+                    :effort="quickEffort"
+                    :disabled="busy || modelSaving || contextBusy || activeTurn?.status === 'awaiting_review'"
+                    @select="selectStoryModel"
+                    @update:effort="setEffort"
                   /><button class="quiet" @click="inspectContext">◫ 上下文</button
                   ><button class="quiet" @click="storyView = 'work'">
                     ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
@@ -2655,6 +2658,7 @@ useTimedError(error);
                   v-else
                   class="send"
                   :disabled="
+                    modelSaving ||
                     contextBusy ||
                     !channelModelsReady ||
                     !session?.channel_origin ||

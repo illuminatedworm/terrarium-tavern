@@ -134,3 +134,44 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
         restarted.state.store.save_settings(doc)
         assert (await api.get("/api/settings/models", params=query)).json()["updated_at"] is None
     assert len(calls) == 2
+
+
+async def test_catalogs_are_provider_isolated_and_shared_across_openai_protocols(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    doc = app.state.store.settings_document()
+    doc.shared.providers = [Provider(id=name, name=name, api_key="same-key") for name in ("one", "two")]
+    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_editor):
+        profile.provider_id = "one"
+    app.state.store.save_settings(doc)
+    real_client = httpx.AsyncClient
+    responses = iter((["one-a", "one-b"], ["two-a"]))
+    def client(**kwargs):
+        return real_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": [{"id": value} for value in next(responses)]})))
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    async with real_client(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
+        for provider in ("one", "two"):
+            result = await api.post("/api/settings/models", json={"provider_id": provider, "api_mode": "responses"})
+            assert result.status_code == 200
+    restarted = create_app(tmp_path)
+    async with real_client(transport=httpx.ASGITransport(app=restarted), base_url="http://testserver") as api:
+        for provider, expected in (("one", ["one-a", "one-b"]), ("two", ["two-a"])):
+            for mode in ("chat_completions", "responses"):
+                result = await api.get("/api/settings/models", params={"provider_id": provider, "api_mode": mode})
+                assert result.json()["models"] == expected
+        with restarted.state.store.connection() as db:
+            values = [row[0] for row in db.execute("SELECT value FROM meta WHERE key LIKE 'provider_models:%'")]
+        assert len(values) == 2 and all("same-key" not in value for value in values)
+
+
+async def test_legacy_provider_catalog_migrates_without_network(tmp_path):
+    from tavern.core.cache_policy import fingerprint
+    app = create_app(tmp_path)
+    provider = app.state.store.settings_document().shared.providers[0]
+    url = endpoint(provider.base_url, "responses", resource="models", api_path="")
+    with app.state.store.connection() as db:
+        for mode, timestamp in (("chat_completions", 1), ("responses", 2)):
+            key = "provider_models:" + fingerprint([provider.id, url, mode, fingerprint(provider.api_key)])
+            db.execute("INSERT INTO meta VALUES (?,?)", (key, json.dumps({"models": [mode], "updated_at": timestamp})))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
+        result = await api.get("/api/settings/models", params={"provider_id": provider.id})
+        assert result.json() == {"models": ["responses"], "updated_at": 2}
