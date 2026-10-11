@@ -275,13 +275,13 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     result["context_additions"] = copy.deepcopy(ledger.additions)
     project_context(result, settings, tools=tools, reasoning_cost=reasoning_cost, managed=True)
     if complete_source:
-        from tavern.full_agent.compaction import canonical
+        from tavern.conversation.compaction import canonical
         from tavern.scripting.native_response import portable
         complete = [canonical(portable(message)) for message in result["messages"]]
         result.update(_replay_header=complete[:fixed_count], _replay_body=complete[fixed_count:],
                       _replay_starts=replay_starts,
                       _replay_complete=pending_offset if pending_offset is not None else len(complete) - fixed_count)
     if compact:
-        from tavern.full_agent.compaction import project_compact
+        from tavern.conversation.compaction import project_compact
         return project_compact(result, state, settings, tools, fixed_count)
     return result if replay_all else prepare_context(result, {**session, "agent_mode": "full_agent"}, history, snapshot, settings)

@@ -40,6 +40,8 @@ class TurnAgent:
         self.native_response = None
         self.clean_response = ""
         self.native_responses = {}
+        self.compact_checked = False
+        self.compact_calls = 0
 
     def compile(self):
         self.compiled = compile_context(
@@ -102,6 +104,34 @@ class TurnAgent:
                     raise PluginBlockError("本轮 Agent 调用次数超限")
                 try:
                     context = owner.compile()
+                    from tavern.conversation.half_compaction import enabled, install
+                    if enabled(owner.settings) and not owner.compact_checked:
+                        owner.compact_checked = True
+                        if (owner.settings.compact_auto and context["estimated_tokens"] > owner.settings.context_tokens
+                                and context["_replay_complete"]):
+                            from tavern.conversation.compaction import prepare_turn
+                            narrative_context = provider.request_context
+                            capture = getattr(provider, "capture", None)
+                            def maintenance_event(kind, payload):
+                                owner.store.event(owner.tid, kind, {**payload, "purpose": "context_maintenance"})
+                            async def progress(value):
+                                maintenance_event("context_replay", {k: value[k] for k in ("batches", "processed", "total")})
+                                maintenance_event("usage", {"usage": value["usage"][-1], "calls": 1})
+                                owner.compact_calls += 1
+                            configure_operation(provider, owner.operation_contexts.new("context_maintenance"),
+                                                maintenance_event, "context_maintenance")
+                            if hasattr(provider, "capture"):
+                                provider.capture = lambda payload: maintenance_event("provider_request", payload)
+                            try:
+                                checkpoint = await prepare_turn(context, owner.settings, provider, save=progress)
+                                install(owner.snapshot, checkpoint, context, owner.history)
+                            finally:
+                                configure_operation(provider, narrative_context,
+                                    lambda kind, payload: owner.store.event(owner.tid, kind, payload), "narrative")
+                                if hasattr(provider, "capture"):
+                                    provider.capture = capture
+                            context = owner.compile()
+                            maintenance_event("context_compacted", {"message": "云端已压缩已完成的交流"})
                     compiled = model_messages(context)
                     provider.request_context.diagnostics = copy.deepcopy(context.get("context_ledger", {}))
                     provider.request_context.window_id = context.get("half_agent_record", {}).get("window", "")
@@ -186,7 +216,8 @@ class TurnAgent:
                 {
                     "purpose": "narrative",
                     "calls": self.calls,
-                    "usage": getattr(provider, "reported_usage", None) or result.usage or {},
+                    "usage": (provider.usage_history[-1] if self.compact_calls and getattr(provider, "usage_history", [])
+                              else getattr(provider, "reported_usage", None) or result.usage or {}),
                     "duration_s": result.duration_s,
                 },
             )

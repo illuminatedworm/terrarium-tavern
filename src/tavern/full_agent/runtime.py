@@ -20,8 +20,6 @@ class FullAgentRuntime:
         self.runtime = ScriptRuntime()
         self.tasks, self.agents = {}, {}
         self.provider_factory = None
-        from tavern.full_agent.context_operations import ContextOperations
-        self.context_operations = ContextOperations(store)
 
     def submit(self, sid, request):
         session = self.store.session(sid)
@@ -46,7 +44,6 @@ class FullAgentRuntime:
         return self.store.turn(tid)
 
     async def close(self):
-        await self.context_operations.close()
         for task in self.tasks.values():
             if not task.done():
                 task.cancel()

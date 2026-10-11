@@ -59,8 +59,9 @@ def effective_message_id(session, settings):
         start = session["snapshot"].get("full_agent", {}).get("window", {}).get("start", 0)
         visible = session["messages"][start:]
     else:
+        from tavern.conversation.half_compaction import local_window_enabled
         visible, _ = window_history(session["messages"], session["snapshot"],
-                                    enabled=settings.chunk_mode != "off")
+                                    enabled=local_window_enabled(settings))
     return candidate if any(message["id"] == candidate for message in visible) else None
 
 

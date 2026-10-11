@@ -6,7 +6,9 @@ from tavern.full_agent.runtime import FullAgentRuntime
 class ModeRuntime:
     def __init__(self, store):
         self.store = store
+        from tavern.application.context_operations import ContextOperations
         self.half = RoleplayRuntime(store)
+        self.context_operations = ContextOperations(store, self.half.retrieval)
         self.full = FullAgentRuntime(store, self.half.retrieval, self.half.dependencies)
 
     def __getattr__(self, name):
@@ -54,9 +56,9 @@ class ModeRuntime:
         await self.engine(self.store.turn(tid)["session"]).cancel(tid)
 
     async def delete_session(self, sid):
-        for oid, task in list(self.full.context_operations.tasks.items()):
-            if self.full.context_operations.get(oid)["session"] == sid:
-                await self.full.context_operations.cancel(oid)
+        for oid in list(self.context_operations.tasks):
+            if self.context_operations.get(oid)["session"] == sid:
+                await self.context_operations.cancel(oid)
         for tid in self.store.session_turn_ids(sid):
             if tid in self.full.tasks:
                 await self.full.cancel(tid)
@@ -82,5 +84,6 @@ class ModeRuntime:
             return None
 
     async def close(self):
+        await self.context_operations.close()
         await self.full.close()
         await self.half.close()

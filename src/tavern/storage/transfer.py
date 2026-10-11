@@ -251,7 +251,7 @@ def validate_package(store, package, blobs):
                 raise ValueError("对话渠道无效")
             if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
                 raise ValueError("上下文模式无效")
-            if session.get("context_strategy") == "openai_compact" and (session.get("channel_origin") != "chatgpt" or session["agent_mode"] != "full_agent"):
+            if session.get("context_strategy") == "openai_compact" and session.get("channel_origin") != "chatgpt":
                 raise ValueError("此渠道不能导入云端 compact 会话")
             if session.get("policy") not in (None, "automatic", "review", "directed", "evolving", "preview"):
                 raise ValueError("对话更新策略无效")
@@ -419,6 +419,10 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 window_fingerprints = {}
                 for message in bundle["messages"]:
                     cloned = remap(message, ids)
+                    from tavern.conversation.half_compaction import STATE, remap_state
+                    if STATE in message["snapshot"]:
+                        cloned["snapshot"][STATE] = copy.deepcopy(message["snapshot"][STATE])
+                        remap_state(cloned["snapshot"], ids)
                     # User-authored strings are content, not identity references.
                     for key in ("raw", "model", "display", "retrieval_query"):
                         if key in message:
@@ -445,7 +449,12 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     insert(db, "messages", cloned)
                 for table in ("full_agent_trace", "half_agent_trace"):
                     for trace in bundle.get(table, []):
-                        insert(db, table, remap(trace, ids))
+                        cloned = remap(trace, ids)
+                        if table == "half_agent_trace":
+                            from tavern.conversation.half_context import remap_record
+                            cloned["payload"] = remap_record(trace["payload"], ids)
+                            cloned["window_id"] = cloned["payload"]["window"]
+                        insert(db, table, cloned)
                 adapter = bundle.get("adapter")
                 if adapter:
                     insert(db, "message_adapter_configs", {**remap(adapter, ids), "revision": 0})

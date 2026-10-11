@@ -74,8 +74,10 @@ def create_app(data_dir=None):
         return JSONResponse(error.public(), status_code=400)
     from tavern.character.card_editor_api import register_editor_routes
     register_editor_routes(app, editor)
+    from tavern.application.context_api import register_context_routes
     from tavern.full_agent.api import register_full_agent_routes
-    register_full_agent_routes(app, store, service.full.context_operations)
+    register_context_routes(app, store, service.context_operations)
+    register_full_agent_routes(app, store, service.context_operations)
 
     @app.post("/api/shutdown")
     async def shutdown(payload: dict):

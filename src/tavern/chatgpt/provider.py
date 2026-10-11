@@ -78,8 +78,8 @@ class ChatGPTProvider(ModelTransport):
         # dedicated maintenance requests may compress; story/tool continuations
         # must not trigger a second, server-side threshold policy mid-turn.
         if threshold is not None and not kwargs.get("_compact_disabled"):
-            if cfg.runtime_mode != "full_agent":
-                raise ValueError("云端 compact 仅适用于官方渠道的 Full Agent")
+            if cfg.runtime_mode not in ("full_agent", "half_agent"):
+                raise ValueError("云端 compact 仅适用于官方渠道的剧情上下文")
             if type(threshold) is not int or threshold < 1024:
                 raise ValueError("云端压缩阈值必须为至少 1024 tokens 的整数")
             body["context_management"] = [{"type": "compaction", "compact_threshold": threshold}]

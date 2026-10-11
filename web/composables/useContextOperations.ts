@@ -4,26 +4,40 @@ import { api } from '../lib/api';
 export function useContextOperations(session: () => any, updated: (value: any) => void) {
   const operation = ref<any>(null),
     error = ref(''),
-    submitting = ref(false);
-  const busy = computed(() => submitting.value || ['queued', 'running'].includes(operation.value?.status));
+    submitting = ref(false),
+    awaitingSession = ref(false);
+  const busy = computed(
+    () =>
+      submitting.value || awaitingSession.value || ['queued', 'running'].includes(operation.value?.status),
+  );
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
+  let observation = 0;
   async function refresh() {
     const sid = session()?.id,
-      ticket = generation;
-    if (!sid || session()?.channel_origin !== 'chatgpt' || session()?.agent_mode !== 'full_agent') return;
+      ticket = generation,
+      read = ++observation;
+    if (!sid || session()?.channel_origin !== 'chatgpt') return;
     try {
       const result = await api(`/sessions/${sid}/context-operation`);
-      if (generation !== ticket || session()?.id !== sid) return;
+      if (generation !== ticket || read !== observation || session()?.id !== sid) return;
       const previous = operation.value;
+      const needsSession =
+        result?.status === 'completed' &&
+        (previous?.status !== 'completed' || previous?.id !== result.id || awaitingSession.value);
+      if (needsSession) awaitingSession.value = true;
       operation.value = result;
-      if (result?.status === 'completed' && previous?.status !== 'completed') {
+      if (needsSession) {
         const value = await api(`/sessions/${sid}`);
-        if (generation === ticket && session()?.id === sid) updated(value);
+        if (generation === ticket && read === observation && session()?.id === sid) {
+          if (value.revision >= session().revision) updated(value);
+          awaitingSession.value = false;
+        }
       }
-      if (['queued', 'running'].includes(result?.status)) timer = setTimeout(refresh, 1000);
+      if (generation === ticket && read === observation && ['queued', 'running'].includes(result?.status))
+        timer = setTimeout(refresh, 1000);
     } catch (e: any) {
-      if (generation === ticket) {
+      if (generation === ticket && read === observation) {
         error.value = e.message;
         if (busy.value) timer = setTimeout(refresh, 3000);
       }
@@ -36,6 +50,7 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       clearTimeout(timer);
       operation.value = null;
       submitting.value = false;
+      awaitingSession.value = false;
       error.value = '';
       void refresh();
     },
@@ -45,6 +60,7 @@ export function useContextOperations(session: () => any, updated: (value: any) =
     const sid = session()?.id,
       ticket = generation;
     if (!sid || busy.value) return;
+    observation++;
     submitting.value = true;
     error.value = '';
     try {
@@ -57,13 +73,20 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       operation.value = result;
       clearTimeout(timer);
       if (result.status === 'completed') {
+        awaitingSession.value = true;
         const value = await api(`/sessions/${sid}`);
-        if (ticket === generation && session()?.id === sid) updated(value);
+        if (ticket === generation && session()?.id === sid) {
+          if (value.revision >= session().revision) updated(value);
+          awaitingSession.value = false;
+        }
       } else {
         void refresh();
       }
     } catch (e: any) {
-      if (ticket === generation) error.value = e.message;
+      if (ticket === generation) {
+        error.value = e.message;
+        if (awaitingSession.value) timer = setTimeout(refresh, 3000);
+      }
     } finally {
       if (ticket === generation) submitting.value = false;
     }
@@ -72,7 +95,9 @@ export function useContextOperations(session: () => any, updated: (value: any) =
     const sid = session()?.id,
       op = operation.value,
       ticket = generation;
-    if (!sid || !op) return;
+    if (!sid || !op || submitting.value) return;
+    observation++;
+    submitting.value = true;
     error.value = '';
     try {
       const value = await api(`/sessions/${sid}/context-operations/${op.id}/${action}`, {});
@@ -82,11 +107,17 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       void refresh();
     } catch (e: any) {
       if (ticket === generation) error.value = e.message;
+    } finally {
+      if (ticket === generation) submitting.value = false;
     }
   }
   async function automatic(enabled: boolean) {
     const sid = session()?.id,
       ticket = generation;
+    if (!sid || busy.value) return;
+    observation++;
+    submitting.value = true;
+    error.value = '';
     try {
       const value = await api(
         `/sessions/${sid}/compact-auto`,
@@ -96,6 +127,8 @@ export function useContextOperations(session: () => any, updated: (value: any) =
       if (ticket === generation) updated(value);
     } catch (e: any) {
       if (ticket === generation) error.value = e.message;
+    } finally {
+      if (ticket === generation) submitting.value = false;
     }
   }
   onBeforeUnmount(() => {

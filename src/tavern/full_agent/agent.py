@@ -184,7 +184,7 @@ class FullAgent:
                 compiled = self.compile()
                 if (step == 0 and self.settings.context_strategy == "openai_compact"
                         and self.settings.compact_auto and compiled["estimated_tokens"] > self.settings.context_tokens):
-                    from tavern.full_agent.compaction import prepare_turn
+                    from tavern.conversation.compaction import prepare_turn
                     async def save_replay(value):
                         self.state["compact_replay"] = value
                         self.event("context_replay", {key: value[key] for key in ("batches", "processed", "total")})

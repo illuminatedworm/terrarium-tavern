@@ -4,6 +4,8 @@ import type { ContextOperations } from '../../composables/useContextOperations';
 const props = defineProps<{ session: any; disabled?: boolean }>();
 const ops = inject<ContextOperations>('context-operations');
 const compact = computed(() => props.session.context_strategy === 'openai_compact');
+const half = computed(() => props.session.agent_mode === 'half_agent');
+const localLabel = computed(() => (half.value ? '本地滚动窗口' : '本地换窗'));
 const working = computed(() => props.disabled || ops?.busy.value);
 const groupName = 'context-strategy-' + getCurrentInstance()?.uid;
 const usage = computed(() => {
@@ -33,7 +35,7 @@ const usage = computed(() => {
           :checked="!compact"
           :disabled="working"
           @change="ops.start('enable_local')"
-        />本地换窗</label
+        />{{ localLabel }}</label
       >
       <label
         ><input
@@ -46,9 +48,20 @@ const usage = computed(() => {
       >
     </div>
     <p class="inspector-note">
-      {{ compact ? '历史由云端压缩，长期笔记始终保留。' : '由 Agent 保存交接笔记并换窗，长期笔记独立保留。' }}
+      {{
+        half
+          ? compact
+            ? 'Writer 历史由云端压缩；Tracker 继续整理记忆、维护变量与设定。'
+            : '按完整交流滚动历史，退出前由 Tracker 检查记忆覆盖。'
+          : compact
+            ? '历史由云端压缩，长期笔记始终保留。'
+            : '由 Agent 保存交接笔记并换窗，长期笔记独立保留。'
+      }}
     </p>
     <template v-if="compact">
+      <p v-if="half" class="inspector-note">
+        本地消息上限、移除批量与压力裁剪不生效；记忆周期保持不变。切回本地时会按需补齐记忆覆盖。
+      </p>
       <div class="compact-auto-row">
         <label class="compact-auto"
           ><input
@@ -89,7 +102,9 @@ const usage = computed(() => {
           !ops.operation.value.converted && !ops.operation.value.compacted
             ? '上下文方式已切换，完整历史无需转换。'
             : ops.operation.value.kind === 'enable_local'
-              ? '新的交接笔记已保存，已切回本地换窗。'
+              ? half
+                ? '记忆覆盖已补齐，已切回本地滚动窗口。'
+                : '新的交接笔记已保存，已切回本地换窗。'
               : ops.operation.value.compacted
                 ? '云端上下文已就绪。'
                 : '上下文已就绪，本次未发生压缩。'

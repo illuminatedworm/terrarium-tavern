@@ -77,6 +77,7 @@ class Tracker:
 
     async def prepare(self, tid, document, session, history, snapshot, request, settings, summarize,
                       *, retrieval=None, periodic=True, call_budget=None):
+        from tavern.conversation.half_compaction import local_window_enabled
         from tavern.conversation.window import plan_window
         from tavern.memories.memory_engine import CallBudget, consolidate
         from tavern.memories.memory_records import (
@@ -94,7 +95,7 @@ class Tracker:
         if request.mode != "send":
             return
         window = draft.get("context_window")
-        old_count = window["covered_count"] if window and settings.chunk_mode != "off" else 0
+        old_count = window["covered_count"] if window and local_window_enabled(settings) else 0
         rounds = completed_rounds(history)
         from tavern.conversation.half_context import load_trace
         count, _ = plan_window(document, session, history, draft, request.text, settings, tid, retrieval,
@@ -105,7 +106,7 @@ class Tracker:
             eligible -= 1
         # Closing the window retains all original messages; periodic archives may
         # cover all completed exchanges because they cannot move the window.
-        if settings.chunk_mode == "off":
+        if not local_window_enabled(settings):
             eligible = len(history)
         for kind, key, interval in (
             ("memory", "memory_archive", settings.memory_interval_turns),

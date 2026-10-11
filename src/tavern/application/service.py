@@ -431,9 +431,10 @@ class RoleplayRuntime:
                     configure_operation(provider, contexts.new("script"),
                                         lambda kind, payload: self.store.event(tid, kind, payload), "script")
                     try:
+                        from tavern.conversation.half_compaction import local_window_enabled
                         from tavern.memories.memory import window_history
                         nested_document = (snapshot.get("content") or {}).get("document", document)
-                        visible, _ = window_history(history, snapshot, enabled=settings.chunk_mode != "off")
+                        visible, _ = window_history(history, snapshot, enabled=local_window_enabled(settings))
                         prepared = await self.retrieval.prepare(
                             nested_document, visible, args.get("user_input", ""), snapshot, settings, session, tid)
                         context = compile_context(

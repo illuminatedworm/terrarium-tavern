@@ -166,7 +166,9 @@ def lexical_recall(document, history, user_input, snapshot, settings, session, s
                    [e["timelines"]] if isinstance(e["timelines"], str) else e["timelines"]))]
     clues = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in history]
     visible_ids = {m["id"] for m in history}
-    retained = {r["id"] for r in snapshot.get("lore_injections", []) if r["anchor_id"] in visible_ids}
+    from tavern.conversation.half_compaction import active_lore, enabled
+    injections = active_lore(snapshot) if enabled(settings) else snapshot.get("lore_injections", [])
+    retained = {r["id"] for r in injections if r["anchor_id"] in visible_ids}
     exiting = {eid for eid, old in snapshot.get("lore", {}).items()
                if isinstance(old, dict) and old.get("present") and eid not in retained}
     suppressed = retained | exiting if session.get("lore_injection_mode") == "conversation" else set()

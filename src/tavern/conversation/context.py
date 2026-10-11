@@ -291,13 +291,22 @@ def compile_context(
     read_only=False,
     replay_records=None,
 ):
+    from tavern.conversation.half_compaction import (
+        enabled as cloud_context,
+    )
+    from tavern.conversation.half_compaction import (
+        local_window_enabled,
+        retired_lore,
+        source_lore,
+        valid_source_lore,
+    )
     from tavern.memories.memory import render_memory, window_history
 
     card = normalize(document)
     recipe = ContextRecipe.model_validate(session["recipe"])
     persona = session["persona"]
     state = snapshot.get("state", {})
-    visible_history, story_summary = window_history(history, snapshot, enabled=settings.chunk_mode != "off")
+    visible_history, story_summary = window_history(history, snapshot, enabled=local_window_enabled(settings))
     protected_memory = render_memory(snapshot, history) if len(visible_history) < len(history) else ""
     gen = generate or {}
     overrides = gen.get("overrides", {})
@@ -321,10 +330,15 @@ def compile_context(
     writer_ids = {e["id"] for e in lore_entries(document, "writer")}
     excluded_ids = {e["id"] for e in lore_entries(document)} - writer_ids
     constants = {e["id"] for e in lore_entries(document, "writer") if e.get("constant")}
-    records = [copy.deepcopy(r) for r in snapshot.get("lore_injections", [])
+    compact = cloud_context(settings)
+    retired = retired_lore(snapshot) if compact else set()
+    original_lore = (valid_source_lore(document, source_lore(history, snapshot, replay_records)) if compact
+                     else snapshot.get("lore_injections", []))
+    records = [copy.deepcopy(r) for r in original_lore
                if (r["anchor_id"] in visible_ids or (r.get("manually_removed") and r["anchor_id"] == input_message_id))
                and r["id"] not in constants and r["id"] not in excluded_ids]
-    retained_ids = {r["id"] for r in records}
+    existing_lore_keys = {(r["anchor_id"], r["id"]) for r in records}
+    retained_ids = {r["id"] for r in records if (r["anchor_id"], r["id"]) not in retired}
     prior = {eid: copy.deepcopy(old) if isinstance(old, dict) else {} for eid, old in snapshot.get("lore", {}).items()}
     exiting_ids = set()
     if conversation_lore:
@@ -642,6 +656,8 @@ def compile_context(
                 "role": "system", "content": wrap_lorebook(record["content"]), "title": record["title"],
                 "source": "lore:" + record["id"], "lore_ids": [record["id"]],
                 "anchor_id": record["anchor_id"], "priority": 60, "required": record["id"] in retained_ids,
+                "archived_lore": (record["anchor_id"], record["id"]) in retired,
+                "current_lore": (record["anchor_id"], record["id"]) not in existing_lore_keys,
             })
             actual_records.append(record)
     if protected_memory and not any(m.get("context_source", m["source"]) == "memory" for m in messages):
@@ -738,7 +754,7 @@ def compile_context(
     messages = runtime_messages(messages, getattr(settings, "_adapter_lane", "foreground"))
     injected_ids = set()
     for message in messages:
-        ids = message.get("lore_ids", [])
+        ids = [] if message.get("archived_lore") else message.get("lore_ids", [])
         if ids:
             injected_ids.update(ids)
             message.setdefault("title", " · ".join(
@@ -769,7 +785,9 @@ def compile_context(
         "retrieval": {k: v for k, v in retrieval.items() if k != "entries"},
         "diagnostics": diagnostics,
         "next_lore": next_lore,
-        "next_lore_injections": [r for r in actual_records if r["id"] in injected_ids or r["id"] in suppressed_ids],
+        "next_lore_injections": [r for r in actual_records
+                                 if (r["anchor_id"], r["id"]) not in retired
+                                 and (r["id"] in injected_ids or r["id"] in suppressed_ids)],
         "estimated_tokens": total,
         "token_counting": counting_info(settings),
         "daily_context_budget": min(settings.daily_context_budget, available),
@@ -789,4 +807,8 @@ def compile_context(
         apply_context(result, replay_records, session, history, snapshot, settings, input_id=input_message_id)
     else:
         project_context(result, settings)
+    if compact and replay_records is not None:
+        from tavern.conversation.half_compaction import project
+        result["_source_lore_keys"] = list(existing_lore_keys)
+        project(result, session, history, snapshot, settings)
     return result

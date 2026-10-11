@@ -428,8 +428,8 @@ class Store(MessageAdapters):
         settings = self.settings(session["agent_mode"], channel or "standard")
         settings.context_strategy = session.get("context_strategy", "new_context")
         settings.compact_auto = bool(session.get("compact_auto", True))
-        if settings.context_strategy == "openai_compact" and (channel != "chatgpt" or session["agent_mode"] != "full_agent"):
-            raise ValueError("只有 ChatGPT 官方渠道的 Full Agent 对话可以使用云端 compact")
+        if settings.context_strategy == "openai_compact" and channel != "chatgpt":
+            raise ValueError("只有 ChatGPT 官方渠道的对话可以使用云端 compact")
         return settings
 
     @property
@@ -553,6 +553,8 @@ class Store(MessageAdapters):
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
                 from tavern.full_agent.state import remap_sources
                 remap_sources(cloned["snapshot"], ids)
+                from tavern.conversation.half_compaction import remap_state
+                remap_state(cloned["snapshot"], ids)
                 from tavern.conversation.message_editing import NOTIFICATIONS
                 if NOTIFICATIONS in cloned["snapshot"]:
                     cloned["snapshot"][NOTIFICATIONS] = [
@@ -898,6 +900,17 @@ class Store(MessageAdapters):
                     ]
                 db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), row["id"]))
             db.execute("UPDATE messages SET retrieval_query='' WHERE session=?", (sid,))
+            # New half-context traces retain frozen sources after window exits.
+            # An edit invalidates the same injections there as in snapshots;
+            # otherwise a later cloud rebuild would resurrect rejected sources.
+            for row in db.execute("SELECT message_id,payload FROM half_agent_trace WHERE session=?", (sid,)).fetchall():
+                record = json.loads(row["payload"])
+                original = record.get("lore", [])
+                retained = [item for item in original
+                            if item["anchor_id"] not in affected and mid not in item.get("source_ids", [])]
+                if retained != original:
+                    record["lore"] = retained
+                    db.execute("UPDATE half_agent_trace SET payload=? WHERE message_id=?", (dump(record), row["message_id"]))
             db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
         result = self.session(sid)
         result["edit_affected_memory"] = affected_memory

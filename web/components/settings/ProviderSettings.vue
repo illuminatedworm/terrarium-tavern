@@ -106,7 +106,7 @@ function add() {
   <p class="channel-provider-note muted">
     {{
       channel === 'chatgpt'
-        ? '官方渠道的 Full Agent 支持本地换窗与云端 compact，新对话默认使用本地换窗。'
+        ? '官方渠道的两种 Agent 模式均支持本地上下文与云端 compact，新对话默认使用本地方式。'
         : '普通渠道的 Full Agent 使用本地换窗。API Key 连接始终属于普通渠道。'
     }}
   </p>

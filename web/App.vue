@@ -27,6 +27,7 @@ import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue'
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
 import FullAgentNotes from './components/story/FullAgentNotes.vue';
+import ContextStrategyControls from './components/story/ContextStrategyControls.vue';
 import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
@@ -92,7 +93,10 @@ const savingSessionTitle = ref(false);
 const sessionTitleInput = ref<HTMLInputElement>();
 const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 function applyFullSession(updated: any) {
-  if (session.value?.id === updated.id) session.value = updated;
+  if (session.value?.id === updated.id && updated.revision >= session.value.revision) {
+    session.value = updated;
+    void refreshContextStats();
+  }
 }
 const contextOps = useContextOperations(() => session.value, applyFullSession);
 const contextBusy = contextOps.busy;
@@ -2537,7 +2541,11 @@ useTimedError(error);
           </section>
         </div>
         <AppNotification
-          :message="memoryWarning ? `记忆整理失败：${memoryWarning}。旧记忆保留；需要裁剪时将暂停发送。` : ''"
+          :message="
+            memoryWarning
+              ? `记忆整理失败：${memoryWarning}。旧记忆保留；${session.context_strategy === 'openai_compact' ? '云端上下文仍独立保留，切回本地时会检查记忆覆盖。' : '需要裁剪时将暂停发送。'}`
+              : ''
+          "
         />
         <div v-show="storyView === 'dialogue'" class="composer">
           <div class="composer-inner">
@@ -2802,6 +2810,12 @@ useTimedError(error);
             @saved="applyFullSession"
           />
           <template v-else>
+            <ContextStrategyControls
+              :session="session"
+              :disabled="
+                busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+              "
+            />
             <p class="inspector-note">
               这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
               保存。记忆随剧情进度保存，继承进度时会带入新对话。
@@ -2813,7 +2827,11 @@ useTimedError(error);
               <h3>记忆</h3>
               <button
                 :disabled="
-                  busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+                  busy ||
+                  contextBusy ||
+                  !!sceneSubmitting ||
+                  !!editingMessageId ||
+                  activeTurn?.status === 'awaiting_review'
                 "
                 :aria-busy="sceneUpdating === 'memory'"
                 @click="refreshScene('memory')"
@@ -2835,7 +2853,11 @@ useTimedError(error);
               :persona="session.persona"
               :character="archiveCharacter"
               :disabled="
-                busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+                busy ||
+                contextBusy ||
+                !!sceneSubmitting ||
+                !!editingMessageId ||
+                activeTurn?.status === 'awaiting_review'
               "
               :saving="sceneSaving === 'memory'"
               @locate="locateSource"

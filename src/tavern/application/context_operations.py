@@ -8,11 +8,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from tavern.conversation.compaction import compact_once, rebuild
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapter_snapshot, bind_adapter
 from tavern.core.models import TurnRequest
 from tavern.core.provider import make_provider
-from tavern.full_agent.compaction import compact_once, rebuild, rebuild_local
+from tavern.full_agent.compaction import rebuild_local
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import tool_definitions
@@ -26,8 +27,9 @@ class ContextOperationRequest(BaseModel):
 
 
 class ContextOperations:
-    def __init__(self, store):
+    def __init__(self, store, retrieval=None):
         self.store, self.tasks = store, {}
+        self.retrieval = retrieval
         self.provider_factory = None
         with store.connection() as db:
             db.execute(
@@ -61,12 +63,8 @@ class ContextOperations:
 
     def start(self, sid, request):
         session = self.store.session(sid)
-        if session["channel_origin"] != "chatgpt" or session["agent_mode"] != "full_agent":
-            raise ValueError("此操作仅适用于 ChatGPT 官方渠道的 Full Agent 对话")
-        if request.kind == "compact" and session["context_strategy"] != "openai_compact":
-            raise ValueError("请先切换为云端 compact 模式")
-        if not session["head"]:
-            raise ValueError("当前对话没有可整理的历史")
+        if session["channel_origin"] != "chatgpt":
+            raise ValueError("此操作仅适用于 ChatGPT 官方渠道的对话")
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(
@@ -80,6 +78,10 @@ class ContextOperations:
                 ):
                     raise Conflict("相同操作 ID 不能用于不同上下文请求")
                 return self.get(previous["id"])
+            if request.kind == "compact" and session["context_strategy"] != "openai_compact":
+                raise ValueError("请先切换为云端 compact 模式")
+            if not session["head"]:
+                raise ValueError("当前对话没有可整理的历史")
             if db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
                 (sid,),
@@ -130,9 +132,19 @@ class ContextOperations:
                 self.save(oid, payload, status="completed")
                 return
             snapshot = copy.deepcopy(session["snapshot"])
-            state = full_state(snapshot)
-            settings = bind_adapter(self.store.session_settings(session), self.store, "story", session["id"])
-            source_settings = fingerprint([settings.model_dump(), adapter_snapshot(settings)])
+            half = session["agent_mode"] == "half_agent"
+            from tavern.conversation.half_compaction import STATE, install
+            state = snapshot.setdefault(STATE, {}) if half else full_state(snapshot)
+            role = "foreground" if half else "full_agent"
+            settings = bind_adapter(self.store.session_settings(session).for_role(role), self.store, "story", session["id"])
+            from tavern.scripting.request_context import response_origin
+            def identity(config):
+                return fingerprint([config.model_dump(), adapter_snapshot(config), response_origin(config),
+                                    response_origin(config.for_role("background")) if half else None])
+            source_settings = identity(settings)
+            if payload.get("source_settings", source_settings) != source_settings:
+                raise Conflict("整理设置或官方连接已改变，不能继续旧操作；请重新发起")
+            payload["source_settings"] = source_settings
             settings.context_strategy = strategy
             source = {**session, "context_strategy": strategy}
             if op["kind"] != "compact":
@@ -144,11 +156,14 @@ class ContextOperations:
                 "document", self.store.session_card(session["id"])["document"]
             )
             request = TurnRequest(operation_id=op["operation"], expected_revision=session["revision"])
-            tools = tool_definitions(
+            tools = [] if half else tool_definitions(
                 request, source, settings.full_agent_config, settings=settings, document=document
             )
 
             def compile_current():
+                if half:
+                    from tavern.conversation.half_context_operations import compile_sources
+                    return compile_sources(self.store, source, snapshot, document, settings)
                 return compile_window(
                     document,
                     source,
@@ -162,6 +177,9 @@ class ContextOperations:
                 )
 
             compiled = compile_current()
+            if half and strategy == "openai_compact":
+                from tavern.conversation.half_compaction import completed_context
+                compiled = completed_context(compiled)
             self.save(oid, payload)
 
             class LazyProvider:
@@ -187,7 +205,20 @@ class ContextOperations:
                 )
                 self.save(oid, payload)
 
-            if op["kind"] == "enable_local":
+            if op["kind"] == "enable_local" and half:
+                from tavern.conversation.half_context_operations import rebuild_local as rebuild_half_local
+                async def save_local(value):
+                    payload["replay"] = value
+                    payload["progress"] = {key: value[key] for key in ("batches", "processed", "total")}
+                    payload["usage"] = copy.deepcopy(value["usage"])
+                    self.save(oid, payload)
+                snapshot, replay = await rebuild_half_local(
+                    self.store, oid, source, snapshot, document, settings,
+                    provider_factory=self.provider_factory, progress=payload.get("replay"),
+                    save=save_local, retrieval=self.retrieval)
+                payload["usage"] = replay["usage"]
+                payload["converted"] = bool(replay["batches"])
+            elif op["kind"] == "enable_local":
                 replay = await rebuild_local(compiled, settings, lazy_provider,
                                              progress=payload.get("replay"), save=save_progress)
                 state["handoff"] = {"text": replay["handoff"], "revision": state["handoff"]["revision"] + 1,
@@ -196,32 +227,38 @@ class ContextOperations:
                                    "start": replay["history_start"], "replay_history": True}
                 payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
-            elif compiled["compact_requires_rebuild"] or op["kind"] == "enable_compact":
+            elif (compiled["compact_requires_rebuild"] or op["kind"] == "enable_compact"
+                  or half and not compiled["compaction_opaque"]):
                 # Manual re-compaction can start from the existing checkpoint,
                 # but rebuilding from originals is required on identity changes.
                 checkpoint, replay = await rebuild(
                     compiled, settings, lazy_provider, progress=payload.get("replay"), save=save_progress,
-                    force=op["kind"] == "compact",
+                    force=op["kind"] == "compact" or half and compiled["estimated_tokens"] > settings.context_tokens,
                 )
                 state["compaction"] = checkpoint
+                if half:
+                    install(snapshot, checkpoint, compiled, session["messages"])
                 payload["compacted"] = any(i.get("type") == "compaction" for i in checkpoint["items"])
                 payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
+                if half and compiled["_replay_complete"] and compiled["estimated_tokens"] > settings.context_tokens and not payload["compacted"]:
+                    raise ValueError("历史超过窗口上限，但服务端未生成压缩状态；原上下文保持不变")
             elif op["kind"] == "compact":
-                checkpoint, usage = await compact_once(compiled, settings, lazy_provider)
+                checkpoint, usage = (await compact_once(compiled, settings, lazy_provider)
+                                     if not half or compiled["_replay_complete"] else (None, {}))
                 if checkpoint:
                     state["compaction"] = checkpoint
+                    if half:
+                        install(snapshot, checkpoint, compiled, session["messages"])
                 payload["compacted"] = checkpoint is not None
                 payload["usage"] = [usage]
                 payload["converted"] = True
             if hasattr(provider, "usage_history"):
                 payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)
-            from tavern.scripting.request_context import response_origin
-
-            if response_origin(self.store.session_settings(session)) != response_origin(settings):
+            if response_origin(self.store.session_settings(session).for_role(role)) != response_origin(settings):
                 raise Conflict("整理期间官方连接已改变，未替换当前上下文；请重新整理")
-            current_settings = bind_adapter(self.store.session_settings(session), self.store, "story", session["id"])
-            if fingerprint([current_settings.model_dump(), adapter_snapshot(current_settings)]) != source_settings:
+            current_settings = bind_adapter(self.store.session_settings(session).for_role(role), self.store, "story", session["id"])
+            if identity(current_settings) != source_settings:
                 raise Conflict("整理期间上下文设置已改变，未替换当前上下文；请重新整理")
             with self.store.connection() as db:
                 db.execute("BEGIN IMMEDIATE")

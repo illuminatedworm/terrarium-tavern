@@ -2,6 +2,7 @@
 import copy
 import json
 
+from tavern.conversation.half_compaction import enabled, local_window_enabled
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
@@ -9,8 +10,8 @@ from tavern.scripting.native_response import message_digest, native_items
 from tavern.scripting.request_context import response_origin
 from tavern.search.retrieval_text import split_retrieval
 
-# Rebuild saved frames whose update/revocation notices preceded their field tags.
-VERSION = 3
+# v4 adds per-exchange frozen lore; v3 append frames remain compatible.
+VERSION = 4
 DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference"}
 TRANSIENT = {"message_edit_notice", "regenerate_reference"}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
@@ -80,6 +81,9 @@ def remap_record(record, ids):
     result["retired_native"] = [ids.get(mid, mid) for mid in result.get("retired_native", [])]
     for frame in result.get("frames", []):
         frame["anchor_id"] = ids.get(frame.get("anchor_id"), frame.get("anchor_id"))
+    for row in result.get("lore", []):
+        row["anchor_id"] = ids.get(row["anchor_id"], row["anchor_id"])
+        row["source_ids"] = [ids.get(mid, mid) for mid in row.get("source_ids", [])]
     # The new story starts a new baseline; opaque protocol IDs remain untouched.
     result["window"] = "forked"
     return result
@@ -111,16 +115,18 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     active = [(m["id"], records[m["id"]]) for m in history
               if m["id"] in records and m["id"] in visible_ids]
     previous = previous_record or (active[-1][1] if active else None)
+    generation = snapshot.get("half_context", {}).get("compaction", {}).get("generation", "") if enabled(settings) else ""
+    reassert = bool(generation and generation != (previous or {}).get("compaction_generation"))
     origin = response_origin(settings)
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
-                          snapshot.get("context_window", {}) if settings.chunk_mode != "off" else {}])
+                          snapshot.get("context_window", {}) if local_window_enabled(settings) else {}])
     layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", "")) for b in session.get("recipe", {}).get("blocks", [])]
     policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:
         reason = "legacy_context" if history else "initial_context"
-    elif previous.get("version") != VERSION:
+    elif previous.get("version") not in (3, VERSION):
         reason = "context_version_changed"
     elif previous.get("origin") != origin:
         reason = "provider_or_model_changed"
@@ -175,7 +181,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     items = []
     for row in base:
         items.extend(replay.pop(row.get("message_id"), []))
-        if purpose == "narrative" and row.get("source") == "history" and row["role"] == "assistant":
+        if (purpose == "narrative" and not enabled(settings)
+                and row.get("source") == "history" and row["role"] == "assistant"):
             restore_native(row)
         items.append(row)
     current = {}
@@ -189,7 +196,7 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
         value = [row["content"], input_id if source == "turn_instruction" or source in TRANSIENT else None]
         current[key] = {"key": key, "source": source, "value": value, "role": row["role"], "label": label,
                         "message_type": row.get("message_type")}
-        if key in seen and seen[key]["value"] == value:
+        if key in seen and seen[key]["value"] == value and not reassert:
             continue
         notice = (f"[当前{label}；取代此前同来源版本。"
                   + ("仅适用于本轮。" if source == "turn_instruction" or source in TRANSIENT else "") + "]")
@@ -201,7 +208,7 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
             frame["runtime_phase"] = "body"
         updates.append(frame)
     for key, previous_value in seen.items():
-        if key not in current and previous_value["value"] is not None:
+        if key not in current and (previous_value["value"] is not None or reassert):
             source = previous_value["source"]
             updates.append({"role": previous_value["role"], "source": source, "anchor_id": input_id,
                 "content": frame_content(source,
@@ -242,7 +249,14 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
         "updates": [{"source": f["source"], "cleared": f["_half_frame"]["value"] is None} for f in updates]}
     context["half_agent_record"] = {"version": VERSION, "origin": origin, "window": window, "policy": policy,
         "epoch": epoch, "native_epoch": native_epoch, "base": current_base, "input_id": input_id,
+        "compaction_generation": generation,
         "frames": updates, "retired_native": sorted(retired & visible_ids), "continuation_count": len(continuation)}
+    # Save only newly introduced lore. Older frozen originals belong to their
+    # own exchange and remain recoverable after active snapshots retire them.
+    previous_keys = {(row["anchor_id"], row["id"]) for row in snapshot.get("lore_injections", [])}
+    context["half_agent_record"]["lore"] = [copy.deepcopy(row) for row in context.get("next_lore_injections", [])
+                                            if (row["anchor_id"], row["id"]) not in previous_keys]
+    context["_half_record_ids"] = list(records)
     context["runtime_trace"] = items
     return project_context(context, settings)
 

@@ -115,8 +115,9 @@ useTimedError(error);
               : 'Writer 负责正文，Tracker 负责后台整理，运行时管理上下文。'
           }}
         </p>
-        <p v-if="agentMode === 'full_agent'" class="muted">
-          上下文方式：本地换窗{{ channel === 'chatgpt' ? '（创建后可切换云端 compact）' : '' }}
+        <p class="muted">
+          上下文方式：{{ agentMode === 'full_agent' ? '本地换窗' : '本地滚动窗口'
+          }}{{ channel === 'chatgpt' ? '（创建后可切换云端 compact）' : '' }}
         </p>
         <label
           >用户角色<select v-model="personaId">

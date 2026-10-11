@@ -2,6 +2,7 @@
 import copy
 
 from tavern.character.cards import lore_entries
+from tavern.conversation.half_compaction import local_window_enabled
 from tavern.conversation.half_context import load_trace
 from tavern.conversation.window import plan_window
 from tavern.memories.memory import completed_rounds, fingerprint, window_history, window_valid
@@ -27,12 +28,12 @@ async def before_story(store, tid, settings, session, history, snapshot, request
         snapshot["memory_warning"] = str(error)
     edited = False
     while True:
-        visible, _ = window_history(history, snapshot, enabled=settings.chunk_mode != "off")
+        visible, _ = window_history(history, snapshot, enabled=local_window_enabled(settings))
         prepared = await retrieval.prepare(document, visible, request.text, snapshot, settings, session, tid,
                                            turn_number=sum(m["role"] == "user" for m in history) + 1)
         count, _ = plan_window(document, session, history, snapshot, request.text, settings, tid, prepared,
                               replay_records=load_trace(store, session["id"], history))
-        old_count = snapshot.get("context_window", {}).get("covered_count", 0) if settings.chunk_mode != "off" else 0
+        old_count = snapshot.get("context_window", {}).get("covered_count", 0) if local_window_enabled(settings) else 0
         trimming = request.mode == "send" and count > old_count
         covered = snapshot.get("memory_archive", {}).get("covered_count", 0)
         memory_needed = trimming and covered < count

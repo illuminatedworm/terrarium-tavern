@@ -477,6 +477,9 @@ onMounted(async () => {
             />
             <template v-else
               ><h4>历史窗口</h4>
+              <p class="muted">
+                以下裁剪设置仅适用于本地滚动窗口；云端 compact 按 Writer 的上下文 token 上限触发。
+              </p>
               <SettingsFields :value="values" :fields="historyFields" />
               <h4>Tracker 与记忆整理</h4>
               <SettingsFields :value="values" :fields="memoryFields"

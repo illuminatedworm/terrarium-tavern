@@ -7,9 +7,9 @@ import httpx
 import pytest
 
 from tavern.application.api import create_app
+from tavern.application.context_operations import ContextOperationRequest
+from tavern.conversation.compaction import checkpoint_items, replay_groups
 from tavern.core.settings import migrate_settings
-from tavern.full_agent.compaction import checkpoint_items, replay_groups
-from tavern.full_agent.context_operations import ContextOperationRequest
 from tavern.storage.store import Conflict
 from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_chatgpt_integration import connected_store, story
@@ -32,7 +32,7 @@ def long_story(store):
 
 
 async def operate(service, session, kind):
-    operations = service.full.context_operations
+    operations = service.context_operations
     operation = operations.start(
         session["id"],
         ContextOperationRequest(
@@ -224,7 +224,7 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
 
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
-        operations = service.full.context_operations
+        operations = service.context_operations
         op = operations.start(
             session["id"],
             ContextOperationRequest(
@@ -265,7 +265,7 @@ async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path):
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
-        operations = service.full.context_operations
+        operations = service.context_operations
         op = operations.start(
             session["id"],
             ContextOperationRequest(
@@ -304,8 +304,8 @@ def test_compaction_boundary_does_not_hide_pending_calls_and_groups_remain_whole
 
 
 async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_change():
+    from tavern.conversation.compaction import hashes, rebuild, valid
     from tavern.core.models import Settings
-    from tavern.full_agent.compaction import hashes, rebuild, valid
     from tavern.scripting.request_context import response_origin
 
     settings = Settings(
@@ -360,8 +360,8 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
 
 
 async def test_subscription_stream_compaction_item_survives_empty_terminal_output(tmp_path):
+    from tavern.conversation.compaction import opaque_message
     from tavern.core.provider import make_provider
-    from tavern.full_agent.compaction import opaque_message
 
     store, _, _ = connected_store(tmp_path)
     settings = store.settings("full_agent", "chatgpt")
@@ -414,7 +414,7 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
     def unexpected_provider(_):
         raise AssertionError("Short source must not even initialize a maintenance provider")
 
-    service.full.context_operations.provider_factory = unexpected_provider
+    service.context_operations.provider_factory = unexpected_provider
     try:
         if played:
             saved, session = await turn(service, session, Model(
@@ -453,9 +453,10 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
 
 @pytest.mark.parametrize("strategy", ["openai_compact", "new_context"])
 async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
+    from tavern.conversation.compaction import rebuild
     from tavern.core.models import Settings
     from tavern.core.tokens import request_tokens
-    from tavern.full_agent.compaction import rebuild, rebuild_local
+    from tavern.full_agent.compaction import rebuild_local
 
     settings = Settings(model="fixture", context_tokens=8192, context_strategy=strategy)
     body, starts = [], []
@@ -506,8 +507,8 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
 
 
 def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoint_special_cases():
+    from tavern.conversation.compaction import compact_limit, project_compact
     from tavern.core.models import Settings
-    from tavern.full_agent.compaction import compact_limit, project_compact
 
     settings = Settings(model="fixture", context_tokens=8192, context_strategy="openai_compact")
 
@@ -604,8 +605,8 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
 
 
 async def test_pre_turn_recompaction_keeps_the_pending_exchange_outside_the_checkpoint():
+    from tavern.conversation.compaction import hashes, prepare_turn, project_compact
     from tavern.core.models import Settings
-    from tavern.full_agent.compaction import hashes, prepare_turn, project_compact
     from tavern.scripting.request_context import response_origin
 
     settings = Settings(model="fixture", auth_mode="chatgpt_subscription", context_strategy="openai_compact")
