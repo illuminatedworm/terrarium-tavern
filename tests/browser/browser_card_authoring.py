@@ -46,8 +46,15 @@ async def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(address)
                     await page.get_by_role("tab", name="制卡", exact=True).click()
+                    await expect(page.get_by_role("region", name="制卡对话入口")).to_be_visible()
+                    assert editor.edits.conversations() == []
+                    await page.reload()
+                    await expect(page.get_by_role("region", name="制卡对话入口")).to_be_visible()
+                    assert editor.edits.conversations() == []
+                    await page.get_by_role("button", name="新建制卡对话", exact=True).click()
                     composer = page.get_by_role("textbox", name="制卡要求", exact=True)
                     await expect(composer).to_be_visible()
+                    await expect(page.get_by_role("button", name="内置技能", exact=True)).to_have_count(1)
                     await composer.fill("先给一个方案，不制作")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(2)
@@ -62,11 +69,13 @@ async def main():
                     await composer.fill("确认方案，制作")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(4)
+                    await expect(page.locator('.cw-inspector-footer').get_by_role("button", name="保存新卡", exact=True)).to_be_visible()
+                    await expect(page.get_by_role("button", name="审阅修改", exact=True)).to_have_count(0)
                     await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name=re.compile("修改")).click()
                     await expect(page.get_by_role("button", name="保存新卡", exact=True)).to_be_enabled()
                     await composer.fill("保存时保留我的未发送输入")
                     await page.get_by_role("button", name="保存新卡", exact=True).click()
-                    await expect(page.get_by_role("button", name="覆盖原卡", exact=True)).to_be_enabled()
+                    await expect(page.get_by_role("button", name="保存角色卡", exact=True)).to_be_enabled()
                     await expect(composer).to_have_value("保存时保留我的未发送输入")
                     assert len(store.cards()) == 3
                     await composer.fill("@")
@@ -80,12 +89,29 @@ async def main():
                     await composer.fill("修改 C2 的描述")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(6)
+                    assert await page.locator('.cw-message.assistant').evaluate_all("""messages => messages.every(message =>
+                        message.previousElementSibling?.matches('.cw-run') &&
+                        message.previousElementSibling.dataset.runId === message.dataset.messageRun)""")
+                    await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="预览", exact=True).click()
+                    await expect(page.get_by_role("region", name="当前草稿阅读预览")).to_contain_text("UI 修改结果")
+                    await expect(page.locator('.cw-inspector-footer').get_by_role("button", name="保存角色卡", exact=True)).to_be_visible()
+                    await expect(page.get_by_role("button", name="保存角色卡", exact=True)).to_have_count(1)
+                    await expect(page.get_by_role("button", name="另存副本", exact=True)).to_have_count(1)
+                    await composer.fill("保留我的额外要求")
+                    await page.locator('.cw-skills-button').click()
+                    skills = page.get_by_role("dialog", name="内置技能", exact=True)
+                    await expect(skills).to_contain_text("适配项目工作流")
+                    await skills.locator('.skill-choice').filter(has_text="迁移正文状态栏").get_by_role("button", name="填入请求").click()
+                    await expect(composer).to_have_value(re.compile("保留我的额外要求.*@C2.*状态栏", re.S))
+                    await expect(page.locator(".cw-message")).to_have_count(6)
+                    await composer.fill("")
+                    await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name=re.compile("修改")).click()
                     assert editor.edits.conversation(wid)["cards"][1]["document"]["description"] == "UI 修改结果"
                     assert store.card(card["id"])["document"] == card["document"]
                     newer = copy.deepcopy(card["document"])
                     newer["description"] = "外部新版"
                     store.edit_card(card["id"], newer, 0)
-                    await page.get_by_role("button", name="覆盖原卡", exact=True).click()
+                    await page.get_by_role("button", name="保存角色卡", exact=True).click()
                     await expect(page.get_by_role("alert").first).to_contain_text("原卡已改变")
                     await page.get_by_role("button", name="另存副本", exact=True).click()
                     await expect(page.locator(".cw-notice", has_text="角色卡已保存")).to_be_visible()
@@ -99,6 +125,30 @@ async def main():
                             await asyncio.sleep(30)
                             async for chunk in super().chat(messages, **kwargs):
                                 yield chunk
+
+                    class SlowAfterWrite(ToolLLM):
+                        async def chat(self, messages, **kwargs):
+                            if self.call_count == 2:
+                                await asyncio.sleep(30)
+                            async for chunk in super().chat(messages, **kwargs):
+                                yield chunk
+
+                    editor.provider_factory = lambda: SlowAfterWrite([
+                        ("read_field", {"card_ref": "C2", "path": "/description"}),
+                        ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "尚未完成的实时预览"}], "reason": "验证预览同步"})])
+                    await composer.fill("检查未完成草稿同步")
+                    await page.get_by_role("button", name="发送", exact=True).click()
+                    await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="预览", exact=True).click()
+                    await page.get_by_role("checkbox", name="查看本轮未完成版本", exact=True).check()
+                    await expect(page.get_by_role("region", name="当前草稿阅读预览")).to_contain_text("尚未完成的实时预览")
+                    await expect(page.get_by_role("button", name="打开表单编辑", exact=True)).to_be_disabled()
+                    await expect(page.get_by_role("button", name="保存角色卡", exact=True)).to_be_disabled()
+                    await expect(page.get_by_role("button", name="另存副本", exact=True)).to_be_disabled()
+                    await page.get_by_role("button", name="停止", exact=True).click()
+                    await expect(page.get_by_role("button", name="继续本轮", exact=True)).to_be_visible()
+                    await page.get_by_role("button", name="丢弃本轮", exact=True).click()
+                    await page.get_by_role("dialog").get_by_role("button", name="确认", exact=True).click()
+                    await expect(page.get_by_role("region", name="当前草稿阅读预览")).not_to_contain_text("尚未完成的实时预览")
 
                     editor.provider_factory = lambda: Slow([])
                     await composer.fill("检查卡片")
@@ -125,7 +175,7 @@ async def main():
                             await expect(page.get_by_role("button", name="返回对话", exact=True)).to_be_visible()
                             await page.get_by_role("button", name="返回对话", exact=True).click()
                     await page.set_viewport_size({"width": 1920, "height": 1080})
-                    await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="资料", exact=True).click()
+                    await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="数据", exact=True).click()
                     await page.get_by_role("button", name="打开表单编辑", exact=True).click()
                     form = page.get_by_role("dialog", name="编辑角色卡草稿", exact=True)
                     await expect(form).to_be_visible()

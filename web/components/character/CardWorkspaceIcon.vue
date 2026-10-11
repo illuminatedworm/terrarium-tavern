@@ -1,5 +1,7 @@
 <script setup lang="ts">
-defineProps<{ name: 'pen' | 'plus' | 'up' | 'down' | 'message' | 'sliders' | 'file' | 'chevron' }>();
+defineProps<{
+  name: 'pen' | 'plus' | 'up' | 'down' | 'message' | 'sliders' | 'file' | 'chevron' | 'book' | 'trash';
+}>();
 </script>
 
 <template>
@@ -30,6 +32,12 @@ defineProps<{ name: 'pen' | 'plus' | 'up' | 'down' | 'message' | 'sliders' | 'fi
     <template v-else-if="name === 'file'">
       <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z" />
       <path d="M14 3v5h5M9 13h6M9 17h6" />
+    </template>
+    <template v-else-if="name === 'book'">
+      <path d="M12 5c-3-2-6-2-9-1v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-3-1-6-1-9 1Zm0 0v15" />
+    </template>
+    <template v-else-if="name === 'trash'">
+      <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" />
     </template>
     <path v-else d="m9 5 7 7-7 7" />
   </svg>

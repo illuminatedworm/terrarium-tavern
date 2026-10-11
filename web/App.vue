@@ -1126,7 +1126,14 @@ async function manageCardAgent() {
     const remembered = localStorage.getItem('tavern-active-card-conversation');
     const chosen = cardConversations.value.find((c) => c.id === remembered) || cardConversations.value[0];
     if (chosen) openCardAgent(chosen.id);
-    else await newCardConversation();
+    else {
+      abandonStoryLoad();
+      editorConversationId.value = '';
+      sidebarSection.value = 'editor';
+      pageMode.value = 'editor';
+      panel.value = '';
+      if (window.innerWidth < 760) layout.value.leftCollapsed = true;
+    }
   });
 }
 async function cardConversationDeleted(id: string) {
@@ -1140,7 +1147,6 @@ async function cardConversationDeleted(id: string) {
   if (wasCurrent && !editorConversationId.value && pageMode.value === 'editor') {
     if (cardConversations.value.length) openCardAgent(cardConversations.value[0].id);
     else {
-      pageMode.value = '';
       sidebarSection.value = 'editor';
     }
   }
@@ -2141,6 +2147,11 @@ useTimedError(error);
         @saved="load"
         @deleted="cardConversationDeleted"
       />
+      <section v-else-if="pageMode === 'editor'" class="library" aria-label="制卡对话入口">
+        <h1>开始制卡</h1>
+        <p class="intro">从左侧选择已有对话，或新建一个制卡对话。</p>
+        <button class="primary" :disabled="busy" @click="newCardConversation">新建制卡对话</button>
+      </section>
       <CharacterEditor
         v-else-if="pageMode === 'card' && selected"
         :key="selected._editorKey || selected._workspaceId || selected.id"

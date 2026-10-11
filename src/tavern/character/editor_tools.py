@@ -83,7 +83,7 @@ class Opening(Card):
 
 
 class Skill(Arguments):
-    resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. runtime-guide.md covers MVU and script compatibility; mode-specific references only explain execution differences.")
+    resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md", "references/status-display.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. references/status-display.md covers migrating model-written HTML, Markdown or tagged status displays into independent variables. runtime-guide.md covers MVU and script compatibility.")
 
 
 class Handoff(Arguments):
@@ -321,7 +321,7 @@ class EditorTools(PersonaTools):
 
     async def read_skill(self, args):
         root = Path(__file__).parents[1] / "skills"
-        folder = "adapt-card-to-tavern" if args.resource in {"SKILL.md", "references/workflow.md"} else "card-authoring"
+        folder = "adapt-card-to-tavern" if args.resource in {"SKILL.md", "references/workflow.md", "references/status-display.md"} else "card-authoring"
         return {"resource": args.resource, "text": (root / folder / args.resource).read_text(encoding="utf-8")}
 
     async def write_handoff(self, args):

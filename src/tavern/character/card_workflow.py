@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 
+from tavern.character.card_status_diagnostics import status_display_warnings
 from tavern.character.cards import lore_entries, normalize, parse_card
 
 AUDIENCES = {"writer", "tracker_mvu", "runtime_init"}
@@ -68,13 +69,16 @@ def validation_report(document):
         validate_document(document)
     except (ValueError, TypeError, KeyError) as error:
         errors.append(str(error))
+    if errors:
+        return {"valid": False, "errors": errors, "warnings": [], "adapted": False}
     marker = re.compile(r"<(?:initvar|UpdateVariable|JSONPatch)\b|_\.(?:set|add|insert|delete|move)\s*\("
                         r"|StatusPlaceHolder|getMvuData|getAllVariables|stat_data", re.I)
-    # Opening MVU and its card-owned filtering/display rules are outside the
-    # default adaptation scope; only Writer worldbook leakage is diagnosed.
+    # Existing inline MVU initialization stays outside ordinary adaptation;
+    # model-written status displays have separate, advisory diagnostics.
     for entry in lore_entries(document):
         if audience(entry) == "writer" and marker.search(entry.get("content", "")):
             warnings.append(f"Writer 条目 {entry['id']} 可能包含变量规则，请确认或拆分")
+    warnings.extend(status_display_warnings(document))
     meta = workflow(document) or {}
     warnings.extend(str(item) for item in meta.get("unresolved", []))
     return {"valid": not errors, "errors": errors, "warnings": warnings,

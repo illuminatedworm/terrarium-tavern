@@ -2,19 +2,24 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { compare } from 'fast-json-patch';
 import { api } from '../../lib/api';
-import { cardName, mentionCard, type EditorCard, type EditorConversation } from '../../lib/cardEditor';
 import {
-  editorActions,
-  actionStatus,
-  mergeEditorEvents,
-  type EditorEvent,
-} from '../../lib/cardAgentActivity';
+  cardName,
+  editorTimeline,
+  mentionCard,
+  type EditorCard,
+  type EditorConversation,
+} from '../../lib/cardEditor';
+import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
+import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardEditorSkills';
 import { eventCursor } from '../../lib/turnStream';
 import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
 import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
+import CardRunActivity from './CardRunActivity.vue';
+import CardDraftPreview from './CardDraftPreview.vue';
+import CardSkills from './CardSkills.vue';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 
@@ -27,7 +32,7 @@ const error = ref(''),
   busy = ref(false),
   partial = ref('');
 const selected = ref(''),
-  tab = ref('document'),
+  tab = ref('preview'),
   inspectorOpen = ref(false),
   pendingView = ref(false);
 const modal = ref(''),
@@ -48,6 +53,7 @@ const onResize = () => {
 };
 const activities = ref<Record<string, EditorEvent[]>>({});
 let alive = true;
+let refreshVersion = 0;
 let stream: EventSource | undefined;
 let modalTrigger: HTMLElement | null = null;
 const base = `/card-editor/conversations/${props.conversationId}`;
@@ -61,6 +67,24 @@ const items = computed(() =>
 const current = computed(() => items.value.find((c) => c.ref === selected.value) || items.value[0]);
 const changes = computed(() =>
   current.value ? compare(current.value.base_document, current.value.document) : [],
+);
+const timeline = computed(() => editorTimeline(workspace.value?.messages || [], workspace.value?.runs || []));
+const conversationTitle = computed(
+  () =>
+    workspace.value?.title ||
+    workspace.value?.messages.find((message) => message.role === 'user')?.content.split('\n')[0] ||
+    '新的制卡对话',
+);
+const draftStatus = computed(() =>
+  pendingView.value
+    ? '本轮未完成版本'
+    : current.value?.kind === 'reference'
+      ? '引用快照 · 尚未修改'
+      : changes.value.length
+        ? '独立草稿 · 有未保存修改'
+        : current.value?.card
+          ? '与已保存版本一致'
+          : '独立草稿 · 尚未保存',
 );
 const filtered = computed(() =>
   props.library.filter((card) => card.name.toLocaleLowerCase().includes(search.value.toLocaleLowerCase())),
@@ -105,21 +129,12 @@ async function guard(action: () => Promise<void>) {
   }
 }
 async function refresh() {
+  const version = ++refreshVersion;
   const value = (await api(base)) as EditorConversation;
-  if (!alive) return;
+  if (!alive || version !== refreshVersion) return;
   workspace.value = value;
   if (!value.pending) pendingView.value = false;
   emit('changed');
-}
-async function loadActivity(id: string) {
-  let cursor = 0;
-  do {
-    const page = await api(`/card-edit-runs/${id}/activity?after=${cursor}`);
-    if (!alive) return;
-    activities.value[id] = mergeEditorEvents(activities.value[id] || [], page.events);
-    if (!page.has_more) break;
-    cursor = page.next_cursor;
-  } while (alive);
 }
 function scroll(force = false) {
   if (force) followingLatest.value = true;
@@ -129,12 +144,6 @@ function scroll(force = false) {
 function trackScroll() {
   const element = chat.value;
   if (element) followingLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-}
-function showRun(id: string, event: Event) {
-  if ((event.target as HTMLDetailsElement).open && !activities.value[id])
-    void loadActivity(id).catch((e: Error) => {
-      if (alive) error.value = e.message;
-    });
 }
 function observe(id: string) {
   stream?.close();
@@ -151,6 +160,19 @@ function observe(id: string) {
     if (event.kind === 'context_warning') notice.value = event.payload.message;
     if (['model_call', 'tool_started', 'tool_finished'].includes(event.kind))
       activities.value[id] = mergeEditorEvents(activities.value[id] || [], [event]);
+    // tool_finished follows persistence of the working draft. Refresh the
+    // opt-in unfinished preview; keep the completed draft selected by default.
+    if (
+      event.kind === 'tool_finished' &&
+      event.payload.status === 'completed' &&
+      ['patch_draft', 'set_opening', 'create_draft', 'revert_draft', 'configure_card'].includes(
+        event.payload.tool,
+      )
+    ) {
+      void refresh().catch((e: Error) => {
+        if (alive && connection === stream) error.value = `草稿预览更新失败：${e.message}`;
+      });
+    }
     scroll();
   };
   connection.addEventListener('end', () => {
@@ -159,7 +181,6 @@ function observe(id: string) {
     void guard(async () => {
       await refresh();
       partial.value = '';
-      await loadActivity(id);
       scroll();
     });
   });
@@ -237,6 +258,12 @@ function mention(item: EditorCard) {
   closeModal();
   input.value = mentionCard(input.value, item.ref);
   selected.value = item.ref;
+}
+function useSkill(preset: EditorSkillPreset) {
+  if (!current.value || busy.value || active.value) return;
+  input.value = appendSkillRequest(input.value, current.value.ref, preset);
+  closeModal();
+  void nextTick(() => composer.value?.focus({ preventScroll: true }));
 }
 async function action(kind: string) {
   if (!workspace.value || !current.value || locked.value) return;
@@ -339,27 +366,31 @@ onBeforeUnmount(() => {
 
 <template>
   <section ref="shell" class="card-workspace" aria-label="角色卡 Agent" :inert="!!modal">
-    <header class="cw-header">
-      <div class="cw-heading">
-        <small>CARD EDITOR</small>
-        <h1>{{ workspace?.title || '角色卡 Agent' }}</h1>
-      </div>
-      <div class="cw-toolbar">
-        <button class="cw-quiet" :disabled="locked" @click="openModal('rename')">改名</button>
-        <button class="cw-quiet cw-delete" :disabled="locked" @click="openModal('delete')">删除对话</button>
-        <button
-          class="cw-inspector-toggle"
-          :aria-expanded="inspectorOpen"
-          @click="inspectorOpen = !inspectorOpen"
-        >
-          卡片与修改
-        </button>
-      </div>
-    </header>
-    <p v-if="error" class="cw-notice danger" role="alert">{{ error }}</p>
-    <p v-if="notice" class="cw-notice" role="status">{{ notice }}</p>
     <div class="cw-body">
       <div class="cw-dialogue" :inert="inspectorOpen && narrow">
+        <header class="cw-header">
+          <div class="cw-heading">
+            <h1>角色卡编辑</h1>
+            <p :title="conversationTitle">{{ conversationTitle }}</p>
+          </div>
+          <div class="cw-toolbar">
+            <button class="cw-quiet" :disabled="locked" @click="openModal('rename')">
+              <CardWorkspaceIcon name="pen" />改名
+            </button>
+            <button class="cw-quiet cw-delete" :disabled="locked" @click="openModal('delete')">
+              <CardWorkspaceIcon name="trash" />删除对话
+            </button>
+            <button
+              class="cw-inspector-toggle"
+              :aria-expanded="inspectorOpen"
+              @click="inspectorOpen = !inspectorOpen"
+            >
+              卡片与修改
+            </button>
+          </div>
+        </header>
+        <p v-if="error" class="cw-notice danger" role="alert">{{ error }}</p>
+        <p v-if="notice" class="cw-notice" role="status">{{ notice }}</p>
         <div class="cw-chat-wrap">
           <div ref="chat" class="cw-chat" aria-label="制卡对话" @scroll="trackScroll">
             <div class="cw-chat-content">
@@ -368,59 +399,51 @@ onBeforeUnmount(() => {
                 <h2>从一个想法开始</h2>
                 <p>讨论人物、世界或互动情境，也可以引用书架中的角色卡来分析和修改。</p>
                 <p>制作新卡时，先讨论方案，确认后生成可审阅的草稿。</p>
+                <p>适配导入卡或迁移状态栏，可使用输入区的“内置技能”。</p>
               </div>
-              <article
-                v-for="message in workspace?.messages"
-                :key="message.ref"
-                class="cw-message"
-                :class="message.role"
-              >
-                <div class="cw-message-meta">
-                  <span v-if="message.role !== 'user'" class="cw-agent-mark"
-                    ><CardWorkspaceIcon name="pen"
-                  /></span>
-                  <span>{{ message.role === 'user' ? '你' : 'Card Editor' }}</span>
-                  <small>{{ message.ref }}</small>
-                </div>
-                <div class="cw-message-content"><StoryProse :text="message.content" /></div>
-              </article>
-              <article v-if="active" class="cw-message" aria-live="polite">
-                <div class="cw-message-meta">
-                  <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span><span>Card Editor</span
-                  ><small class="cw-working">处理中</small>
-                </div>
-                <div class="cw-message-content">
-                  <StoryProse v-if="partial" :text="partial" />
-                  <p v-else class="muted">正在读取资料或处理工具…</p>
-                </div>
-              </article>
-              <details
-                v-for="run in workspace?.runs"
-                :key="run.id"
-                class="cw-run"
-                :open="run.id === active?.id"
-                @toggle="showRun(run.id, $event)"
-              >
-                <summary>
-                  <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">{{
-                    run.request.text || '继续本轮'
-                  }}</span
-                  ><span class="cw-run-status" :class="`is-${run.status}`">{{
-                    actionStatus(run.status)
-                  }}</span>
-                </summary>
-                <p v-if="run.error" class="danger">{{ run.error }}</p>
-                <details
-                  v-for="step in editorActions(activities[run.id] || [], run.status)"
-                  :key="step.id"
-                  class="cw-step"
+              <template v-for="entry in timeline" :key="entry.key">
+                <CardRunActivity
+                  v-if="entry.kind === 'activity'"
+                  :run="entry.run"
+                  :events="activities[entry.run.id]"
+                  @content-change="entry.run.id === active?.id && scroll()"
+                />
+                <article
+                  v-else
+                  class="cw-message"
+                  :class="entry.message.role"
+                  :data-message-ref="entry.message.ref"
+                  :data-message-run="entry.message.run"
                 >
-                  <summary>{{ step.title }} · {{ step.target }} · {{ actionStatus(step.status) }}</summary>
-                  <pre v-if="step.arguments">{{ step.arguments }}</pre>
-                  <pre v-if="step.result">{{ step.result }}</pre>
-                  <small v-if="step.truncated">这里只展示日志摘要；模型读取的原文保持完整。</small>
-                </details>
-              </details>
+                  <span
+                    class="cw-avatar"
+                    aria-hidden="true"
+                    :class="{ 'cw-avatar-user': entry.message.role === 'user' }"
+                    ><template v-if="entry.message.role === 'user'">你</template
+                    ><CardWorkspaceIcon v-else name="pen"
+                  /></span>
+                  <div class="cw-message-body">
+                    <div class="cw-message-meta">
+                      <strong>{{ entry.message.role === 'user' ? '你' : '角色卡编辑' }}</strong>
+                    </div>
+                    <div class="cw-message-content">
+                      <StoryProse :text="entry.message.content" :breaks="entry.message.role === 'user'" />
+                    </div>
+                  </div>
+                </article>
+              </template>
+              <article v-if="active" class="cw-message cw-live-message" aria-live="polite">
+                <span class="cw-avatar" aria-hidden="true"><CardWorkspaceIcon name="pen" /></span>
+                <div class="cw-message-body">
+                  <div class="cw-message-meta">
+                    <strong>角色卡编辑</strong><small class="cw-working">处理中</small>
+                  </div>
+                  <div class="cw-message-content">
+                    <StoryProse v-if="partial" :text="partial" />
+                    <p v-else class="muted">正在读取资料或处理工具…</p>
+                  </div>
+                </div>
+              </article>
             </div>
           </div>
           <button v-if="!followingLatest" class="cw-latest" aria-label="跳到最新" @click="scroll(true)">
@@ -459,6 +482,7 @@ onBeforeUnmount(() => {
                 :key="item.ref"
                 class="cw-reference-chip"
                 type="button"
+                :disabled="busy || !!active"
                 :title="`引用 ${cardName(item)}`"
                 @click="mention(item)"
               >
@@ -480,6 +504,9 @@ onBeforeUnmount(() => {
             />
             <div class="cw-composer-actions">
               <div class="cw-composer-tools">
+                <button class="cw-quiet cw-skills-button" type="button" @click="openModal('skills')">
+                  <CardWorkspaceIcon name="book" />内置技能
+                </button>
                 <button class="cw-quiet" type="button" @click="openModal('adapter')">
                   <CardWorkspaceIcon name="message" />消息适配
                 </button>
@@ -507,9 +534,10 @@ onBeforeUnmount(() => {
       <aside class="cw-inspector" :class="{ open: inspectorOpen }" aria-label="卡片与修改">
         <button class="cw-close-inspector" @click="inspectorOpen = false">返回对话</button>
         <div class="cw-inspector-top">
-          <h2>卡片与修改</h2>
+          <h2>当前草稿</h2>
           <label
-            >当前卡片<select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
+            ><span class="sr-only">当前卡片</span
+            ><select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
               <option v-if="!items.length" value="">暂无卡片</option>
               <option v-for="item in items" :key="item.ref" :value="item.ref">
                 {{ item.ref }} · {{ cardName(item) }}
@@ -525,7 +553,8 @@ onBeforeUnmount(() => {
           <nav class="cw-tabs" aria-label="卡片信息">
             <button
               v-for="t in [
-                { id: 'document', name: '资料' },
+                { id: 'preview', name: '预览' },
+                { id: 'document', name: '数据' },
                 { id: 'changes', name: '修改' },
                 { id: 'validation', name: '诊断' },
               ]"
@@ -537,7 +566,15 @@ onBeforeUnmount(() => {
             </button>
           </nav>
           <div class="cw-inspector-scroll">
-            <template v-if="tab === 'document'">
+            <CardDraftPreview
+              v-if="tab === 'preview'"
+              :key="current.ref"
+              :card="current"
+              :status="draftStatus"
+              :disabled="locked || pendingView"
+              @edit="openModal('form')"
+            />
+            <template v-else-if="tab === 'document'">
               <p class="muted cw-card-kind">
                 {{ current.kind === 'reference' ? '参考卡 · 修改时自动建立草稿' : '独立草稿' }}
               </p>
@@ -566,23 +603,6 @@ onBeforeUnmount(() => {
                 书架原卡已有新版本。覆盖会进行版本检查，当前草稿保持不变。
               </p>
               <div class="cw-save-actions">
-                <button
-                  v-if="!current.card"
-                  class="primary"
-                  :disabled="locked || pendingView"
-                  @click="action('create')"
-                >
-                  保存新卡
-                </button>
-                <button
-                  v-else
-                  class="primary"
-                  :disabled="locked || pendingView || !current.source_exists"
-                  @click="action('overwrite')"
-                >
-                  覆盖原卡
-                </button>
-                <button :disabled="locked || pendingView" @click="action('copy')">另存副本</button>
                 <button :disabled="locked || !current.can_undo || pendingView" @click="action('undo')">
                   撤销上次修改
                 </button>
@@ -624,6 +644,26 @@ onBeforeUnmount(() => {
               <JsonDataTree v-if="probe?.card_ref === current.ref" :value="probe" />
             </template>
           </div>
+          <footer class="cw-inspector-footer">
+            <span>{{
+              pendingView
+                ? '未完成修改仅供查看'
+                : current.card && !current.source_exists
+                  ? '原卡已删除，请另存副本'
+                  : draftStatus
+            }}</span>
+            <div class="cw-save-buttons">
+              <button :disabled="locked || pendingView" @click="action('copy')">另存副本</button>
+              <button
+                class="primary"
+                :disabled="locked || pendingView || (!!current.card && !current.source_exists)"
+                :title="current.card ? '将当前草稿保存到所引用的书架角色卡' : '将草稿加入书架'"
+                @click="action(current.card ? 'overwrite' : 'create')"
+              >
+                {{ current.card ? '保存角色卡' : '保存新卡' }}
+              </button>
+            </div>
+          </footer>
         </template>
         <p v-else class="cw-empty">还没有引用或草稿。可以直接开始讨论。</p>
       </aside>
@@ -632,11 +672,20 @@ onBeforeUnmount(() => {
   <Teleport to="body"
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
-        :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'references' ? '引用角色卡' : '制卡对话操作'"
+        :class="{ 'cw-skills-modal': modal === 'skills' }"
+        :label="
+          modal === 'form'
+            ? '编辑角色卡草稿'
+            : modal === 'references'
+              ? '引用角色卡'
+              : modal === 'skills'
+                ? '内置技能'
+                : '制卡对话操作'
+        "
         :size="
           ['form', 'preview', 'adapter'].includes(modal)
             ? 'large'
-            : modal === 'references'
+            : ['references', 'skills'].includes(modal)
               ? 'medium'
               : 'small'
         "
@@ -652,6 +701,15 @@ onBeforeUnmount(() => {
           </div>
           <p v-if="!filtered.length" class="muted">没有匹配的书架角色卡。也可以直接描述想制作的新卡。</p>
         </template>
+        <CardSkills
+          v-else-if="modal === 'skills'"
+          :cards="items"
+          :selected="current?.ref || ''"
+          :disabled="busy || !!active"
+          @select="selected = $event"
+          @use="useSkill"
+          @reference="openModal('references')"
+        />
         <CharacterEditor
           v-else-if="modal === 'form' && formCard"
           :key="formCard.id"

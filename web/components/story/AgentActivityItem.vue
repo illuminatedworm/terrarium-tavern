@@ -3,7 +3,13 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import { toolLabels, type AgentActivity } from '../../lib/agentActivity';
 
-const props = defineProps<{ item: AgentActivity; endpoint: string }>();
+const props = defineProps<{
+  item: AgentActivity;
+  endpoint: string;
+  title?: string;
+  note?: string;
+  statusLabel?: string;
+}>();
 type Part = 'arguments' | 'result' | 'content';
 type Page = { text: string; next: number | null; total: number };
 const opened = ref(false);
@@ -12,13 +18,16 @@ const errors = ref<Partial<Record<Part, string>>>({});
 const loading = ref(new Set<Part>());
 let generation = 0;
 const parts = computed<Part[]>(() => (props.item.kind === 'tool' ? ['arguments', 'result'] : ['content']));
-const title = computed(() =>
-  props.item.kind === 'assistant' ? 'Agent 回复' : toolLabels[props.item.name || ''] || props.item.name,
+const title = computed(
+  () =>
+    props.title ||
+    (props.item.kind === 'assistant' ? 'Agent 回复' : toolLabels[props.item.name || ''] || props.item.name),
 );
 const labels = { arguments: '调用参数', result: '工具返回', content: '回复内容' };
 const status = computed(
   () =>
-    ({ running: '执行中', returned: '已返回', error: '返回错误', interrupted: '已中断' })[props.item.status],
+    props.statusLabel ||
+    { running: '执行中', returned: '已返回', error: '返回错误', interrupted: '已中断' }[props.item.status],
 );
 
 async function load(part: Part, more = false) {
@@ -91,6 +100,7 @@ onBeforeUnmount(() => {
       >
     </summary>
     <div v-if="opened" class="activity-details">
+      <p v-if="note" class="activity-note">{{ note }}</p>
       <section v-for="part in parts" :key="part" class="activity-part" :aria-label="labels[part]">
         <h3>{{ labels[part] }}</h3>
         <p v-if="part === 'result' && item.status === 'running'" class="muted">等待工具返回…</p>
@@ -113,6 +123,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-activity {
   container-type: inline-size;
+  padding: 0;
   margin: 8px 0 12px 52px;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
@@ -188,6 +199,11 @@ onBeforeUnmount(() => {
   margin: 12px 0 7px;
   font: 600 12px var(--font-ui);
   color: var(--text-secondary);
+}
+.activity-note {
+  color: var(--text-muted);
+  font: 11px/1.7 var(--font-ui);
+  margin: 12px 0 0;
 }
 .activity-part pre {
   margin: 0;

@@ -24,7 +24,7 @@
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、可选 `narrative/initialization/to_index`；程序维护关联、身份和指纹 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`；检查本地初始化、正则和脚本启动，返回实际结果、日志和未测范围 |
-| `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md；适配共用 SKILL.md 和 references/workflow.md |
+| `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
 | `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
 | `search_history` | `query`、`limit=5`（1–20）；`*` 列出最近记录，返回 H 引用与定位摘要 |
@@ -43,6 +43,8 @@
 开场编号 0 对应 first_mes，其余对应 alternate_greetings。初始化参数省略时保留现有关联；仅更新初始化时可以省略 narrative，由程序保留原文。新增开场需要完整 narrative；删除最后一个开场应改为空文本。普通编辑不自动提取内联初始化。
 
 本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。passed、failed、blocked 及 untested 各有含义，不能用 passed 代表全部动态和叙事效果已验证。
+
+静态诊断对角色字段、启用世界书、开场及示例中的疑似逐轮状态栏输出、根路径变量宏、静态状态示范和缺少声明式初值/变量规则给出带位置的提示。提示不阻止草稿编辑或保存，不自动删除 HTML，也不替代语义判断；未发现警告及内部 adapted 标志均只表示通过已实现的静态检查，不证明完整适配。停用条目不触发状态栏提示，传统禁用的 [InitVar] 条目仍按运行契约识别。
 
 用户角色名称最多 100 字符且不能纯空白，介绍完整读写，不分页或截断。用户角色写入与任务完成在同一事务中提交，并检查读取时的保存版本；任何冲突均不部分保存。失败续接不会重复创建角色，已有故事身份快照保持独立。不提供删除用户角色的工具。
 
