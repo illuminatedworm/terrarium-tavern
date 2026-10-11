@@ -29,7 +29,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 
 [StoryHistory.vue](../../web/components/story/StoryHistory.vue) 与 [storyHistory.ts](../../web/lib/storyHistory.ts) 管理动态高度虚拟列表；[ConversationRail.vue](../../web/components/story/ConversationRail.vue) 管理历史刻度导航。脚本交互实例保留到退出会话视图，避免因虚拟列表滚动而重复运行或丢失草稿。界面渲染范围不影响模型窗口。
 
-引号字体源产物为 [quote-marks.ttf](../../web/assets/quote-marks.ttf)，只覆盖 U+201C/U+201D。使用 [build-quote-font.py](../../tools/build-quote-font.py) 与 fonttools 4.61.1 重新生成；fonttools 不属于应用运行依赖。用户可见行为见[历史阅读](../guides/story-history.md#世界书与文字显示)。
+引号字体源产物为 [quote-marks.ttf](../../web/assets/quote-marks.ttf)，只覆盖中文单引号 U+2018/U+2019 和双引号 U+201C/U+201D，以一枚或两枚弯曲引号区分，不覆盖角括号。使用 [build-quote-font.py](../../tools/build-quote-font.py) 与 fonttools 4.61.1 重新生成；fonttools 不属于应用运行依赖。用户可见行为见[历史阅读](../guides/story-history.md#世界书与文字显示)。
 
 `compat/` 是兼容桥，`vendor/` 保存固定第三方源码。前端构建经 [build-mvu.mjs](../../tools/build-mvu.mjs) 和 [package-web.mjs](../../tools/package-web.mjs) 生成后端静态资源；修改源文件后重新构建，避免直接维护生成文件。
 

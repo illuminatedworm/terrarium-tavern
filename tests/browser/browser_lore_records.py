@@ -67,8 +67,9 @@ async def main(*, pending_only=False):
     with tempfile.TemporaryDirectory() as root:
         app = create_app(root)
         store = app.state.store
+        opening = '开场白：“她说：‘怎么说呢……’”\n\n「这是角括号」和『双角括号』保持原样。'
         card = store.import_card(json.dumps({
-            "name": "注入位置检查", "first_mes": "开场白：“左引号与右引号。”\n\n“怎么说呢……”", "description": "角色设定",
+            "name": "注入位置检查", "first_mes": opening, "description": "角色设定",
             "mes_example": "示例台词", "character_book": {"entries": [
                 {"id": "constant", "constant": True, "content": "常驻内容", "position": 0},
                 {"id": "first", "keys": ["灯塔"], "content": "灯塔资料"},
@@ -156,6 +157,9 @@ async def main(*, pending_only=False):
                         first_record = records.first
                         await first_record.locator(':scope > summary').click()
                         remove = first_record.get_by_role('button', name='移除注入：灯塔资料')
+                        # Drain automatic scroll events before opening a popup that dismisses on scroll.
+                        await remove.scroll_into_view_if_needed()
+                        await page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                         await remove.click()
                         confirm = page.get_by_role('dialog', name='确认移除世界书注入')
                         await expect(confirm).to_be_visible()
@@ -169,12 +173,30 @@ async def main(*, pending_only=False):
                         await first_record.locator(':scope > summary').click()
                     await page.set_viewport_size({"width": 1440, "height": 900})
                     composer = page.locator('.composer textarea')
-                    await composer.fill('“怎么说呢……”')
+                    quote_text = '“双引号” ‘单引号’ 「角括号」 『双角括号』'
+                    await composer.fill(quote_text)
                     await page.evaluate('document.fonts.ready')
-                    assert await composer.input_value() == '“怎么说呢……”'
+                    assert await page.evaluate(
+                        '''async () => {
+                            const fonts = await document.fonts.load('20px "Tavern Quote Marks"', '“”‘’');
+                            return fonts.length === 1 && fonts[0].status === 'loaded';
+                        }''')
+                    assert await composer.input_value() == quote_text
                     assert 'Tavern Quote Marks' in await composer.evaluate('e=>getComputedStyle(e).fontFamily')
-                    assert await page.locator('.prose').first.text_content() == '开场白：“左引号与右引号。”\n“怎么说呢……”\n'
+                    assert await page.locator('.prose').first.text_content() == opening.replace('\n\n', '\n') + '\n'
                     await page.screenshot(path=str(screenshots / 'quote-marks.png'))
+                    # The last assistant reply is editable; the opening is outside the edit window.
+                    reply_row = page.locator('.message.assistant').last
+                    await reply_row.get_by_role('button', name='编辑', exact=True).click()
+                    editor = reply_row.get_by_role('textbox', name='编辑消息原文', exact=True)
+                    await expect(editor).to_have_value('第二轮回复')
+                    assert 'Tavern Quote Marks' in await editor.evaluate('e=>getComputedStyle(e).fontFamily')
+                    await editor.fill(quote_text)
+                    await expect(editor).to_have_value(quote_text)
+                    await page.screenshot(path=str(screenshots / 'quote-marks-editor.png'))
+                    await reply_row.get_by_role('button', name='取消', exact=True).click()
+                    assert store.session(session['id'])['messages'][0]['raw'] == opening
+                    assert store.session(session['id'])['messages'][-1]['raw'] == '第二轮回复'
                     await records.first.locator(':scope > summary').click()
                     await records.first.get_by_role('button', name='移除注入：灯塔资料').click()
                     await page.get_by_role('dialog', name='确认移除世界书注入').get_by_role('button', name='确认移除', exact=True).click()

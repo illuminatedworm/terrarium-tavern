@@ -4276,12 +4276,12 @@ main,
   overflow-wrap: anywhere;
   pointer-events: none;
 }
-/* Only the two curly double quotes use original, directionally distinct corner
-   outlines. Native textareas keep their caret, IME, undo and clipboard behavior. */
+/* Curly single and double quotes use rounded, directionally distinct outlines.
+   Corner brackets retain their own glyphs; textarea text remains unchanged. */
 @font-face {
   font-family: 'Tavern Quote Marks';
   src: url('../assets/quote-marks.ttf') format('truetype');
-  unicode-range: U+201C-201D;
+  unicode-range: U+2018-2019, U+201C-201D;
   font-display: swap;
 }
 .prose,
