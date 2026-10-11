@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 
+from tavern.character.card_initialization_diagnostics import initialization_warnings
+from tavern.character.card_regex_diagnostics import regex_warnings
 from tavern.character.card_status_diagnostics import status_display_warnings
 from tavern.character.cards import lore_entries, normalize, parse_card
 
@@ -76,9 +78,12 @@ def validation_report(document):
     # Existing inline MVU initialization stays outside ordinary adaptation;
     # model-written status displays have separate, advisory diagnostics.
     for entry in lore_entries(document):
-        if audience(entry) == "writer" and marker.search(entry.get("content", "")):
+        if (audience(entry) == "writer" and "[initvar]" not in str(entry.get("comment", "")).lower()
+                and marker.search(entry.get("content", ""))):
             warnings.append(f"Writer 条目 {entry['id']} 可能包含变量规则，请确认或拆分")
     warnings.extend(status_display_warnings(document))
+    warnings.extend(regex_warnings(document))
+    warnings.extend(initialization_warnings(document))
     meta = workflow(document) or {}
     warnings.extend(str(item) for item in meta.get("unresolved", []))
     return {"valid": not errors, "errors": errors, "warnings": warnings,

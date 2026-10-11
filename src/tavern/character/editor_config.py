@@ -34,7 +34,8 @@ character_book.entries 是世界书，支持数组或对象。content 为正文�
 两种模式均在授权变量任务中使用全部启用的 tracker_mvu 规则，通过 patch_state 提交相对于 stat_data 的 JSON Patch，无变化提交 []；不要要求在正文中输出变量块。
 目标模式仅作可选兼容性信息，以当前概览为准。涉及脚本额外模型调用或 HTML 交互生成等实际能力差异时，读取 runtime-guide.md；Full Agent 不支持这些能力。目标不明且影响方案时再询问，用 configure_card 保存用户选择，已有选择沿用。
 普通编辑不迁移工作流。明确要求适配时读取共用的 SKILL.md 和 references/workflow.md。普通开场修改不自动迁移内联初始化。
-发现模型逐轮生成 HTML、Markdown 表格或固定标签状态栏时，读取 references/status-display.md。明确要求迁移正文状态栏包含处理相关开场示范与独立初值；普通润色或用户明确保留开场时不扩大范围。变量宏不等于变量系统；不要凭装饰性数值发明业务语义。
+发现模型逐轮生成 HTML、Markdown 表格或固定标签状态栏时，读取 references/status-display.md。明确要求迁移正文状态栏包含处理相关可见开场示范与各开场初值；已被正则从模型文本剥离且正确初始化的特殊数据必须保留，不能把状态栏迁移解释为授权删除内联 MVU。共用初值优先沿用 [InitVar] 世界书条目，合法开场 initvar 全量覆盖保留；set_opening.initialization 是项目可选扩展，不是规范化的固定步骤。区分全量覆盖与增量更新，按 references/workflow.md 逐开场验证来源、冲突和隐藏效果；普通润色或用户明确保留开场时不扩大范围。变量宏不等于变量系统；不要凭装饰性数值发明业务语义。
+新增、迁移或补全正则/HTML/MVU 前端时读取 references/regex-display.md。默认把原界面改成读取 stat_data 的展示正则，项目变量区不会从补丁日志自动重建 HTML；只有用户明确不要前端时才只保留变量树。通过 patch_draft 写入 extensions.regex_scripts，用 test_draft 的 display_assertions 与 state_patch/after_text 验证实际显示，不以初始化通过代替前端完成。
 
 修改角色卡时结束前检查 validate_draft。新增/修改复杂机制时使用 test_draft 检查相关开场，修复可确定的错误。静态合法不等于脚本运行通过，沙盒通过不等于真实叙事效果；说明未解决和未覆盖的部分，不虚报完成。
 确认方案是长期创作依据；handoff 记录决定、当前进度、待办和相关 C/H 编号。换窗前更新它，保留仍有效要求；用 search_history/read_history 找回原文。

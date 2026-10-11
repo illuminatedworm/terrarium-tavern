@@ -128,13 +128,16 @@ def cleanup(store, *, vacuum=False):
             db.execute(f"DELETE FROM {row['table']} WHERE key=?", (row["key"],))
         # Editing conversations and undo versions are user data. Only detailed
         # diagnostics of saved, idle workspaces are subject to log retention.
+        from tavern.character.editor_activity import PUBLIC_KINDS, compact_text_events
+        compact_text_events(db)
+        placeholders = ",".join("?" for _ in PUBLIC_KINDS)
         settings = store.settings()
-        editor_events = db.execute("""SELECT e.seq,length(CAST(e.payload AS BLOB)) AS bytes,r.created,
+        editor_events = db.execute(f"""SELECT e.seq,length(CAST(e.payload AS BLOB)) AS bytes,r.created,
             NOT EXISTS(SELECT 1 FROM json_each(w.payload,'$.cards') a
                 WHERE json_extract(a.value,'$.card') IS NULL OR json_extract(a.value,'$.document') != json_extract(a.value,'$.base_document'))
                 AND NOT EXISTS(SELECT 1 FROM card_editor_progress p WHERE p.workspace=w.id) AS saved FROM card_edit_events e
             JOIN card_edit_runs r ON r.id=e.run JOIN card_editor_conversations w ON w.id=r.workspace
-            WHERE e.kind NOT IN ('completed','error','cancelled') ORDER BY e.seq""").fetchall()
+            WHERE e.kind NOT IN ({placeholders}) ORDER BY e.seq""", PUBLIC_KINDS).fetchall()
         total = sum(e["bytes"] for e in editor_events)
         for event in editor_events:
             if event["saved"] and (event["created"] < time.time() - settings.log_retention_days * 86400

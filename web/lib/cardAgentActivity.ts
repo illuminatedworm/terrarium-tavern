@@ -110,3 +110,54 @@ export function actionStatus(status: string) {
     )[status] || status
   );
 }
+
+export type EditorActivityBlock =
+  | { kind: 'tools'; id: string; actions: EditorAction[] }
+  | { kind: 'assistant'; id: string; text: string; status: 'intermediate' | 'streaming' | 'interrupted' };
+
+/** Text is public provider output, never reasoning/debug payloads. Request/tool
+ * boundaries work for ordinary APIs as well as Responses commentary messages.
+ * Only the successful final request moves to the committed reply below the run.
+ */
+export function editorActivityBlocks(events: EditorEvent[], runStatus: string): EditorActivityBlock[] {
+  const ordered = mergeEditorEvents([], events);
+  type TextStep = { id: string; seq: number; text: string; hasTools: boolean };
+  const texts: TextStep[] = [];
+  let current: TextStep | undefined;
+  for (const event of ordered) {
+    if (event.kind === 'model_call') current = undefined;
+    else if (event.kind === 'text' && typeof event.payload.text === 'string') {
+      if (!current) {
+        current = { id: `text-${event.seq}`, seq: event.seq, text: '', hasTools: false };
+        texts.push(current);
+      }
+      current.text += event.payload.text;
+    } else if (event.kind === 'tool_started' && current) current.hasTools = true;
+  }
+  const live = ['queued', 'running'].includes(runStatus);
+  const entries = [
+    ...editorActions(ordered, runStatus).map((action) => ({ seq: action.seq, action })),
+    ...texts
+      .filter(
+        (text) => text.text.trim() && !(runStatus === 'completed' && text === current && !text.hasTools),
+      )
+      .map((text) => ({ seq: text.seq, text })),
+  ].sort((a, b) => a.seq - b.seq);
+  const blocks: EditorActivityBlock[] = [];
+  for (const entry of entries) {
+    if ('action' in entry) {
+      const previous = blocks.at(-1);
+      if (previous?.kind === 'tools') previous.actions.push(entry.action);
+      else blocks.push({ kind: 'tools', id: entry.action.id, actions: [entry.action] });
+    } else {
+      const unfinished = entry.text === current && !entry.text.hasTools;
+      blocks.push({
+        kind: 'assistant',
+        id: entry.text.id,
+        text: entry.text.text,
+        status: unfinished ? (live ? 'streaming' : 'interrupted') : 'intermediate',
+      });
+    }
+  }
+  return blocks;
+}

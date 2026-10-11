@@ -379,7 +379,8 @@ async def test_failed_tool_action_is_recorded_without_a_draft_change(tmp_path):
         assert starts[0]['payload']['action_id'] == ends[0]['payload']['action_id']
         assert ends[0]['payload']['status'] == 'error'
         assert 'missing' in ends[0]['payload']['detail']
-        assert not any(event['kind'] in ('provider_request', 'text') for event in page['events'])
+        assert not any(event['kind'] in ('provider_request', 'provider_response') for event in page['events'])
+        assert any(event['kind'] == 'text' for event in page['events'])
         assert editor.edits.get(ws['id'])['document'] == card['document']
     finally:
         await editor.close()

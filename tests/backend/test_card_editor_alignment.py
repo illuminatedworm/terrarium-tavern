@@ -148,6 +148,11 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             else:
                 settings.shared.providers[0].api_key = "different-editor-secret"
             editor.store.save_settings(settings)
+            if change == "model":
+                # Composer model selections belong to the conversation, not the global default.
+                with editor.store.connection() as db:
+                    db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+                               (json.dumps({"provider_id": "default", "model": "new-model"}), editor.workspace["id"]))
         elif change == "draft":
             doc = copy.deepcopy(editor.workspace["document"])
             doc["description"] = "手工改写设定"

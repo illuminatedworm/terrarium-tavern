@@ -22,6 +22,7 @@ import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardRunActivity from './CardRunActivity.vue';
+import CardMessage from './CardMessage.vue';
 import CardDraftPreview from './CardDraftPreview.vue';
 import CardSkills from './CardSkills.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
@@ -84,8 +85,7 @@ const contextTitle = computed(
 );
 const error = ref(''),
   notice = ref(''),
-  busy = ref(false),
-  partial = ref('');
+  busy = ref(false);
 const selected = ref(''),
   tab = ref('preview'),
   inspectorOpen = ref(false),
@@ -237,15 +237,12 @@ function trackScroll() {
 function observe(id: string) {
   stream?.close();
   const accept = eventCursor();
-  partial.value = '';
   const connection = new EventSource(`/api/card-edit-runs/${id}/events`);
   stream = connection;
   connection.onmessage = (message) => {
     if (!alive || connection !== stream) return;
     const event = JSON.parse(message.data) as EditorEvent;
     if (!accept(event)) return;
-    if (event.kind === 'text') partial.value += event.payload.text;
-    if (event.kind === 'model_call') partial.value = '';
     if (event.kind === 'context_stats') {
       ++statsVersion;
       clearTimeout(statsTimer);
@@ -253,7 +250,7 @@ function observe(id: string) {
       statsError.value = '';
     }
     if (event.kind === 'context_warning') notice.value = event.payload.message;
-    if (['model_call', 'tool_started', 'tool_finished'].includes(event.kind))
+    if (['model_call', 'text', 'tool_started', 'tool_finished'].includes(event.kind))
       activities.value[id] = mergeEditorEvents(activities.value[id] || [], [event]);
     // tool_finished follows persistence of the working draft. Refresh the
     // opt-in unfinished preview; keep the completed draft selected by default.
@@ -275,7 +272,6 @@ function observe(id: string) {
     if (!alive || connection !== stream) return;
     void guard(async () => {
       await refresh();
-      partial.value = '';
       scroll();
     });
   });
@@ -564,42 +560,14 @@ onBeforeUnmount(() => {
                   :events="activities[entry.run.id]"
                   @content-change="entry.run.id === active?.id && scroll()"
                 />
-                <article
+                <CardMessage
                   v-else
-                  class="cw-message"
-                  :class="entry.message.role"
+                  :role="entry.message.role"
+                  :text="entry.message.content"
                   :data-message-ref="entry.message.ref"
                   :data-message-run="entry.message.run"
-                >
-                  <span
-                    class="cw-avatar"
-                    aria-hidden="true"
-                    :class="{ 'cw-avatar-user': entry.message.role === 'user' }"
-                    ><template v-if="entry.message.role === 'user'">你</template
-                    ><CardWorkspaceIcon v-else name="pen"
-                  /></span>
-                  <div class="cw-message-body">
-                    <div class="cw-message-meta">
-                      <strong>{{ entry.message.role === 'user' ? '你' : '角色卡编辑' }}</strong>
-                    </div>
-                    <div class="cw-message-content">
-                      <StoryProse :text="entry.message.content" :breaks="entry.message.role === 'user'" />
-                    </div>
-                  </div>
-                </article>
+                />
               </template>
-              <article v-if="active" class="cw-message cw-live-message" aria-live="polite">
-                <span class="cw-avatar" aria-hidden="true"><CardWorkspaceIcon name="pen" /></span>
-                <div class="cw-message-body">
-                  <div class="cw-message-meta">
-                    <strong>角色卡编辑</strong><small class="cw-working">处理中</small>
-                  </div>
-                  <div class="cw-message-content">
-                    <StoryProse v-if="partial" :text="partial" />
-                    <p v-else class="muted">正在读取资料或处理工具…</p>
-                  </div>
-                </div>
-              </article>
             </div>
           </div>
           <button v-if="!followingLatest" class="cw-latest" aria-label="跳到最新" @click="scroll(true)">

@@ -127,8 +127,7 @@
   max-width: 530px;
   margin: 0 auto;
 }
-.cw-agent-mark,
-.cw-avatar {
+.cw-agent-mark {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
@@ -138,11 +137,6 @@
   border-radius: 11px;
   background: var(--accent-soft);
   color: var(--accent-hover);
-}
-.cw-avatar-user {
-  background: var(--surface-active);
-  color: var(--text-secondary);
-  font: 500 15px var(--font-ui);
 }
 .cw-empty .cw-agent-mark {
   width: 44px;
@@ -158,63 +152,6 @@
 .cw-empty p {
   font-size: 14px;
   margin: 8px 0;
-}
-.cw-message {
-  display: flex;
-  gap: 17px;
-  margin: 0 0 28px;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.cw-message-body {
-  min-width: 0;
-  flex: 1;
-}
-.cw-message-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0 12px;
-  color: var(--text-secondary);
-}
-.cw-message-meta strong {
-  font: 500 13px/1.5 var(--font-ui);
-  color: var(--text-primary);
-}
-.cw-message-meta small {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-.cw-message-content :deep(.prose) {
-  font-family: var(--story-font-family, var(--font-ui));
-  font-size: var(--story-font-size, 16px);
-  line-height: var(--story-line-height, 1.9);
-}
-.cw-message-content :deep(.prose > :first-child) {
-  margin-top: 0;
-}
-.cw-message-content :deep(.prose > :last-child) {
-  margin-bottom: 0;
-}
-.cw-message-content :deep(pre) {
-  max-width: 100%;
-  overflow-x: auto;
-}
-.cw-message.user :deep(.prose) {
-  color: var(--text-primary);
-}
-.cw-message-meta .cw-working {
-  color: var(--accent);
-}
-.cw-working::before {
-  content: '';
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 7px;
-  border-radius: 50%;
-  background: currentColor;
-  vertical-align: middle;
 }
 .cw-composer {
   flex: 0 0 auto;
@@ -596,19 +533,6 @@ pre {
   }
   .cw-empty h2 {
     font-size: 23px;
-  }
-  .cw-message {
-    gap: 10px;
-    margin-bottom: 24px;
-  }
-  .cw-avatar {
-    width: 29px;
-    height: 29px;
-    border-radius: 9px;
-  }
-  .cw-message-meta {
-    margin-top: 2px;
-    margin-bottom: 9px;
   }
   .cw-composer {
     padding-bottom: 10px;

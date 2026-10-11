@@ -1,6 +1,7 @@
 """One typed catalog for Card Editor execution, provider schemas and previews."""
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -77,13 +78,13 @@ class Revert(Card):
 class Opening(Card):
     action: Literal["update", "add", "remove", "move"] = Field(default="update", description="Opening operation. Initialization migration happens only if initialization is explicitly supplied.")
     index: int = Field(ge=0, description="Zero-based opening index; 0 is first_mes, followed by alternate_greetings. add inserts before index (or appends at count).")
-    narrative: str | None = Field(default=None, description="Complete opening text for add/update. For initialization-only updates omit this to preserve the existing narrative. Retain macros and inline data unless migration was requested.")
-    initialization: str | None = Field(default=None, description="Explicit standalone InitVar/MVU data when the user requested migration; omission preserves current initialization and does not create metadata.")
+    narrative: str | None = Field(default=None, description="Complete opening text for add/update. Preserve valid inline InitVar/data blocks and their hiding regex, including during status-display migration; hidden initialization is not a model-written panel. For initialization-only updates omit this to preserve the original opening.")
+    initialization: str | None = Field(default=None, description="Project-specific standalone data channel, only for explicitly requested extraction or a confirmed compatibility repair. Not required for standard MVU: prefer [InitVar] lore defaults and valid per-opening inline initvar overrides. Workflow records override inline initialization; when first creating them Runtime copies other openings' existing inline initvar blocks to preserve their effective initial state. Omission preserves existing sources and creates no metadata.")
     to_index: int | None = Field(default=None, ge=0, description="Destination index for move, in the resulting opening list.")
 
 
 class Skill(Arguments):
-    resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md", "references/status-display.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. references/status-display.md covers migrating model-written HTML, Markdown or tagged status displays into independent variables. runtime-guide.md covers MVU and script compatibility.")
+    resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md", "references/status-display.md", "references/regex-display.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. references/status-display.md covers status migration; references/regex-display.md gives the executable regex/HTML/MVU display contract, patch_draft examples and test_draft assertions. runtime-guide.md covers MVU and script compatibility.")
 
 
 class Handoff(Arguments):
@@ -99,9 +100,18 @@ class HistoryRead(Arguments):
     ref: str = Field(pattern=r"^H[1-9]\d*$", description="Exact H reference from history search or current request. Reads full original message and associated tool exchanges.")
 
 
+class DisplayAssertion(Arguments):
+    sample_index: int = Field(default=0, ge=0, description="0 tests the selected opening; 1..N test samples in order, as assistant output.")
+    selector: str = Field(min_length=1, description="CSS selector that must match exactly one rendered display element.")
+    text: str = Field(description="Expected complete textContent, with outer whitespace trimmed, after initialization.")
+    after_text: str | None = Field(default=None, description="Expected text after state_patch is applied and the display is rebuilt with the updated snapshot, as in the MVU sidebar.")
+
+
 class Probe(Card):
     index: int = Field(default=0, ge=0, description="Opening to initialize in a temporary local sandbox; 0 selects first_mes.")
     samples: list[str] = Field(default_factory=list, max_length=10, description="Optional complete text examples on which to observe input/output regex transformations. No model calls are made.")
+    display_assertions: list[DisplayAssertion] = Field(default_factory=list, max_length=30, description="Render output HTML in an isolated browser and verify expected DOM text. Use for MVU frontend migration; an empty list does not verify rendering. Read references/regex-display.md.")
+    state_patch: list[Operation] = Field(default_factory=list, max_length=100, description="Optional temporary JSON Patch relative to stat_data, applied through Runtime to test after_text. No card or story state is saved.")
 
 
 SPECS = {
@@ -110,11 +120,11 @@ SPECS = {
     "search_entries": (Search, "Locate worldbook entries by literal words. Previews are only navigation; read_field returns full entries before editing."),
     "create_draft": (Create, "Create a new unsaved V2 card or explicitly requested variant after a proposal is approved, or an explicit direct/mechanical-copy request. This does not save to the library. Returns a new C handle and full initial document."),
     "configure_card": (Configure, "Record an optional user-confirmed compatibility target when requested or when specific script capabilities affect the design. Not required for ordinary authoring or MVU rules. Does not migrate content by itself."),
-    "patch_draft": (Patch, "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing."),
+    "patch_draft": (Patch, "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing."),
     "revert_draft": (Revert, "Undo this task's uncommitted changes to one card after the user changes direction. Runtime restores the complete round-start card; a card newly created in this task is removed. Other cards and the library are unchanged. Use this instead of mechanically reconstructing the old document."),
     "set_opening": (Opening, "Add, edit, remove or reorder an opening with its existing initialization association. Read the affected opening first. Runtime maintains stable IDs and hashes. Supplying initialization explicitly opts into standalone migration; never migrate on ordinary prose edits."),
     "validate_draft": (Card, "Check structure, authoring completeness and static compatibility separately. Reports warnings and untested runtime behavior; a valid document is not proof of script or narrative correctness."),
-    "test_draft": (Probe, "Run local deterministic checks on one opening: initialization, script startup and regex transformations. Uses isolated temporary state and only embedded/cached resources; reports failed/blocked/untested checks. Never calls a model or writes a story."),
+    "test_draft": (Probe, "Run local deterministic checks on one opening: initialization, script startup and regex transformations. Supply display_assertions and state_patch to verify rendered MVU frontend values before/after updates. Without assertions, transformed text is only an observation, not display verification. Uses isolated temporary state and only embedded/cached resources. Never calls a model or writes a story."),
     "read_skill": (Skill, "Read complete bundled card-authoring or runtime adaptation documentation. Only listed resources are accessible."),
     "write_handoff": (Handoff, "Replace the handoff note, preserving useful earlier decisions and unresolved work. Approved proposal originals are retained independently. A failed update does not replace the old note."),
     "new_context": (Handoff, "Save the complete handoff note and switch context windows. Call alone. Retains approved proposals, card directory, current user inputs and two recent user/final-answer exchanges; old tools leave together and remain readable from history. Continue the task after switching; the call allowance does not reset."),
@@ -273,7 +283,12 @@ class EditorTools(PersonaTools):
         greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
         meta = data.get("extensions", {}).get("terrarium", {}).get("workflow")
         if args.initialization is not None and meta is None:
-            meta = {"version": 1, "greetings": [{"id": uid(), "initialization": "", "greeting_hash": greeting_hash(t)} for t in greetings], "unresolved": []}
+            # Workflow records take precedence even when empty. Copy the already
+            # effective inline declarations of untouched openings before opting
+            # into this channel, or editing one opening erases another's defaults.
+            meta = {"version": 1, "greetings": [{"id": uid(), "initialization": "\n".join(
+                re.findall(r"<initvar\b[^>]*>[\s\S]*?</initvar\s*>", t, re.I)),
+                "greeting_hash": greeting_hash(t)} for t in greetings], "unresolved": []}
             data.setdefault("extensions", {}).setdefault("terrarium", {})["workflow"] = meta
         if args.action != "add" and not 0 <= args.index < len(greetings):
             raise ValueError("开场编号不存在，index 从 0 开始")
@@ -317,11 +332,13 @@ class EditorTools(PersonaTools):
 
     async def test_draft(self, args):
         from tavern.character.editor_sandbox import test_card
-        return await test_card(self.owner.store, self.card(args.card_ref), args.index, args.samples)
+        return await test_card(self.owner.store, self.card(args.card_ref), args.index, self.view.restore(args.samples),
+                               self.view.restore([a.model_dump() for a in args.display_assertions]),
+                               self.view.restore([op.model_dump(by_alias=True, exclude_unset=True) for op in args.state_patch]))
 
     async def read_skill(self, args):
         root = Path(__file__).parents[1] / "skills"
-        folder = "adapt-card-to-tavern" if args.resource in {"SKILL.md", "references/workflow.md", "references/status-display.md"} else "card-authoring"
+        folder = "adapt-card-to-tavern" if args.resource == "SKILL.md" or args.resource.startswith("references/") else "card-authoring"
         return {"resource": args.resource, "text": (root / folder / args.resource).read_text(encoding="utf-8")}
 
     async def write_handoff(self, args):

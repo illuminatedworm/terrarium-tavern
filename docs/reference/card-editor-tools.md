@@ -23,8 +23,8 @@
 | `revert_draft` | `card_ref`、`reason`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、可选 `narrative/initialization/to_index`；程序维护关联、身份和指纹 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
-| `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`；检查本地初始化、正则和脚本启动，返回实际结果、日志和未测范围 |
-| `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
+| `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`、`display_assertions`、`state_patch`；检查初始化、正则转换、脚本启动和指定 DOM 值，临时补丁用于验证更新后显示，返回实际结果、日志和未测范围 |
+| `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md、references/regex-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
 | `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
 | `search_history` | `query`、`limit=5`（1–20）；`*` 列出最近记录，返回 H 引用与定位摘要 |
@@ -40,9 +40,15 @@
 
 `add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。新增卡返回的完整初始文档视为已读。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。
 
-开场编号 0 对应 first_mes，其余对应 alternate_greetings。初始化参数省略时保留现有关联；仅更新初始化时可以省略 narrative，由程序保留原文。新增开场需要完整 narrative；删除最后一个开场应改为空文本。普通编辑不自动提取内联初始化。
+开场编号 0 对应 first_mes，其余对应 alternate_greetings。初始化参数省略时保留现有关联；仅更新初始化时可以省略 narrative，由程序保留原文。新增开场需要完整 narrative；删除最后一个开场应改为空文本。普通编辑及可见状态栏迁移不自动提取有效的内联初始化；已正确初始化并对模型隐藏的数据须原位保留。独立 initialization 是可选的项目扩展，首次创建关联时程序复制其他开场已有的内联 initvar，以免空记录覆盖其有效初值；既有记录与内联数据并存时诊断会提示核对实际来源。
 
-本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。passed、failed、blocked 及 untested 各有含义，不能用 passed 代表全部动态和叙事效果已验证。
+本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。正则字段的类型、缺少 findRegex/replaceString、HTML 误入模型通道会给出静态警告。正则无规则时返回 skipped，有规则时仅报告 observed 转换结果，不等于界面验证。
+
+`display_assertions` 的每项含 `sample_index`（0 为所选开场，1..N 为 samples）、CSS `selector`、期望 `text` 和可选 `after_text`。工具在禁止联网的独立页面中加载实际展示 HTML 和兼容 SDK，要求选择器唯一且完整 textContent（去除首尾空白）一致。`state_patch` 为相对 stat_data 的 JSON Patch，通过 Runtime 应用到临时快照后重建页面检查 after_text；不改变草稿、故事或权限。缺少断言时明确报告前端未测，缺少更新断言时报告更新后的显示未测。完整用例见内置 references/regex-display.md。
+
+passed、failed、blocked 及 untested 各有含义，不能用 passed 代表全部动态和叙事效果已验证。
+
+初始化诊断还提示损坏的 initvar 标签、被误标为 tracker_mvu 的 [InitVar] 条目、工作流记录覆盖内联数据及需要单独验证的开场增量指令；[InitVar] 数据不因含结构标记而误报为 Writer 更新规则。
 
 静态诊断对角色字段、启用世界书、开场及示例中的疑似逐轮状态栏输出、根路径变量宏、静态状态示范和缺少声明式初值/变量规则给出带位置的提示。提示不阻止草稿编辑或保存，不自动删除 HTML，也不替代语义判断；未发现警告及内部 adapted 标志均只表示通过已实现的静态检查，不证明完整适配。停用条目不触发状态栏提示，传统禁用的 [InitVar] 条目仍按运行契约识别。
 

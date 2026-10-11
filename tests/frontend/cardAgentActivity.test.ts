@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { editorActions, mergeEditorEvents, type EditorEvent } from '../../web/lib/cardAgentActivity';
+import {
+  editorActions,
+  editorActivityBlocks,
+  mergeEditorEvents,
+  type EditorEvent,
+} from '../../web/lib/cardAgentActivity';
 
 describe('editor action timeline', () => {
   const started: EditorEvent = {
@@ -59,5 +64,57 @@ describe('editor action timeline', () => {
     const actions = editorActions([started, finished, next], 'running');
     expect(actions).toHaveLength(2);
     expect(actions[1]).toMatchObject({ status: 'running', truncated: true, target: '' });
+  });
+});
+
+describe('public editor intermediate replies', () => {
+  const event = (seq: number, kind: string, payload: Record<string, any> = {}): EditorEvent => ({
+    seq,
+    kind,
+    payload,
+  });
+  const source = [
+    event(1, 'model_call', { call: 1 }),
+    event(2, 'text', { text: '我会先检查。' }),
+    event(3, 'text', { text: '\n完整中间说明。' }),
+    event(4, 'provider_response', {
+      native: { items: [{ type: 'reasoning', summary: '不可展示的推理', encrypted_content: 'opaque' }] },
+    }),
+    event(5, 'tool_started', { action_id: 'read', tool: 'overview', arguments: '{}' }),
+    event(6, 'tool_finished', { action_id: 'read', tool: 'overview', status: 'completed', result: '{}' }),
+    event(7, 'model_call', { call: 2 }),
+    event(8, 'text', { text: '最终回复。' }),
+  ];
+  it('keeps public prose between tool groups after completion without duplicating the final reply', () => {
+    const blocks = editorActivityBlocks(source, 'completed');
+    expect(blocks.map((block) => block.kind)).toEqual(['tools', 'assistant', 'tools']);
+    expect(blocks[1]).toMatchObject({ text: '我会先检查。\n完整中间说明。', status: 'intermediate' });
+    expect(JSON.stringify(blocks)).not.toContain('最终回复');
+    expect(JSON.stringify(blocks)).not.toContain('不可展示的推理');
+    expect(JSON.stringify(blocks)).not.toContain('opaque');
+  });
+  it('does not clear earlier text when a new request begins, including requests with no text', () => {
+    const before = editorActivityBlocks(source.slice(0, 3), 'running');
+    const next = editorActivityBlocks(source.slice(0, 7), 'running');
+    expect(before[1]).toMatchObject({ status: 'streaming' });
+    expect(next[1]).toMatchObject({
+      id: before[1].id,
+      text: '我会先检查。\n完整中间说明。',
+      status: 'intermediate',
+    });
+    const live = editorActivityBlocks(source, 'running');
+    expect(live.at(-1)).toMatchObject({ text: '最终回复。', status: 'streaming' });
+  });
+  it('retains partial user-visible output after interruption and deduplicates replayed chunks', () => {
+    const merged = mergeEditorEvents(source, source.slice(0, 5));
+    const blocks = editorActivityBlocks(merged, 'cancelled');
+    expect(blocks.filter((block) => block.kind === 'assistant')).toHaveLength(2);
+    expect(blocks.at(-1)).toMatchObject({ text: '最终回复。', status: 'interrupted' });
+  });
+  it('handles ordinary text-only and tool-only responses without phase metadata', () => {
+    const plain = [event(1, 'model_call', { call: 1 }), event(2, 'text', { text: '普通 API 回复' })];
+    expect(editorActivityBlocks(plain, 'completed').every((block) => block.kind === 'tools')).toBe(true);
+    const tools = source.filter((item) => item.kind !== 'text');
+    expect(editorActivityBlocks(tools, 'completed')).toHaveLength(1);
   });
 });

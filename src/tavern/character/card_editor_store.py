@@ -3,6 +3,7 @@
 import json
 import time
 
+from tavern.character.editor_activity import PUBLIC_KINDS
 from tavern.character.editor_storage import Conversations
 from tavern.storage.store import dump
 
@@ -78,9 +79,9 @@ class EditorStore(Conversations):
 
     def activity(self, rid, after=0):
         with self.store.connection() as db:
-            rows = db.execute("""SELECT * FROM card_edit_events WHERE run=? AND seq>?
-                AND kind IN ('started','model_call','tool_started','tool_finished','completed','error','cancelled')
-                ORDER BY seq LIMIT 201""", (rid, after)).fetchall()
+            placeholders = ",".join("?" for _ in PUBLIC_KINDS)
+            rows = db.execute(f"""SELECT * FROM card_edit_events WHERE run=? AND seq>?
+                AND kind IN ({placeholders}) ORDER BY seq LIMIT 201""", (rid, after, *PUBLIC_KINDS)).fetchall()
         events = [{**dict(row), "payload": json.loads(row["payload"])} for row in rows[:200]]
         return {"events": events, "has_more": len(rows) > 200,
                 "next_cursor": events[-1]["seq"] if events else after}
