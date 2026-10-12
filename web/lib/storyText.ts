@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import { marked } from 'marked';
+import { parseStoryMarkdown } from './storyMarkdown';
 
 export function openingProse(source: string): string {
   return source
@@ -16,7 +16,7 @@ export function dialogueRanges(text: string): Array<[number, number]> {
 }
 
 export function renderStoryText(source: string, breaks = false): string {
-  const html = DOMPurify.sanitize(marked.parse(source, { async: false, gfm: true, breaks }) as string);
+  const html = DOMPurify.sanitize(parseStoryMarkdown(source, breaks));
   const root = document.createElement('div');
   root.innerHTML = html;
   const groups = new Map<Element, Text[]>();

@@ -67,7 +67,8 @@ summary:hover {
   font-family: var(--font-ui);
   color: var(--text-primary);
   background: var(--surface-input);
-  font-synthesis: none;
+  /* Chinese fonts often need a synthesized italic face for Markdown emphasis. */
+  font-synthesis: style;
   font-weight: 400;
   color-scheme: dark;
 }
