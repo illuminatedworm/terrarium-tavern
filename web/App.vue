@@ -48,8 +48,6 @@ import PolicySelect from './components/settings/PolicySelect.vue';
 import TurnReview from './components/story/TurnReview.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
-import CharacterEditor from './components/character/CharacterEditor.vue';
-import CardWorkspace from './components/character/CardWorkspace.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
@@ -73,6 +71,20 @@ const SettingsPanel = defineAsyncComponent({
   delay: 0,
   loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载设置…') },
   errorComponent: { render: () => h('p', { role: 'alert' }, '设置页面加载失败，请刷新页面后重试。') },
+});
+// Editing surfaces are independent of the story reader; load their code only
+// when opened, just as we do for settings.
+const CharacterEditor = defineAsyncComponent({
+  loader: () => import('./components/character/CharacterEditor.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载角色卡编辑器…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '角色卡编辑器加载失败，请刷新页面后重试。') },
+});
+const CardWorkspace = defineAsyncComponent({
+  loader: () => import('./components/character/CardWorkspace.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载制卡界面…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '制卡界面加载失败，请刷新页面后重试。') },
 });
 
 const orphanDrafts = ref<any[]>([]);
