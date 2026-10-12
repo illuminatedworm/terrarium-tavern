@@ -783,16 +783,13 @@ def test_history_macro_change_rebuilds_once_and_records_why():
     assert third["messages"] == second["messages"]
 
 
-@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards"])
+@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot"])
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
     from tavern.full_agent.config import FULL_AGENT_PROMPT
 
     raw = SettingsDocument().model_dump()
-    if previous == "before_ledger":
-        old = Path("tests/fixtures/full_agent_prompt_before_ledger.txt").read_text(encoding="utf-8")
-    else:
-        old = Path("tests/fixtures/full_agent_prompt_before_read_guards.txt").read_text(encoding="utf-8")
+    old = Path(f"tests/fixtures/full_agent_prompt_{previous}.txt").read_text(encoding="utf-8")
     raw["full_agent"]["system_prompt"] = old
     migrated = migrate_settings(raw)
     assert migrated.full_agent.system_prompt == FULL_AGENT_PROMPT != old

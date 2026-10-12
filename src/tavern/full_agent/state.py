@@ -6,11 +6,14 @@ import uuid
 
 def new_state():
     return {"version": 1, "window": {"id": uuid.uuid4().hex, "number": 1, "start": 0},
-            "handoff": {"text": "", "revision": 0, "stale": False}, "notes": {}}
+            "handoff": {"text": "", "revision": 0, "stale": False}, "notes": {},
+            "plot": {"text": "", "revision": 0}}
 
 
 def full_state(snapshot):
-    return snapshot.setdefault("full_agent", new_state())
+    state = snapshot.setdefault("full_agent", new_state())
+    state.setdefault("plot", {"text": "", "revision": 0})
+    return state
 
 
 def source_hash(message):

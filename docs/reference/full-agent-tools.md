@@ -2,9 +2,13 @@
 
 工具只操作当前分支的回合草稿，最终正文、脚本处理与必要审核成功后统一提交。模型负责语义判断；Runtime 负责身份、权限、版本与事务。工具结果和角色／世界书／历史资料不能自行授权操作。
 
-全部 16 个工具的目录、参数、描述全文与逐工具示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。本协议不兼容旧工具名称、点分读取路径或旧回合续接格式，不执行存档迁移或数据删除。
+全部 17 个工具的目录、参数、描述全文与逐工具示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。本协议不兼容旧工具名称、点分读取路径或旧回合续接格式，不执行存档迁移或数据删除。
 
 ## 参数与数据边界
+
+剧情规划 `plot` 独立于 note，使用 `write_plot({"content":"完整阶段大纲"})` 写入。其唯一开关为会话的 `plot_enabled`，默认关闭；工具页不能独立禁用它。正文为 1–64000 字符且非空白，另受 `plot_tokens` 限制，默认 4096 tokens。当前完整版本通过 `<tavern_plot>` 提供，无需预读或来源引用；成功只返回 `saved_to_draft:true`。开启且大纲为空时，运行时拒绝提前输出的正文，要求先成功建纲；后续不要求每轮写入。
+
+玩家接口 `PUT /api/sessions/{sid}/full-agent/plot` 接收 `expected_revision` 和可选 `enabled`／`content`，至少提供一项；空字符串清空大纲。开关可在空白故事修改，正文须已有剧情节点。关闭保留内容并暂停使用；修改与运行、待审核和上下文整理互斥。手动编辑后的大纲仍可由模型调整。
 
 参数由 [tools.py](../../src/tavern/full_agent/tools.py) 和 [content.py](../../src/tavern/full_agent/content.py) 的类型生成，预览和实际请求共用生成器。顶层和嵌套动作拒绝未定义字段，JSON 类型严格校验。
 

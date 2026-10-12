@@ -32,11 +32,11 @@ async def test_documented_minimal_results_match_execution(name):
         "entries": [{"id": "port", "comment": ENTRY["title"],
                      **{key: value for key, value in ENTRY.items() if key not in ("ref", "title")}}]}}
     request = TurnRequest(operation_id="docs", expected_revision=0, allow_content_edit=True, update_variables=True)
-    owner = SimpleNamespace(document=document, session={}, state=state,
+    owner = SimpleNamespace(document=document, session={"plot_enabled": True}, state=state,
         snapshot={"state": {"stat_data": {"hp": 8}}, "scopes": {}}, history=[],
         source_history=[{"id": "source", "role": "user", "raw": "我明天去港口。"}],
         settings=settings, request=request, model_view=ModelView(document), tid="docs", patch_state_done=False,
-        definitions=tool_definitions(request, {"policy_effective": "directed"}))
+        definitions=tool_definitions(request, {"policy_effective": "directed", "plot_enabled": True}))
 
     async def retrieve(query, **options):
         assert query == "港口" and not options["include_ref"] and not options["include_title"]

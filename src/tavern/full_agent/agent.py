@@ -235,6 +235,11 @@ class FullAgent:
                         self.reject_reply(response, provider, "刚才的正文回复已被运行时否决，未提交。必须单独调用 new_context 换窗后再继续。")
                         await self.save_progress()
                         continue
+                    if self.session.get("plot_enabled", False) and not self.state["plot"]["text"].strip():
+                        self.event("full_agent_reply_rejected", {"message": "尚未建立剧情规划，正文回复已否决"})
+                        self.reject_reply(response, provider, "刚才的正文回复未提交。剧情规划已开启且当前大纲为空，先成功调用 write_plot 建立初始大纲，再回复正文。")
+                        await self.save_progress()
+                        continue
                     if self.request.update_variables and not self.patch_state_done:
                         self.event("full_agent_reply_rejected", {"message": "本轮尚未调用 patch_state，正文回复已否决"})
                         self.reject_reply(response, provider, "刚才的正文回复未提交。本轮必须先成功调用一次 patch_state 更新 MVU 变量。")

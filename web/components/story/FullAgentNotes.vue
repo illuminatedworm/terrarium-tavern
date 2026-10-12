@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import ContextStrategyControls from './ContextStrategyControls.vue';
+import FullAgentPlot from './FullAgentPlot.vue';
 
 const props = defineProps<{ session: any; disabled?: boolean }>();
 const emit = defineEmits<{ saved: [session: any] }>();
@@ -75,7 +76,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
           v-model="handoff"
           rows="7"
           :disabled="disabled || saving"
-          placeholder="当前场景、用户约束、未决线索与下一步…"
+          placeholder="当前场景、重要经历、用户约束与未决线索…"
         />
       </label>
       <p v-if="records?.handoff?.stale" role="status">原始剧情已编辑，这份交接笔记需要核对。</p>
@@ -84,9 +85,15 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
         <button :disabled="disabled || saving || !handoff.trim()" @click="save(true)">保存并换新窗口</button>
       </div>
       <p class="inspector-note">
-        手动换窗后仅携带交接笔记与基础设定。全部原文和工具记录仍可搜索，下一条发言会进入新窗口。
+        手动换窗后携带交接笔记、基础设定和已开启的剧情规划。长期笔记独立保留；剧情原文可搜索，工具过程可在记录中查看。
       </p>
     </template>
+    <FullAgentPlot
+      :session="session"
+      :disabled="disabled || saving"
+      :limit="records?.plot_tokens"
+      @saved="emit('saved', $event)"
+    />
     <p v-if="error" role="alert">{{ error }}</p>
     <div class="notes-heading">
       <h3>长期笔记</h3>

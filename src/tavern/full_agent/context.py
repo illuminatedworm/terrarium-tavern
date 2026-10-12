@@ -17,6 +17,7 @@ from tavern.core.tokens import count_text, counting_info, message_tokens, reques
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
+from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
 
 
@@ -63,7 +64,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             items.append({"role": role, "content": content, "source": source, **metadata})
 
     add("system", settings.full_agent_system_prompt, "rules")
-    add("system", tool_protocol(settings.full_agent_config, compact=compact), "tool_protocol")
+    add("system", tool_protocol(settings.full_agent_config, compact=compact,
+                                plot_enabled=session.get("plot_enabled", False)), "tool_protocol")
     # Keep the window policy in the fixed prefix, once per compiled window;
     # live token counts belong in append-only pressure notices below.
     if not compact:
@@ -191,6 +193,8 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     for source, content in turn_instructions.items():
         update(source, content)
+    planning = plan_value(state, session.get("plot_enabled", False), compact=compact)
+    update("plot", plan_message(planning), value=planning)
     # Staleness remains truthful in the user's notes and source checks. Proactive
     # edit instructions now come only from the user's explicit notification queue.
     if not complete_source:

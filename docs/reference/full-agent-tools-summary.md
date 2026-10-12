@@ -1,6 +1,6 @@
 # Full Agent 工具速查
 
-当前共 **16 个工具**。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **17 个工具**。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作、为何这样设计
 
@@ -23,6 +23,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型、H 来源和 `stale`；过时来源应核对。 |
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；无需预读，覆盖归档键会激活。 |
 | `archive_note` | 归档笔记 | `key: string` | 普通搜索不再返回，仍可按键读取；不提供删除工具。 |
+| `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后按需更新。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "variables"或"story"="variables"` | 默认相对 stat_data，如 `/hp`；空串读完整作用域。story 读取完整剧情状态的投影视图；只有完整 variables 读取授予非空补丁资格。 |
 | `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时必须且只能成功一次，失败可修正重试；非空先完整读变量，空数组免读取且不触发补丁脚本回调。 |
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
@@ -46,8 +47,8 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 - 成功为 `{"ok":true,"data":{...}}`；失败为 `{"ok":false,"error":{"code":"...","message":"...","retryable":true,"next_action":"..."}}`。参数错误另附 expected_parameters；变量补丁错误附 patch_state_completed。错误恢复及终止原因见[完整协议](full-agent-tools.md)。
 - query 最长 1000 字符，除 set_retrieval_query 外不能空；limit 为 1–10。历史 ref、笔记 key 为 1–80 字符，世界书引用为 L 加正整数，状态 path 最长 200 字符。新笔记键支持字母、数字、下划线、中文、斜线、连字符、空格和点。
-- 交接／笔记正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；comment 为必填的简短操作备注，1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。
-- 关闭工具会移除其定义和执行资格；关闭 read_state 同时禁用 patch_state。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。
+- 交接／笔记／剧情规划的工具写入正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；comment 为必填的简短操作备注，1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。玩家界面允许清空剧情规划。
+- 关闭工具会移除其定义和执行资格；关闭 read_state 同时禁用 patch_state。write_plot 统一由剧情规划开关控制。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。
 - 读取记录由后端维护，写后完整结果可续用；目标变化、删除、换窗或新回合后重新读取。失败／取消／预算耗尽保留可恢复草稿；明确拒绝审核会清除可恢复进度，正式剧情不变。
 - 每次运行默认最多 24 次模型请求，范围 2–100；运行时内部执行上限，不向模型注入额度、剩余次数或最后一次调用提醒。耗尽时报告 BUDGET_EXHAUSTED 并保留进度。换窗不重置；手动续接有新请求额度，已成功工具和变量提交标记保留。
 
@@ -55,7 +56,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 ## 附录：工具描述全文与最小示例
 
-以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；变量示例已获本轮授权，设定写入示例已完整读取 description。
+以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；剧情规划示例已开启功能，变量示例已获本轮授权，设定写入示例已完整读取 description。
 
 ### `find_lore_for_edit`
 
@@ -150,7 +151,7 @@ Read complete original dialogue by a valid H reference, including the current us
 ### `write_handoff`
 
 ```text
-Replace the complete handoff in the current window. The handoff is a summary of all current context. Build on the latest runtime memory update or successful write, whichever is later. Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.
+Replace the complete handoff in the current window: a concise continuation summary, not all notes or the future plot outline. Build on the latest runtime memory update or successful write, whichever is later. Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.
 ```
 
 请求：
@@ -168,7 +169,7 @@ Replace the complete handoff in the current window. The handoff is a summary of 
 ### `new_context`
 
 ```text
-Replace the complete handoff and switch windows. The handoff is a summary of all current context. Preserve valid context, constraints, unresolved issues and references needed to continue. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
+Replace the complete handoff and switch windows. Preserve the scene, important experiences, constraints, unresolved issues and references needed to continue; do not copy complete notes or the future plot outline. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
 ```
 
 请求：
@@ -222,7 +223,7 @@ Read a complete active or archived note by key, with optional kind, H sources an
 ### `write_note`
 
 ```text
-Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks intent. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it.
+Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks characters' in-story intentions, not an author-level future outline. Preserve valid experiences and changes, not just a current-state snapshot. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it.
 ```
 
 请求：
@@ -235,6 +236,24 @@ Create or fully replace a note by key; preserve still-valid information. No prio
 
 ```json
 {"ok":true,"data":{"key":"计划/港口","saved_to_draft":true}}
+```
+
+### `write_plot`
+
+```text
+Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. The current complete outline is supplied automatically; no prior read, source references or version argument is required. When empty, save an initial outline before the final story reply. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline.
+```
+
+请求：
+
+```json
+{"content":"近期：若玩家前往港口，让守塔人的隐瞒引出冲突；远期：视选择揭开旧信来历。"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true}}
 ```
 
 ### `archive_note`
@@ -354,6 +373,7 @@ Replace this turn's clues for next-turn automatic worldbook retrieval; the last 
 | `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |
 | `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |
 | `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |
+| `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |
 | `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |
 | `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |
 

@@ -51,6 +51,10 @@ class Handoff(Arguments):
     content: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text; must contain non-whitespace text.")
 
 
+class Plot(Arguments):
+    content: str = Field(min_length=1, max_length=64000, description="Complete replacement author-level stage outline; future possibilities, not established story facts. Must contain non-whitespace text.")
+
+
 class NewContext(Arguments):
     handoff: str = Field(min_length=1, max_length=64000, description="Complete updated handoff text for the new window; must contain non-whitespace text.")
     keep_recent: int = Field(default=2, ge=0, le=12, description="Recent dialogue messages to retain (0-12; default 2), normally up to 6 user/assistant exchanges. Expanded to complete exchanges; current user input is retained separately.")
@@ -59,7 +63,7 @@ class NewContext(Arguments):
 class Note(Arguments):
     key: str = Field(min_length=1, max_length=80, pattern=r"^[\w\-/ .\u4e00-\u9fff]+$", description="Meaningful, stable note key.")
     content: str = Field(min_length=1, max_length=64000, description="Complete updated note text; must contain non-whitespace text.")
-    kind: Literal["fact", "hypothesis", "plan"] = Field(description="Whether the note records evidence-backed facts, a hypothesis, or a plan.")
+    kind: Literal["fact", "hypothesis", "plan"] = Field(description="Whether the note records evidence-backed facts, a hypothesis, or characters' in-story intentions. Author-level future outlines belong to plot, not kind=plan.")
     sources: list[str] = Field(default_factory=list, max_length=20, description="Valid H references in this branch, including the current user input; required for facts. No prior tool read or search is required.")
 
 
@@ -135,9 +139,9 @@ SPECS = {
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable."),
     "read_history": (HistoryRead, "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose."),
-    "write_handoff": (Handoff, "Replace the complete handoff in the current window. The handoff is a summary of all current context. Build on the latest runtime memory update or successful write, whichever is later. "
+    "write_handoff": (Handoff, "Replace the complete handoff in the current window: a concise continuation summary, not all notes or the future plot outline. Build on the latest runtime memory update or successful write, whichever is later. "
         "Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources."),
-    "new_context": (NewContext, "Replace the complete handoff and switch windows. The handoff is a summary of all current context. Preserve valid context, constraints, unresolved issues and references needed to continue. "
+    "new_context": (NewContext, "Replace the complete handoff and switch windows. Preserve the scene, important experiences, constraints, unresolved issues and references needed to continue; do not copy complete notes or the future plot outline. "
         "Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. "
         "Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset."),
     "search_notes": (Search, "Search active notes in this branch by literal terms in content or keys; query=* lists notes. "
@@ -145,8 +149,13 @@ SPECS = {
     "read_note": (NoteRead, "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
     "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. "
-        "kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks intent. "
-        "Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it."),
+        "kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks characters' in-story intentions, not an author-level future outline. "
+        "Preserve valid experiences and changes, not just a current-state snapshot. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it."),
+    "write_plot": (Plot, "Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. "
+        "The current complete outline is supplied automatically; no prior read, source references or version argument is required. "
+        "When empty, save an initial outline before the final story reply. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. "
+        "Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. "
+        "Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
         "This does not delete it or older history. write_note with the same key reactivates it."),
     "read_state": (StateRead, "Read state using JSON Pointer. Default scope=variables reads stat_data with the same relative paths as patch_state, e.g. /hp. "
@@ -175,6 +184,11 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         names.difference_update({"new_context", "write_handoff"})
     if not catalog:
         names.difference_update(session.get("disabled_tools", []))
+        # This capability has one player-facing switch, not two conflicting ones.
+        if session.get("plot_enabled", False):
+            names.add("write_plot")
+        else:
+            names.discard("write_plot")
         for write, read in READ_DEPENDENCIES.items():
             if read not in names:
                 names.discard(write)
@@ -184,6 +198,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         "write_handoff": f" content limit: {config.handoff_tokens} tokens.",
         "new_context": f" handoff limit: {config.handoff_tokens} tokens.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
+        "write_plot": f" content limit: {config.plot_tokens} tokens.",
     }
     if settings is not None:
         mechanisms = {
@@ -300,6 +315,10 @@ class AgentTools:
             state.pop("edited_sources", None)
             return {"saved_to_draft": True, "window": state["window"]["number"],
                     "notice": "正文完成后与本回合统一提交。"}
+        if name == "write_plot":
+            self.cap_text(args.content, owner.settings.full_agent_config.plot_tokens, "剧情规划")
+            state["plot"] = {"text": args.content, "revision": state.get("plot", {}).get("revision", 0) + 1}
+            return {"saved_to_draft": True}
         if name == "search_notes":
             rows = [{**note_view(n, owner.source_history), "text": n["content"]} for n in state["notes"].values()
                     if n["status"] == "active"]

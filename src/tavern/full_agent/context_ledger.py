@@ -90,7 +90,7 @@ class ContextLedger:
         if message.get("role") != "tool":
             return
         call = self.calls.get(message.get("tool_call_id"))
-        if not call or call["name"] != "write_handoff":
+        if not call or call["name"] not in ("write_handoff", "write_plot"):
             return
         try:
             result, args = json.loads(message.get("content", "")), json.loads(call["arguments"])
@@ -99,7 +99,12 @@ class ContextLedger:
         # A proposal in tool arguments is not an effective memory until the
         # matching tool result confirms that the local draft accepted it.
         if saved(result):
-            self.seen["handoff"] = args["content"]
+            if call["name"] == "write_handoff":
+                self.seen["handoff"] = args["content"]
+            else:
+                previous = self.seen.get("plot", {})
+                self.seen["plot"] = {"enabled": True, "text": args["content"],
+                                          "checkpoint": previous.get("checkpoint")}
 
     def update(self, source, content, *, value=None):
         value = content if value is None else value

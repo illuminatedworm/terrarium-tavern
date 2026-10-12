@@ -57,9 +57,10 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
       } catch {
         args = {};
       }
-      const summary = ['query', 'key', 'ref', 'path', 'reason', 'content']
-        .map((key) => args?.[key])
-        .find(Boolean);
+      const summary =
+        p.name === 'write_plot'
+          ? '包含未来剧情，展开查看'
+          : ['query', 'key', 'ref', 'path', 'reason', 'content'].map((key) => args?.[key]).find(Boolean);
       const finished = event.kind === 'full_agent_tool';
       items.set(id, {
         id,
@@ -96,6 +97,7 @@ export const toolLabels: Record<string, string> = {
   search_history: '搜索历史',
   read_history: '读取历史',
   write_handoff: '更新交接笔记',
+  write_plot: '更新剧情规划',
   new_context: '切换工作窗口',
   search_notes: '搜索笔记',
   read_note: '读取笔记',

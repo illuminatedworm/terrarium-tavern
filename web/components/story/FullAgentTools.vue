@@ -58,6 +58,7 @@ watch(
   { immediate: true },
 );
 async function toggle(name: string, enabled: boolean) {
+  if (name === 'write_plot') return;
   const sid = props.session.id;
   const tool = tools.value.find((item) => item.name === name);
   if (tool) tool.enabled = enabled;
@@ -132,7 +133,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
           type="checkbox"
           :checked="tool.enabled"
           :aria-label="`启用 ${tool.name}`"
-          :disabled="disabled || loading || saving"
+          :disabled="disabled || loading || saving || !!tool.controlled_by"
           @change="toggle(tool.name, !tool.enabled)"
         />
         <code>{{ tool.name }}</code>
@@ -147,6 +148,9 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
                 ? '已启用 · 读取工具已关闭'
                 : '已启用 · 本轮尚未授权'
         }}
+      </p>
+      <p v-if="tool.controlled_by === 'plot_enabled'" class="inspector-note">
+        由记忆面板中的“剧情规划”开关统一控制。
       </p>
       <p v-if="tool.enabled && missingRead(tool.name)" class="inspector-note">
         请先启用 {{ missingRead(tool.name) }}，完成本回合当前窗口的读取后才能修改。

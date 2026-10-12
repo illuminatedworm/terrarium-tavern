@@ -29,6 +29,7 @@ from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 
 LEGACY_FULL_AGENT_PROMPT_HASHES = {
+    "2ab331d1d01ab9ffeeb9436e27af00b7425f7aed7b1a685e5d38081a84dc7727",
     "d72b35768688226ad359f3fdc8dcb04286633b4da808a8ee6aa70f7f47e8e00b",
     "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e",
     "7ee23c619af1a6cb406489c4c9316a8457e2161d68d1ef5feba332c8fdb267ea",

@@ -3,7 +3,7 @@ import copy
 from typing import Literal
 
 from fastapi import Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.core.models import TurnRequest
 from tavern.core.tokens import count_text
@@ -27,6 +27,19 @@ class ToolSettings(BaseModel):
     expected_revision: int = Field(ge=0)
     disabled_tools: list[str] = Field(max_length=len(SPECS))
     tool_result_options: dict[str, dict[str, bool]] | None = None
+
+
+class PlotEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: int = Field(ge=0)
+    enabled: bool | None = None
+    content: str | None = Field(default=None, max_length=64000)
+
+    @model_validator(mode="after")
+    def require_change(self):
+        if self.enabled is None and self.content is None:
+            raise ValueError("请提供剧情规划开关或正文")
+        return self
 
 
 
@@ -70,7 +83,9 @@ def register_full_agent_routes(app, store, context_operations=None):
         edit_capabilities = {"character": "revise_content" in available and "read_character" in available,
                              "lore_update_remove": "revise_content" in available and "read_lore_entry" in available,
                              "lore_add": "revise_content" in available}
-        return {"tools": [{**t["function"], "enabled": t["function"]["name"] not in session["disabled_tools"],
+        return {"tools": [{**t["function"], "enabled": (session["plot_enabled"]
+                           if t["function"]["name"] == "write_plot" else t["function"]["name"] not in session["disabled_tools"]),
+                           **({"controlled_by": "plot_enabled"} if t["function"]["name"] == "write_plot" else {}),
                            "available": t["function"]["name"] in available,
                            **({"edit_capabilities": edit_capabilities} if t["function"]["name"] == "revise_content" else {}),
                            "result_options": {key: result_field(session, t["function"]["name"], key)
@@ -82,6 +97,8 @@ def register_full_agent_routes(app, store, context_operations=None):
         require_full(store, sid)
         if set(edit.disabled_tools) - set(SPECS):
             raise ValueError("未知的 Full Agent 工具")
+        if "write_plot" in edit.disabled_tools:
+            raise ValueError("write_plot 由剧情规划开关统一控制，请在记忆面板调整")
         session = require_full(store, sid)
         options = session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
         options = dict(options)
@@ -134,8 +151,41 @@ def register_full_agent_routes(app, store, context_operations=None):
                 "context_strategy": session["context_strategy"], "channel_origin": session["channel_origin"],
                 "compact_auto": session["compact_auto"], "context_operation": context_operations.latest(sid),
                 "handoff": state["handoff"],
+                "plot_enabled": session["plot_enabled"],
+                "plot": state["plot"],
+                "plot_tokens": settings.full_agent_config.plot_tokens,
                 "notes": [note_view(n, session["messages"]) for n in state["notes"].values()],
                 "history_messages": len(session["messages"])}
+
+    @app.put("/api/sessions/{sid}/full-agent/plot")
+    def edit_plot(sid: str, edit: PlotEdit):
+        session = require_full(store, sid)
+        snapshot = copy.deepcopy(session["snapshot"])
+        if edit.content is not None:
+            if not session["head"]:
+                raise ValueError("空白故事尚无可保存规划的剧情节点；可以先开启功能，再发送一条消息")
+            settings = store.session_settings(session, require_origin=False).for_role("full_agent")
+            content = edit.content if edit.content.strip() else ""
+            if count_text(content, settings) > settings.full_agent_config.plot_tokens:
+                raise ValueError("剧情规划超过配置的 token 上限")
+            state = full_state(snapshot)
+            state["plot"] = {"text": content, "revision": state["plot"]["revision"] + 1}
+        enabled = session["plot_enabled"] if edit.enabled is None else edit.enabled
+        with store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消上下文整理")
+            if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')", (sid,)).fetchone():
+                raise Conflict("请先完成或取消当前回合")
+            if session["revision"] != edit.expected_revision:
+                raise Conflict("会话已改变，请刷新后重试；未提交的规划仍可保留")
+            result = db.execute("UPDATE sessions SET plot_enabled=?,revision=revision+1 WHERE id=? AND revision=?",
+                                (int(enabled), sid, edit.expected_revision))
+            if result.rowcount != 1:
+                raise Conflict("会话已改变，请刷新后重试；未提交的规划仍可保留")
+            if edit.content is not None:
+                db.execute("UPDATE messages SET snapshot=? WHERE id=? AND session=?", (dump(snapshot), session["head"], sid))
+        return store.session(sid)
 
     @app.put("/api/sessions/{sid}/full-agent/context")
     def edit_context(sid: str, edit: ContextEdit):

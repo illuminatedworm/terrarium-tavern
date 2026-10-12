@@ -67,7 +67,7 @@ DEFAULT_PROBE_MARKER_PROMPT = """The current scene marker is TAVERN_MID_42. Repl
 
 FULL_AGENT_SYSTEM_PROMPT_DEFINITION = {
     "path": "system_prompt", "label": "顶级规则/引导",
-    "description": "前台主代理：负责 RP 与文学创作，并自主查阅资料、维护记忆和剧情状态。",
+    "description": "Full Agent 的叙事、连续性与可选剧情规划原则；工具授权、记录职责和提交规则由运行时协议提供，具体参数与操作条件见工具说明。",
     "default": FULL_AGENT_PROMPT,
 }
 HALF_AGENT_SYSTEM_PROMPT_DEFINITION = {

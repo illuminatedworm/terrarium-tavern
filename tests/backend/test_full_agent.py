@@ -888,7 +888,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert not any("约定仍待兑现" in m.get("content", "") for m in wire["messages"] if m["role"] == "system")
         assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
-        assert set(definitions) == set(SPECS) - {"revise_content"}
+        assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"}
         assert "Must succeed exactly once" in definitions["patch_state"]["description"]
         assert not any(m.get("content", "").startswith("本轮须调用 patch_state") for m in wire["messages"])
         assert "1536 tokens" in definitions["new_context"]["description"]
@@ -933,7 +933,7 @@ def test_full_window_places_current_input_before_dynamic_context(story):
     last_history = max(i for i, source in enumerate(sources) if source == "history")
     assert sources[last_history + 1:] == ["lore:current", "lore:second", "input", "turn_variable_instruction",
                                           "mvu_rules", "post", "turn_instruction", "regenerate_instruction",
-                                          "handoff", "context_status"]
+                                          "plot", "handoff", "context_status"]
 
 
 @pytest.mark.parametrize("window_number, notes, expected", [

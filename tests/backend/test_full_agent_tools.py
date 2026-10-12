@@ -188,7 +188,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert {t["name"] for t in catalog} == set(SPECS)
             assert "read_lore" not in {t["name"] for t in catalog}
             for tool in catalog:
-                assert tool["enabled"]
+                assert tool["enabled"] == (tool["name"] != "write_plot")
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
             lore = next(t for t in catalog if t["name"] == "recall_lore")
@@ -220,7 +220,9 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             result, session = await turn(service, session, Model("重生成"), mode="regenerate")
             assert result["status"] == "committed"
             assert session["disabled_tools"] == ["write_handoff"]
-            response = await client.put(url, json={"expected_revision": session["revision"], "disabled_tools": list(SPECS)})
+            response = await client.put(url, json={"expected_revision": session["revision"],
+                                                   "disabled_tools": [name for name in SPECS if name != "write_plot"]})
+            assert response.status_code == 200, response.text
             session = response.json()
             no_tools = Model("不使用工具的正文")
             result, session = await turn(service, session, no_tools)

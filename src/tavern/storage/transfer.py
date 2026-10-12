@@ -248,6 +248,9 @@ def validate_package(store, package, blobs):
             card(session["card_data"])
             if session["agent_mode"] not in ("half_agent", "full_agent") or session["lore_injection_mode"] not in ("conversation", "st_top"):
                 raise ValueError("对话运行模式无效")
+            planning = session.get("plot_enabled", 0)
+            if type(planning) not in (bool, int) or planning not in (0, 1) or planning and session["agent_mode"] != "full_agent":
+                raise ValueError("剧情规划开关无效")
             if session.get("model_selection"):
                 from tavern.core.model_selection import ModelSelection
                 ModelSelection.model_validate(session["model_selection"]).profile(ModelProfile())

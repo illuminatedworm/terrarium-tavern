@@ -2,6 +2,27 @@ import { expect, it } from 'vitest';
 import { liveActivity, mergeActivity } from '../../web/lib/agentActivity';
 import { mergeWorkTurns } from '../../web/lib/workRecords';
 
+it('hides future outline spoilers from collapsed live activity summaries', () => {
+  const [item] = liveActivity(
+    [
+      {
+        seq: 1,
+        turn: 't',
+        kind: 'full_agent_tool_started',
+        payload: {
+          activity_id: 'plot',
+          name: 'write_plot',
+          arguments: '{"content":"SPOILER_OUTLINE"}',
+        },
+      },
+    ],
+    't',
+    'running',
+  );
+  expect(item.summary).toBe('包含未来剧情，展开查看');
+  expect(item.details?.arguments).toContain('SPOILER_OUTLINE');
+});
+
 it('pairs streamed calls/results in order and ignores replay and foreign turns', () => {
   const event = (seq: number, kind: string, activity_id: string, order: number, more = {}) => ({
     seq,

@@ -60,6 +60,7 @@ export const fullFields: SettingField[] = [
   },
   number('tools.handoff_tokens', '交接笔记上限（tokens）', 128, 16384),
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
+  number('tools.plot_tokens', '剧情规划上限（tokens）', 128, 16384),
 ];
 export const historyFields: SettingField[] = [
   {

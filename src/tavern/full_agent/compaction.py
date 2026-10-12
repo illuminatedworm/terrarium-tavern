@@ -70,7 +70,8 @@ async def make_handoff(compiled, settings, provider):
     instruction = (
         "用户正在将此对话切换为本地换窗。本次任务是生成交接笔记，之前已完成的历史整理所要求的 OK 回复格式不适用于本次。"
         "基于当前完整上下文保留场景、关系、经历、约定、未决事项和继续所需的线索，区分事实与计划。"
-        "调用 prepare_handoff 返回完整交接，不续写剧情，不修改 notes 或变量。"
+        "不要把完整长期笔记或作者未来大纲复制到 handoff。"
+        "调用 prepare_handoff 返回完整交接，不续写剧情，不修改 notes、剧情规划或变量。"
         f"handoff 限 {settings.full_agent_config.handoff_tokens} tokens。"
     )
     definition = {

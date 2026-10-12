@@ -38,6 +38,8 @@ EXAMPLES = {
     "read_note": ({"key": NOTE_KEY}, {**NOTE_META, "text": "明天去港口。"}),
     "write_note": ({"key": NOTE_KEY, "content": "用户表示明天去港口。", "kind": "fact", "sources": ["H1"]},
                    {"key": NOTE_KEY, "saved_to_draft": True}),
+    "write_plot": ({"content": "近期：若玩家前往港口，让守塔人的隐瞒引出冲突；远期：视选择揭开旧信来历。"},
+                   {"saved_to_draft": True}),
     "archive_note": ({"key": NOTE_KEY}, {"key": NOTE_KEY, "archived": True}),
     "read_state": ({}, {"path": "", "scope": "variables", "text": '{"hp":8}'}),
     "patch_state": ({"operations": [], "comment": "本轮变量无变化"}, {
@@ -57,7 +59,7 @@ def encoded(value):
 
 def descriptions():
     parts = [DESCRIPTION_MARKER, "",
-             "以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；变量示例已获本轮授权，设定写入示例已完整读取 description。",
+             "以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；剧情规划示例已开启功能，变量示例已获本轮授权，设定写入示例已完整读取 description。",
              ""]
     assert set(EXAMPLES) == set(SPECS)
     for name, (_, description) in SPECS.items():
@@ -71,6 +73,7 @@ def descriptions():
         "| `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |",
         "| `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |",
         "| `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |",
+        "| `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |",
         "| `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |",
         "| `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |", "",
         "其余工具无动态追加描述。工具是否下发由会话开关及设定授权决定；变量授权在执行时检查。", ""])

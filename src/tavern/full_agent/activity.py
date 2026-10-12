@@ -23,6 +23,8 @@ def tool_item(key, order, name, arguments):
     # Stored traces from before the argument rename still use reason.
     summary = next((str(args[k]) for k in ("query", "key", "ref", "path", "comment", "reason", "handoff", "content")
                     if isinstance(args, dict) and args.get(k)), "")
+    if name == "write_plot":
+        summary = "包含未来剧情，展开查看"
     return {"id": key, "order": order, "kind": "tool", "name": name,
             "summary": " ".join(summary.split())[:140], "status": "running",
             "details": {"arguments": pretty(arguments), "result": ""}}
