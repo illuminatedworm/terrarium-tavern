@@ -265,19 +265,22 @@ const updatingTracker = computed(
 );
 const retryNote = ref(''),
   retryIncludeReply = ref(false);
+const storyLoad = ref<{ id: string; creating: boolean; name: string; error: string } | null>(null);
 watch(
-  () => [session.value?.id, activeTurn.value?.id, activeTurn.value?.status],
-  () => {
+  // Review reloads temporarily clear session while reopening the same conversation.
+  () => [session.value?.id ?? storyLoad.value?.id, activeTurn.value?.id, activeTurn.value?.status],
+  ([sessionId], [previousSessionId]) => {
     retryNote.value = activeTurn.value?.request?.regenerate_note || '';
     retryIncludeReply.value = !!activeTurn.value?.request?.regenerate_include_reply;
     const request = activeTurn.value?.status !== 'committed' ? activeTurn.value?.request : null;
-    updateVariables.value = !!request?.update_variables;
+    if (request || sessionId !== previousSessionId) {
+      updateVariables.value = !!request?.update_variables;
+    }
     allowEdit.value = !!request?.allow_content_edit;
   },
 );
 const viewScope = createSessionController();
 const viewApi = viewScope.request;
-const storyLoad = ref<{ id: string; creating: boolean; name: string; error: string } | null>(null);
 function abandonStoryLoad() {
   if (!storyLoad.value) return;
   viewScope.enter();
