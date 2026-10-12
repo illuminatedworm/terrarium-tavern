@@ -46,6 +46,8 @@ async def test_documented_minimal_results_match_execution(name):
     tools = AgentTools(owner)
     if name == "revise_content":
         await tools.execute("read_character", '{"ref":"description"}')
+    if name in ("write_note", "archive_note"):
+        await tools.execute("read_note", json.dumps({"key": NOTE_KEY}))
     arguments, expected = copy.deepcopy(EXAMPLES[name])
     # Tool parsing validates every documented top-level and nested parameter.
     result = await tools.execute(name, json.dumps(arguments, ensure_ascii=False))

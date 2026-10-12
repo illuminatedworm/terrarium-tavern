@@ -240,7 +240,7 @@ async def test_identity_ambiguity_and_failed_validation_do_not_change_draft(owne
         await call(owner, "find_lore_for_edit", query="*")
 
 
-async def test_edit_type_dependencies_allow_additions_when_reads_are_disabled(story):
+async def test_visible_character_and_additions_work_when_reads_are_disabled(story):
     store, session = story
     app, service = create_app(store.root), runtime(store)
     try:
@@ -251,13 +251,13 @@ async def test_edit_type_dependencies_allow_additions_when_reads_are_disabled(st
             catalog = (await client.get(url, params={"allow_content_edit": "true"})).json()["tools"]
             edit = next(tool for tool in catalog if tool["name"] == "revise_content")
             assert edit["available"] and edit["edit_capabilities"] == {
-                "character": False, "lore_update_remove": False, "lore_add": True}
+                "character": True, "lore_update_remove": True, "lore_add": True}
         model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Blocked"}], "comment": "Check"}),
             ("revise_content", {"operations": [{"op": "add_lore", "entry": {"title": "New", "content": "New setting"}}], "comment": "Check"}), "Narrative")
         result, _ = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
         results = [e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"]
-        assert "read_character" in results[0]["error"]["message"] and results[1]["data"]["saved_to_draft"]
+        assert results[0]["data"]["saved_to_draft"] and results[1]["data"]["saved_to_draft"]
     finally:
         await service.close()
         await app.state.service.close()

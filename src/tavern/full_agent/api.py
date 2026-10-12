@@ -80,8 +80,8 @@ def register_full_agent_routes(app, store, context_operations=None):
         document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
         definitions = tool_definitions(request, session, settings.full_agent_config, settings=settings,
                                        catalog=True, document=document)
-        edit_capabilities = {"character": "revise_content" in available and "read_character" in available,
-                             "lore_update_remove": "revise_content" in available and "read_lore_entry" in available,
+        edit_capabilities = {"character": "revise_content" in available,
+                             "lore_update_remove": "revise_content" in available,
                              "lore_add": "revise_content" in available}
         return {"tools": [{**t["function"], "enabled": (session["plot_enabled"]
                            if t["function"]["name"] == "write_plot" else t["function"]["name"] not in session["disabled_tools"]),

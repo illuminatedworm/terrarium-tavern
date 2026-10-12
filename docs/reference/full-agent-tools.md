@@ -20,7 +20,7 @@ patch_state 和 revise_content 的备注参数统一使用 comment，替代旧�
 
 ## 叙事检索与编辑定位
 
-recall_lore 使用自动检索的索引与准入规则，返回完整命中正文，已注入正文省略，合法零命中保持为空。编号和标题由返回选项控制；返回的 L 引用可交给 read_lore_entry，但受保护目标仍会拒绝。召回正文和已有上下文不授予编辑资格。
+recall_lore 使用自动检索的索引与准入规则，返回完整命中正文，已注入正文省略，合法零命中保持为空。编号和标题由返回选项控制；返回的 L 引用可交给 read_lore_entry，但受保护目标仍会拒绝。召回或自动注入的完整当前正文可以作为修改依据，修改权限仍由本轮授权决定。
 
 find_lore_for_edit 按标题、关键词和正文做字面定位，包括停用普通条目；query=* 列出最多 limit 项。read_lore_entry 一次返回完整 title/content/keys/secondary_keys/enabled，并登记该条目的读取记录。历史与笔记搜索也支持 *，但不搜索旧工具过程。
 
@@ -28,7 +28,7 @@ set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最
 
 ## 变量路径与唯一成功提交
 
-read_state 默认 scope="variables"，根对象为投影后的 stat_data；scope="story" 的根对象为投影后的完整剧情状态。两者 path 都是 JSON Pointer，空串读取整个作用域，缺失目标返回 text:"null"，没有 stat_data 时变量视图为 {}。内部账本与 MVU 元数据不开放。父对象替换会保留隐藏字段，数组下标按模型可见项定位，由程序映射到实际存储位置。
+read_state 默认 scope="mvu"，根对象为投影后的 stat_data；scope="full" 读取全部模型可见运行时状态，包含 stat_data；scope="other" 读取同一状态中除顶层 stat_data 之外的字段。path 相对于所选范围，使用 JSON Pointer，空串读取整个范围，缺失路径返回 text:"null"，没有 stat_data 时 mvu 返回 {}。所有范围都过滤内部账本与 MVU 元数据，full 不开放内部数据。只有完整 mvu 或 full 中的完整 stat_data 可作为非空变量补丁的上下文依据，other 不授予该依据。旧工具调用中的 variables／story 分别按 mvu／full 兼容解析及回放，新工具目录只提供 mvu／full／other。父对象替换会保留隐藏字段，数组下标按模型可见项定位，由程序映射到实际存储位置。
 
 | 目标 | 默认变量作用域的 path |
 |---|---|
@@ -40,9 +40,9 @@ read_state 默认 scope="variables"，根对象为投影后的 stat_data；scope
 
 patch_state.operations 为 0–100 项带类型的 JSON Patch：每项 op/path 必填，add/replace/test 需要 value（包括 null），move/copy 需要 from，remove 无其他字段。path/from 相对 stat_data；数组从 0 起，add 可用末尾 /-，空指针指根。既有目标、父节点和根值限制由补丁及 MVU 校验共同检查。
 
-授权回合必须且只能成功一次。非空补丁须先在当前窗口完整执行 read_state(path="",scope="variables")；局部、story 作用域或过期读取无效。operations=[] 可直接确认无变化，不调用补丁阶段的脚本，仍消耗一次成功提交。失败不计成功，补丁失败恢复脚本镜像后允许修正重试；恢复失败则终止回合。错误路径给出纠正建议，不自动改写路径；真实存在的 stat_data 同名嵌套键仍合法。
+授权回合必须且只能成功一次。非空补丁需要上下文中的完整当前变量；完整 mvu／stat_data 读取、工具参数中的完整根值，或完整读取加成功补丁可准确还原当前值时均有效。完整 full 读取含 stat_data 时也有效，局部变量、过期值及无法还原的脚本变化不算。缺少当前版本时先 read_state(path="",scope="mvu")。operations=[] 可直接确认无变化，不调用补丁阶段的脚本，仍消耗一次成功提交。失败不计成功，补丁失败恢复脚本镜像后允许修正重试；恢复失败则终止回合。错误路径给出纠正建议，不自动改写路径；真实存在的 stat_data 同名嵌套键仍合法。
 
-变量规则以本轮固定的完整 mvu_rules 快照提供，规则不扩大权限。patch_state 定义不随本轮授权变化，以保持请求前缀稳定；关闭 read_state 或 patch_state 则不允许发起变量更新。
+变量规则以本轮固定的完整 mvu_rules 快照提供，规则不扩大权限。patch_state 定义不随本轮授权变化，以保持请求前缀稳定；关闭 patch_state 不允许发起变量更新。关闭 read_state 不连带禁用 patch_state，已有完整当前版本或提交空补丁时仍可执行。
 
 ## 设定编辑与读取记录
 
@@ -52,12 +52,12 @@ revise_content 接受 1–100 项受限动作及 comment：
 
 | op | 参数 | 规则 |
 |---|---|---|
-| set_character | field、完整文本 value | 首次编辑前完整读取字段；可清空可选字段，name 必须有效。 |
+| set_character | field、完整文本 value | 当前上下文没有完整最新字段时先读取；可清空可选字段，name 必须有效。 |
 | add_lore | entry | 必填非空白 title/content，可选 keys=[]、secondary_keys=[]、enabled=true；不需预读。 |
-| update_lore | ref、非空 changes | 首次编辑前完整读取条目；可改 title/content/keys/secondary_keys/enabled，不能传 null，省略保留。 |
-| remove_lore | ref | 使用最新读取记录删除一个普通条目。 |
+| update_lore | ref、非空 changes | 当前上下文没有完整最新条目正文时先读取；可改 title/content/keys/secondary_keys/enabled，不能传 null，省略保留。 |
+| remove_lore | ref | 当前上下文须有该普通条目的完整最新正文，否则先读取。 |
 
-整批在副本上校验并应用，失败不改变内容或读取记录。成功返回 characters、entries 中每个新增／修改目标的完整最终视图，同目标只返回一次；删除项进入 removed_refs，新增引用进入 added_refs。后端为返回的完整内容刷新记录，因此可以连续编辑或编辑新建条目；删除、外部内容变化、换窗或新回合使旧记录失效。
+整批在副本上校验并应用，失败不改变内容或读取记录。成功返回 characters、entries 中每个新增／修改目标的完整最终视图，同目标只返回一次；删除项进入 removed_refs，新增引用进入 added_refs。自动注入、完整工具结果、模型自己在工具参数中提供的完整当前文本均算修改依据；同窗口跨回合可沿用。目标改变、删除或原文退出上下文后重新核对，没有当前版本才须读取。读取工具关闭不阻止上下文依据充分的修改。
 
 只开放普通叙事条目，包含停用条目。脚本、HTML 执行入口、tracker_mvu、runtime_init、传统 InitVar 和执行配置受保护；不能借新文本引入执行内容。无关字段、开场白和扩展保持原样。身份、别名、数组位置及原配置由程序维护，工具不接受整卡替换或任意 JSON Patch。
 
@@ -67,7 +67,7 @@ revise_content 接受 1–100 项受限动作及 comment：
 
 write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入；最多 20 个，无需预先搜索或读取。程序校验来源身份与过时状态，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。stale=true 表示来源变化或不可用，应先核对原文。
 
-write_note 完整替换内容，无先读要求；覆盖归档键重新激活。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
+write_note 完整替换内容；覆盖已有键或 archive_note 归档前，当前完整正文须已在上下文，否则先 read_note。工具参数中的完整当前正文也算，成功写入后不必重复读取。新 key 无需读取，覆盖归档键重新激活。目录和搜索摘要不算完整正文。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
 
 handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 的 content 参数只替换笔记；new_context 使用 handoff 参数保存交接并同时换窗，不再接受 content 参数。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
 

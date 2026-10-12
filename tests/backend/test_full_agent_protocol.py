@@ -26,10 +26,10 @@ async def test_pointer_scopes_escaped_keys_arrays_missing_values_and_handles(own
         "weather": "rain", "initialized_lorebooks": [opaque], "schema": {"private": True}}
     assert json.loads((await call(owner, "read_state", path="/a.b/a~1b~0c/1"))["text"]) == 4
     assert json.loads((await call(owner, "read_state", path="/missing"))["text"]) is None
-    story_result = json.loads((await call(owner, "read_state", scope="story"))["text"])
+    story_result = json.loads((await call(owner, "read_state", scope="full"))["text"])
     assert story_result["weather"] == "rain" and "schema" not in story_result
     assert "initialized_lorebooks" not in story_result and "$meta" not in story_result["stat_data"]
-    assert owner.tools.reads.records["state"] is None
+    assert owner.tools.reads.records["state"] is not None
     full = await call(owner, "read_state")
     assert opaque not in full["text"]
     assert json.loads((await call(owner, "read_state", path="/" + owner.model_view.forward[opaque]))["text"]) == "source"

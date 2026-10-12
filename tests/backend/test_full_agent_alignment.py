@@ -265,6 +265,7 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
     model = Model(
         ("write_note", {"key": "线索/钟楼", "content": "初版笔记", "kind": "plan"}),
         ("new_context", {"handoff": "继续当前场景", "keep_recent": 0}),
+        ("read_note", {"key": "线索/钟楼"}),
         ("write_note", {"key": "线索/钟楼", "content": "更新笔记正文", "kind": "hypothesis"}),
         ("write_note", {"key": "计划/港口", "content": "新计划", "kind": "plan"}),
         ("archive_note", {"key": "线索/钟楼"}),
@@ -276,7 +277,7 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        expected = [None, None, "线索/钟楼", "线索/钟楼", "线索/钟楼\n计划/港口",
+        expected = [None, None, "线索/钟楼", "线索/钟楼", "线索/钟楼", "线索/钟楼\n计划/港口",
                     "计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口"]
         fixed_prefix = None
         for request, keys in zip(model.requests, expected, strict=True):
@@ -296,7 +297,7 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
             assert prefix == fixed_prefix
             assert messages[at + 1]["role"] == "user"
         # Editing contents with the same key keeps the entire previously sent prefix.
-        before_edit, after_edit = [strip_local(r["messages"]) for r in model.requests[2:4]]
+        before_edit, after_edit = [strip_local(r["messages"]) for r in model.requests[3:5]]
         assert after_edit[:len(before_edit)] == before_edit
         assert current["snapshot"]["full_agent"]["window"]["number"] == 3
         directory_trace = next(m for m in result["preview"]["trace"] if m["source"] == "note_list")

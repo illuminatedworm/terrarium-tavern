@@ -19,8 +19,10 @@ async def main():
         app = create_app(data)
         store = app.state.store
         card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
-        settings = store.settings()
-        settings.full_agent_config.auto_retrieval = False
+        settings = store.settings_document()
+        settings.full_agent.model.model = "fixture"
+        settings.shared.providers[0].api_key = "fixture-local-only"
+        settings.full_agent.tools.auto_retrieval = False
         store.save_settings(settings)
         app.state.service.full.provider_factory = lambda: Model(
             ("read_history", {"ref": "H2"}),
@@ -100,8 +102,11 @@ async def main():
                         calls = detail_page.locator('.agent-activity').filter(
                             has=detail_page.locator('.activity-name', has_text='read_history'))
                         for call in [calls.first, calls.last]:
-                            await call.locator('summary').click()
+                            # Keyboard activation remains available when the
+                            # jump-to-latest overlay crosses this narrow view.
+                            await call.locator('summary').press('Enter')
                             await expect(call.get_by_role('region', name='调用参数')).to_contain_text('H2')
+                            await call.locator('summary').press('Tab')
                         await expect(calls.last.get_by_role('region', name='工具返回')).to_contain_text('缺少必填参数 ref')
                         layout = await calls.evaluate_all("""elements => elements.map(el => {
                             const properties = ['display', 'padding', 'margin', 'borderWidth', 'borderRadius',
@@ -161,22 +166,21 @@ async def main():
                 await page.get_by_label("本轮更新变量", exact=True).check()
                 await state_read.uncheck()
                 await expect(state_read).to_be_enabled()
-                await expect(page.get_by_label("本轮更新变量", exact=True)).to_be_disabled()
-                await expect(page.get_by_label("本轮更新变量", exact=True)).not_to_be_checked()
+                await expect(page.get_by_label("本轮更新变量", exact=True)).to_be_enabled()
+                await expect(page.get_by_label("本轮更新变量", exact=True)).to_be_checked()
                 patch_card = tools.locator(".tool-card").filter(has=page.get_by_label("启用 patch_state", exact=True))
-                await expect(patch_card).to_contain_text("读取工具已关闭")
-                await expect(patch_card).to_contain_text("请先启用 read_state")
+                await expect(patch_card).to_contain_text("本轮可用")
                 await character_read.uncheck()
                 await expect(character_read).to_be_enabled()
                 revise_card = tools.locator(".tool-card").filter(has=page.get_by_label("启用 revise_content", exact=True))
                 await page.get_by_label("本轮允许修改设定", exact=True).check()
-                await expect(revise_card).to_contain_text("人物设定修改需启用 read_character")
+                await expect(revise_card).to_contain_text("当前上下文已有目标的完整最新内容时可直接修改")
                 entry_read = tools.get_by_label("启用 read_lore_entry", exact=True)
                 await entry_read.uncheck()
                 await expect(entry_read).to_be_enabled()
-                await expect(revise_card).to_contain_text("已有世界书条目的修改和删除需启用 read_lore_entry")
+                await page.get_by_label("本轮允许修改设定", exact=True).check()
                 await expect(revise_card).to_contain_text("本轮可用")
-                await expect(revise_card).to_contain_text("新增普通世界书条目无需读取整本世界书")
+                await expect(revise_card).to_contain_text("新增普通世界书条目无需读取")
                 await tools.locator(".tool-card").filter(has=page.get_by_label("启用 recall_lore", exact=True)).locator("summary").click()
                 await expect(tools).to_contain_text("Uses keyword and BM25 recall.")
                 await expect(tools).to_contain_text("Search text or retrieval clues")
@@ -198,6 +202,7 @@ async def main():
                 await state_read.check()
                 await expect(state_read).to_be_enabled()
                 await expect(page.get_by_label("本轮更新变量", exact=True)).to_be_enabled()
+                await page.get_by_label("本轮更新变量", exact=True).uncheck()
                 await character_read.check()
                 await expect(character_read).to_be_enabled()
                 await entry_read.check()
@@ -209,7 +214,7 @@ async def main():
                 await page.get_by_role("button", name="场景", exact=True).click()
                 notes = page.get_by_role("region", name="Full Agent 记忆与窗口")
                 await expect(notes).to_contain_text("工作窗口 2")
-                await expect(notes.get_by_text("约定/钟楼 · 有据事实", exact=True)).to_be_visible()
+                await expect(notes.locator("summary").filter(has_text="约定/钟楼")).to_contain_text("有据事实")
                 await expect(page.get_by_role("button", name="重新生成记忆", exact=True)).to_have_count(0)
                 await page.screenshot(path=str(output / "desktop.png"))
                 await notes.get_by_label("交接笔记（handoff）", exact=True).fill("人工确认：明天去钟楼。")

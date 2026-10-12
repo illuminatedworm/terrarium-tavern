@@ -70,7 +70,7 @@ def test_old_bulk_exchanges_cannot_reach_compiled_model_requests(story):
     assert trace == original
 
 
-async def test_entry_read_survives_failure_and_branch_regeneration_requires_fresh_read(story):
+async def test_entry_visibility_survives_failure_and_fork_but_not_excluded_regeneration_trace(story):
     store, session = story
     service = runtime(store)
     def update(text):
@@ -87,10 +87,9 @@ async def test_entry_read_survives_failure_and_branch_regeneration_requires_fres
         assert store.turn(resumed["id"])["status"] == "committed"
         current = store.session(session["id"])
         branch = store.fork_session(current["id"], current["head"], current["revision"])
-        result, branch = await turn(service, branch, Model(update("Unqualified edit"),
-            ("read_lore_entry", {"ref": "L1"}), update("Fork update"), "Branch narrative"), allow_content_edit=True)
+        result, branch = await turn(service, branch, Model(update("Fork update"), "Branch narrative"), allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
-        assert any(e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"] for e in store.events(result["id"]))
+        assert not any(e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"] for e in store.events(result["id"]))
         assert branch["snapshot"]["content"]["document"]["data"]["character_book"]["entries"][0]["content"] == "Fork update"
         assert store.session(current["id"])["snapshot"]["content"]["document"]["data"]["character_book"]["entries"][0]["content"] == "Original branch update"
         result, current = await turn(service, current, Model(update("Unqualified regeneration"),

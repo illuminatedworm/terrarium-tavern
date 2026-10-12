@@ -43,15 +43,15 @@ async def call(owner, name, **args):
 async def test_nonempty_patch_requires_current_complete_variables_read(owner):
     operations = [{"op": "replace", "path": "/hp", "value": 7}]
     async def denied():
-        with pytest.raises(ValueError, match="完整读取最新变量"):
+        with pytest.raises(ValueError, match="完整最新变量"):
             await call(owner, "patch_state", operations=operations, comment="Injury")
         assert not owner.patch_state_done
 
     await denied()
     await call(owner, "read_state", path="/hp")
     await denied()
-    await call(owner, "read_state", scope="story")
-    await denied()
+    await call(owner, "read_state", scope="full")
+    owner.tools.reads.require_state()
     await call(owner, "read_state")
     owner.snapshot["state"]["stat_data"]["hp"] = 6
     await denied()
@@ -119,7 +119,7 @@ async def test_reads_and_writes_in_one_tool_batch_follow_execution_order(story):
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-async def test_read_permissions_survive_failure_resume_but_old_progress_requires_reread(story, legacy):
+async def test_visibility_rebuilds_from_context_after_failure_even_with_legacy_progress(story, legacy):
     store, session = story
     service = runtime(store)
     try:
@@ -134,10 +134,8 @@ async def test_read_permissions_survive_failure_resume_but_old_progress_requires
         patch = ("patch_state", {"operations": [], "comment": "No changes"})
         edit = ("revise_content", {"operations": [{"op": "set_character", "field": "description",
                                  "value": "Revised"}], "comment": "User requested edit"})
-        # The sample is a wrapped card. Missing legacy stamps cannot grant a write.
+        # The complete field remains in the fixed context, even with no saved stamp.
         responses = [patch, edit]
-        if legacy:
-            responses += [("read_character", {"ref": "description"}), edit]
         model = Model(*responses, "Narrative")
         service.full.provider_factory = lambda: model
         resumed = service.submit(session["id"], TurnRequest(text=failed["request"]["text"], operation_id="resume-reads",
@@ -148,7 +146,7 @@ async def test_read_permissions_survive_failure_resume_but_old_progress_requires
         assert result["status"] == "committed", result["error"]
         errors = [e["payload"]["result"]["error"] for e in store.events(resumed["id"])
                   if e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"]]
-        assert len(errors) == (1 if legacy else 0)
+        assert not errors
         current = store.session(session["id"])
         assert current["snapshot"]["content"]["document"]["data"]["description"] == "Revised"
         for mode in ("send", "regenerate"):

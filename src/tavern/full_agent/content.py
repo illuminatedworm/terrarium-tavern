@@ -72,13 +72,13 @@ class AddLore(ContentArguments):
 
 
 class UpdateLore(ContentArguments):
-    op: Literal["update_lore"] = Field(description="Update one previously read ordinary narrative entry.")
+    op: Literal["update_lore"] = Field(description="Update one ordinary narrative entry whose complete current text is in context.")
     ref: str = Field(pattern=r"^L[1-9]\d*$", description="L handle returned for this entry.")
     changes: EntryChanges = Field(description="Only changed narrative properties; omitted properties and runtime configuration remain intact.")
 
 
 class RemoveLore(ContentArguments):
-    op: Literal["remove_lore"] = Field(description="Delete one previously read ordinary narrative entry.")
+    op: Literal["remove_lore"] = Field(description="Delete one ordinary narrative entry whose complete current text is in context.")
     ref: str = Field(pattern=r"^L[1-9]\d*$", description="L handle of the ordinary entry to remove.")
 
 
@@ -194,10 +194,6 @@ class ContentEditor:
         return [{"ref": refs[entry["id"]], **entry_view(entry)}
                 for _, raw, entry in entry_rows(self.owner.document) if editable_entry(raw, entry)]
 
-    def require_tool(self, name):
-        if name not in {tool["function"]["name"] for tool in self.owner.definitions}:
-            raise ToolError("PERMISSION_DENIED", f"此类设定修改需要启用 {name}")
-
     def revise(self, arguments):
         owner = self.owner
         operations = owner.model_view.restore([op.model_dump(exclude_unset=True) for op in arguments.operations])
@@ -209,14 +205,12 @@ class ContentEditor:
         fields, changed, affected_refs = set(), set(), set()
         for operation in operations:
             if operation["op"] == "set_character":
-                self.require_tool("read_character")
                 self.character(operation["field"])
                 self.reads.require_character(operation["field"])
                 if runtime_code(operation["value"]):
                     raise ToolError("PROTECTED_TARGET", "人物设定不能引入执行脚本或变量指令")
                 fields.add(operation["field"])
             elif operation["op"] in ("update_lore", "remove_lore"):
-                self.require_tool("read_lore_entry")
                 _, raw, entry = self.resolve(operation["ref"], refs=refs)
                 self.reads.require_entry(operation["ref"], raw)
                 affected_refs.add(operation["ref"])

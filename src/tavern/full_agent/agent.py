@@ -21,6 +21,7 @@ from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.protocol import ToolError, TurnError, failed
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
+from tavern.full_agent.visibility import context_messages
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 
@@ -151,6 +152,7 @@ class FullAgent:
         self.native_epoch = result["context_ledger"]["native_epoch"]
         self.request_context.window_id = self.state["window"]["id"]
         self.request_context.diagnostics = copy.deepcopy(result["context_ledger"])
+        self.tools.reads.observe_context(context_messages(result))
         for message in result["context_additions"]:
             self.append(message, self.state["window"]["id"])
         if result["context_ledger"]["rebuild_reason"]:

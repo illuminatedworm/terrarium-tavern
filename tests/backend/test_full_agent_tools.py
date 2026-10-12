@@ -160,7 +160,7 @@ async def test_retired_tool_names_are_not_accepted_in_settings(story, old_name):
         await app.state.service.close()
 
 
-@pytest.mark.parametrize("tool", ["patch_state", "read_state"])
+@pytest.mark.parametrize("tool", ["patch_state"])
 async def test_required_mvu_update_rejects_disabled_dependency(story, tool):
     store, session = story
     with store.connection() as db:

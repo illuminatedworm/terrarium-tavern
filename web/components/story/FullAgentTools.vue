@@ -25,13 +25,6 @@ const metadataLabels: Record<string, string> = {
   read_state: '返回路径',
   read_character: '返回字段名',
 };
-const readDependencies: Record<string, string> = {
-  patch_state: 'read_state',
-};
-function missingRead(name: string) {
-  const read = readDependencies[name];
-  return read && props.session.disabled_tools?.includes(read) ? read : '';
-}
 function resultLabel(name: string, key: string) {
   return key === 'include_metadata' ? metadataLabels[name] || resultLabels[key] : resultLabels[key];
 }
@@ -139,34 +132,19 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
         <code>{{ tool.name }}</code>
       </label>
       <p class="tool-status">
-        {{
-          !tool.enabled
-            ? '已关闭'
-            : tool.available
-              ? '本轮可用'
-              : missingRead(tool.name)
-                ? '已启用 · 读取工具已关闭'
-                : '已启用 · 本轮尚未授权'
-        }}
+        {{ !tool.enabled ? '已关闭' : tool.available ? '本轮可用' : '已启用 · 本轮尚未授权' }}
       </p>
       <p v-if="tool.controlled_by === 'plot_enabled'" class="inspector-note">
         由记忆面板中的“剧情规划”开关统一控制。
       </p>
-      <p v-if="tool.enabled && missingRead(tool.name)" class="inspector-note">
-        请先启用 {{ missingRead(tool.name) }}，完成本回合当前窗口的读取后才能修改。
-      </p>
-      <p v-else-if="tool.name === 'patch_state' && tool.enabled && !tool.available" class="inspector-note">
+      <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available" class="inspector-note">
         工具定义保持稳定；勾选本轮“更新变量”后才允许执行，且本轮须成功调用一次。
       </p>
       <p v-else-if="tool.name === 'revise_content' && tool.enabled && !tool.available" class="inspector-note">
         本轮允许修改设定后可用。
       </p>
       <p v-if="tool.name === 'revise_content' && tool.available" class="inspector-note">
-        <template v-if="!tool.edit_capabilities?.character">人物设定修改需启用 read_character。 </template>
-        <template v-if="!tool.edit_capabilities?.lore_update_remove">
-          已有世界书条目的修改和删除需启用 read_lore_entry。
-        </template>
-        新增普通世界书条目无需读取整本世界书。
+        当前上下文已有目标的完整最新内容时可直接修改，否则需先读取。新增普通世界书条目无需读取。
       </p>
       <p v-if="tool.name === 'new_context' && !tool.enabled" class="inspector-note">
         上下文满时，需要在场景页手动换窗或重新启用此工具。

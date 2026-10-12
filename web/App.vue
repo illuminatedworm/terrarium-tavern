@@ -339,11 +339,7 @@ watch([updateVariables, () => allowEdit.value], () => {
 watch(
   () => [session.value?.agent_mode, session.value?.disabled_tools],
   () => {
-    if (
-      session.value?.agent_mode === 'full_agent' &&
-      (session.value.disabled_tools?.includes('read_state') ||
-        session.value.disabled_tools?.includes('patch_state'))
-    ) {
+    if (session.value?.agent_mode === 'full_agent' && session.value.disabled_tools?.includes('patch_state')) {
       updateVariables.value = false;
     }
   },
@@ -2677,9 +2673,7 @@ useTimedError(error);
                       :disabled="
                         busy ||
                         activeTurn?.status === 'awaiting_review' ||
-                        (isFullAgent &&
-                          (session?.disabled_tools?.includes('read_state') ||
-                            session?.disabled_tools?.includes('patch_state')))
+                        (isFullAgent && session?.disabled_tools?.includes('patch_state'))
                       "
                     />
                     本轮更新变量</label

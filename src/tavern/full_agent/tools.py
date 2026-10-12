@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 
 import jsonpatch
 import jsonpointer
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
@@ -13,7 +13,7 @@ from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
 from tavern.full_agent.content import CharacterRead, ContentEditor, ContentRevision, LoreRead, entry_view
 from tavern.full_agent.protocol import ToolError, TurnError, success
-from tavern.full_agent.read_guards import DraftReads
+from tavern.full_agent.read_guards import DraftReads, state_scope
 from tavern.full_agent.state import note_view, rollover, source_hash
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
@@ -107,7 +107,12 @@ class StatePatch(Arguments):
 
 class StateRead(Arguments):
     path: str = Field(default="", max_length=200, description="JSON Pointer relative to the selected scope, e.g. /hp or /items/0/name. Escape ~ as ~0 and / as ~1 in keys. Empty reads the complete scope; missing paths return null.")
-    scope: Literal["variables", "story"] = Field(default="variables", description="variables reads stat_data, matching patch_state paths. story reads projected story state. Only a complete variables read qualifies for a nonempty patch.")
+    scope: Literal["mvu", "full", "other"] = Field(default="mvu", description="mvu reads stat_data, matching patch_state paths. full reads all model-visible runtime state, including stat_data. other reads that state with the top-level stat_data field excluded. Internal bookkeeping is hidden in every scope. Complete current stat_data from mvu or full can support a nonempty patch; other cannot.")
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def legacy_scope(cls, value):
+        return state_scope(value)
 
 
 RESULT_FIELDS = {
@@ -119,7 +124,6 @@ RESULT_FIELDS = {
     "read_state": {"include_metadata": True},
     "read_character": {"include_metadata": True},
 }
-READ_DEPENDENCIES = {"patch_state": "read_state"}
 
 
 def result_field(session, tool, field):
@@ -129,13 +133,13 @@ def result_field(session, tool, field):
 SPECS = {
     "find_lore_for_edit": (Search, "Locate ordinary narrative worldbook entries for editing; use recall_lore for narrative recall. "
         "Search literal title, keywords or text, including disabled ordinary entries; query=* lists up to limit results. "
-        "Returns L handles, titles and navigation previews. Read one target with read_lore_entry before updating/removing it."),
+        "Returns L handles, titles and navigation previews. If the current complete target text is absent from context, read it with read_lore_entry before updating/removing it."),
     "read_lore_entry": (LoreRead, "Read one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. "
-        "Establishes a current read record for editing. Protected scripts, variable rules and initialization are unavailable."),
+        "Provides current-context evidence for editing. Protected scripts, variable rules and initialization are unavailable."),
     "recall_lore": (Query, "Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. "
         "Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. "
         "Returns complete selected entries in <lorebook>; already injected text is omitted. "
-        "When enabled, results include titles and L handles. These handles can be passed to read_lore_entry, subject to target protection; recall alone does not establish an edit read record."),
+        "When enabled, results include titles and L handles. Complete current recalled text also qualifies as context evidence for editing; target protection still applies."),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable."),
     "read_history": (HistoryRead, "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose."),
@@ -148,7 +152,7 @@ SPECS = {
         "Returns navigation previews when enabled. Note contents are not automatically injected; use read_note for complete text."),
     "read_note": (NoteRead, "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
-    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. No prior note or history read is required. "
+    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. Replacing an existing active or archived note requires its complete current text in context, including your own earlier tool-call arguments; otherwise read_note first. New keys need no read. "
         "kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks characters' in-story intentions, not an author-level future outline. "
         "Preserve valid experiences and changes, not just a current-state snapshot. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it."),
     "write_plot": (Plot, "Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. "
@@ -157,21 +161,21 @@ SPECS = {
         "Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. "
         "Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
-        "This does not delete it or older history. write_note with the same key reactivates it."),
-    "read_state": (StateRead, "Read state using JSON Pointer. Default scope=variables reads stat_data with the same relative paths as patch_state, e.g. /hp. "
-        "Empty path reads the complete scope; scope=story reads projected story state. Internal ledgers remain hidden. "
-        'Before a nonempty patch, read all variables with path="", scope=variables; partial or story-scope reads do not qualify.'),
+        "Its complete current text must be in context; otherwise read_note first. This does not delete it or older history. write_note with the same key reactivates it."),
+    "read_state": (StateRead, "Read state using JSON Pointer relative to the selected scope. Default scope=mvu reads stat_data with the same relative paths as patch_state, e.g. /hp. "
+        "scope=full reads all model-visible runtime state, including stat_data; scope=other reads that state excluding the top-level stat_data field. Empty path reads the complete selected scope. Internal ledgers remain hidden in every scope. "
+        'If complete current MVU variables are absent from context, read them with path="", scope=mvu before a nonempty patch. Complete stat_data from scope=full also qualifies; partial MVU reads and scope=other do not.'),
     "patch_state": (StatePatch, "Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. "
-        'Nonempty operations require a current complete variables read with read_state(path="", scope="variables"). '
+        'Nonempty operations require complete current variables in context, including complete tool-call values or a visible full read plus successful patches that reconstruct the current value. Otherwise use read_state(path="", scope="mvu"). '
         "Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. "
         "Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. "
         "Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose."),
     "revise_content": (ContentRevision, "Edit narrative settings with set_character, add_lore, update_lore or remove_lore; use these semantic actions, not JSON Patch or storage IDs. "
-        "Existing fields require a current read_character record; existing entries require a current read_lore_entry record. add_lore needs no prior read. "
-        "Success returns complete final contents of changed targets and refreshes their read records for further edits in this window; deletion invalidates the record. "
+        "Existing field or entry text must be complete and current in context: automatic sources, tool results and your own complete tool-call texts all qualify. Otherwise use read_character or read_lore_entry. add_lore needs no prior read. "
+        "Success returns complete final contents of changed targets, usable for further edits while retained in context, including later turns; deletion invalidates the target. "
         "Omitted properties remain intact. Script-bearing targets and execution settings are protected; failed batches change nothing."),
     "read_character": (CharacterRead, "Read one complete setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
-        "Missing fields return null. Establishes a current read record for set_character; script-bearing fields are protected."),
+        "Missing fields return null. Provides current-context evidence for set_character; script-bearing fields are protected."),
     "set_retrieval_query": (RetrievalQuery, "Replace this turn's clues for next-turn automatic worldbook retrieval; the last successful call wins. "
         'query="" clears these clues without erasing clues saved by earlier turns. Describe relevant scenes, entities or unresolved issues, distinguishing anticipated events from facts. Clues stay outside narrative prose.'),
 }
@@ -189,9 +193,6 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
             names.add("write_plot")
         else:
             names.discard("write_plot")
-        for write, read in READ_DEPENDENCIES.items():
-            if read not in names:
-                names.discard(write)
     if not catalog and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
@@ -283,7 +284,7 @@ class AgentTools:
                      "text": row["title"] + " " + " ".join(row["keys"] + row["secondary_keys"]) + " " + row["content"]}
                     for row in self.content.rows()]
             result = self.search(rows, args.query, args.limit)
-            result["notice"] = "preview 仅用于定位；用 read_lore_entry 完整读取一个目标后才能修改或删除。"
+            result["notice"] = "preview 仅用于定位；当前上下文没有目标的完整最新正文时，先用 read_lore_entry 读取再修改或删除。"
             return owner.model_view.expose(result)
         if name == "read_lore_entry":
             _, raw, entry = self.content.resolve(args.ref)
@@ -333,10 +334,12 @@ class AgentTools:
                 raise ToolError("INVALID_REFERENCE", "笔记 key 不存在")
             meta = note_view(note, owner.source_history)
             meta.pop("revision")
+            self.reads.read_note(args.key)
             return self.read(meta.pop("content"),
                              **(meta if result_field(owner.session, name, "include_metadata") else {}))
         if name == "write_note":
             self.cap_text(args.content, owner.settings.full_agent_config.note_tokens, "笔记")
+            self.reads.require_note(args.key)
             old = state["notes"].get(args.key, {})
             if args.kind == "fact" and not args.sources:
                 raise ToolError("INVALID_ARGUMENTS", "fact 必须提供当前分支有效的 H 原文依据；尚未确立的内容请用 hypothesis/plan")
@@ -349,10 +352,13 @@ class AgentTools:
                 sources.append({"message_id": source["id"], "hash": source_hash(source)})
             state["notes"][args.key] = {"key": args.key, "content": args.content, "kind": args.kind,
                                        "status": "active", "revision": old.get("revision", 0) + 1, "sources": sources}
+            # The full replacement is already present in the model's tool call.
+            self.reads.read_note(args.key)
             return {"key": args.key, "saved_to_draft": True}
         if name == "archive_note":
             if args.key not in state["notes"]:
                 raise ToolError("INVALID_REFERENCE", "笔记 key 不存在")
+            self.reads.require_note(args.key)
             state["notes"][args.key]["status"] = "archived"
             state["notes"][args.key]["revision"] += 1
             return {"key": args.key, "archived": True}
@@ -362,12 +368,18 @@ class AgentTools:
             except jsonpointer.JsonPointerException as error:
                 raise ToolError("INVALID_PATH", str(error)) from None
             projected = state_for_model(owner.snapshot["state"])
-            root = projected.get("stat_data", {}) if args.scope == "variables" else projected
+            if args.scope == "mvu":
+                root = projected.get("stat_data", {})
+            elif args.scope == "other":
+                root = {key: value for key, value in projected.items() if key != "stat_data"}
+            else:
+                root = projected
             value = jsonpointer.resolve_pointer(root, path, default=None)
             result = self.read(encoded(owner.model_view.expose(value)),
                                **({"path": args.path, "scope": args.scope}
                                   if result_field(owner.session, name, "include_metadata") else {}))
-            if path == "" and args.scope == "variables":
+            if (path == "" and args.scope == "mvu"
+                    or args.scope == "full" and path in ("", "/stat_data")):
                 self.reads.read_state()
             return result
         if name == "patch_state":

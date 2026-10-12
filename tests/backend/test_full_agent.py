@@ -774,7 +774,7 @@ async def test_empty_note_and_history_search_results_are_minimal(story):
 
 
 @pytest.mark.parametrize("status", ["active", "archived"])
-async def test_note_update_and_reactivation_need_no_reads_across_windows(story, status):
+async def test_note_update_and_reactivation_require_visible_version_after_rollover(story, status):
     from tavern.full_agent.agent import FullAgent
     from tavern.full_agent.state import rollover
 
@@ -791,11 +791,17 @@ async def test_note_update_and_reactivation_need_no_reads_across_windows(story, 
     async def call(name, **args):
         return await owner.tools.execute(name, json.dumps(args, ensure_ascii=False))
 
+    with pytest.raises(ValueError, match="read_note"):
+        await call("write_note", key="线索", content=old["content"] + "，新增猜想", kind="hypothesis")
+    await call("read_note", key="线索")
     await call("write_note", key="线索", content=old["content"] + "，新增猜想", kind="hypothesis")
     assert owner.state["notes"]["线索"]["revision"] == 2
     assert owner.state["notes"]["线索"]["status"] == "active"
     await call("write_note", key="线索", content=old["content"] + "，再次修订", kind="hypothesis")
     rollover(owner.state, owner.history, "保留交接", 0)
+    with pytest.raises(ValueError, match="read_note"):
+        await call("write_note", key="线索", content=old["content"] + "，修正猜想", kind="hypothesis")
+    await call("read_note", key="线索")
     await call("write_note", key="线索", content=old["content"] + "，修正猜想", kind="hypothesis")
     assert owner.state["notes"]["线索"]["revision"] == 4
 

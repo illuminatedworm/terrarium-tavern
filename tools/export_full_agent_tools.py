@@ -22,7 +22,7 @@ NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
     "find_lore_for_edit": ({"query": "港口"}, {
         "matches": [{"ref": "L1", "title": "港口", "preview": "港口 港口 港口有一座灯塔。"}],
-        "notice": "preview 仅用于定位；用 read_lore_entry 完整读取一个目标后才能修改或删除。"}),
+        "notice": "preview 仅用于定位；当前上下文没有目标的完整最新正文时，先用 read_lore_entry 读取再修改或删除。"}),
     "read_lore_entry": ({"ref": "L1"}, ENTRY),
     "recall_lore": ({"query": "港口"}, {"matches": [{"text": "<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}),
     "search_history": ({"query": "港口"}, {
@@ -41,7 +41,7 @@ EXAMPLES = {
     "write_plot": ({"content": "近期：若玩家前往港口，让守塔人的隐瞒引出冲突；远期：视选择揭开旧信来历。"},
                    {"saved_to_draft": True}),
     "archive_note": ({"key": NOTE_KEY}, {"key": NOTE_KEY, "archived": True}),
-    "read_state": ({}, {"path": "", "scope": "variables", "text": '{"hp":8}'}),
+    "read_state": ({}, {"path": "", "scope": "mvu", "text": '{"hp":8}'}),
     "patch_state": ({"operations": [], "comment": "本轮变量无变化"}, {
         "saved_to_draft": True, "patch_state_completed": True, "notice": "已确认本轮变量无变化；未执行变量补丁或脚本回调。"}),
     "revise_content": ({"operations": [{"op": "set_character", "field": "description", "value": "新的角色描述。"}],
@@ -59,7 +59,7 @@ def encoded(value):
 
 def descriptions():
     parts = [DESCRIPTION_MARKER, "",
-             "以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；剧情规划示例已开启功能，变量示例已获本轮授权，设定写入示例已完整读取 description。",
+             "以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；剧情规划示例已开启功能，变量示例已获本轮授权，设定写入与笔记修改示例的目标当前全文已在上下文中。",
              ""]
     assert set(EXAMPLES) == set(SPECS)
     for name, (_, description) in SPECS.items():
