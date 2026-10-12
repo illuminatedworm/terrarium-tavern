@@ -68,7 +68,7 @@ class FullAgentRuntime:
         script = await self.runtime.open(card["document"], session["messages"], session["snapshot"],
             bool(card["permission"]), host, self.dependencies.scripts(card),
             lambda html: self.dependencies.markup(card, html), persona=session["persona"],
-            opening=True, greeting_id=session.get("greeting_id"))
+            opening=True)
         try:
             mirror = await script.call("snapshot")
             snapshot = session["snapshot"]

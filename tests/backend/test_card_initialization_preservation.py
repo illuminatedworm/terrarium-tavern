@@ -1,13 +1,12 @@
 """Keep hidden opening data while testing the real initialization/context pipeline."""
 
 import copy
-import json
 
 import pytest
 
 from tavern.application.service import RoleplayRuntime
 from tavern.character.card_editor import CardEditorService
-from tavern.character.card_workflow import greeting_hash, validation_report
+from tavern.character.card_workflow import validation_report
 from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
@@ -75,35 +74,9 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
         await service.close()
 
 
-async def test_explicit_extraction_of_one_opening_preserves_other_inline_initialization(tmp_path):
-    store = Store(tmp_path)
-    doc = fixture()
-    source = store.import_card(dump(doc).encode(), "fixture.json")
-    editor = CardEditorService(store)
-    wid = editor.edits.create(source["id"])["id"]
-    try:
-        provider = ToolLLM([
-            ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
-            ("set_opening", {"card_ref": "C1", "index": 0, "narrative": "清晨开门。",
-                             "initialization": "<initvar>hp: 8\nplace: morning</initvar>"}),
-            ("test_draft", {"card_ref": "C1", "index": 1}),
-        ])
-        result = await run(editor, wid, provider)
-        assert result["status"] == "completed", result["error"]
-        current = editor.edits.conversation(wid)["cards"][0]["document"]
-        assert current["alternate_greetings"] == doc["alternate_greetings"]
-        records = current["extensions"]["terrarium"]["workflow"]["greetings"]
-        assert records[1]["initialization"] == "<initvar>hp: 3\nplace: night</initvar>"
-        probe = json.loads([m for m in provider.call_log[-1] if m.get("role") == "tool"][-1]["content"])
-        assert probe["status"] == "passed", probe
-        assert probe["checks"][0]["state"]["stat_data"] == {"hp": 3, "place": "night"}
-    finally:
-        await editor.close()
-
-
 @pytest.mark.parametrize("problem,warning", [
     ("wrong_audience", "tracker_mvu"), ("unclosed", "标签未成对"),
-    ("legacy_update", "不会自动执行"), ("metadata_override", "空串也会覆盖"),
+    ("legacy_update", "不会自动执行"),
 ])
 def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
     doc = fixture()
@@ -113,11 +86,47 @@ def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
         doc["first_mes"] = doc["first_mes"].replace("</initvar>", "")
     elif problem == "legacy_update":
         doc["first_mes"] = "开场。<UpdateVariable>_.set('hp', 8);</UpdateVariable>"
-    else:
-        doc["extensions"]["terrarium"] = {"workflow": {"version": 1, "greetings": [
-            {"id": str(i), "initialization": "", "greeting_hash": greeting_hash(text)}
-            for i, text in enumerate([doc["first_mes"], *doc["alternate_greetings"]])], "unresolved": []}}
     original = copy.deepcopy(doc)
     result = validation_report(doc)
     assert result["valid"] and any(warning in text for text in result["warnings"])
     assert doc == original
+
+
+@pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
+async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_story(tmp_path, mode):
+    store = Store(tmp_path)
+    doc = {"name": "初值更新", "first_mes": "开门。", "extensions": {},
+           "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]}}
+    card = store.import_card(dump(doc).encode(), "card.json")
+    service = RoleplayRuntime(store)
+    try:
+        previous = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+        previous = await service.initialize_session(previous["id"])
+        assert previous["snapshot"]["state"]["stat_data"]["Money"] == 0
+        doc["character_book"]["entries"][0]["content"] = "Money: 500000"
+        store.edit_card(card["id"], doc, card["revision"])
+        current = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
+        current = await service.initialize_session(current["id"])
+        assert current["snapshot"]["state"]["stat_data"]["Money"] == 500000
+        assert store.session(previous["id"])["snapshot"]["state"]["stat_data"]["Money"] == 0
+        assert current["card_data"]["document"]["extensions"] == {}
+    finally:
+        await service.close()
+
+
+def test_removed_initialization_channel_is_rejected_in_tools_and_card_import(tmp_path):
+    from pydantic import ValidationError
+
+    from tavern.character.editor_tools import Opening
+    assert "initialization" not in Opening.model_json_schema()["properties"]
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        Opening(card_ref="C1", index=0, narrative="开门。", initialization="<initvar>Money: 0</initvar>")
+    doc = fixture()
+    doc["extensions"]["terrarium"] = {"workflow": {"version": 1, "greetings": [
+        {"id": "old", "initialization": "<initvar>Money: 0</initvar>", "greeting_hash": "obsolete"}]}}
+    report = validation_report(doc)
+    assert not report["valid"] and "已移除" in report["errors"][0]
+    store = Store(tmp_path)
+    with pytest.raises(ValueError, match="已移除"):
+        store.import_card(dump(doc).encode(), "old.json")
+    assert store.cards() == []

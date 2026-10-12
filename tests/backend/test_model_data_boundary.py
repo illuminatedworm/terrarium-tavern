@@ -30,7 +30,7 @@ def document():
 
 def runtime_state():
     return {"stat_data": {"hp": 8, "$internal": {"cache_key": ID}, "$meta": {"schema_version": HASH}},
-            "initialized_openings": {ID: True}, "initialized_lorebooks": {"card:" + ID: ["初始化正文" * 100]},
+            "initialized_lorebooks": {"card:" + ID: ["初始化正文" * 100]},
             "schema": {"id": HASH}, "display_data": {"hp": "5->8"}, "delta_data": {"hp": "+3"}}
 
 
@@ -120,7 +120,7 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     assert any('"hp": 8' in m["content"] for m in compiled["messages"])
     assert state == runtime_state()
     assert state_for_model(state) == {"stat_data": {"hp": 8}}
-    assert ID not in macros("{{getvar::initialized_openings}}", doc, "用户", state)
+    assert ID not in macros("{{getvar::initialized_lorebooks}}", doc, "用户", state)
     # Script-triggered generation uses this exact compiler and messages view.
     nested = compile_context(doc, session, [], snapshot, "继续", Settings(), ID, generate={"user_input": "继续"})
     assert ID not in json.dumps(nested["messages"]) and HASH not in json.dumps(nested["messages"])
@@ -214,8 +214,7 @@ async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_pare
         await service.close()
 
 
-async def test_opening_tool_restores_handles_before_generating_its_own_hash(tmp_path):
-    from tavern.character.card_workflow import greeting_hash
+async def test_opening_tool_restores_handles_in_complete_inline_text(tmp_path):
     from tests.backend.test_card_editor import ToolLLM
     doc = {"name": "艾琳", "first_mes": "遗物编号：" + ID}
     store = Store(tmp_path)
@@ -228,8 +227,7 @@ async def test_opening_tool_restores_handles_before_generating_its_own_hash(tmp_
             if self.call_count == 1:
                 text = json.loads([m["content"] for m in messages if m.get("role") == "tool"][-1])["text"]
                 short_id = text.split("：", 1)[1]
-                self.steps[1] = ("set_opening", {"index": 0, "narrative": text,
-                                                "initialization": "<initvar>artifact: " + short_id + "</initvar>"})
+                self.steps[1] = ("set_opening", {"index": 0, "narrative": text + "\n<initvar>artifact: " + short_id + "</initvar>"})
             async for item in super().chat(messages, **kwargs):
                 yield item
     provider = Editor([("read_field", {"path": "/first_mes"}), ("set_opening", {})])
@@ -240,10 +238,9 @@ async def test_opening_tool_restores_handles_before_generating_its_own_hash(tmp_
         final = service.edits.run(run["id"])
         assert final["status"] == "completed", final["error"]
         result = service.edits.get(workspace["id"])["document"]
-        opening = result["extensions"]["terrarium"]["workflow"]["greetings"][0]
-        assert result["first_mes"] == doc["first_mes"]
-        assert ID in opening["initialization"] and "@D" not in opening["initialization"]
-        assert opening["greeting_hash"] == greeting_hash(doc["first_mes"])
+        assert result["first_mes"] == doc["first_mes"] + "\n<initvar>artifact: " + ID + "</initvar>"
+        assert "@D" not in result["first_mes"]
+        assert "extensions" not in result
     finally:
         await service.close()
 

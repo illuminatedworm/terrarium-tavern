@@ -324,7 +324,7 @@ async def test_local_sandbox_reports_observed_initialization_and_errors(tmp_path
     assert "PROBE_EXPECTED_ERROR" in dump(failed)
 
 
-async def test_initialization_only_opening_update_preserves_narrative(tmp_path):
+async def test_inline_initialization_update_preserves_narrative(tmp_path):
     store = Store(tmp_path)
     editor = CardEditorService(store)
     source = import_fixture(store)
@@ -332,11 +332,12 @@ async def test_initialization_only_opening_update_preserves_narrative(tmp_path):
     try:
         result = await run(editor, workspace["id"], ToolLLM([
             ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
-            ("set_opening", {"card_ref": "C1", "index": 0, "initialization": "<initvar>hp: 8</initvar>"})]),
+            ("set_opening", {"card_ref": "C1", "index": 0, "narrative": source["document"]["first_mes"] + "\n<initvar>hp: 8</initvar>"})]),
             "只设置开场初始化，正文原样保留")
         assert result["status"] == "completed", result["error"]
         card = editor.edits.conversation(workspace["id"])["cards"][0]
-        assert card["document"]["first_mes"] == source["document"]["first_mes"]
+        assert card["document"]["first_mes"] == source["document"]["first_mes"] + "\n<initvar>hp: 8</initvar>"
+        assert card["document"].get("extensions", {}) == source["document"].get("extensions", {})
         observed = await probe_card(store, card)
         assert observed["status"] == "passed"
         assert observed["checks"][0]["state"]["stat_data"]["hp"] == 8

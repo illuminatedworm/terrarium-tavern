@@ -28,8 +28,6 @@ def status_display_warnings(document):
     data = normalize(document)
     entries = lore_entries(document)
     active = [e for e in entries if e.get("enabled", True)]
-    meta = data.get("extensions", {}).get("terrarium", {}).get("workflow") or {}
-    records = meta.get("greetings", [])
     openings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
     fields = [(key, data.get(key, ""), None) for key in (
         "system_prompt", "description", "personality", "scenario", "mes_example", "post_history_instructions")]
@@ -46,8 +44,8 @@ def status_display_warnings(document):
         for e in entries if e.get("content", "").strip()
         and e.get("terrarium", {}).get("audience") != "tracker_mvu"
     )
-    initialized = [base_init or bool(INIT.search(records[i]["initialization"] if records else text))
-                   for i, text in enumerate(openings)]
+    initialized = [base_init or bool(INIT.search(text))
+                   for text in openings]
     rules = any(e.get("terrarium", {}).get("audience") == "tracker_mvu"
                 and e.get("content", "").strip() for e in active)
     warnings, candidates = [], []

@@ -95,7 +95,7 @@ class Store(MessageAdapters):
                     cache_breakpoint_auto INTEGER NOT NULL DEFAULT 1,
                     cache_breakpoint_message TEXT,
                     persona_data TEXT NOT NULL DEFAULT '{}', turn_preference TEXT NOT NULL DEFAULT '',
-                    card_data TEXT NOT NULL, lore_injection_mode TEXT NOT NULL, greeting_id TEXT);
+                    card_data TEXT NOT NULL, lore_injection_mode TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                     parent TEXT, role TEXT NOT NULL, raw TEXT NOT NULL, model TEXT NOT NULL,
                     display TEXT NOT NULL, snapshot TEXT NOT NULL, created REAL NOT NULL,
@@ -477,10 +477,8 @@ class Store(MessageAdapters):
             from tavern.full_agent.state import new_state
             snapshot.pop("memory_document")
             snapshot["full_agent"] = new_state()
-        from tavern.character.card_workflow import validate_document, workflow
+        from tavern.character.card_workflow import validate_document
         validate_document(card["document"])
-        metadata = workflow(card["document"])
-        greeting_id = metadata["greetings"][options.greeting]["id"] if metadata else None
         raw = greetings[options.greeting]
         persona_data = self.persona(options.persona_id) if options.persona_id else {}
         persona_name = persona_data.get("name", options.persona)
@@ -491,7 +489,7 @@ class Store(MessageAdapters):
             if not db.execute("SELECT 1 FROM cards WHERE id=?", (card["id"],)).fetchone():
                 raise KeyError("角色卡不存在或已删除")
             db.execute(
-                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,title,persona_data,lore_injection_mode,card_data,greeting_id) VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO sessions(id,card,head,revision,persona,policy,recipe,created,title,persona_data,lore_injection_mode,card_data) VALUES (?,?,?,0,?,?,?,?,?,?,?,?)",
                 (
                     sid,
                     card["id"],
@@ -504,7 +502,6 @@ class Store(MessageAdapters):
                     dump(persona_data),
                     self.settings().lore_injection_mode,
                     dump({**card, "session_id": sid, "dependencies": dependencies}),
-                    greeting_id,
                 ),
             )
             db.execute(

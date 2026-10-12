@@ -1,20 +1,19 @@
 """One typed catalog for Card Editor execution, provider schemas and previews."""
 import copy
 import json
-import re
 from pathlib import Path
 from typing import Any, Literal
 
 import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from tavern.character.card_workflow import greeting_hash, validate_document, validation_report
+from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
 from tavern.character.editor_config import FIELD_PURPOSES, blank_card
 from tavern.character.editor_personas import PERSONA_SPECS, PersonaTools
 from tavern.core.model_view import hidden_field
 from tavern.core.tokens import count_text
-from tavern.storage.store import dump, uid
+from tavern.storage.store import dump
 
 
 class Arguments(BaseModel):
@@ -76,10 +75,9 @@ class Revert(Card):
 
 
 class Opening(Card):
-    action: Literal["update", "add", "remove", "move"] = Field(default="update", description="Opening operation. Initialization migration happens only if initialization is explicitly supplied.")
+    action: Literal["update", "add", "remove", "move"] = Field(default="update", description="Opening operation.")
     index: int = Field(ge=0, description="Zero-based opening index; 0 is first_mes, followed by alternate_greetings. add inserts before index (or appends at count).")
-    narrative: str | None = Field(default=None, description="Complete opening text for add/update. Preserve valid inline InitVar/data blocks and their hiding regex, including during status-display migration; hidden initialization is not a model-written panel. For initialization-only updates omit this to preserve the original opening.")
-    initialization: str | None = Field(default=None, description="Project-specific standalone data channel, only for explicitly requested extraction or a confirmed compatibility repair. Not required for standard MVU: prefer [InitVar] lore defaults and valid per-opening inline initvar overrides. Workflow records override inline initialization; when first creating them Runtime copies other openings' existing inline initvar blocks to preserve their effective initial state. Omission preserves existing sources and creates no metadata.")
+    narrative: str | None = Field(default=None, description="Complete opening text for add/update. Preserve valid inline InitVar/data blocks and their hiding regex, including during status-display migration; hidden initialization is not a model-written panel.")
     to_index: int | None = Field(default=None, ge=0, description="Destination index for move, in the resulting opening list.")
 
 
@@ -122,7 +120,7 @@ SPECS = {
     "configure_card": (Configure, "Record an optional user-confirmed compatibility target when requested or when specific script capabilities affect the design. Not required for ordinary authoring or MVU rules. Does not migrate content by itself."),
     "patch_draft": (Patch, "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing."),
     "revert_draft": (Revert, "Undo this task's uncommitted changes to one card after the user changes direction. Runtime restores the complete round-start card; a card newly created in this task is removed. Other cards and the library are unchanged. Use this instead of mechanically reconstructing the old document."),
-    "set_opening": (Opening, "Add, edit, remove or reorder an opening with its existing initialization association. Read the affected opening first. Runtime maintains stable IDs and hashes. Supplying initialization explicitly opts into standalone migration; never migrate on ordinary prose edits."),
+    "set_opening": (Opening, "Add, edit, remove or reorder complete opening text. Read the affected opening first. Keep valid inline InitVar blocks with their opening; shared defaults belong in [InitVar] worldbook entries."),
     "validate_draft": (Card, "Check structure, authoring completeness and static compatibility separately. Reports warnings and untested runtime behavior; a valid document is not proof of script or narrative correctness."),
     "test_draft": (Probe, "Run local deterministic checks on one opening: initialization, script startup and regex transformations. Supply display_assertions and state_patch to verify rendered MVU frontend values before/after updates. Without assertions, transformed text is only an observation, not display verification. Uses isolated temporary state and only embedded/cached resources. Never calls a model or writes a story."),
     "read_skill": (Skill, "Read complete bundled card-authoring or runtime adaptation documentation. Only listed resources are accessible."),
@@ -154,7 +152,7 @@ def argument_error(name, error):
         lines.append(f"{field}：{hint}")
         if name == "patch_draft" and issue["loc"] == ("operations",) and issue["type"] == "list_type":
             lines.append('结构示例（路径和值需换成实际目标）："operations": [{"op": "replace", "path": "/data/description", "value": "完整新正文"}]。不要给整个数组加引号，也不要手工拼接内层 JSON。')
-            lines.append("如果只修改开场正文，优先使用 set_opening，提供 card_ref、index 和完整 narrative，省略 initialization。")
+            lines.append("如果只修改开场正文，优先使用 set_opening，提供 card_ref、index 和完整 narrative。")
     lines.append("按上述原因修正后再调用；不要原样重试。")
     return "\n".join(lines)
 
@@ -304,46 +302,26 @@ class EditorTools(PersonaTools):
         prefix = "/data" if changed.get("spec") else ""
         self.require_read(args.card_ref, prefix + ("/first_mes" if args.index == 0 else "/alternate_greetings"))
         greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
-        meta = data.get("extensions", {}).get("terrarium", {}).get("workflow")
-        if args.initialization is not None and meta is None:
-            # Workflow records take precedence even when empty. Copy the already
-            # effective inline declarations of untouched openings before opting
-            # into this channel, or editing one opening erases another's defaults.
-            meta = {"version": 1, "greetings": [{"id": uid(), "initialization": "\n".join(
-                re.findall(r"<initvar\b[^>]*>[\s\S]*?</initvar\s*>", t, re.I)),
-                "greeting_hash": greeting_hash(t)} for t in greetings], "unresolved": []}
-            data.setdefault("extensions", {}).setdefault("terrarium", {})["workflow"] = meta
         if args.action != "add" and not 0 <= args.index < len(greetings):
             raise ValueError("开场编号不存在，index 从 0 开始")
         if args.action in {"add", "update"}:
-            if args.narrative is None and (args.action == "add" or args.initialization is None):
-                raise ValueError("新增需要 narrative；修改需要 narrative 或 initialization")
-            narrative = self.view.restore(args.narrative) if args.narrative is not None else greetings[args.index]
+            if args.narrative is None:
+                raise ValueError("新增或修改开场需要完整 narrative")
+            narrative = self.view.restore(args.narrative)
             if args.action == "add":
                 if args.index > len(greetings):
                     raise ValueError("插入位置超过开场数量")
                 greetings.insert(args.index, narrative)
-                if meta:
-                    meta["greetings"].insert(args.index, {"id": uid(), "initialization": "", "greeting_hash": greeting_hash(narrative)})
             else:
                 greetings[args.index] = narrative
-            if meta:
-                record = meta["greetings"][args.index]
-                record["greeting_hash"] = greeting_hash(narrative)
-                if args.initialization is not None:
-                    record["initialization"] = self.view.restore(args.initialization)
         elif args.action == "remove":
             if len(greetings) == 1:
                 raise ValueError("必须保留一个默认开场；可把正文设为空")
             greetings.pop(args.index)
-            if meta:
-                meta["greetings"].pop(args.index)
         else:
             if args.to_index is None or args.to_index >= len(greetings):
                 raise ValueError("需要有效的目标开场编号")
             greetings.insert(args.to_index, greetings.pop(args.index))
-            if meta:
-                meta["greetings"].insert(args.to_index, meta["greetings"].pop(args.index))
         data["first_mes"], data["alternate_greetings"] = greetings[0], greetings[1:]
         validate_document(changed)
         item.update(document=changed, kind="draft")

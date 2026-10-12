@@ -4,7 +4,7 @@ import copy
 import json
 import re
 
-from tavern.character.card_workflow import validate_document, workflow
+from tavern.character.card_workflow import validate_document
 from tavern.character.cards import normalize, regex_scripts
 from tavern.core.model_view import state_for_model
 from tavern.scripting.dependencies import IMPORTS, Dependencies
@@ -93,10 +93,8 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
             return {"status": "blocked", "checks": [{"check": "dependencies", "status": "blocked", "message": "脚本模块尚未缓存；本地验证不下载依赖"}]}
         snapshot = {"state": {}, "scopes": {}}
         history = [{"id": "probe-opening", "role": "assistant", "raw": greetings[index], "snapshot": snapshot}]
-        metadata = workflow(document)
         session = await runtime.open(document, history, snapshot, True, host, scripts,
-            lambda html: dependencies.markup(source, html), persona="测试用户", opening=True,
-            greeting_id=metadata["greetings"][index]["id"] if metadata else None)
+            lambda html: dependencies.markup(source, html), persona="测试用户", opening=True)
         mirror = await session.call("snapshot")
         checks.append({"check": "initialization_and_startup", "status": "passed", "state": state_for_model(mirror["state"])})
         displays = []

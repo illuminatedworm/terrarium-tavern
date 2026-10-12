@@ -8,8 +8,9 @@ import pytest
 from kohakuterrarium.testing.llm import ScriptedLLM
 from pydantic import ValidationError
 
+from tavern.application.service import RoleplayRuntime
 from tavern.character.card_editor import CardEditorService
-from tavern.character.card_workflow import greeting_hash, validation_report
+from tavern.character.card_workflow import validation_report
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import Skill, tool_definitions
 from tavern.conversation.context import compile_context
@@ -91,7 +92,7 @@ def test_negation_does_not_hide_later_requirement_and_relabeling_template_is_not
     assert validation_report(document)["warnings"] == []
 
 
-def test_initialization_hints_follow_disabled_init_and_per_opening_associations():
+def test_initialization_hints_follow_disabled_init_and_inline_openings():
     document = card()
     entries = document["character_book"]["entries"]
     entries.append({"comment": "[InitVar]", "enabled": False, "content": "Time: '08:20'\nMoney: 12"})
@@ -101,10 +102,7 @@ def test_initialization_hints_follow_disabled_init_and_per_opening_associations(
     entries[-2]["extensions"] = {"terrarium": {"audience": "runtime_init"}}
     assert any("初始化来源" in w for w in validation_report(document)["warnings"])
     document["alternate_greetings"] = [OPENING]
-    document["extensions"]["terrarium"] = {"workflow": {"version": 1, "greetings": [
-        {"id": "a", "greeting_hash": greeting_hash(OPENING), "initialization": '<initvar>Money: 12</initvar>'},
-        {"id": "b", "greeting_hash": greeting_hash(OPENING), "initialization": ''},
-    ]}}
+    document["first_mes"] += "\n<initvar>Money: 12</initvar>"
     missing = next(w for w in validation_report(document)["warnings"] if "初始化来源" in w)
     assert "alternate_greetings[0]" in missing and "first_mes" not in missing
 
@@ -156,9 +154,12 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
         ("validate_draft", {"card_ref": "C1"}),
         ("patch_draft", {"card_ref": "C1", "comment": "迁移正文状态栏", "operations": [
             {"op": "replace", "path": "/character_book/entries/0/content", "value": RULE},
-            {"op": "add", "path": "/character_book/entries/0/extensions", "value": {"terrarium": {"audience": "tracker_mvu"}}}]}),
-        *[("set_opening", {"card_ref": "C1", "index": i, "narrative": "旅客放下行李。",
-            "initialization": f'<initvar>时间: "{time}"\n营业收入: {money}</initvar>'})
+            {"op": "add", "path": "/character_book/entries/0/extensions", "value": {"terrarium": {"audience": "tracker_mvu"}}},
+            {"op": "add", "path": "/extensions/regex_scripts", "value": [{
+                "scriptName": "隐藏初始化", "findRegex": r"/<initvar\b[^>]*>[\s\S]*?</initvar\s*>/gi",
+                "replaceString": "", "placement": [2], "markdownOnly": True, "promptOnly": True}]}]}),
+        *[("set_opening", {"card_ref": "C1", "index": i,
+            "narrative": f'旅客放下行李。\n<initvar>时间: "{time}"\n营业收入: {money}</initvar>'})
           for i, time, money in [(0, "08:20", 12), (1, "19:40", 35)]],
         ("validate_draft", {"card_ref": "C1"}),
     ])
@@ -186,7 +187,12 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
             # Compile actual new-story messages in an isolated store: an existing
             # story would intentionally retain its original opening and settings.
             session = store.new_session(SessionCreate(card_id=migrated["id"], greeting=index))
-            snapshot = {**session["snapshot"], "state": state}
+            runtime = RoleplayRuntime(store)
+            try:
+                session = await runtime.initialize_session(session["id"])
+            finally:
+                await runtime.close()
+            snapshot = session["snapshot"]
             half = compile_context(document, session, session["messages"], snapshot, "继续", store.settings(), "test")
             full = compile_window(document, session, session["messages"], snapshot, "继续", store.settings(), [], require_state_patch=True)
             for compiled in (half, full):

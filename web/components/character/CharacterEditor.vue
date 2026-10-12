@@ -50,8 +50,7 @@ const restorePopoverId = useId();
 const loreFile = ref<HTMLInputElement>();
 const loreDialog = ref<{ mode: 'add' | 'edit'; index: number; entry: any } | null>(null);
 const confirmingLoreDelete = ref(false);
-const deletedGreetings = ref<{ index: number; text: string; cleared: boolean; initialization?: any }[]>([]);
-const openingMetadata = computed(() => data.value.extensions?.terrarium?.workflow?.greetings);
+const deletedGreetings = ref<{ index: number; text: string; cleared: boolean }[]>([]);
 const entries = computed<any[]>(() => {
   const e = data.value.character_book?.entries || [];
   return Array.isArray(e) ? e : Object.values(e);
@@ -226,7 +225,6 @@ async function save() {
   await act(async () => {
     if (tab.value === 'raw') document.value = JSON.parse(raw.value);
     const previousKey = draftKey();
-    await syncOpeningHashes();
     if (props.draftMode) {
       // The parent clears the local draft only after its save request succeeds.
       emit('draftSaved', clone(document.value));
@@ -273,22 +271,8 @@ async function save() {
     emit('saved', card.value);
   });
 }
-async function syncOpeningHashes() {
-  if (tab.value === 'raw') return; // Raw editing must explicitly keep metadata aligned.
-  const metadata = openingMetadata.value;
-  if (!metadata) return;
-  const greetings = [data.value.first_mes || '', ...(data.value.alternate_greetings || [])];
-  for (let i = 0; i < greetings.length; i++) {
-    if (!metadata[i]) continue;
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(greetings[i]));
-    metadata[i].greeting_hash = Array.from(new Uint8Array(digest))
-      .map((x) => x.toString(16).padStart(2, '0'))
-      .join('');
-  }
-}
 async function syncWorkspace() {
   const previousKey = draftKey();
-  await syncOpeningHashes();
   if (!workspace.value)
     workspace.value = await api(`/cards/${card.value.id}/edits`, {
       document: document.value,
@@ -334,7 +318,6 @@ async function changeTab(next: string) {
       return;
     }
   }
-  await syncOpeningHashes();
   if (next === 'raw') raw.value = JSON.stringify(document.value, null, 2);
   tab.value = next;
 }
@@ -343,13 +326,7 @@ function deleteGreeting(index: number) {
   const text = index === 0 ? data.value.first_mes || '' : alternatives[index - 1];
   if (typeof text !== 'string') return;
   const cleared = index === 0 && alternatives.length === 0;
-  const initialization = openingMetadata.value?.[index];
-  deletedGreetings.value.push({ index, text, cleared, initialization: clone(initialization ?? null) });
-  if (openingMetadata.value) {
-    if (cleared)
-      openingMetadata.value[index] = { id: crypto.randomUUID(), initialization: '', greeting_hash: '' };
-    else openingMetadata.value.splice(index, 1);
-  }
+  deletedGreetings.value.push({ index, text, cleared });
   if (index === 0) data.value.first_mes = alternatives.length ? alternatives.shift() : '';
   else alternatives.splice(index - 1, 1);
   notice.value = cleared
@@ -364,15 +341,10 @@ function undoDeleteGreeting() {
     (data.value.alternate_greetings ||= []).unshift(data.value.first_mes || '');
     data.value.first_mes = removed.text;
   } else (data.value.alternate_greetings ||= []).splice(removed.index - 1, 0, removed.text);
-  if (openingMetadata.value && removed.initialization) {
-    if (removed.cleared) openingMetadata.value[0] = removed.initialization;
-    else openingMetadata.value.splice(removed.index, 0, removed.initialization);
-  }
   notice.value = '已撤销删除开场白，保存角色后生效。';
 }
 function addGreeting() {
   (data.value.alternate_greetings ||= []).push('');
-  openingMetadata.value?.push({ id: crypto.randomUUID(), initialization: '', greeting_hash: '' });
 }
 function setAudience(entry: any, value: string) {
   ((entry.extensions ||= {}).terrarium ||= {}).audience = value;

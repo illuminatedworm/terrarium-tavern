@@ -182,7 +182,6 @@ class RoleplayRuntime:
             lambda html: self.dependencies.markup(card, html),
             persona=session["persona"],
             opening=True,
-            greeting_id=session.get("greeting_id"),
         )
         try:
             mirror = await runtime.call("snapshot")

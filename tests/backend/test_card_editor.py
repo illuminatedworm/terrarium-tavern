@@ -14,7 +14,7 @@ from PIL import Image, PngImagePlugin
 from tavern.application.service import RoleplayRuntime
 from tavern.character.card_editor import CardEditorService
 from tavern.character.card_editor_store import EditorStore
-from tavern.character.card_workflow import greeting_hash, validate_document, validation_report
+from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import export_card, parse_card
 from tavern.conversation.context import compile_context
 from tavern.core.models import CardEditorRequest, SessionCreate, Settings
@@ -118,7 +118,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
     provider = ToolLLM([
         ("read_skill", {}),
         ("patch_draft", {"operations": [{"op": "replace", "path": "/description", "value": "新的角色描述"}], "comment": "修改描述"}),
-        ("set_opening", {"index": 0, "narrative": "干净开场", "initialization": "<initvar>hp: 8</initvar>"}),
+        ("set_opening", {"index": 0, "narrative": "干净开场\n<initvar>hp: 8</initvar>"}),
         ("validate_draft", {}),
     ])
     service.provider_factory = lambda: provider
@@ -133,7 +133,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert store.card(card["id"])["document"]["description"] == "原人物设定"
         current = service.edits.get(workspace["id"])
         assert current["document"]["description"] == "新的角色描述"
-        assert current["document"]["first_mes"] == "干净开场"
+        assert current["document"]["first_mes"] == "干净开场\n<initvar>hp: 8</initvar>"
         events = service.edits.activity(run["id"])["events"]
         starts = [e for e in events if e["kind"] == "tool_started"]
         ends = [e for e in events if e["kind"] == "tool_finished"]
@@ -141,7 +141,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert {e["payload"]["action_id"] for e in starts} == {e["payload"]["action_id"] for e in ends}
         assert all(e["payload"]["status"] == 'completed' for e in ends)
         assert all(len(e["payload"]["result"]) <= 4000 for e in ends)
-        assert current["document"]["extensions"]["terrarium"]["workflow"]["greetings"][0]["initialization"]
+        assert "terrarium" not in current["document"]["extensions"]
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
         assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_opening", "validate_draft", "read_skill",
                          "create_draft", "configure_card", "revert_draft", "test_draft", "write_handoff", "new_context", "search_history", "read_history",
@@ -162,10 +162,8 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
 async def test_mvu_routing_and_opening_initialization(tmp_path):
     store = Store(tmp_path)
     doc = fixture()
-    doc["extensions"]["terrarium"] = {"workflow": {"version": 1, "greetings": [
-        {"id": "one", "initialization": "<initvar>hp: 8</initvar>", "greeting_hash": greeting_hash("开场一")},
-        {"id": "two", "initialization": "<initvar>hp: 9</initvar>\n_.add('hp', 1);", "greeting_hash": greeting_hash("开场二")},
-    ]}}
+    doc["first_mes"] += "\n<initvar>hp: 8</initvar>"
+    doc["alternate_greetings"] = ["开场二\n<initvar>hp: 10</initvar>"]
     validate_document(doc)
     card = store.import_card(json.dumps(doc).encode(), "fixture.json")
     session = store.new_session(SessionCreate(card_id=card["id"], greeting=1))
@@ -173,7 +171,7 @@ async def test_mvu_routing_and_opening_initialization(tmp_path):
     try:
         session = await service.initialize_session(session["id"])
         assert session["snapshot"]["state"]["stat_data"]["hp"] == 10
-        assert session["messages"][0]["raw"] == "开场二"
+        assert session["messages"][0]["raw"] == "开场二\n<initvar>hp: 10</initvar>"
         reopened = await service.initialize_session(session["id"])
         assert reopened["snapshot"]["state"]["stat_data"]["hp"] == 10
         snapshot = copy.deepcopy(session["snapshot"])

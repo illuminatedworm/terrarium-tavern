@@ -66,7 +66,6 @@ class ScriptRuntime:
         prepare_markup=None,
         persona="用户",
         opening=False,
-        greeting_id=None,
     ):
         await self.start()
         if not SDK.exists():
@@ -74,7 +73,7 @@ class ScriptRuntime:
         context = await self.browser.new_context(service_workers="block")
         try:
             return await self._open_context(context, document, history, snapshot, allowed, host,
-                                            scripts_override, prepare_markup, persona, opening, greeting_id)
+                                            scripts_override, prepare_markup, persona, opening)
         except BaseException:
             # Setup failures and cancellation before install have the same lifetime
             # boundary as script failures. No orphan browser contexts may survive.
@@ -82,7 +81,7 @@ class ScriptRuntime:
             raise
 
     async def _open_context(self, context, document, history, snapshot, allowed, host,
-                            scripts_override, prepare_markup, persona, opening, greeting_id):
+                            scripts_override, prepare_markup, persona, opening):
         prefix = f"https://tavern.invalid/{secrets.token_urlsafe(24)}/"
         messages = [
             {"message_id": i, "id": m["id"], "role": m["role"], "message": m["raw"],
@@ -176,21 +175,8 @@ class ScriptRuntime:
                                "serverMain": False, "currentMessage": index}, host
                     )
             greeting = history[0]["raw"] if opening and history else ""
-            from tavern.character.card_workflow import workflow
-            metadata = workflow(document)
-            migrated = None
-            if opening and metadata:
-                migrated = next((r for r in metadata["greetings"] if r["id"] == greeting_id), None)
-                if migrated is None:
-                    raise ValueError("找不到所选开场的初始化记录")
-                greeting = migrated.get("initialization", "")
             greeting = greeting.replace("{{user}}", persona).replace("{{char}}", normalize(document).get("name", ""))
             await runtime.call("initMvu", greeting)
-            if migrated and greeting.strip():
-                # This side-channel is data-only and never becomes a story message.
-                updates = re.sub(r"<initvar\b[^>]*>[\s\S]*?</initvar\s*>", "", greeting, flags=re.I)
-                if updates.strip():
-                    await runtime.call("initializeUpdates", updates, migrated["id"])
             return runtime
         except BaseException:
             await runtime.close()

@@ -16,7 +16,7 @@ import jsonpointer
 OPAQUE = re.compile(r"(?<![\w])(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24,})(?![\w])")
 HANDLE = re.compile(r"@D[1-9]\d*\b")
 IDENTITY_FIELDS = {"id", "uid", "source", "message_id", "source_message_id", "anchor_id", "split_from"}
-STATE_BOOKKEEPING = {"initialized_lorebooks", "initialized_openings", "schema", "display_data", "delta_data"}
+STATE_BOOKKEEPING = {"initialized_lorebooks", "schema", "display_data", "delta_data"}
 
 
 def state_for_model(state):

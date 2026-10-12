@@ -532,7 +532,7 @@ def test_notes_and_runtime_metadata_are_not_implicitly_in_context(story):
     store, session = story
     snapshot = copy.deepcopy(session["snapshot"])
     snapshot["full_agent"]["notes"]["secret-note"] = {"content": "只能通过工具读取的长笔记"}
-    snapshot["state"] = {"initialized_openings": {"opaque-identity": "ledger-only"}}
+    snapshot["state"] = {"initialized_lorebooks": {"opaque-identity": "ledger-only"}}
     snapshot["memory_document"] = {"version": 1, "records": [{"content": "legacy-memory"}]}
     result = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
                             snapshot, "继续", store.settings().for_role("full_agent"), [])
@@ -641,7 +641,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         current = store.session(session["id"])
         assert current["snapshot"]["state"]["stat_data"]["能量"] == 4
         assert "能量" in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
-        assert "initialized_openings" not in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
+        assert "initialized_lorebooks" not in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert len(current["messages"]) == 3
     finally:
         await service.close()

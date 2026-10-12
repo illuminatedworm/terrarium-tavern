@@ -233,21 +233,6 @@ export async function process(text: string, extra: any[] = [], variableText?: st
   return {text: variableText === undefined ? result.text : text, ...snapshot()};
 }
 
-export async function initializeUpdates(text: string, openingId: string) {
-  // Opening metadata uses the restricted data parser, never upstream JS evaluation.
-  if (mirror.state.initialized_openings?.[openingId]) return snapshot();
-  let remainder = text.replace(/<JSONPatch>[\s\S]*?<\/JSONPatch>/gi, '');
-  for (const command of mvu.commands(remainder)) remainder = remainder.replace(command.full_match, '');
-  remainder = remainder.replace(/<\/?UpdateVariable>/gi, '').replace(/[;\s]/g, '');
-  if (remainder) throw Error('开场初始化包含无法识别的非数据指令');
-  const result = await mvu.apply(text, mirror.state, emit);
-  mirror.state = result.data;
-  (mirror.state.initialized_openings ||= {})[openingId] = true;
-  if (mirror.messages.length) mirror.messages.at(-1).variables = _.cloneDeep(result.data);
-  await flush();
-  return snapshot();
-}
-
 async function applyMvu(text:string,old:any,extra:any[]=[]):Promise<{text:string,data:any}> {
   if (!w.MVUReference && coreLoader) {
     corePending ||= coreLoader().catch(error => { corePending = undefined; throw error; });

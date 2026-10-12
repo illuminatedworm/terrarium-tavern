@@ -6,4 +6,4 @@
 
 Full Agent 不支持脚本额外发起模型请求和 HTML 交互生成。保留受支持的 schema/校验逻辑，遇到这些不支持能力应说明并与用户决定替代交互，不能通过静态验证就声称完整适配。
 
-适配流程共用 SKILL.md 和 references/workflow.md，已有 tracker_mvu 规则可直接使用，不必迁往 writer。开场和初始化关系仍由 set_opening 管理，普通文本修改不自动迁移。使用 test_draft 检查所选开场本地行为，真实叙事和更新判断另行验收。
+适配流程共用 SKILL.md 和 references/workflow.md，已有 tracker_mvu 规则可直接使用，不必迁往 writer。set_opening 编辑完整开场原文，初值保留在世界书或开场内联数据中，不另建关联记录。使用 test_draft 检查所选开场本地行为，真实叙事和更新判断另行验收。

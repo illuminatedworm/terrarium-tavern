@@ -20,7 +20,7 @@
 
 [core/model_view.py](../../src/tavern/core/model_view.py) 的 `state_for_model` 生成请求视图，不修改源状态：
 
-- 根部 `initialized_openings`、`initialized_lorebooks`、`schema`、`display_data` 和 `delta_data` 留在运行时。
+- 根部 `initialized_lorebooks`、`schema`、`display_data` 和 `delta_data` 留在运行时。
 - 递归排除 `$internal`、`$meta`、`$arrayMeta` 和 MVU 扩展占位值。
 - 实际剧情变量和平铺状态保留。
 

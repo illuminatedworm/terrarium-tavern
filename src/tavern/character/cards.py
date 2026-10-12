@@ -86,6 +86,10 @@ def parse_card(blob: bytes, filename: str):
             raise ValueError(f"角色卡 {field} 必须为文本")
     if "extensions" in view and not isinstance(view["extensions"], dict):
         raise ValueError("角色卡 extensions 必须为对象")
+    project = view.get("extensions", {}).get("terrarium", {})
+    if isinstance(project, dict) and "workflow" in project:
+        raise ValueError("角色卡含已移除的独立开场初始化扩展；请核对世界书 [InitVar] 或开场 <initvar> 中的初值，"
+                         "保留需要的数据后删除 extensions.terrarium.workflow")
     if view.get("character_book") is not None:
         book = view["character_book"]
         if not isinstance(book, dict) or not isinstance(book.get("entries", []), (dict, list)):

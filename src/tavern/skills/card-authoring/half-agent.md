@@ -4,4 +4,4 @@
 
 变量工具采用相对于 stat_data 的 JSON Patch，无变化提交 []。卡片主要写清变量语义、触发条件、范围和约束，不让 Writer 在新回复中输出内联变量块。保留已有 schema 注册、校验回调、宏和资源。
 
-适配已有卡前读取 read_skill(resource="SKILL.md") 和 references/workflow.md。普通润色不触发迁移，现有开场和内联初始化默认保留；用户明确要求拆分开场时才传 set_opening.initialization。制作后检查实际初始化、正则样例和脚本启动；这些检查不等于真实模型的变量判断正确。
+适配已有卡前读取 read_skill(resource="SKILL.md") 和 references/workflow.md。普通润色不触发迁移，现有开场和内联初始化默认保留；初值仅放在世界书或开场原文，不另存隐藏副本。制作后检查实际初始化、正则样例和脚本启动；这些检查不等于真实模型的变量判断正确。

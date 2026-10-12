@@ -1,13 +1,12 @@
 """Portable card workflow metadata and deterministic validation (no script execution)."""
 
-import hashlib
 import json
 import re
 
 from tavern.character.card_initialization_diagnostics import initialization_warnings
 from tavern.character.card_regex_diagnostics import regex_warnings
 from tavern.character.card_status_diagnostics import status_display_warnings
-from tavern.character.cards import lore_entries, normalize, parse_card
+from tavern.character.cards import lore_entries, parse_card
 
 AUDIENCES = {"writer", "tracker_mvu", "runtime_init"}
 
@@ -22,47 +21,11 @@ def audience(entry):
     return metadata.get("audience", "writer")
 
 
-def workflow(document):
-    metadata = normalize(document).get("extensions", {}).get("terrarium", {})
-    if not isinstance(metadata, dict):
-        raise ValueError("角色卡 terrarium 扩展必须为对象")
-    return metadata.get("workflow")
-
-
-def greeting_hash(text):
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 def validate_document(document):
     parse_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
     for entry in lore_entries(document):
         if audience(entry) not in AUDIENCES:
             raise ValueError(f"条目 {entry['id']} 的用途无效")
-    metadata = workflow(document)
-    if metadata is None:
-        return
-    if not isinstance(metadata, dict) or metadata.get("version") != 1:
-        raise ValueError("不支持的角色卡工作流版本")
-    if not isinstance(metadata.get("unresolved", []), list):
-        raise ValueError("工作流 unresolved 必须为待处理问题数组")
-    data = normalize(document)
-    greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
-    records = metadata.get("greetings")
-    if not isinstance(records, list) or len(records) != len(greetings):
-        raise ValueError("开场白与独立初始化记录必须一一对应")
-    ids = set()
-    for text, record in zip(greetings, records, strict=True):
-        if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not record["id"]:
-            raise ValueError("开场初始化缺少稳定 ID")
-        if record["id"] in ids:
-            raise ValueError("开场初始化 ID 重复")
-        ids.add(record["id"])
-        if record.get("greeting_hash") != greeting_hash(text):
-            raise ValueError("开场白与初始化记录不匹配，请通过开场编辑工具同步正文与初始化")
-        if not isinstance(record.get("initialization", ""), str):
-            raise ValueError("开场初始化必须为文本")
-        if re.search(r"<script\b|\beval\s*\(|\bfetch\s*\(", record.get("initialization", ""), re.I):
-            raise ValueError("开场初始化只允许 InitVar 数据与 MVU 数据指令")
 
 
 def validation_report(document):
@@ -84,7 +47,5 @@ def validation_report(document):
     warnings.extend(status_display_warnings(document))
     warnings.extend(regex_warnings(document))
     warnings.extend(initialization_warnings(document))
-    meta = workflow(document) or {}
-    warnings.extend(str(item) for item in meta.get("unresolved", []))
     return {"valid": not errors, "errors": errors, "warnings": warnings,
             "adapted": not errors and not warnings}

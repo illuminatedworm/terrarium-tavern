@@ -21,7 +21,7 @@
 | `configure_card` | `card_ref`、`target_mode=half_agent/full_agent`、用户选择的 `confirmation_ref`；可选兼容性目标，普通制卡和 MVU 无需调用，不自动迁移内容 |
 | `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
 | `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
-| `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、可选 `narrative/initialization/to_index`；程序维护关联、身份和指纹 |
+| `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、新增/修改须传完整 `narrative`，移动使用 `to_index` |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`、`display_assertions`、`state_patch`；检查初始化、正则转换、脚本启动和指定 DOM 值，临时补丁用于验证更新后显示，返回实际结果、日志和未测范围 |
 | `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md、references/regex-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
@@ -38,13 +38,13 @@
 
 `patch_draft` 和 `revert_draft` 的 `comment` 为必填的简短操作备注，1–1000 字符，替代旧参数 `reason`。新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
-Agent 优先使用对应的专门工具：普通开场润色使用 `set_opening.narrative` 并省略 `initialization`，撤销本轮卡片修改使用 `revert_draft`；其他字段或确需跨字段原子修改时使用 `patch_draft`。`operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例和开场专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
+Agent 优先使用对应的专门工具：普通开场润色使用完整的 `set_opening.narrative`，保留有效内联初值，撤销本轮卡片修改使用 `revert_draft`；其他字段或确需跨字段原子修改时使用 `patch_draft`。`operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例和开场专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
 
 路径相对于完整文档。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
 
 `add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。新增卡返回的完整初始文档视为已读。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。
 
-开场编号 0 对应 first_mes，其余对应 alternate_greetings。初始化参数省略时保留现有关联；仅更新初始化时可以省略 narrative，由程序保留原文。新增开场需要完整 narrative；删除最后一个开场应改为空文本。普通编辑及可见状态栏迁移不自动提取有效的内联初始化；已正确初始化并对模型隐藏的数据须原位保留。独立 initialization 是可选的项目扩展，首次创建关联时程序复制其他开场已有的内联 initvar，以免空记录覆盖其有效初值；既有记录与内联数据并存时诊断会提示核对实际来源。
+开场编号 0 对应 first_mes，其余对应 alternate_greetings。新增和修改需要完整 narrative；删除最后一个开场应改为空文本。有效的内联初始化与隐藏正则须原位保留，移动开场时随完整原文一起移动。共用默认初值使用世界书 [InitVar]，开场专属完整初值使用该开场 <initvar>；不提供独立初始化参数，不生成关联元数据或隐藏覆盖来源。
 
 本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。正则字段的类型、缺少 findRegex/replaceString、HTML 误入模型通道会给出静态警告。正则无规则时返回 skipped，有规则时仅报告 observed 转换结果，不等于界面验证。
 
