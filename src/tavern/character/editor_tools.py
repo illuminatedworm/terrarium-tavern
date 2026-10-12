@@ -11,6 +11,7 @@ from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
 from tavern.character.editor_config import FIELD_PURPOSES, blank_card
 from tavern.character.editor_personas import PERSONA_SPECS, PersonaTools
+from tavern.character.editor_reads import after_patch, known, remember
 from tavern.core.model_view import hidden_field
 from tavern.core.tokens import count_text
 from tavern.storage.store import dump
@@ -54,6 +55,12 @@ class Operation(Arguments):
 
 class Patch(Card):
     operations: list[Operation] = Field(min_length=1, max_length=100, description="1–100 JSON Patch operations applied atomically. Read current affected fields first; preserve unrelated fields and extensions.")
+    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
+
+
+class TextField(Card):
+    path: str = Field(min_length=1, description="JSON Pointer of an existing text field, such as /data/description or /data/character_book/entries/0/content. Read its current value first.")
+    text: str = Field(description="Complete replacement text, including literal macros, quotes and newlines. Empty string clears the field. Do not encode it as JSON text.")
     comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
@@ -113,6 +120,7 @@ class Probe(Card):
 
 
 SPECS = {
+    "set_text_field": (TextField, "Replace one existing text field directly. Prefer this for worldbook content, titles, descriptions and other prose; pass complete text without a JSON Patch array. Read current content first. Use set_opening for openings; use patch_draft for structural or atomic multi-field changes. Preserves all other fields and extensions."),
     "overview": (Overview, "Inspect attached cards or the structure of one card. Returns current C handles, data root, field purposes/types/sizes, and worldbook paths. No library search."),
     "read_field": (Read, "Read a complete current field, entry, extension, script or whole card. A read makes that subtree available for edits; source is never paginated or truncated."),
     "search_entries": (Search, "Locate worldbook entries by literal words. Previews are only navigation; read_field returns full entries before editing."),
@@ -153,6 +161,7 @@ def argument_error(name, error):
         if name == "patch_draft" and issue["loc"] == ("operations",) and issue["type"] == "list_type":
             lines.append('结构示例（路径和值需换成实际目标）："operations": [{"op": "replace", "path": "/data/description", "value": "完整新正文"}]。不要给整个数组加引号，也不要手工拼接内层 JSON。')
             lines.append("如果只修改开场正文，优先使用 set_opening，提供 card_ref、index 和完整 narrative。")
+            lines.append("如果修改世界书正文、标题或其他已有文本字段，使用 set_text_field，提供 card_ref、path、完整 text 和 comment，无需补丁数组。")
     lines.append("按上述原因修正后再调用；不要原样重试。")
     return "\n".join(lines)
 
@@ -201,8 +210,8 @@ class EditorTools(PersonaTools):
     def require_read(self, ref, path):
         if self.owner.legacy:
             return
-        if not any(path == read or path.startswith(read + "/") or read == "" for read in self.owner.reads.get(ref, [])):
-            raise ValueError(f"修改前请先完整读取 {ref} 的 {path or '根对象'}")
+        if not known(self.owner.reads, ref, self.card(ref)["document"], path):
+            raise ValueError(f"修改前请先完整读取 {ref} 的 {path or '根对象'}；当前上下文中没有该字段有效的完整版本，请用 read_field 读取 current。")
 
     async def execute(self, name, raw):
         if name not in SPECS:
@@ -230,7 +239,7 @@ class EditorTools(PersonaTools):
                     else item["base_document"] if args.version == "saved" else item["document"])
         value = self.view.expose(jsonpointer.resolve_pointer(document, pointer))
         if args.version == "current":
-            self.owner.reads.setdefault(args.card_ref, []).append(pointer)
+            remember(self.owner.reads, args.card_ref, document, pointer)
         return {"card_ref": args.card_ref, "path": args.path, "version": args.version, "text": value if isinstance(value, str) else dump(value)}
 
     async def search_entries(self, args):
@@ -261,7 +270,7 @@ class EditorTools(PersonaTools):
                 "brief": (f"方案原文（{proposal['ref']}）：\n{proposal['content']}\n\n" if proposal else "")
                          + f"用户要求/确认原文（{confirmation['ref']}）：\n{confirmation['content']}"}
         self.owner.working["cards"].append(item)
-        self.owner.reads[ref] = [""]
+        remember(self.owner.reads, ref, document, "")
         return {"card_ref": ref, "document": self.view.expose(document), "saved_to_library": False}
 
     async def configure_card(self, args):
@@ -281,6 +290,19 @@ class EditorTools(PersonaTools):
         self.owner.reads.pop(args.card_ref, None)
         return {"card_ref": args.card_ref, "restored_round_start": bool(old), "removed_new_draft": old is None}
 
+    async def set_text_field(self, args):
+        pointer = self.view.pointer(args.path, restore=True)
+        if any(hidden_field(part) for part in jsonpointer.JsonPointer(pointer).parts):
+            raise ValueError("指纹和哈希由程序维护，不接受模型修改")
+        try:
+            value = jsonpointer.resolve_pointer(self.card(args.card_ref)["document"], pointer)
+        except jsonpointer.JsonPointerException:
+            raise ValueError("目标文本字段不存在；请用 overview 或 read_field 确认路径，新增字段使用 patch_draft") from None
+        if not isinstance(value, str):
+            raise ValueError("set_text_field 只能替换已有字符串字段；结构修改请使用 patch_draft")
+        return await self.patch_draft(Patch(card_ref=args.card_ref, comment=args.comment,
+            operations=[Operation(op="replace", path=args.path, value=args.text)]))
+
     async def patch_draft(self, args):
         item = self.card(args.card_ref)
         operations = [op.model_dump(by_alias=True, exclude_unset=True) for op in args.operations]
@@ -291,6 +313,7 @@ class EditorTools(PersonaTools):
                 self.require_read(args.card_ref, self.view.pointer(op["from"], restore=True))
         changed = self.view.patch(item["document"], operations)
         validate_document(changed)
+        after_patch(self.owner.reads, args.card_ref, item["document"], changed, self.view.operations(operations))
         item.update(document=changed, kind="draft")
         self.owner.event("draft_change", {"card_ref": args.card_ref, "reason": args.comment})
         return {"card_ref": args.card_ref, "accepted": True, **report(changed)}
@@ -324,6 +347,14 @@ class EditorTools(PersonaTools):
             greetings.insert(args.to_index, greetings.pop(args.index))
         data["first_mes"], data["alternate_greetings"] = greetings[0], greetings[1:]
         validate_document(changed)
+        keys = ("first_mes", "alternate_greetings")
+        if args.action == "update":
+            keys = ("first_mes" if args.index == 0 else "alternate_greetings",)
+        # Structural operations can move text between openings. Do not turn an
+        # unseen source into read evidence merely because Runtime moved it.
+        if args.action == "update" or all(known(self.owner.reads, args.card_ref, item["document"], prefix + "/" + key) for key in keys):
+            after_patch(self.owner.reads, args.card_ref, item["document"], changed,
+                        [{"op": "replace", "path": prefix + "/" + key, "value": data[key]} for key in keys])
         item.update(document=changed, kind="draft")
         return {"card_ref": args.card_ref, **report(changed)}
 

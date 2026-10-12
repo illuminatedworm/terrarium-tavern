@@ -45,6 +45,7 @@ class EditorContext:
         self.seen = []
         self.epoch = fingerprint([owner.wid, self.origin, self.policy, signature(owner.working), owner.rid])
         if not self.reason:
+            owner.reads = copy.deepcopy(saved.get("read_versions", {}))
             self.view.forward = copy.deepcopy(saved["view"]["forward"])
             self.view.reverse = copy.deepcopy(saved["view"]["reverse"])
             self.view.reserved = set(saved["view"]["reserved"])
@@ -115,6 +116,7 @@ class EditorContext:
             for m in self.messages if not m.get("_native_response") and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
 
     def rollover(self):
+        self.owner.reads = {}
         history = self.owner.edits.messages(self.owner.wid)
         completed = [m for m in history if m["role"] == "assistant"][-2:]
         keep_runs = {m["run"] for m in completed}
@@ -131,6 +133,7 @@ class EditorContext:
 
     def saved(self):
         return {"version": 4, "origin": self.origin, "policy": self.policy, "epoch": self.epoch,
+                "read_versions": copy.deepcopy(self.owner.reads),
                 "document": signature(self.owner.working), "messages": copy.deepcopy(self.messages),
                 "frames": copy.deepcopy(self.frames), "seen": list(self.seen),
                 "view": {"forward": dict(self.view.forward), "reverse": dict(self.view.reverse), "reserved": sorted(self.view.reserved)}}

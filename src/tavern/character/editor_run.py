@@ -31,7 +31,7 @@ class EditorRun:
         if self.request.get("_input_ref") and self.request["_input_ref"] not in self.current_refs:
             self.current_refs.append(self.request["_input_ref"])
         self.legacy = self.request.get("_legacy", False)
-        self.reads = copy.deepcopy(progress.get("reads", {}) if progress else {})
+        self.reads = {}  # Restored with the visible context, not the run boundary.
         self.persona_reads = copy.deepcopy(progress.get("persona_reads", {}) if progress else {})
         self.persona_changes = copy.deepcopy(progress.get("persona_changes", {}) if progress else {})
         self.trace = copy.deepcopy(progress.get("trace", []) if progress else [])
@@ -71,7 +71,7 @@ class EditorRun:
     def save(self):
         self.edits.save_progress(self.wid, self.rid, {"working": self.working, "base": self.base,
             "current_refs": self.current_refs, "context": self.context.saved(), "trace": self.trace,
-            "pending_calls": self.pending_calls, "reads": self.reads, "persona_reads": self.persona_reads,
+            "pending_calls": self.pending_calls, "persona_reads": self.persona_reads,
             "persona_changes": self.persona_changes, "calls": self.calls, "rolled": self.rolled})
 
     def response(self, provider, text, calls):
@@ -127,7 +127,6 @@ class EditorRun:
         self.pending_calls = None
         if self.rolled:
             self.context.rollover()
-            self.reads = {}
             self.persona_reads = {}
             self.rolled = False
             self.request_context.window_id = self.context.epoch

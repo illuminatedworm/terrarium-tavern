@@ -20,6 +20,7 @@
 | `create_draft` | `name`、可选 `source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。返回新引用与初始文档 |
 | `configure_card` | `card_ref`、`target_mode=half_agent/full_agent`、用户选择的 `confirmation_ref`；可选兼容性目标，普通制卡和 MVU 无需调用，不自动迁移内容 |
 | `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
+| `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
 | `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、新增/修改须传完整 `narrative`，移动使用 `to_index` |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
@@ -38,11 +39,15 @@
 
 `patch_draft` 和 `revert_draft` 的 `comment` 为必填的简短操作备注，1–1000 字符，替代旧参数 `reason`。新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
-Agent 优先使用对应的专门工具：普通开场润色使用完整的 `set_opening.narrative`，保留有效内联初值，撤销本轮卡片修改使用 `revert_draft`；其他字段或确需跨字段原子修改时使用 `patch_draft`。`operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例和开场专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
+Agent 优先使用对应的专门工具：世界书正文、标题、人物介绍等单个已有文本字段使用 `set_text_field`，直接传完整正文，不构造补丁数组；不能借此新增字段或替换对象、数组、数值及内部哈希。普通开场润色使用完整的 `set_opening.narrative`，保留有效内联初值，撤销本轮卡片修改使用 `revert_draft`；结构修改或确需跨字段原子修改时使用 `patch_draft`。三个编辑工具的读取、权限、可逆编号与文档校验保持一致，文本工具同样要求 1–1000 字符的 `comment`。
+
+`operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例及开场、文本字段专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
 
 路径相对于完整文档。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
 
 `add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。新增卡返回的完整初始文档视为已读。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。
+
+完整读取的版本证据随当前上下文持久化，跨轮、重启和中断续接可复用；每次写入核对当前字段版本。读取父对象覆盖其子字段，修改一个字段不使未变的兄弟字段失效，成功且可确定的写入更新已知版本。换窗、上下文重建、撤销目标卡修改后清除相应证据；旧上下文没有版本证据时须重新读取。概览、搜索摘要、历史资料读取不授予当前草稿的修改资格。版本证据只由程序保存，不进入模型消息或角色卡。
 
 开场编号 0 对应 first_mes，其余对应 alternate_greetings。新增和修改需要完整 narrative；删除最后一个开场应改为空文本。有效的内联初始化与隐藏正则须原位保留，移动开场时随完整原文一起移动。共用默认初值使用世界书 [InitVar]，开场专属完整初值使用该开场 <initvar>；不提供独立初始化参数，不生成关联元数据或隐藏覆盖来源。
 

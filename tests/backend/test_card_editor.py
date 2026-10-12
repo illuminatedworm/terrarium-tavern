@@ -143,7 +143,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert all(len(e["payload"]["result"]) <= 4000 for e in ends)
         assert "terrarium" not in current["document"]["extensions"]
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
-        assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_opening", "validate_draft", "read_skill",
+        assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_text_field", "set_opening", "validate_draft", "read_skill",
                          "create_draft", "configure_card", "revert_draft", "test_draft", "write_handoff", "new_context", "search_history", "read_history",
                          "list_personas", "read_persona", "create_persona", "update_persona"}
         saved = service.edits.save(current["id"], current["revision"], "copy", "copy-once")

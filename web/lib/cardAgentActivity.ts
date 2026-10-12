@@ -20,6 +20,7 @@ const labels: Record<string, string> = {
   read_field: '读取字段',
   search_entries: '搜索世界书',
   patch_draft: '修改草稿',
+  set_text_field: '编辑文本字段',
   set_opening: '编辑开场',
   validate_draft: '验证草稿',
   read_skill: '读取适配 skill',

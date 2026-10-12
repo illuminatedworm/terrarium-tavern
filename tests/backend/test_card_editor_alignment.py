@@ -73,6 +73,42 @@ class Editor:
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_text_tool_native_schema_and_cross_turn_read_evidence(tmp_path, monkeypatch, api):
+    editor = Editor(tmp_path, monkeypatch, api)
+
+    async def execute(plan):
+        editor.plans.append(plan)
+        ws = editor.service.edits.get(editor.workspace["id"])
+        result = editor.service.submit(ws["id"], CardEditorRequest(
+            text="修改世界书正文", expected_revision=ws["revision"], operation_id=str(len(ws["runs"]))), legacy=False)
+        await editor.service.tasks[result["id"]]
+        result = editor.service.edits.run(result["id"])
+        assert result["status"] == "completed", result["error"]
+        failures = [e for e in editor.service.edits.events(result["id"])
+                    if e["kind"] == "tool_finished" and e["payload"]["status"] == "error"]
+        assert not failures
+
+    try:
+        await execute([editor.tool(1, "read_field", {"card_ref": "C1", "path": "/character_book"}), blocks(api, "已读取")])
+        evidence = editor.service.edits.context(editor.workspace["id"])["read_versions"]
+        text = '他说："未知"。\n`Money` {{user}} \\n\n完整尾部'
+        await execute([editor.tool(2, "set_text_field", {"card_ref": "C1", "path": "/character_book/entries/0/content",
+                                                       "text": text, "comment": "修改正文"}), blocks(api, "完成")])
+        body = json.loads(editor.requests[-1].content)
+        schema = next(t for t in body["tools"] if t["name"] == "set_text_field")
+        parameters = schema["input_schema" if api == "anthropic" else "parameters"]
+        assert set(parameters["properties"]) == {"card_ref", "path", "text", "comment"}
+        assert all(p["type"] == "string" for p in parameters["properties"].values())
+        assert editor.service.edits.get(editor.workspace["id"])["document"]["character_book"]["entries"][0]["content"] == text
+        wire = json.dumps(body, ensure_ascii=False)
+        assert "普通世界设定" in wire
+        assert "read_versions" not in wire
+        assert all(value not in wire for value in evidence["C1"].values())
+    finally:
+        await editor.service.close()
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
 async def test_editor_argument_failure_guides_repair_and_survives_native_replay(tmp_path, monkeypatch, api):
     editor = Editor(tmp_path, monkeypatch, api)
     # Reproduce the double-encoded array with unescaped prose quotes. Neither
