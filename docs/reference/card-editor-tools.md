@@ -19,8 +19,8 @@
 | `search_entries` | `card_ref`、`query`；空查询列出全部。提供标题、定位路径及明确标识的摘要，修改前读取全文 |
 | `create_draft` | `name`、可选 `source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。返回新引用与初始文档 |
 | `configure_card` | `card_ref`、`target_mode=half_agent/full_agent`、用户选择的 `confirmation_ref`；可选兼容性目标，普通制卡和 MVU 无需调用，不自动迁移内容 |
-| `patch_draft` | `card_ref`、`operations`、`reason`；严格 JSON Patch，一批 1–100 项原子应用 |
-| `revert_draft` | `card_ref`、`reason`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
+| `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
+| `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、可选 `narrative/initialization/to_index`；程序维护关联、身份和指纹 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`、`display_assertions`、`state_patch`；检查初始化、正则转换、脚本启动和指定 DOM 值，临时补丁用于验证更新后显示，返回实际结果、日志和未测范围 |
@@ -35,6 +35,8 @@
 | `update_persona` | `request_ref`、`persona_ref`、可选 `name/description`；省略保留，description 空串清空；`revert=true` 仅撤销本任务待保存修改 |
 
 ## 路径与修改
+
+`patch_draft` 和 `revert_draft` 的 `comment` 为必填的简短操作备注，1–1000 字符，替代旧参数 `reason`。新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
 路径相对于完整文档。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
 

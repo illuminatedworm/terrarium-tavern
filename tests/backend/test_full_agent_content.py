@@ -64,7 +64,7 @@ async def call(owner, name, **args):
 
 
 async def revise(owner, *operations):
-    return await call(owner, "revise_content", operations=list(operations), reason="User requested setting")
+    return await call(owner, "revise_content", operations=list(operations), comment="User requested setting")
 
 
 @pytest.mark.parametrize("owner", [CARD_FORMATS[0], CARD_FORMATS[2]], indirect=True)
@@ -163,7 +163,7 @@ async def test_protected_entries_and_script_bearing_fields_cannot_be_read_change
     assert {row["title"] for row in search["matches"]} == {"港口", "旧船"}
     for ref in ("L20", "L21", "L22"):
         for name, args in [("read_lore_entry", {"ref": ref}),
-            ("revise_content", {"operations": [{"op": "remove_lore", "ref": ref}], "reason": "Forbidden"})]:
+            ("revise_content", {"operations": [{"op": "remove_lore", "ref": ref}], "comment": "Forbidden"})]:
             with pytest.raises(ValueError, match="变量规则、初始化或脚本"):
                 await call(owner, name, **args)
     card_data(owner.document)["description"] = "Text <script>keep()</script>"
@@ -252,8 +252,8 @@ async def test_edit_type_dependencies_allow_additions_when_reads_are_disabled(st
             edit = next(tool for tool in catalog if tool["name"] == "revise_content")
             assert edit["available"] and edit["edit_capabilities"] == {
                 "character": False, "lore_update_remove": False, "lore_add": True}
-        model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Blocked"}], "reason": "Check"}),
-            ("revise_content", {"operations": [{"op": "add_lore", "entry": {"title": "New", "content": "New setting"}}], "reason": "Check"}), "Narrative")
+        model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Blocked"}], "comment": "Check"}),
+            ("revise_content", {"operations": [{"op": "add_lore", "entry": {"title": "New", "content": "New setting"}}], "comment": "Check"}), "Narrative")
         result, _ = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
         results = [e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"]
@@ -278,7 +278,7 @@ async def test_five_hundred_entries_only_selected_source_reaches_model_and_other
     store.save_settings(settings)
     service = runtime(store)
     model = Model(("find_lore_for_edit", {"query": "PICKED_TARGET"}), ("read_lore_entry", {"ref": "L251"}),
-        ("revise_content", {"operations": [{"op": "update_lore", "ref": "L251", "changes": {"content": "Updated selected setting"}}], "reason": "User request"}), "Narrative")
+        ("revise_content", {"operations": [{"op": "update_lore", "ref": "L251", "changes": {"content": "Updated selected setting"}}], "comment": "User request"}), "Narrative")
     try:
         result, current = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]

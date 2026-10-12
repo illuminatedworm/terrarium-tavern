@@ -77,7 +77,7 @@ class Editor:
 async def test_editor_native_prefix_identity_and_committed_replay(tmp_path, monkeypatch, api, mode):
     editor = Editor(tmp_path, monkeypatch, api, mode)
     first = editor.tool(1, "patch_draft", {
-        "operations": [{"op": "replace", "path": "/name", "value": "更新后的角色名称"}], "reason": "修改名称"})
+        "operations": [{"op": "replace", "path": "/name", "value": "更新后的角色名称"}], "comment": "修改名称"})
     second = editor.tool(2, "validate_draft", {})
     final = blocks(api, "完成编辑")
     try:
@@ -223,7 +223,7 @@ async def test_editor_context_commits_atomically_and_survives_cleanup_backup(tmp
                     yield chunk
 
         failed = await run(Failure([("patch_draft", {
-            "operations": [{"op": "replace", "path": "/name", "value": "不应提交"}], "reason": "测试"})]), "失败一轮")
+            "operations": [{"op": "replace", "path": "/name", "value": "不应提交"}], "comment": "测试"})]), "失败一轮")
         assert failed["status"] == "error"
         assert service.edits.context(ws["id"]) == saved
         assert service.edits.get(ws["id"])["document"] == ws["document"]
@@ -256,7 +256,7 @@ async def test_editor_preserves_short_handles_and_opaque_responses_across_runs(t
         assert saved["view"]["reverse"]["@D1"] == opaque
         assert editor.service.edits.get(editor.workspace["id"])["runs"][-1]["response"].endswith(opaque)
         patch = editor.tool(2, "patch_draft", {
-            "operations": [{"op": "replace", "path": "/description", "value": "引用 @D1"}], "reason": "引用资料"})
+            "operations": [{"op": "replace", "path": "/description", "value": "引用 @D1"}], "comment": "引用资料"})
         await editor.run([patch, blocks("responses", "已改")])
         assert editor.service.edits.get(editor.workspace["id"])["document"]["description"] == "引用 " + opaque
         wire = editor.wire(editor.requests[-1])

@@ -37,8 +37,8 @@ class Model:
             name, args = response
             self.last_tool_calls = [SimpleNamespace(id=f"call{len(self.requests)}", name=name,
                                                     arguments=json.dumps(args, ensure_ascii=False))]
-            return SimpleNamespace(content="工作过程不会混入正文", usage={}, finish_reason="tool_calls")
-        return SimpleNamespace(content=response, usage={}, finish_reason="stop")
+            return SimpleNamespace(content="工作过程不会混入正文", usage={}, finish_comment="tool_calls")
+        return SimpleNamespace(content=response, usage={}, finish_comment="stop")
 
     async def close(self):
         self.closed = True
@@ -202,7 +202,7 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
     service = runtime(store)
     operations = [{"op": "add", "path": "/energy", "value": 2}]
     try:
-        model = Model(("patch_state", {"operations": operations, "reason": "未获授权"}), "正文")
+        model = Model(("patch_state", {"operations": operations, "comment": "未获授权"}), "正文")
         result, current = await turn(service, session, model, update_variables=False)
         assert result["status"] == "committed", result["error"]
         assert current["snapshot"]["state"] == session["snapshot"]["state"]
@@ -214,7 +214,7 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
                        for m in model.requests[0]["messages"] if isinstance(m.get("content"), str))
 
         required = Model("过早的正文", ("read_state", {}),
-                         ("patch_state", {"operations": operations, "reason": "能量变化"}), "最终正文")
+                         ("patch_state", {"operations": operations, "comment": "能量变化"}), "最终正文")
         result, current = await turn(service, current, required, update_variables=True)
         assert result["status"] == "committed", result["error"]
         assert len(required.requests) == 4
@@ -227,8 +227,8 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         assert any(e["kind"] == "full_agent_reply_rejected" for e in store.events(result["id"]))
         assert current["messages"][-1]["raw"] == "最终正文"
 
-        repeated = Model(("read_state", {}), ("patch_state", {"operations": operations, "reason": "首次更新"}),
-                         ("patch_state", {"operations": operations, "reason": "重复更新"}), "重复后的正文")
+        repeated = Model(("read_state", {}), ("patch_state", {"operations": operations, "comment": "首次更新"}),
+                         ("patch_state", {"operations": operations, "comment": "重复更新"}), "重复后的正文")
         result, _ = await turn(service, current, repeated, update_variables=True)
         assert result["status"] == "committed", result["error"]
         returns = [json.loads(m["content"]) for m in repeated.requests[-1]["messages"] if m["role"] == "tool"][-2:]
@@ -389,7 +389,7 @@ async def test_budget_step_limit_and_invalid_tools_roll_back(story):
     config.full_agent_config.max_steps = 2
     store.save_settings(config)
     try:
-        model = Model(("patch_state", {"operations": [], "reason": "unauthorized"}),
+        model = Model(("patch_state", {"operations": [], "comment": "unauthorized"}),
                       ("new_context", {"handoff": "不能重置本回合调用额度"}))
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and "上限" in result["error"]
@@ -630,7 +630,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         raise AssertionError("No background model in Full Agent")
     service.memory_provider_factory = service.variable_provider_factory = forbidden
     model = Model(("read_state", {}),
-                  ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}], "reason": "本轮变化"}),
+                  ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}], "comment": "本轮变化"}),
                   ("write_handoff", {"content": "目前能量为4"}), "洛伊带你来到观测窗。")
     try:
         session = await service.initialize_session(session["id"])
@@ -662,7 +662,7 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         failed, unchanged = await turn(service, session, Model(
             ("read_state", {}),
             ("patch_state", {"operations": [{"op": "replace", "path": "/能量", "value": 4}],
-                             "reason": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
+                             "comment": "本轮变化"}), RuntimeError("model disconnected")), update_variables=True)
         assert failed["status"] == "error"
         assert unchanged["snapshot"]["state"]["stat_data"]["能量"] != 4
         assert store.full_agent_progress(failed["id"])["patch_state_done"] is True

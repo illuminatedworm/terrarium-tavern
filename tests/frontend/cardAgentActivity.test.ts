@@ -65,6 +65,39 @@ describe('editor action timeline', () => {
     expect(actions).toHaveLength(2);
     expect(actions[1]).toMatchObject({ status: 'running', truncated: true, target: '' });
   });
+  it('shows operation comments while retaining remarks from legacy activity records', () => {
+    const events = [
+      {
+        ...started,
+        payload: {
+          action_id: 'patch',
+          tool: 'patch_draft',
+          arguments: '{"card_ref":"C1","operations":[],"comment":"修改人物描述"}',
+        },
+      },
+      {
+        ...started,
+        seq: 5,
+        payload: {
+          action_id: 'revert',
+          tool: 'revert_draft',
+          arguments: '{"card_ref":"C1","comment":"恢复原设定"}',
+        },
+      },
+      {
+        ...started,
+        seq: 8,
+        payload: {
+          action_id: 'legacy',
+          tool: 'patch_draft',
+          arguments: '{"card_ref":"C1","reason":"旧操作备注"}',
+        },
+      },
+    ];
+    const actions = editorActions(events, 'completed');
+    expect(actions.map((action) => action.target)).toEqual(['修改人物描述', '恢复原设定', '旧操作备注']);
+    expect(actions[2].arguments).toContain('"reason"');
+  });
 });
 
 describe('public editor intermediate replies', () => {

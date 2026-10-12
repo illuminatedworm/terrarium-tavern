@@ -40,10 +40,10 @@ EXAMPLES = {
                    {"key": NOTE_KEY, "saved_to_draft": True}),
     "archive_note": ({"key": NOTE_KEY}, {"key": NOTE_KEY, "archived": True}),
     "read_state": ({}, {"path": "", "scope": "variables", "text": '{"hp":8}'}),
-    "patch_state": ({"operations": [], "reason": "本轮变量无变化"}, {
+    "patch_state": ({"operations": [], "comment": "本轮变量无变化"}, {
         "saved_to_draft": True, "patch_state_completed": True, "notice": "已确认本轮变量无变化；未执行变量补丁或脚本回调。"}),
     "revise_content": ({"operations": [{"op": "set_character", "field": "description", "value": "新的角色描述。"}],
-                        "reason": "用户要求调整描述"}, {
+                        "comment": "用户要求调整描述"}, {
         "saved_to_draft": True, "added_refs": [], "characters": [{"ref": "description", "text": "新的角色描述。"}],
         "entries": [], "removed_refs": []}),
     "read_character": ({"ref": "description"}, {"ref": "description", "exists": True, "text": "角色描述。"}),

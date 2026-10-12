@@ -6,6 +6,7 @@ from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
+from tavern.full_agent.activity import turn_items
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.tools import SPECS
 from tavern.storage.store import Store
@@ -13,6 +14,48 @@ from tests.backend import test_full_agent
 from tests.backend.test_full_agent import Model, runtime, turn
 
 story = test_full_agent.story
+
+
+@pytest.mark.parametrize("name", ["patch_state", "revise_content"])
+async def test_tool_comment_contract_repairs_old_arguments_and_preserves_activity(story, name):
+    store, session = story
+    service = runtime(store)
+    operations = [] if name == "patch_state" else [
+        {"op": "set_character", "field": "description", "value": "新的角色描述"}]
+    calls = [] if name == "patch_state" else [("read_character", {"ref": "description"})]
+    comment = "本轮操作备注"
+    model = Model(*calls, (name, {"operations": operations, "reason": "旧参数备注"}),
+                  (name, {"operations": operations, "comment": comment}), "继续正文")
+    try:
+        result, current = await turn(service, session, model, update_variables=name == "patch_state",
+                                     allow_content_edit=name == "revise_content")
+        assert result["status"] == "committed", result["error"]
+        schema = next(tool["function"]["parameters"] for tool in model.requests[0]["extra_body"]["tools"]
+                      if tool["function"]["name"] == name)
+        assert set(schema["properties"]) == {"operations", "comment"}
+        assert "comment" in schema["required"]
+        outputs = [json.loads(message["content"]) for message in model.requests[-1]["messages"]
+                   if message["role"] == "tool"]
+        feedback, successful = outputs[-2:]
+        assert feedback["error"]["code"] == "INVALID_ARGUMENTS"
+        assert "缺少必填参数 comment" in feedback["error"]["message"]
+        assert "不接受参数 reason" in feedback["error"]["message"]
+        assert set(feedback["expected_parameters"]["properties"]) == {"operations", "comment"}
+        assert successful["ok"] and successful["data"]["saved_to_draft"]
+        if name == "revise_content":
+            content = current["snapshot"]["content"]
+            assert content["document"]["data"]["description"] == "新的角色描述"
+            assert content["reason"] == comment
+        else:
+            assert successful["data"]["patch_state_completed"]
+        items = [item for item in turn_items(store, session["id"], result["id"])
+                 if item["kind"] == "tool" and item["name"] == name]
+        assert [item["summary"] for item in items] == ["旧参数备注", comment]
+        assert [item["status"] for item in items] == ["error", "returned"]
+        assert json.loads(items[0]["details"]["arguments"])["reason"] == "旧参数备注"
+        assert json.loads(items[1]["details"]["arguments"])["comment"] == comment
+    finally:
+        await service.close()
 
 
 @pytest.mark.parametrize("name,arguments,expected", [
@@ -290,6 +333,6 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
     before = await tools.execute("read_character", json.dumps({"ref": "description"}))
     assert before["data"]["text"] == "Before"
     await tools.execute("revise_content", json.dumps({"operations": [
-        {"op": "set_character", "field": "description", "value": "After"}], "reason": "Update setting"}))
+        {"op": "set_character", "field": "description", "value": "After"}], "comment": "Update setting"}))
     after = await tools.execute("read_character", json.dumps({"ref": "description"}))
     assert after["data"]["text"] == "After"

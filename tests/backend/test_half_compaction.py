@@ -423,7 +423,7 @@ async def test_periodic_tracker_and_variables_still_run_in_compact_mode(tmp_path
     _, session = story(store)
     service = ModeRuntime(store)
     tracker = TrackerModel(("write_memory", {"operations": [], "questions": []}),
-                           ("patch_state", {"operations": [], "reason": "无需修改"}), "维护完成")
+                           ("patch_state", {"operations": [], "comment": "无需修改"}), "维护完成")
     service.half.tracker_provider_factory = lambda: tracker
     wire = []
     def route(request):
@@ -521,7 +521,7 @@ async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(
     session = store.update_session(session["id"], session["revision"], policy="review")
     service = ModeRuntime(store)
     tracker = TrackerModel(("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}],
-                                            "reason": "本轮变化"}), "完成")
+                                            "comment": "本轮变化"}), "完成")
     service.half.tracker_provider_factory = lambda: tracker
     store.chatgpt.http_transport = httpx.MockTransport(lambda request: sse(
         compact_response() if json.loads(request.content).get("instructions") else completed("待审核正文")))

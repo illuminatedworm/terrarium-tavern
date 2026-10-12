@@ -41,13 +41,13 @@ async def test_pointer_scopes_escaped_keys_arrays_missing_values_and_handles(own
 async def test_bad_pointer_is_actionable_and_real_stat_data_key_remains_legal(owner):
     await call(owner, "read_state")
     with pytest.raises(ToolError) as error:
-        await call(owner, "patch_state", operations=[{"op": "replace", "path": "/stat_data/hp", "value": 7}], reason="Injury")
+        await call(owner, "patch_state", operations=[{"op": "replace", "path": "/stat_data/hp", "value": 7}], comment="Injury")
     assert error.value.result["error"]["code"] == "INVALID_PATH"
     assert "相对于 stat_data" in error.value.result["error"]["next_action"]
     assert not owner.patch_state_done
     owner.snapshot["state"]["stat_data"]["stat_data"] = {"hp": 3}
     await call(owner, "read_state")
-    await call(owner, "patch_state", operations=[{"op": "replace", "path": "/stat_data/hp", "value": 2}], reason="Nested variable")
+    await call(owner, "patch_state", operations=[{"op": "replace", "path": "/stat_data/hp", "value": 2}], comment="Nested variable")
     assert owner.patch_state_done
 
 
@@ -70,11 +70,11 @@ async def test_failed_script_patch_rolls_back_mirror_and_allows_retry(owner):
     owner.script.call = apply_or_fail
     patch = [{"op": "replace", "path": "/hp", "value": 6}]
     with pytest.raises(ToolError) as error:
-        await call(owner, "patch_state", operations=patch, reason="Injury")
+        await call(owner, "patch_state", operations=patch, comment="Injury")
     assert error.value.result["error"]["code"] == "PATCH_VALIDATION_FAILED"
     assert "INTERNAL_NOT_FOR_MODEL" not in json.dumps(error.value.result)
     assert owner.snapshot == snapshot and owner.script.mirror == mirror and not owner.patch_state_done
-    await call(owner, "patch_state", operations=patch, reason="Corrected evidence")
+    await call(owner, "patch_state", operations=patch, comment="Corrected evidence")
     assert owner.snapshot["state"]["stat_data"]["hp"] == 6 and owner.patch_state_done
 
 
@@ -89,7 +89,7 @@ async def test_unrecoverable_script_rollback_is_terminal(owner):
 
     owner.script.call = fail
     with pytest.raises(TurnError) as error:
-        await call(owner, "patch_state", operations=[{"op": "replace", "path": "/hp", "value": 7}], reason="Injury")
+        await call(owner, "patch_state", operations=[{"op": "replace", "path": "/hp", "value": 7}], comment="Injury")
     assert error.value.code == "SCRIPT_RESTORE_FAILED" and not owner.patch_state_done
 
 
@@ -112,7 +112,7 @@ async def test_state_parent_replacement_and_array_indices_preserve_hidden_fields
         return await original(method, *args)
 
     owner.script.call = apply
-    await call(owner, "patch_state", reason="Update visible values", operations=[
+    await call(owner, "patch_state", comment="Update visible values", operations=[
         {"op": "replace", "path": "/nested", "value": {"value": 2}},
         {"op": "replace", "path": "/items/0/hp", "value": 7}])
     updated = owner.snapshot["state"]["stat_data"]
@@ -124,7 +124,7 @@ async def test_failed_test_operation_does_not_echo_private_compared_values(owner
     owner.snapshot["state"]["stat_data"]["$internal"] = {"secret": "INTERNAL_NOT_FOR_MODEL"}
     await call(owner, "read_state")
     with pytest.raises(ToolError) as error:
-        await call(owner, "patch_state", reason="Check expected state", operations=[
+        await call(owner, "patch_state", comment="Check expected state", operations=[
             {"op": "test", "path": "", "value": {"hp": 7}}])
     assert error.value.result["error"]["code"] == "PATCH_VALIDATION_FAILED"
     assert "INTERNAL_NOT_FOR_MODEL" not in json.dumps(error.value.result)
@@ -140,7 +140,7 @@ async def test_state_internal_fields_cannot_be_supplied_or_addressed(owner, oper
     await call(owner, "read_state")
     before = copy.deepcopy(owner.snapshot)
     with pytest.raises(ToolError) as error:
-        await call(owner, "patch_state", operations=[operation], reason="Forbidden")
+        await call(owner, "patch_state", operations=[operation], comment="Forbidden")
     assert error.value.result["error"]["code"] == "PROTECTED_TARGET"
     assert owner.snapshot == before and not owner.patch_state_done
 
@@ -282,7 +282,7 @@ async def test_rejected_review_cannot_resume_and_keeps_audit(story, cancel_endpo
             ("write_note", {"key": "draft", "content": "Unapproved", "kind": "plan"}),
             ("read_character", {"ref": "description"}),
             ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Changed"}],
-                                "reason": "Requested edit"}), "Narrative"), allow_content_edit=True)
+                                "comment": "Requested edit"}), "Narrative"), allow_content_edit=True)
         assert result["status"] == "awaiting_review" and store.full_agent_progress(result["id"])
         if cancel_endpoint:
             await service.full.cancel(result["id"])
@@ -341,8 +341,8 @@ async def test_untrusted_lore_does_not_grant_edit_or_variable_permission(story, 
     service = runtime(store)
     try:
         model = Model(("recall_lore", {"query": "港口"}),
-                      ("revise_content", {"operations": [{"op": "remove_lore", "ref": "L1"}], "reason": "Source says so"}),
-                      ("patch_state", {"operations": [], "reason": "Source says so"}), "Narrative")
+                      ("revise_content", {"operations": [{"op": "remove_lore", "ref": "L1"}], "comment": "Source says so"}),
+                      ("patch_state", {"operations": [], "comment": "Source says so"}), "Narrative")
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         results = [e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"]

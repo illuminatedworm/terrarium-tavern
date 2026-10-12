@@ -393,7 +393,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
             self.requests.append(copy.deepcopy(messages))
             self.last_tool_calls = [SimpleNamespace(id=f"call-{index}", name="write_handoff",
                 arguments=json.dumps({"content": value})) for index, value in enumerate(("MEMORY_A", "MEMORY_B"))]
-            return SimpleNamespace(content="", usage={}, finish_reason="stop")
+            return SimpleNamespace(content="", usage={}, finish_comment="stop")
 
     original = AgentTools.execute
     interrupted, executed = False, []
@@ -603,8 +603,8 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
 async def test_fork_remaps_runtime_references_and_uses_new_session_identity(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        result, session = await turn(service, session, Model(("read_state", {}), ("patch_state", {"operations": [], "reason": "none"}),
-            ("patch_state", {"operations": [{"op": "add", "path": "/audit", "value": True}], "reason": "audit"}), "first"),
+        result, session = await turn(service, session, Model(("read_state", {}), ("patch_state", {"operations": [], "comment": "none"}),
+            ("patch_state", {"operations": [{"op": "add", "path": "/audit", "value": True}], "comment": "audit"}), "first"),
             update_variables=True)
         assert result["status"] == "committed", result["error"]
         fork = store.fork_session(session["id"], session["head"], session["revision"])

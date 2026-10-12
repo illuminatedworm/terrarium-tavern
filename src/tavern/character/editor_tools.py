@@ -55,7 +55,7 @@ class Operation(Arguments):
 
 class Patch(Card):
     operations: list[Operation] = Field(min_length=1, max_length=100, description="1–100 JSON Patch operations applied atomically. Read current affected fields first; preserve unrelated fields and extensions.")
-    reason: str = Field(min_length=1, max_length=1000, description="User-requested purpose of the change.")
+    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
 class Create(Arguments):
@@ -72,7 +72,7 @@ class Configure(Card):
 
 
 class Revert(Card):
-    reason: str = Field(min_length=1, max_length=1000, description="User-requested reason to undo this task's changes to this card.")
+    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
 class Opening(Card):
@@ -271,7 +271,7 @@ class EditorTools(PersonaTools):
         changed = self.view.patch(item["document"], operations)
         validate_document(changed)
         item.update(document=changed, kind="draft")
-        self.owner.event("draft_change", {"card_ref": args.card_ref, "reason": args.reason})
+        self.owner.event("draft_change", {"card_ref": args.card_ref, "reason": args.comment})
         return {"card_ref": args.card_ref, "accepted": True, **report(changed)}
 
     async def set_opening(self, args):

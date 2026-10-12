@@ -117,7 +117,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
     workspace = service.edits.create(card["id"])
     provider = ToolLLM([
         ("read_skill", {}),
-        ("patch_draft", {"operations": [{"op": "replace", "path": "/description", "value": "新的角色描述"}], "reason": "修改描述"}),
+        ("patch_draft", {"operations": [{"op": "replace", "path": "/description", "value": "新的角色描述"}], "comment": "修改描述"}),
         ("set_opening", {"index": 0, "narrative": "干净开场", "initialization": "<initvar>hp: 8</initvar>"}),
         ("validate_draft", {}),
     ])
@@ -212,7 +212,7 @@ async def test_cancel_rolls_back_partial_tools(tmp_path):
             async for chunk in super().chat(messages, **kwargs):
                 yield chunk
     service.provider_factory = lambda: Waiting([("patch_draft", {
-        "operations": [{"op": "replace", "path": "/description", "value": "未完成"}], "reason": "临时",
+        "operations": [{"op": "replace", "path": "/description", "value": "未完成"}], "comment": "临时",
     })])
     try:
         run = service.submit(ws["id"], CardEditorRequest(text="修改", operation_id="cancel", expected_revision=0))
@@ -392,7 +392,7 @@ async def test_multiple_contexts_keep_drafts_and_model_history_independent(tmp_p
     editor = CardEditorService(store)
     first = editor.edits.create(card['id'])
     editor.provider_factory = lambda: ToolLLM([('patch_draft', {
-        'operations': [{'op': 'replace', 'path': '/description', 'value': '只属于第一份草稿'}], 'reason': '修改',
+        'operations': [{'op': 'replace', 'path': '/description', 'value': '只属于第一份草稿'}], 'comment': '修改',
     })])
     try:
         run = editor.submit(first['id'], CardEditorRequest(

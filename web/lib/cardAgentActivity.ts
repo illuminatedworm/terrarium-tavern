@@ -70,6 +70,7 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
           action.target =
             args.path ??
             args.query ??
+            args.comment ??
             args.reason ??
             args.resource ??
             args.persona_ref ??

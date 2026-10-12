@@ -49,7 +49,7 @@ def frames(messages):
 
 
 def empty_patch():
-    return ("patch_state", {"operations": [], "reason": "No changes in this turn"})
+    return ("patch_state", {"operations": [], "comment": "No changes in this turn"})
 
 
 @pytest.mark.parametrize("object_entries", [False, True])
@@ -139,7 +139,7 @@ async def test_full_agent_cannot_edit_variable_rules_or_initialization(tmp_path,
         model = Model(("read_character", {"ref": "character_book"}),
             ("revise_content", {"operations": [{"op": "add_lore", "entry": {
                 "title": "Rule change", "content": "RULE_NEW", "extensions": {"terrarium": {"audience": target}}}}],
-                "reason": "Forbidden runtime configuration"}),
+                "comment": "Forbidden runtime configuration"}),
             ("read_state", {}), empty_patch(), "Narrative")
         result, session = await turn(service, session, model, update_variables=True, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
@@ -161,9 +161,9 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
         session = await service.initialize_session(session["id"])
         assert session["snapshot"]["state"]["stat_data"]["hp"] == 8
         model = Model(("read_state", {}),
-            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 5}], "reason": "Injury"}),
+            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 5}], "comment": "Injury"}),
             ("read_lore_entry", {"ref": "L1"}),
-            ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": "NEW_NARRATIVE_SETTING"}}], "reason": "Narrative setting"}),
+            ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": "NEW_NARRATIVE_SETTING"}}], "comment": "Narrative setting"}),
             ("new_context", {"handoff": "Injury applied, continue narrative", "keep_recent": 0}),
             RuntimeError("Disconnected"))
         failed, unchanged = await turn(service, session, model, update_variables=True, allow_content_edit=True)
@@ -255,8 +255,8 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(
 
 
 def test_empty_patch_is_specific_to_variable_updates():
-    assert StatePatch(operations=[], reason="No change").operations == []
+    assert StatePatch(operations=[], comment="No change").operations == []
     with pytest.raises(ValidationError):
-        ContentRevision(operations=[], reason="No content edit")
+        ContentRevision(operations=[], comment="No content edit")
     rules = collect_variable_rules(document(), "Reader", {"stat_data": {"hp": 8}})
     assert rules == ["RULE_A Reader", "HP_AT_START=8"]

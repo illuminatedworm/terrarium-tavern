@@ -154,7 +154,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
         ("read_skill", {"resource": "references/status-display.md"}),
         ("read_field", {"card_ref": "C1", "path": ""}),
         ("validate_draft", {"card_ref": "C1"}),
-        ("patch_draft", {"card_ref": "C1", "reason": "迁移正文状态栏", "operations": [
+        ("patch_draft", {"card_ref": "C1", "comment": "迁移正文状态栏", "operations": [
             {"op": "replace", "path": "/character_book/entries/0/content", "value": RULE},
             {"op": "add", "path": "/character_book/entries/0/extensions", "value": {"terrarium": {"audience": "tracker_mvu"}}}]}),
         *[("set_opening", {"card_ref": "C1", "index": i, "narrative": "旅客放下行李。",

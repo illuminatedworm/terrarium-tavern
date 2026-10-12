@@ -197,7 +197,7 @@ async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_pare
                 assert "checksum" not in body["text"] and "fingerprint" not in body["text"]
                 projected["description"] = "本轮修改"
                 self.steps[1] = ("patch_draft", {"operations": [{"op": "replace", "path": "", "value": projected}],
-                                                "reason": "更新描述，保留其余内容"})
+                                                "comment": "更新描述，保留其余内容"})
             async for item in super().chat(messages, **kwargs):
                 yield item
     provider = Editor([("read_field", {"path": ""}), ("patch_draft", {}), ("validate_draft", {})])

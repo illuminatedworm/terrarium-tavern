@@ -168,7 +168,7 @@ async def test_half_tracker_gets_notice_without_starting_extra_tasks(story):
     if session["agent_mode"] != "half_agent":
         return
     edited = edit(store, session)
-    tracker = TrackerModel(("patch_state", {"operations": [], "reason": "unchanged"}), "完成")
+    tracker = TrackerModel(("patch_state", {"operations": [], "comment": "unchanged"}), "完成")
     writer = model_for(edited, "new reply")
     result, current = await run_story(store, edited, writer, tracker=tracker)
     assert result["status"] == "committed", result["error"]

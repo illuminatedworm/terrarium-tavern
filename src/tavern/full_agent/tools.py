@@ -98,7 +98,7 @@ StateOperation = Annotated[ValueOperation | FromOperation | RemoveOperation, Fie
 
 class StatePatch(Arguments):
     operations: list[StateOperation] = Field(max_length=100, description=PATCH_GUIDANCE + " Empty array means no changes.")
-    reason: str = Field(min_length=1, max_length=1000, description="Story evidence and purpose of this change.")
+    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
 class StateRead(Arguments):
@@ -155,7 +155,7 @@ SPECS = {
     "patch_state": (StatePatch, "Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. "
         'Nonempty operations require a current complete variables read with read_state(path="", scope="variables"). '
         "Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. "
-        "Follow the latest <mvu_rules>, explain story evidence in reason and align with the final narrative. "
+        "Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. "
         "Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose."),
     "revise_content": (ContentRevision, "Edit narrative settings with set_character, add_lore, update_lore or remove_lore; use these semantic actions, not JSON Patch or storage IDs. "
         "Existing fields require a current read_character record; existing entries require a current read_lore_entry record. add_lore needs no prior read. "

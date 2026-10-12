@@ -304,8 +304,8 @@ class TrackerTask:
             else:
                 self.document = data
             self.snapshot["content"] = {"document": copy.deepcopy(self.document),
-                "reason": self.view.restore(model.reason), "turn": self.tid}
-            self.event("content_proposal", {"operations": model.operations, "reason": model.reason})
+                "reason": self.view.restore(model.comment), "turn": self.tid}
+            self.event("content_proposal", {"operations": model.operations, "reason": model.comment})
             return {"saved_to_draft": True, "notice": "对话级角色卡草稿已更新，回合提交后生效。"}
         if name == "patch_state":
             if not self.current_ready:
@@ -314,7 +314,7 @@ class TrackerTask:
                 raise ValueError("本轮变量补丁已接受，不能重复提交")
             from tavern.tracker.state import stage
             operations, candidate = stage(self.raw_variables, self.view.operations(model.operations))
-            self.patch, self.patch_reason = operations, self.view.restore(model.reason)
+            self.patch, self.patch_reason = operations, self.view.restore(model.comment)
             self.raw_variables = candidate
             self.variables = state_for_model({"stat_data": candidate})["stat_data"]
             self.event("state_proposal", {"operations": operations, "reason": self.patch_reason, "staged": True})

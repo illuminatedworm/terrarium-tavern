@@ -44,7 +44,7 @@ async def test_nonempty_patch_requires_current_complete_variables_read(owner):
     operations = [{"op": "replace", "path": "/hp", "value": 7}]
     async def denied():
         with pytest.raises(ValueError, match="完整读取最新变量"):
-            await call(owner, "patch_state", operations=operations, reason="Injury")
+            await call(owner, "patch_state", operations=operations, comment="Injury")
         assert not owner.patch_state_done
 
     await denied()
@@ -59,9 +59,9 @@ async def test_nonempty_patch_requires_current_complete_variables_read(owner):
     rollover(owner.state, [], "Continue", 0)
     await denied()
     await call(owner, "read_state")
-    assert (await call(owner, "patch_state", operations=operations, reason="Injury"))["saved_to_draft"]
+    assert (await call(owner, "patch_state", operations=operations, comment="Injury"))["saved_to_draft"]
     with pytest.raises(ValueError, match="不允许重复"):
-        await call(owner, "patch_state", operations=operations, reason="Repeat")
+        await call(owner, "patch_state", operations=operations, comment="Repeat")
 
 
 async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
@@ -69,11 +69,11 @@ async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
     async def forbidden(*args, **kwargs):
         raise AssertionError("Empty patch must not call the script runtime")
     owner.script.call = forbidden
-    result = await call(owner, "patch_state", operations=[], reason="No changes")
+    result = await call(owner, "patch_state", operations=[], comment="No changes")
     assert result["patch_state_completed"] and owner.patch_state_done
     assert owner.snapshot == before and owner.tools.reads.records["state"] is None
     with pytest.raises(ValueError, match="不允许重复"):
-        await call(owner, "patch_state", operations=[], reason="Repeat")
+        await call(owner, "patch_state", operations=[], comment="Repeat")
 
 
 async def test_note_sources_resolve_without_reads_and_remain_stale_after_history_edits(owner):
@@ -100,10 +100,10 @@ async def test_reads_and_writes_in_one_tool_batch_follow_execution_order(story):
             if len(self.requests) == 1:
                 self.last_tool_calls.extend(SimpleNamespace(id=f"batch-{i}", name=name,
                     arguments=json.dumps(args)) for i, (name, args) in enumerate([
-                        ("patch_state", {"operations": [], "reason": "No changes"}),
+                        ("patch_state", {"operations": [], "comment": "No changes"}),
                         ("read_character", {"ref": "description"}),
                         ("revise_content", {"operations": [{"op": "set_character", "field": "description",
-                                             "value": "Batch revision"}], "reason": "User requested"}),
+                                             "value": "Batch revision"}], "comment": "User requested"}),
                     ]))
             return response
 
@@ -131,9 +131,9 @@ async def test_read_permissions_survive_failure_resume_but_old_progress_requires
         if legacy:
             progress["tool_reads"].pop("version")
             store.save_full_agent_progress(failed["id"], progress)
-        patch = ("patch_state", {"operations": [], "reason": "No changes"})
+        patch = ("patch_state", {"operations": [], "comment": "No changes"})
         edit = ("revise_content", {"operations": [{"op": "set_character", "field": "description",
-                                 "value": "Revised"}], "reason": "User requested edit"})
+                                 "value": "Revised"}], "comment": "User requested edit"})
         # The sample is a wrapped card. Missing legacy stamps cannot grant a write.
         responses = [patch, edit]
         if legacy:

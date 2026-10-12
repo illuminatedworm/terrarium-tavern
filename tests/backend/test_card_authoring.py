@@ -1,6 +1,7 @@
 """Behavioral authoring contracts, using isolated data and local model fixtures."""
 import asyncio
 import copy
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -25,7 +26,7 @@ async def run(editor, wid, provider, text="修改已引用卡片", resume=None):
 
 
 def patch(ref, text):
-    return ("patch_draft", {"card_ref": ref, "operations": [{"op": "replace", "path": "/description", "value": text}], "reason": "用户要求"})
+    return ("patch_draft", {"card_ref": ref, "operations": [{"op": "replace", "path": "/description", "value": text}], "comment": "用户要求"})
 
 
 class Batches(ToolLLM):
@@ -55,6 +56,48 @@ def test_schemas_are_explicit_and_use_one_catalog():
     assert set(patch_schema["$defs"]["Operation"]["properties"]["op"]["enum"]) == {"add", "remove", "replace", "move", "copy", "test"}
 
 
+@pytest.mark.parametrize("name", ["patch_draft", "revert_draft"])
+async def test_comment_argument_recovers_from_old_name_in_editor_loop(tmp_path, name):
+    store = Store(tmp_path)
+    card = import_fixture(store)
+    editor = CardEditorService(store)
+    workspace = editor.edits.create(card["id"])
+    operations = [{"op": "replace", "path": "/description", "value": "新的角色描述"}]
+    steps = [("read_field", {"card_ref": "C1", "path": "/description"})]
+    arguments = {"card_ref": "C1"}
+    if name == "revert_draft":
+        steps.append(("patch_draft", {"card_ref": "C1", "operations": operations, "comment": "临时修改"}))
+    else:
+        arguments["operations"] = operations
+    comment = "简短操作备注"
+    provider = ToolLLM([*steps, (name, {**arguments, "reason": "旧参数备注"}),
+                       (name, {**arguments, "comment": comment})])
+    try:
+        result = await run(editor, workspace["id"], provider)
+        assert result["status"] == "completed", result["error"]
+        schema = next(tool.parameters for tool in provider.schemas[0] if tool.name == name)
+        assert "comment" in schema["properties"] and "comment" in schema["required"]
+        assert "reason" not in schema["properties"]
+        events = editor.edits.activity(result["id"])["events"]
+        finished = [event["payload"] for event in events
+                    if event["kind"] == "tool_finished" and event["payload"]["tool"] == name]
+        assert [event["status"] for event in finished[-2:]] == ["error", "completed"]
+        assert "comment" in finished[-2]["detail"] and "reason" in finished[-2]["detail"]
+        starts = [event["payload"] for event in events
+                  if event["kind"] == "tool_started" and event["payload"]["tool"] == name]
+        assert json.loads(starts[-2]["arguments"])["reason"] == "旧参数备注"
+        assert json.loads(starts[-1]["arguments"])["comment"] == comment
+        current = editor.edits.conversation(workspace["id"])["cards"][0]["document"]
+        assert current["description"] == ("原人物设定" if name == "revert_draft" else "新的角色描述")
+        assert store.card(card["id"])["document"]["description"] == "原人物设定"
+        if name == "patch_draft":
+            change = next(event for event in editor.edits.events(result["id"])
+                          if event["kind"] == "draft_change")
+            assert change["payload"]["reason"] == comment
+    finally:
+        await editor.close()
+
+
 async def test_empty_consultation_then_confirmed_creation_survives_rollover(tmp_path):
     store = Store(tmp_path)
     editor = CardEditorService(store)
@@ -71,7 +114,7 @@ async def test_empty_consultation_then_confirmed_creation_survives_rollover(tmp_
             ("patch_draft", {"card_ref": "C1", "operations": [
                 {"op": "replace", "path": "/data/description", "value": "经营雨夜书店的店主"},
                 {"op": "replace", "path": "/data/first_mes", "value": "铜铃轻响，他递来毛巾。"},
-                {"op": "replace", "path": "/data/mes_example", "value": "{{char}}：雨总会停的。"}], "reason": "按确认方案制作"}),
+                {"op": "replace", "path": "/data/mes_example", "value": "{{char}}：雨总会停的。"}], "comment": "按确认方案制作"}),
             ("new_context", {"content": "林间已创建，等待审阅；保留已确认方案。"}),
         ]), "确认，按方案制作")
         assert made["status"] == "completed", made["error"]
@@ -148,7 +191,7 @@ async def test_interrupt_and_steer_abort_unexecuted_calls_without_repeating_writ
         with pytest.raises(Conflict, match="未完成"):
             editor.edits.save_card(wid, "C1", 3, "overwrite", "blocked")
         calls.append("resuming")
-        followup = ToolLLM([('revert_draft', {'card_ref': 'C2', 'reason': '用户要求恢复 B'}), patch('C3', '新的 C')])
+        followup = ToolLLM([('revert_draft', {'card_ref': 'C2', 'comment': '用户要求恢复 B'}), patch('C3', '新的 C')])
         completed = await run(editor, wid, followup, "保留 A，B 恢复本轮之前的版本，C 按新要求改", resume=active["id"])
         assert completed["status"] == "completed", completed["error"]
         current = editor.edits.conversation(wid)
@@ -173,7 +216,7 @@ async def test_long_source_reaches_followup_and_strict_patch_recovers(tmp_path):
     editor = CardEditorService(store)
     workspace = editor.edits.create(card["id"])
     provider = ToolLLM([("read_field", {"card_ref": "C1", "path": "/description"}),
-        ("patch_draft", {"card_ref": "C1", "reason": "错误参数", "operations": [{"op": "replace", "path": "/description"}]}),
+        ("patch_draft", {"card_ref": "C1", "comment": "错误参数", "operations": [{"op": "replace", "path": "/description"}]}),
         patch("C1", "正确结果")])
     try:
         result = await run(editor, workspace["id"], provider)
@@ -317,7 +360,7 @@ async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tm
             ("read_skill", {"resource": "runtime-guide.md"}),
             ("read_field", {"card_ref": "C1", "path": "/character_book/entries/0"}),
             ("patch_draft", {"card_ref": "C1", "operations": [{"op": "add", "path": "/character_book/entries/0/extensions",
-                "value": {"terrarium": {"audience": "tracker_mvu"}}}], "reason": "Use shared variable routing"}),
+                "value": {"terrarium": {"audience": "tracker_mvu"}}}], "comment": "Use shared variable routing"}),
             ("validate_draft", {"card_ref": "C1"}),
         ])
         result = await run(editor, wid, model, "将变量更新规则标记为变量用途，不改变其他内容")

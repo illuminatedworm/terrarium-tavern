@@ -65,7 +65,7 @@ async def main():
                         ("patch_draft", {"card_ref": "C1", "operations": [
                             {"op": "replace", "path": "/data/description", "value": "神秘的书店店主"},
                             {"op": "replace", "path": "/data/first_mes", "value": "铜铃响了。"},
-                            {"op": "replace", "path": "/data/mes_example", "value": "{{char}}：请进。"}], "reason": "制作"})])
+                            {"op": "replace", "path": "/data/mes_example", "value": "{{char}}：请进。"}], "comment": "制作"})])
                     await composer.fill("确认方案，制作")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(4)
@@ -86,7 +86,7 @@ async def main():
                     await expect(composer).to_have_value("")
                     editor.provider_factory = lambda: ToolLLM([
                         ("read_field", {"card_ref": "C2", "path": "/description"}),
-                        ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "UI 修改结果"}], "reason": "修改"})])
+                        ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "UI 修改结果"}], "comment": "修改"})])
                     await composer.fill("修改 C2 的描述")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(6)
@@ -136,7 +136,7 @@ async def main():
 
                     editor.provider_factory = lambda: SlowAfterWrite([
                         ("read_field", {"card_ref": "C2", "path": "/description"}),
-                        ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "尚未完成的实时预览"}], "reason": "验证预览同步"})])
+                        ("patch_draft", {"card_ref": "C2", "operations": [{"op": "replace", "path": "/description", "value": "尚未完成的实时预览"}], "comment": "验证预览同步"})])
                     await composer.fill("检查未完成草稿同步")
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="预览", exact=True).click()

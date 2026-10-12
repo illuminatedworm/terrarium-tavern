@@ -278,7 +278,7 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
     service.provider_factory = lambda: ScriptedLLM(["" if outcome == "failure" else "正文"])
     service.tracker_provider_factory = lambda: TrackerModel(
         ("revise_content", {"operations": [{"op": "add", "path": "/description", "value": "New setting"}],
-                            "reason": "Explicit request"}), "done")
+                            "comment": "Explicit request"}), "done")
     try:
         if outcome == "cancel":
             service.provider_factory = lambda: ScriptedLLM([
@@ -312,7 +312,7 @@ async def test_maintenance_compilation_does_not_consume_narrative_usage(story):
     from tests.support.tracker_model import TrackerModel
     provider = TrackerModel(("search_lore", {"query": "灯塔"}),
         ("revise_content", {"operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
-                            "reason": "停用条目"}), "维护完成", "后置检查完成")
+                            "comment": "停用条目"}), "维护完成", "后置检查完成")
     writer = ScriptedLLM(["正文"])
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: writer

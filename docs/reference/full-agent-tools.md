@@ -10,7 +10,9 @@
 
 历史引用为当前分支有效 H 编号，世界书引用为 L 加正整数；它们是导航句柄，不写入剧情。read_note、write_note、archive_note 统一使用完整笔记 key。版本、指纹、真实 ID 和模型短编号映射由 Runtime 保存；模型不生成或回传这些机械字段。
 
-query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_state.path 最长 200 字符。handoff 和笔记正文为 1–64000 字符，不能为空白，另受配置中的 handoff_tokens／note_tokens 约束；reason 为 1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
+query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_state.path 最长 200 字符。handoff 和笔记正文为 1–64000 字符，不能为空白，另受配置中的 handoff_tokens／note_tokens 约束；comment 为必填的简短操作备注，1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
+
+patch_state 和 revise_content 的备注参数统一使用 comment，替代旧参数 reason；旧调用记录保留原样，新调用传 reason 会返回参数错误及当前参数定义。
 
 ## 叙事检索与编辑定位
 
@@ -42,7 +44,7 @@ patch_state.operations 为 0–100 项带类型的 JSON Patch：每项 op/path �
 
 read_character.ref 和 set_character.field 的白名单为 name、description、personality、scenario、mes_example、system_prompt、post_history_instructions；每次读取一个完整字段，缺失返回 null。
 
-revise_content 接受 1–100 项受限动作及 reason：
+revise_content 接受 1–100 项受限动作及 comment：
 
 | op | 参数 | 规则 |
 |---|---|---|

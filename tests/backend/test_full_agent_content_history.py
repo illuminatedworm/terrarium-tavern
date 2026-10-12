@@ -74,7 +74,7 @@ async def test_entry_read_survives_failure_and_branch_regeneration_requires_fres
     store, session = story
     service = runtime(store)
     def update(text):
-        return ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": text}}], "reason": "Setting"})
+        return ("revise_content", {"operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": text}}], "comment": "Setting"})
     try:
         failed, unchanged = await turn(service, session, Model(("read_lore_entry", {"ref": "L1"}), RuntimeError("Disconnected")), allow_content_edit=True)
         assert failed["status"] == "error" and unchanged["head"] == session["head"]
@@ -118,9 +118,9 @@ async def test_old_progress_broad_calls_are_not_executed_or_replayed_and_audit_i
         progress["new_trace"].extend({"window_id": window, "message": message} for message in [legacy, old_result, pending])
         progress["tool_reads"].pop("version")
         store.save_full_agent_progress(failed["id"], progress)
-        model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Updated"}], "reason": "Setting"}),
+        model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Updated"}], "comment": "Setting"}),
             ("read_character", {"ref": "description"}),
-            ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Updated"}], "reason": "Setting"}), "Narrative")
+            ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Updated"}], "comment": "Setting"}), "Narrative")
         service.full.provider_factory = lambda: model
         resumed = service.submit(session["id"], TurnRequest(text=failed["request"]["text"], operation_id="resume-old-content",
             expected_revision=0, allow_content_edit=True, resume_turn_id=failed["id"]))

@@ -91,4 +91,4 @@ class PatchModel(TrackerModel):
             operations = json.loads(proposal) if isinstance(proposal, str) else proposal
         except ValueError:
             operations = proposal
-        super().__init__(("patch_state", {"operations": operations, "reason": "Fixture turn evidence"}), "完成")
+        super().__init__(("patch_state", {"operations": operations, "comment": "Fixture turn evidence"}), "完成")

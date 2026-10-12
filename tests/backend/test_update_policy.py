@@ -99,7 +99,7 @@ async def test_content_review_holds_entire_turn_and_survives_reload(story, accep
             ("write_note", {"key": "timeline", "content": "Meet tomorrow", "kind": "plan"}),
             ("read_character", {"ref": "description"}),
             ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Changed"}],
-                                "reason": "Explicit request"}), "Story"), allow_content_edit=True)
+                                "comment": "Explicit request"}), "Story"), allow_content_edit=True)
         assert result["status"] == "awaiting_review", result["error"]
         assert current["snapshot"] == session["snapshot"] and current["head"] == session["head"]
         # Reading a pending turn (also used on reopen) must expose only real review targets.

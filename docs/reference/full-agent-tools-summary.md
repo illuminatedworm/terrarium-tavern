@@ -24,9 +24,9 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；无需预读，覆盖归档键会激活。 |
 | `archive_note` | 归档笔记 | `key: string` | 普通搜索不再返回，仍可按键读取；不提供删除工具。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "variables"或"story"="variables"` | 默认相对 stat_data，如 `/hp`；空串读完整作用域。story 读取完整剧情状态的投影视图；只有完整 variables 读取授予非空补丁资格。 |
-| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`reason: string` | 本轮授权时必须且只能成功一次，失败可修正重试；非空先完整读变量，空数组免读取且不触发补丁脚本回调。 |
+| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时必须且只能成功一次，失败可修正重试；非空先完整读变量，空数组免读取且不触发补丁脚本回调。 |
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
-| `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`reason: string` | 四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
+| `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
 | `set_retrieval_query` | 覆盖本轮准备保存的下轮检索线索 | `query: string` | 最后一次成功调用生效；空串清空本轮线索，历史线索保留；随正文提交且不进入正文。 |
 
 ## 编辑参数补充
@@ -46,7 +46,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 - 成功为 `{"ok":true,"data":{...}}`；失败为 `{"ok":false,"error":{"code":"...","message":"...","retryable":true,"next_action":"..."}}`。参数错误另附 expected_parameters；变量补丁错误附 patch_state_completed。错误恢复及终止原因见[完整协议](full-agent-tools.md)。
 - query 最长 1000 字符，除 set_retrieval_query 外不能空；limit 为 1–10。历史 ref、笔记 key 为 1–80 字符，世界书引用为 L 加正整数，状态 path 最长 200 字符。新笔记键支持字母、数字、下划线、中文、斜线、连字符、空格和点。
-- 交接／笔记正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；reason 为 1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。
+- 交接／笔记正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；comment 为必填的简短操作备注，1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。
 - 关闭工具会移除其定义和执行资格；关闭 read_state 同时禁用 patch_state。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。
 - 读取记录由后端维护，写后完整结果可续用；目标变化、删除、换窗或新回合后重新读取。失败／取消／预算耗尽保留可恢复草稿；明确拒绝审核会清除可恢复进度，正式剧情不变。
 - 每次运行默认最多 24 次模型请求，范围 2–100；运行时内部执行上限，不向模型注入额度、剩余次数或最后一次调用提醒。耗尽时报告 BUDGET_EXHAUSTED 并保留进度。换窗不重置；手动续接有新请求额度，已成功工具和变量提交标记保留。
@@ -276,13 +276,13 @@ Read state using JSON Pointer. Default scope=variables reads stat_data with the 
 ### `patch_state`
 
 ```text
-Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. Nonempty operations require a current complete variables read with read_state(path="", scope="variables"). Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. Follow the latest <mvu_rules>, explain story evidence in reason and align with the final narrative. Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose.
+Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. Nonempty operations require a current complete variables read with read_state(path="", scope="variables"). Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose.
 ```
 
 请求：
 
 ```json
-{"operations":[],"reason":"本轮变量无变化"}
+{"operations":[],"comment":"本轮变量无变化"}
 ```
 
 成功返回：
@@ -300,7 +300,7 @@ Edit narrative settings with set_character, add_lore, update_lore or remove_lore
 请求：
 
 ```json
-{"operations":[{"op":"set_character","field":"description","value":"新的角色描述。"}],"reason":"用户要求调整描述"}
+{"operations":[{"op":"set_character","field":"description","value":"新的角色描述。"}],"comment":"用户要求调整描述"}
 ```
 
 成功返回：

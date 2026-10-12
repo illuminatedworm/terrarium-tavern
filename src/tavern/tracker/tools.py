@@ -24,7 +24,7 @@ class Search(Arguments):
 
 class Patch(Arguments):
     operations: list[dict] = Field(max_length=100, description="JSON Patch array: each object has op and path; add/replace/test use value, move/copy use from. JSON Pointer paths use / separators, escape ~ as ~0 and / as ~1. Array indices are zero-based; /- appends. Empty array means no changes.")
-    reason: str = Field(min_length=1, max_length=2000, description="Evidence and purpose of these changes.")
+    comment: str = Field(min_length=1, max_length=2000, description="Brief user-facing comment about this operation.")
 
 
 class MemoryRecord(Arguments):

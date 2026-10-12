@@ -78,7 +78,7 @@ async def main():
                 app.state.service.full.provider_factory = lambda: Model(
                     ('read_character', {'ref': 'description'}),
                     ('revise_content', {'operations': [{'op': 'set_character', 'field': 'description', 'value': '新的魔法教师设定'}],
-                                        'reason': '用户要求'}), '她介绍了自己的经历。')
+                                        'comment': '用户要求'}), '她介绍了自己的经历。')
                 await page.get_by_label('本轮允许修改设定', exact=True).check()
                 await page.get_by_placeholder('说些什么，或描述你的行动…').fill('把角色改为魔法教师')
                 await page.get_by_role('button', name='发送', exact=True).click()

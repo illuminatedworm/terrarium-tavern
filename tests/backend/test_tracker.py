@@ -108,7 +108,7 @@ async def test_independent_context_and_task_permissions(story):
 
 
 async def test_memory_and_variables_share_native_loop(story):
-    model = TrackerModel(memory_write, ("patch_state", {"operations": [], "reason": "No change"}), "done")
+    model = TrackerModel(memory_write, ("patch_state", {"operations": [], "comment": "No change"}), "done")
     work = task(story, model, memory=True, variables=True)
     work.document["data"]["character_book"]["entries"].append({
         "id": "rule", "content": "MVU_HP_RULE {{user}}",
@@ -128,6 +128,37 @@ async def test_memory_and_variables_share_native_loop(story):
     assert "待最终 MVU" in model.requests[2]["messages"][-1]["content"]
 
 
+@pytest.mark.parametrize("name", ["patch_state", "revise_content"])
+async def test_comment_argument_recovers_from_old_name_in_tracker_loop(story, name):
+    operations = [{"op": "add", "path": "/hp", "value": 3}] if name == "patch_state" else [
+        {"op": "replace", "path": "/description", "value": "An experienced guide."}]
+    read = ("read_state", {}) if name == "patch_state" else ("read_character", {"field": "description"})
+    comment = "简短操作备注"
+    model = TrackerModel(read, (name, {"operations": operations, "reason": "旧参数备注"}),
+                         (name, {"operations": operations, "comment": comment}), "done")
+    work = task(story, model, variables=name == "patch_state", content=name == "revise_content")
+    await work.run()
+    schema = next(tool["function"]["parameters"] for tool in model.requests[0]["extra_body"]["tools"]
+                  if tool["function"]["name"] == name)
+    assert set(schema["properties"]) == {"operations", "comment"}
+    assert "comment" in schema["required"]
+    outputs = [json.loads(message["content"]) for message in model.requests[-1]["messages"]
+               if message["role"] == "tool"]
+    assert "comment" in outputs[-2]["error"] and "reason" in outputs[-2]["error"]
+    assert outputs[-1]["saved_to_draft"] and work.completed
+    if name == "patch_state":
+        assert work.patch == operations and work.variables["hp"] == 3
+        assert work.patch_reason == comment
+    else:
+        assert work.document["data"]["description"] == "An experienced guide."
+        assert work.snapshot["content"]["reason"] == comment
+    events = story[0].events("fixture")
+    proposal = next(event for event in events if event["kind"] == (
+        "state_proposal" if name == "patch_state" else "content_proposal"))
+    assert proposal["payload"]["reason"] == comment
+    assert sum(event["kind"] in {"state_proposal", "content_proposal"} for event in events) == 1
+
+
 async def test_deleted_memory_cannot_be_readded_by_tool(story):
     work = task(story, TrackerModel(memory_write, "done"), memory=True)
     original = work.history[0]
@@ -143,7 +174,7 @@ def test_card_paths_are_data_relative_and_lossless(story):
     work = task(story, content=True)
     original = copy.deepcopy(work.document)
     work.execute("revise_content", {"operations": [{"op": "replace", "path": "/description", "value": "An experienced guide."}],
-                                    "reason": "Long-term experience"})
+                                    "comment": "Long-term experience"})
     assert work.document["data"]["description"] == "An experienced guide."
     assert work.document["opaque"] == original["opaque"]
     assert work.document["data"]["extensions"] == original["data"]["extensions"]
@@ -152,7 +183,7 @@ def test_card_paths_are_data_relative_and_lossless(story):
     assert story[1]["document"] == original
     work.document = copy.deepcopy(original["data"])
     work.execute("revise_content", {"operations": [{"op": "replace", "path": "/description", "value": "Flat card."}],
-                                    "reason": "Same path"})
+                                    "comment": "Same path"})
     assert work.document["description"] == "Flat card."
 
 
@@ -160,14 +191,14 @@ def test_patch_staging_rejects_repetition_and_bad_paths(story):
     work = task(story, variables=True)
     before = copy.deepcopy(work.snapshot)
     with pytest.raises(Exception):
-        work.execute("patch_state", {"operations": [{"op": "replace", "path": "/missing", "value": 1}], "reason": "bad"})
+        work.execute("patch_state", {"operations": [{"op": "replace", "path": "/missing", "value": 1}], "comment": "bad"})
     assert work.patch is None
-    result = work.execute("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}], "reason": "injury"})
+    result = work.execute("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}], "comment": "injury"})
     assert "待最终" in result["notice"]
     assert work.snapshot == before
     assert work.execute("read_state", {"path": "hp"}) == 3
     with pytest.raises(ValueError, match="重复"):
-        work.execute("patch_state", {"operations": [], "reason": "repeat"})
+        work.execute("patch_state", {"operations": [], "comment": "repeat"})
 
 
 def test_variable_parent_replace_restores_hidden_metadata():
@@ -243,7 +274,7 @@ async def test_two_batches_share_loop_and_never_expose_future_body_early(story, 
         end = next(i + 1 for i in range(start, len(history)) if history[i]["role"] == "assistant")
         return original(history[:end], expanded[:end], start, memory, document, settings, persona)
     monkeypatch.setattr(memory_engine, "plan_batch", one_exchange)
-    model = TrackerModel(memory_write, memory_write, ("patch_state", {"operations": [], "reason": "No change"}), "done")
+    model = TrackerModel(memory_write, memory_write, ("patch_state", {"operations": [], "comment": "No change"}), "done")
     work = task(story, model, memory=True, variables=True, narrative="FUTURE_BODY")
     work.history.extend([{"id": "new-u", "role": "user", "raw": "Continue", "snapshot": {}},
                          {"id": "new-a", "role": "assistant", "raw": "FUTURE_BODY", "snapshot": {}}])
@@ -288,7 +319,7 @@ async def test_chat_completions_wire_carries_memory_and_variable_tools(story):
         if len(requests) == 1:
             message = {"role": "assistant", "content": None, "tool_calls": [
                 {"id": "memory", "type": "function", "function": {"name": "write_memory", "arguments": '{"operations":[],"questions":[]}'}},
-                {"id": "variables", "type": "function", "function": {"name": "patch_state", "arguments": '{"operations":[],"reason":"No change"}'}},
+                {"id": "variables", "type": "function", "function": {"name": "patch_state", "arguments": '{"operations":[],"comment":"No change"}'}},
             ]}
         return httpx.Response(200, json={"id": "fixture", "object": "chat.completion", "created": 0, "model": "fixture",
             "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if len(requests) == 1 else "stop"}],
@@ -355,7 +386,7 @@ async def test_post_cycle_and_variables_share_task_and_bind_final_sources(story)
     service = RoleplayRuntime(store)
     writer = ScriptedLLM(["Alice greets Bob."])
     model = TrackerModel(memory_write, ("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}],
-                                                       "reason": "This turn"}), "done")
+                                                       "comment": "This turn"}), "done")
     service.provider_factory = lambda: writer
     service.tracker_provider_factory = lambda: model
     try:
@@ -402,8 +433,8 @@ async def test_pre_edit_reaches_writer_and_variable_only_cannot_write_memory(sto
     service = RoleplayRuntime(store)
     writer = ScriptedLLM(["Alice waits."])
     pre = TrackerModel(("revise_content", {"operations": [{"op": "replace", "path": "/description", "value": "NEW_SETTING"}],
-                                         "reason": "Explicit edit"}), "done")
-    post = TrackerModel(("patch_state", {"operations": [], "reason": "No change"}), "done")
+                                         "comment": "Explicit edit"}), "done")
+    post = TrackerModel(("patch_state", {"operations": [], "comment": "No change"}), "done")
     providers = iter([pre, post])
     service.provider_factory = lambda: writer
     service.tracker_provider_factory = lambda: next(providers)
@@ -428,7 +459,7 @@ async def test_optional_task_discards_partial_card_changes(story):
     service.provider_factory = lambda: ScriptedLLM(["Alice waits."])
     service.tracker_provider_factory = lambda: TrackerModel(
         ("revise_content", {"operations": [{"op": "replace", "path": "/description", "value": "partial"}],
-                            "reason": "Provisional change"}), RuntimeError("after edit"))
+                            "comment": "Provisional change"}), RuntimeError("after edit"))
     try:
         turn, current = await send(service, store, session)
         assert turn["status"] == "committed", turn["error"]
@@ -454,9 +485,9 @@ async def test_mvu_callbacks_run_once_after_repaired_tool_and_on_regeneration(tm
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["A small injury."])
     def model():
-        return TrackerModel(("patch_state", {"operations": [{"op": "replace", "path": "/missing", "value": 0}], "reason": "bad path"}),
-            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 4}], "reason": "injury"}),
-            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 3}], "reason": "duplicate"}), "done")
+        return TrackerModel(("patch_state", {"operations": [{"op": "replace", "path": "/missing", "value": 0}], "comment": "bad path"}),
+            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 4}], "comment": "injury"}),
+            ("patch_state", {"operations": [{"op": "replace", "path": "/hp", "value": 3}], "comment": "duplicate"}), "done")
     service.tracker_provider_factory = model
     calls = []
     original_open = service.runtime.open

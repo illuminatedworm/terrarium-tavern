@@ -39,7 +39,7 @@ async def test_published_recipe_is_available_written_and_tested_through_editor_t
     provider = ToolLLM([
         ("read_skill", {"resource": "references/regex-display.md"}),
         ("read_field", {"card_ref": "C1", "path": "/extensions"}),
-        ("patch_draft", {"card_ref": "C1", "reason": "保留原状态界面并绑定 MVU", "operations": [
+        ("patch_draft", {"card_ref": "C1", "comment": "保留原状态界面并绑定 MVU", "operations": [
             {"op": "add", "path": "/extensions/regex_scripts/-", "value": rule}]}),
         ("test_draft", probe),
     ])

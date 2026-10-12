@@ -88,7 +88,7 @@ ContentOperation = Annotated[SetCharacter | AddLore | UpdateLore | RemoveLore, F
 class ContentRevision(ContentArguments):
     operations: list[ContentOperation] = Field(min_length=1, max_length=100,
         description="Atomic setting actions: set_character, add_lore, update_lore, remove_lore. No JSON Patch paths, IDs, card roots or extensions.")
-    reason: str = Field(min_length=1, max_length=1000, description="Story evidence or user-requested purpose.")
+    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
 CODE = re.compile(r"<(?:script|initvar|JSONPatch|UpdateVariable)\b|"
@@ -201,7 +201,7 @@ class ContentEditor:
     def revise(self, arguments):
         owner = self.owner
         operations = owner.model_view.restore([op.model_dump(exclude_unset=True) for op in arguments.operations])
-        reason = owner.model_view.restore(arguments.reason)
+        comment = owner.model_view.restore(arguments.comment)
         edits_lore = any(operation["op"] != "set_character" for operation in operations)
         refs = copy.deepcopy(owner.state.get("lore_references", {}))
         if edits_lore:
@@ -285,7 +285,8 @@ class ContentEditor:
             "removed_refs": removed_refs,
         })
         owner.document = revised
-        owner.snapshot["content"] = {"document": revised, "reason": reason, "turn": owner.tid}
+        # The shared content snapshot keeps its storage field across agent modes.
+        owner.snapshot["content"] = {"document": revised, "reason": comment, "turn": owner.tid}
         self.reads.invalidate_content((), removed_refs)
         for field in fields:
             self.reads.read_character(field)
