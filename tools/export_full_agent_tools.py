@@ -22,7 +22,7 @@ NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
     "find_lore_for_edit": ({"query": "港口"}, {
         "matches": [{"ref": "L1", "title": "港口", "preview": "港口 港口 港口有一座灯塔。"}],
-        "notice": "preview 仅用于定位；当前上下文没有目标的完整最新正文时，先用 read_lore_entry 读取再修改或删除。"}),
+        "notice": "preview 仅用于定位；需要了解或核对目标完整内容时，使用 read_lore_entry。"}),
     "read_lore_entry": ({"ref": "L1"}, ENTRY),
     "recall_lore": ({"query": "港口"}, {"matches": [{"text": "<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}),
     "search_history": ({"query": "港口"}, {

@@ -72,13 +72,13 @@ class AddLore(ContentArguments):
 
 
 class UpdateLore(ContentArguments):
-    op: Literal["update_lore"] = Field(description="Update one ordinary narrative entry whose complete current text is in context.")
+    op: Literal["update_lore"] = Field(description="Update one ordinary narrative entry.")
     ref: str = Field(pattern=r"^L[1-9]\d*$", description="L handle returned for this entry.")
     changes: EntryChanges = Field(description="Only changed narrative properties; omitted properties and runtime configuration remain intact.")
 
 
 class RemoveLore(ContentArguments):
-    op: Literal["remove_lore"] = Field(description="Delete one ordinary narrative entry whose complete current text is in context.")
+    op: Literal["remove_lore"] = Field(description="Delete one ordinary narrative entry.")
     ref: str = Field(pattern=r"^L[1-9]\d*$", description="L handle of the ordinary entry to remove.")
 
 

@@ -107,7 +107,7 @@ class StatePatch(Arguments):
 
 class StateRead(Arguments):
     path: str = Field(default="", max_length=200, description="JSON Pointer relative to the selected scope, e.g. /hp or /items/0/name. Escape ~ as ~0 and / as ~1 in keys. Empty reads the complete scope; missing paths return null.")
-    scope: Literal["mvu", "full", "other"] = Field(default="mvu", description="mvu reads stat_data, matching patch_state paths. full reads all model-visible runtime state, including stat_data. other reads that state with the top-level stat_data field excluded. Internal bookkeeping is hidden in every scope. Complete current stat_data from mvu or full can support a nonempty patch; other cannot.")
+    scope: Literal["mvu", "full", "other"] = Field(default="mvu", description="mvu reads stat_data, matching patch_state paths. full reads all model-visible runtime state, including stat_data. other reads that state with the top-level stat_data field excluded. Internal bookkeeping is hidden in every scope.")
 
     @field_validator("scope", mode="before")
     @classmethod
@@ -133,13 +133,13 @@ def result_field(session, tool, field):
 SPECS = {
     "find_lore_for_edit": (Search, "Locate ordinary narrative worldbook entries for editing; use recall_lore for narrative recall. "
         "Search literal title, keywords or text, including disabled ordinary entries; query=* lists up to limit results. "
-        "Returns L handles, titles and navigation previews. If the current complete target text is absent from context, read it with read_lore_entry before updating/removing it."),
-    "read_lore_entry": (LoreRead, "Read one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. "
-        "Provides current-context evidence for editing. Protected scripts, variable rules and initialization are unavailable."),
+        "Returns L handles, titles and navigation previews. Previews help locate targets; use read_lore_entry when you need to inspect or refresh a target's complete contents."),
+    "read_lore_entry": (LoreRead, "Inspect or refresh one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. "
+        "Protected scripts, variable rules and initialization are unavailable."),
     "recall_lore": (Query, "Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. "
         "Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. "
         "Returns complete selected entries in <lorebook>; already injected text is omitted. "
-        "When enabled, results include titles and L handles. Complete current recalled text also qualifies as context evidence for editing; target protection still applies."),
+        "When enabled, results include titles and L handles. Reuse recalled content for later edits when you know it is still current; target protection still applies."),
     "search_history": (Search, "Search dialogue in this branch by literal text terms; returns H references and optional previews. "
         "Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable."),
     "read_history": (HistoryRead, "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose."),
@@ -152,7 +152,7 @@ SPECS = {
         "Returns navigation previews when enabled. Note contents are not automatically injected; use read_note for complete text."),
     "read_note": (NoteRead, "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
         "Stale means sources changed or became unavailable; verify them before relying on the note."),
-    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. Replacing an existing active or archived note requires its complete current text in context, including your own earlier tool-call arguments; otherwise read_note first. New keys need no read. "
+    "write_note": (Note, "Create or fully replace a note by key; preserve still-valid information. Build on the current contents you already know, including text you wrote in earlier tool calls. Use read_note when you do not know the note's current contents or are unsure whether your version is still current. New keys need no read. "
         "kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks characters' in-story intentions, not an author-level future outline. "
         "Preserve valid experiences and changes, not just a current-state snapshot. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it."),
     "write_plot": (Plot, "Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. "
@@ -161,21 +161,21 @@ SPECS = {
         "Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. "
         "Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline."),
     "archive_note": (NoteKey, "Archive a note so normal searches exclude it; it remains readable by key. "
-        "Its complete current text must be in context; otherwise read_note first. This does not delete it or older history. write_note with the same key reactivates it."),
-    "read_state": (StateRead, "Read state using JSON Pointer relative to the selected scope. Default scope=mvu reads stat_data with the same relative paths as patch_state, e.g. /hp. "
+        "Use what you already know about the note to decide whether to archive it. Use read_note if you do not know its current contents or need to check them. This does not delete the note or older history. write_note with the same key reactivates it."),
+    "read_state": (StateRead, "Inspect or refresh runtime state using JSON Pointer relative to the selected scope. Default scope=mvu reads stat_data with the same relative paths as patch_state, e.g. /hp. "
         "scope=full reads all model-visible runtime state, including stat_data; scope=other reads that state excluding the top-level stat_data field. Empty path reads the complete selected scope. Internal ledgers remain hidden in every scope. "
-        'If complete current MVU variables are absent from context, read them with path="", scope=mvu before a nonempty patch. Complete stat_data from scope=full also qualifies; partial MVU reads and scope=other do not.'),
-    "patch_state": (StatePatch, "Must succeed exactly once this turn when variable updates are authorized; retry after validation errors, which do not count as success. "
-        'Nonempty operations require complete current variables in context, including complete tool-call values or a visible full read plus successful patches that reconstruct the current value. Otherwise use read_state(path="", scope="mvu"). '
+        'To refresh all MVU variables for patching, use path="", scope="mvu".'),
+    "patch_state": (StatePatch, "When variable updates are authorized, submit exactly one successful patch this turn; validation failures may be corrected and retried and do not count as success. "
+        'Work from the current MVU values you already know, including your earlier tool calls and their successful results. If you do not know the current values or are unsure whether they are still current, use read_state(path="", scope="mvu") to refresh them. '
         "Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. "
         "Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. "
         "Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose."),
     "revise_content": (ContentRevision, "Edit narrative settings with set_character, add_lore, update_lore or remove_lore; use these semantic actions, not JSON Patch or storage IDs. "
-        "Existing field or entry text must be complete and current in context: automatic sources, tool results and your own complete tool-call texts all qualify. Otherwise use read_character or read_lore_entry. add_lore needs no prior read. "
-        "Success returns complete final contents of changed targets, usable for further edits while retained in context, including later turns; deletion invalidates the target. "
+        "Work from the current contents you already know, including supplied settings, tool results and text you wrote in earlier tool calls. Use read_character or read_lore_entry when you do not know the target's current contents or are unsure whether your version is still current. Adding a new entry needs no read. "
+        "Success returns complete final contents of changed targets, which you can reuse for later edits. "
         "Omitted properties remain intact. Script-bearing targets and execution settings are protected; failed batches change nothing."),
-    "read_character": (CharacterRead, "Read one complete setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
-        "Missing fields return null. Provides current-context evidence for set_character; script-bearing fields are protected."),
+    "read_character": (CharacterRead, "Inspect or refresh one complete setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. "
+        "Missing fields return null. Script-bearing fields are protected."),
     "set_retrieval_query": (RetrievalQuery, "Replace this turn's clues for next-turn automatic worldbook retrieval; the last successful call wins. "
         'query="" clears these clues without erasing clues saved by earlier turns. Describe relevant scenes, entities or unresolved issues, distinguishing anticipated events from facts. Clues stay outside narrative prose.'),
 }
@@ -284,7 +284,7 @@ class AgentTools:
                      "text": row["title"] + " " + " ".join(row["keys"] + row["secondary_keys"]) + " " + row["content"]}
                     for row in self.content.rows()]
             result = self.search(rows, args.query, args.limit)
-            result["notice"] = "preview 仅用于定位；当前上下文没有目标的完整最新正文时，先用 read_lore_entry 读取再修改或删除。"
+            result["notice"] = "preview 仅用于定位；需要了解或核对目标完整内容时，使用 read_lore_entry。"
             return owner.model_view.expose(result)
         if name == "read_lore_entry":
             _, raw, entry = self.content.resolve(args.ref)
