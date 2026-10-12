@@ -13,6 +13,8 @@ import { loadChatGPTAccounts, subscriptionProvider } from '../../lib/chatgptAcco
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 import { blankChannelProfile, channelProviders, providerChannel, type Channel } from '../../lib/channels';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
+import SelectMenu from '../common/SelectMenu.vue';
+import ModelSelect from './ModelSelect.vue';
 const props = defineProps<{
   profile: ModelProfile;
   providers: Provider[];
@@ -36,6 +38,9 @@ const { details: apiReasoning, note: reasoningNote } = useApiReasoning(
 const editorChannel = ref<Channel>(providerChannel(provider.value));
 const visibleProviders = computed(() =>
   props.role === 'card_editor' ? channelProviders(props.providers, editorChannel.value) : props.providers,
+);
+const providerOptions = computed(() =>
+  visibleProviders.value.map((item) => ({ value: item.id, label: item.name })),
 );
 function switchEditorChannel(channel: Channel) {
   editorChannel.value = channel;
@@ -89,6 +94,7 @@ const common = computed<SettingField[]>(() => [
   {
     path: 'reasoning_effort',
     label: '思考强度',
+    menu: true,
     options: modelEffortOptions(
       props.effortOptions.filter((item) => item.value !== 'inherit'),
       subscription.value
@@ -176,11 +182,15 @@ async function action(check: boolean) {
     <h4 v-if="label">{{ label }}</h4>
     <div class="profile-connection-row">
       <div class="settings-field-grid profile-connection">
-        <label
-          >提供商<select v-model="profile.provider_id" aria-label="提供商" :disabled="busy">
-            <option v-for="item in visibleProviders" :key="item.id" :value="item.id">{{ item.name }}</option>
-          </select></label
-        >
+        <div class="settings-select-field">
+          <span>提供商</span>
+          <SelectMenu
+            v-model="profile.provider_id"
+            :options="providerOptions"
+            label="提供商"
+            :disabled="busy"
+          />
+        </div>
         <label v-if="!subscription"
           >接口方式<select v-model="profile.api_mode" aria-label="接口方式" :disabled="busy">
             <option value="chat_completions">Chat Completions</option>
@@ -193,15 +203,16 @@ async function action(check: boolean) {
           >API 路径<input v-model="profile.api_path" :placeholder="`默认：${defaultPath}`" :disabled="busy"
         /></label>
         <p v-else class="muted">ChatGPT 订阅 · Responses</p>
-        <label
-          >模型名称<input v-model="profile.model" aria-label="模型名称" :list="'models-' + role" /><datalist
-            :id="'models-' + role"
-          >
-            <option v-for="name in models" :key="name" :value="name">
-              {{ catalog?.model_details?.find((item) => item.id === name)?.display_name || name }}
-            </option>
-          </datalist></label
-        >
+        <div class="settings-select-field">
+          <span>模型名称</span>
+          <ModelSelect
+            v-model="profile.model"
+            :models="models"
+            :details="catalog?.model_details"
+            label="模型名称"
+            :disabled="busy"
+          />
+        </div>
       </div>
       <div class="profile-actions">
         <button class="primary" :disabled="busy" @click="action(false)">
@@ -217,7 +228,7 @@ async function action(check: boolean) {
       {{
         catalog?.updated_at
           ? `已缓存 ${models.length} 个模型 · 更新于 ${new Date(catalog.updated_at * 1000).toLocaleString()}`
-          : '暂无模型列表缓存，可更新列表或直接输入模型名称。'
+          : '暂无模型列表缓存，可更新列表，或在模型选单中输入模型 ID。'
       }}
     </p>
     <p v-if="provider" class="muted">

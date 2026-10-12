@@ -598,7 +598,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <form class="cw-composer" @submit.prevent="send(!!workspace?.pending)">
-          <div ref="composerFrame" class="cw-composer-frame">
+          <div ref="composerFrame" class="cw-composer-frame conversation-compose-frame">
             <CardReferencePicker
               v-if="referencePicker.open"
               :id="referencePicker.id"
@@ -681,7 +681,7 @@ onBeforeUnmount(() => {
               </button>
               <button
                 v-else
-                class="primary cw-send"
+                class="primary cw-send conversation-compose-send"
                 :disabled="
                   busy ||
                   !workspace?.channel_origin ||

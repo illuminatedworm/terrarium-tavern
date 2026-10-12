@@ -161,33 +161,6 @@
   position: relative;
   max-width: var(--cw-reading-width);
   margin: 0 auto;
-  padding: 8px 10px 10px;
-  background: var(--surface-panel);
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  transition: border-color 0.15s;
-}
-.cw-composer-frame:focus-within {
-  border-color: var(--accent);
-}
-.cw-composer textarea {
-  display: block;
-  width: 100%;
-  min-height: 64px;
-  height: 76px;
-  max-height: min(180px, 25vh);
-  resize: vertical;
-  margin: 4px 0 8px;
-  padding: 10px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  font-size: 15px;
-  line-height: 1.65;
-}
-.cw-composer textarea:focus-visible {
-  outline: 1px solid var(--border-control);
-  outline-offset: -1px;
 }
 .cw-composer-actions {
   gap: 6px;
@@ -537,16 +510,6 @@ pre {
   .cw-composer {
     padding-bottom: 10px;
   }
-  .cw-composer-frame {
-    padding: 7px;
-  }
-  .cw-composer textarea {
-    height: 64px;
-    min-height: 54px;
-    margin-bottom: 6px;
-    padding: 8px;
-    font-size: 14px;
-  }
   .cw-composer-actions {
     gap: 6px;
   }
@@ -600,10 +563,6 @@ pre {
   }
   .cw-composer {
     padding-bottom: 8px;
-  }
-  .cw-composer textarea {
-    height: 54px;
-    min-height: 48px;
   }
   .cw-empty {
     padding-top: 20px;

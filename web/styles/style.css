@@ -846,20 +846,6 @@ header {
 .composer {
   padding: 15px max(32px, calc((100% - 850px) / 2)) 16px;
 }
-.compose-box {
-  background: var(--surface-panel);
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  box-shadow: 0 12px 35px color-mix(in srgb, var(--surface-input) 25.1%, transparent);
-}
-.compose-box textarea {
-  background: transparent;
-  border: 0;
-  resize: none;
-  min-height: 83px;
-  padding: 17px 20px;
-  font-size: 13px;
-}
 .compose-box textarea::placeholder {
   color: var(--text-faint);
 }
@@ -886,10 +872,16 @@ header {
 }
 .turn-options {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
+}
+.turn-options label {
+  flex: none;
 }
 .send {
   margin-left: 13px;
@@ -1240,10 +1232,6 @@ summary {
 }
 .composer {
   padding: 12px max(24px, calc((100% - var(--reading-width, 1120px)) / 2)) 16px;
-}
-.compose-box textarea {
-  font-size: 16px;
-  min-height: 100px;
 }
 .message-meta strong {
   font-size: 15px;
@@ -1802,18 +1790,13 @@ header {
   max-width: var(--reading-content-width);
   margin: 0 auto;
 }
-.compose-box textarea {
-  min-height: 70px;
-  padding: 11px 15px;
-  font-size: 15px;
-  line-height: 1.55;
-}
 .compose-bottom {
-  padding: 0 9px 8px;
-  gap: 4px;
+  padding: 0;
+  gap: 6px;
 }
 .compose-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
@@ -4140,10 +4123,6 @@ main,
   .sidebar-bottom button {
     padding: 6px;
   }
-  .composer .compose-box textarea {
-    min-height: 48px;
-    height: 48px;
-  }
   .composer-meta {
     flex-wrap: nowrap;
     max-height: 24px;
@@ -4181,9 +4160,6 @@ main,
   }
 }
 @media (max-width: 620px) {
-  .compose-box textarea {
-    font-size: 16px;
-  }
   .compose-bottom {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -4255,11 +4231,6 @@ main,
     opacity: 1;
   }
 }
-@media (max-width: 620px) and (min-height: 651px) {
-  .composer .compose-box textarea {
-    min-height: 64px;
-  }
-}
 @media (hover: none), (pointer: coarse) {
   .message-actions {
     opacity: 1;
@@ -4303,7 +4274,8 @@ main,
 .inline-message-editor textarea {
   font-family: 'Tavern Quote Marks', var(--story-font-family, sans-serif);
 }
-.composer textarea {
+.composer textarea,
+.cw-composer textarea {
   font-family: 'Tavern Quote Marks', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
 }
 

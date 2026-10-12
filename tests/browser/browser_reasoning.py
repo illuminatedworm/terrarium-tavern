@@ -10,6 +10,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tests.browser.select_menu import choose_menu, choose_model, menu_option, menu_popup
 
 
 async def main():
@@ -50,9 +51,11 @@ async def main():
                     await page.reload()
 
                     async def tiers(picker, values):
-                        options = picker.locator('option:not([disabled])')
+                        popup = await menu_popup(picker)
+                        options = popup.locator('[role=option]:not([aria-disabled=true])')
                         await expect(options).to_have_count(len(values))
-                        assert await options.evaluate_all('items=>items.map(item=>item.value)') == values
+                        assert await options.evaluate_all('items=>items.map(item=>item.dataset.value)') == values
+                        await popup.press('Escape')
 
                     async def saved():
                         await expect(page.locator('.settings-save-status')).to_contain_text('已保存')
@@ -70,54 +73,56 @@ async def main():
                             await page.locator('.settings-mode-buttons').get_by_role('button', name=group, exact=True).click()
                             await page.get_by_role('combobox', name='设置页面', exact=True).select_option(target)
 
-                    quick = page.get_by_role('combobox', name='本次思考强度')
+                    quick = page.get_by_role('button', name='本次思考强度', exact=True)
                     openai = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
                     await tiers(quick, ['inherit', *openai])
-                    await quick.select_option('xhigh')
+                    await choose_menu(quick, 'xhigh')
                     await page.get_by_role('button', name='⚙ 设置', exact=True).click()
                     dialog = page.get_by_role('dialog', name='设置', exact=True)
                     await select('full agent 模型与生成')
-                    effort = dialog.get_by_label('思考强度', exact=True)
+                    effort = dialog.get_by_role('button', name='思考强度', exact=True)
                     protocol = dialog.get_by_label('接口方式', exact=True)
-                    model = dialog.get_by_label('模型名称', exact=True)
+                    model = dialog.get_by_role('button', name='模型名称', exact=True)
                     await tiers(effort, openai)
-                    await effort.select_option('xhigh')
+                    await choose_menu(effort, 'xhigh')
                     await saved()
                     await protocol.select_option('responses')
                     await tiers(effort, openai)
                     await saved()
                     await protocol.select_option('anthropic')
                     await tiers(effort, ['default', 'none', 'low', 'medium', 'high'])
-                    await expect(effort).to_have_value('xhigh')
-                    await expect(effort.locator('option[value=xhigh]')).to_have_attribute('disabled', '')
+                    await expect(effort).to_have_attribute('data-value', 'xhigh')
+                    await expect(await menu_option(effort, 'xhigh')).to_have_attribute('aria-disabled', 'true')
+                    await (await menu_popup(effort)).press('Escape')
                     await saved()
                     assert store.settings_document().full_agent.model.reasoning_effort == 'xhigh'
-                    await model.fill('gemini-3.8-flash-high')
+                    await choose_model(model, 'gemini-3.8-flash-high')
                     await protocol.select_option('gemini')
                     await tiers(effort, ['default', 'low', 'medium', 'high'])
-                    await effort.select_option('high')
+                    await choose_menu(effort, 'high')
                     await saved()
                     await page.screenshot(path=str(output / 'gemini-native.png'))
                     await dialog.get_by_role('button', name='关闭', exact=True).click()
                     await expect(dialog).to_have_count(0)
                     await tiers(quick, ['inherit', 'default', 'low', 'medium', 'high'])
-                    await expect(quick).to_have_value('xhigh')
-                    await expect(quick.locator('option[value=xhigh]')).to_have_attribute('disabled', '')
-                    await quick.select_option('medium')
+                    await expect(quick).to_have_attribute('data-value', 'xhigh')
+                    await expect(await menu_option(quick, 'xhigh')).to_have_attribute('aria-disabled', 'true')
+                    await choose_menu(quick, 'medium')
                     await page.reload()
-                    await expect(quick).to_have_value('medium')
+                    await expect(quick).to_have_attribute('data-value', 'medium')
                     await tiers(quick, ['inherit', 'default', 'low', 'medium', 'high'])
 
                     await page.get_by_role('button', name='⚙ 设置', exact=True).click()
                     await select('half agent 模型与生成')
                     writer = dialog.get_by_role('region', name='正文生成', exact=True)
                     tracker = dialog.get_by_role('region', name='后台整理', exact=True)
-                    await tiers(writer.get_by_label('思考强度'), ['default', 'none', 'low', 'medium', 'high', 'max'])
-                    await tiers(tracker.get_by_label('思考强度'),
+                    await tiers(writer.get_by_role('button', name='思考强度', exact=True), ['default', 'none', 'low', 'medium', 'high', 'max'])
+                    await tiers(tracker.get_by_role('button', name='思考强度', exact=True),
                                 ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
-                    await expect(tracker.get_by_label('思考强度').locator('option[value=low]')).to_contain_text('1024')
-                    await writer.get_by_label('模型名称').fill('claude-opus-5-5')
-                    await tiers(writer.get_by_label('思考强度'), ['default', 'low', 'medium', 'high', 'xhigh', 'max'])
+                    await expect(await menu_option(tracker.get_by_role('button', name='思考强度', exact=True), 'low')).to_contain_text('1024')
+                    await (await menu_popup(tracker.get_by_role('button', name='思考强度', exact=True))).press('Escape')
+                    await choose_model(writer.get_by_role('button', name='模型名称', exact=True), 'claude-opus-5-5')
+                    await tiers(writer.get_by_role('button', name='思考强度', exact=True), ['default', 'low', 'medium', 'high', 'xhigh', 'max'])
                     await saved()
                     await page.screenshot(path=str(output / 'half-agent.png'))
                     await select('通用 角色卡编辑')

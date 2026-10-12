@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tests.backend.test_full_agent import Model, ScriptHost
+from tests.browser.select_menu import choose_menu
 
 
 async def main():
@@ -57,7 +58,7 @@ async def main():
                 await page.reload()
                 await expect(retry).to_be_visible()
                 await expect(page.locator('.message.user')).to_contain_text('保留的用户发言')
-                await page.get_by_role('combobox', name='本次思考强度').select_option('xhigh')
+                await choose_menu(page.get_by_role('button', name='本次思考强度', exact=True), 'xhigh')
                 await retry.click()
                 await retry.click()
                 await expect(page.locator('.message').last).to_contain_text('按新设置重试成功', timeout=15000)

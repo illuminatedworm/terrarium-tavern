@@ -228,8 +228,8 @@ async def main():
                     await expect(page.get_by_role("button", name="工具与上下文", exact=True)).to_have_count(0)
                     await expect(page.get_by_label("制卡上下文用量")).to_contain_text("tokens")
                     await expect(page.get_by_label("制卡上下文用量")).to_contain_text("缓存命中率")
-                    await expect(page.get_by_label("本次模型", exact=True)).to_be_visible()
-                    await expect(page.get_by_label("本次思考强度", exact=True)).to_be_visible()
+                    await expect(page.get_by_role("button", name="对话模型", exact=True)).to_be_visible()
+                    await expect(page.get_by_role("button", name="本次思考强度", exact=True)).to_be_visible()
                     mobile = await browser.new_page(viewport={"width": 360, "height": 792}, device_scale_factor=3)
                     await mobile.add_init_script("localStorage.setItem('tavern-sidebar-section','editor');"
                                                  + f"localStorage.setItem('tavern-active-card-conversation','{wid}');")

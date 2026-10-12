@@ -1,0 +1,71 @@
+/* Both conversation surfaces share the same writing area and action geometry. */
+.conversation-compose-frame {
+  container: composer / inline-size;
+  --compose-input-height: 76px;
+  --compose-input-min-height: 64px;
+  --compose-input-padding: 10px;
+  --compose-input-font-size: 15px;
+  padding: 8px 10px 10px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+  transition: border-color 0.15s;
+}
+.conversation-compose-frame:focus-within {
+  border-color: var(--accent);
+}
+.conversation-compose-frame > textarea,
+.conversation-compose-frame .expandable-textarea.is-compact > .prompt-field > textarea {
+  display: block;
+  width: 100%;
+  height: var(--compose-input-height);
+  min-height: var(--compose-input-min-height);
+  max-height: min(180px, 25vh);
+  resize: vertical;
+  margin: 4px 0 8px;
+  padding: var(--compose-input-padding);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: var(--compose-input-font-size);
+  line-height: 1.65;
+}
+.conversation-compose-frame .expandable-textarea.is-compact > .prompt-field > textarea {
+  padding-right: 42px;
+}
+.conversation-compose-frame textarea:focus-visible {
+  outline: 1px solid var(--border-control);
+  outline-offset: -1px;
+}
+.conversation-compose-frame .conversation-compose-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 12px;
+  font: 12px/1.5 var(--font-ui);
+}
+.conversation-compose-send svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.composer-stats-error {
+  color: var(--warning);
+}
+@media (max-width: 620px) {
+  .conversation-compose-frame {
+    --compose-input-height: 64px;
+    --compose-input-min-height: 54px;
+    --compose-input-padding: 8px;
+    --compose-input-font-size: 16px;
+    padding: 7px;
+  }
+}
+@media (max-height: 650px) {
+  .conversation-compose-frame {
+    --compose-input-height: 54px;
+    --compose-input-min-height: 48px;
+  }
+}

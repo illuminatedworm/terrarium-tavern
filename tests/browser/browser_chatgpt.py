@@ -12,6 +12,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tests.backend.chatgpt_fixtures import ACCESS, CLIENT, REFRESH, IdentityFixture
+from tests.browser.select_menu import choose_menu, choose_model, menu_option
 
 OUTPUT = Path(".agents/.local/chatgpt-validation")
 
@@ -153,25 +154,24 @@ async def main():
                 assert all(secret not in markup for secret in (ACCESS, REFRESH, "fixture-id-token-only"))
 
                 dialog = await settings_page(page, "full_agent.model")
-                await dialog.get_by_label("提供商", exact=True).select_option(label="ChatGPT 订阅测试")
+                await choose_menu(dialog.get_by_role("button", name="提供商", exact=True), label="ChatGPT 订阅测试")
                 await expect(dialog.get_by_label("输出预留预算（tokens）", exact=True)).to_be_visible()
                 assert not await dialog.get_by_label("接口方式", exact=True).count()
                 assert not await dialog.get_by_label("温度 temperature", exact=True).count()
                 await dialog.get_by_role("button", name="更新模型列表", exact=True).click()
                 await expect(dialog.get_by_text("已更新 1 个模型，列表已缓存。", exact=True)).to_be_visible()
-                await dialog.get_by_label("模型名称", exact=True).fill("fixture")
-                await dialog.get_by_label("模型名称", exact=True).press("Tab")
+                await choose_model(dialog.get_by_role("button", name="模型名称", exact=True), "fixture")
                 for _ in range(50):
                     if app.state.store.settings_document().full_agent.model.model == "fixture":
                         break
                     await asyncio.sleep(0.1)
                 assert app.state.store.settings_document().full_agent.model.model == "fixture"
-                effort = dialog.get_by_label("思考强度", exact=True)
-                await effort.select_option("xhigh")
-                await expect(effort).to_have_value("xhigh")
-                await expect(effort.locator('option[value="xhigh"]')).to_have_text("超高（xhigh）")
-                await expect(effort.locator('option[value="ultra"]')).to_have_attribute("disabled", "")
-                assert await effort.locator('option[value="none"]').count() == 0
+                effort = dialog.get_by_role("button", name="思考强度", exact=True)
+                await choose_menu(effort, "xhigh")
+                await expect(effort).to_have_attribute("data-value", "xhigh")
+                await expect(await menu_option(effort, "xhigh")).to_have_text("超高（xhigh）")
+                await expect(await menu_option(effort, "ultra")).to_have_attribute("aria-disabled", "true")
+                assert await (await menu_option(effort, "none")).count() == 0
                 checks.append("official reasoning levels and selectable xhigh")
                 await expect(dialog.get_by_text("使用 ChatGPT 订阅", exact=True)).to_be_visible()
                 checks.append("account catalogue, fixed protocol, unsupported controls, output budget label")

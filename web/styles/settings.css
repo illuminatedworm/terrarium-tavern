@@ -341,7 +341,8 @@
 .settings-shell .settings-detail h4:first-child {
   margin-top: 4px;
 }
-.settings-shell .settings-detail label {
+.settings-shell .settings-detail label,
+.settings-shell .settings-detail .settings-select-field {
   display: flex;
   flex-direction: column;
   gap: 6px;

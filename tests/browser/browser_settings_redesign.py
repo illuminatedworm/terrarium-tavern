@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import ContextBlock
+from tests.browser.select_menu import choose_model
 
 
 async def main():
@@ -80,7 +81,7 @@ async def main():
                     await select('half agent 模型与生成')
                     await expect(page.get_by_role('alertdialog')).to_have_count(0)
                     async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/half_agent')):
-                        await page.get_by_role('region',name='后台整理',exact=True).get_by_label('模型名称').fill('valid-other-scope')
+                        await choose_model(page.get_by_role('region',name='后台整理',exact=True).get_by_role('button', name='模型名称', exact=True), 'valid-other-scope')
                     assert (await read())['half_agent']['background']['model'] == 'valid-other-scope'
                     await select('full agent 模型与生成')
                     await context.fill('32768')
@@ -134,7 +135,7 @@ async def main():
                     await expect(dialog).to_have_count(0)
                     await page.get_by_role('button', name='⚙ 设置', exact=True).click()
                     await select('half agent 模型与生成')
-                    await page.get_by_role('region',name='后台整理',exact=True).get_by_label('模型名称').fill('isolated-background')
+                    await choose_model(page.get_by_role('region',name='后台整理',exact=True).get_by_role('button', name='模型名称', exact=True), 'isolated-background')
                     await saved()
                     current = await read()
                     assert current['half_agent']['background']['model'] == 'isolated-background'
@@ -191,7 +192,7 @@ async def main():
                         await saved()
                         assert (await read())['full_agent']['model']['api_mode'] == protocol
                         await select('full agent 模型与生成')
-                        await page.get_by_label('模型名称', exact=True).fill('gemini-3.8-flash-high' if protocol == 'gemini' else 'claude-opus-4-6' if protocol == 'anthropic' else 'gpt-5.6-sol')
+                        await choose_model(page.get_by_role('button', name='模型名称', exact=True), 'gemini-3.8-flash-high' if protocol == 'gemini' else 'claude-opus-4-6' if protocol == 'anthropic' else 'gpt-5.6-sol')
                         await saved()
                         await page.get_by_text('更多参数：采样细项、分词器与提示缓存', exact=True).click()
                         if protocol == 'gemini':
@@ -201,7 +202,7 @@ async def main():
                     await page.get_by_label('接口方式', exact=True).first.select_option('chat_completions')
                     await saved()
                     await select('full agent 模型与生成')
-                    await page.get_by_label('模型名称', exact=True).fill(original_model)
+                    await choose_model(page.get_by_role('button', name='模型名称', exact=True), original_model)
                     await saved()
                     # Recipe metadata auto-saves; custom text commits independently.
                     await select('half agent 上下文编排')

@@ -20,6 +20,7 @@ import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
+import { editorCacheRate } from './lib/editorContextStats';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -723,20 +724,18 @@ function usageValue(usage: any, paths: string[]) {
   }
   return null;
 }
-const cacheRateLabel = computed(() => {
-  const usage = contextStats.value?.usage;
-  if (!usage) return '暂无数据';
-  const prompt = usageValue(usage, ['prompt_tokens', 'input_tokens', 'promptTokenCount']);
-  const cached = usageValue(usage, [
-    'prompt_tokens_details.cached_tokens',
-    'input_tokens_details.cached_tokens',
-    'cache_read_input_tokens',
-    'cached_tokens',
-  ]);
-  if (cached === null) return '服务商未提供';
-  if (!prompt) return '0%';
-  return `${Math.round((cached / prompt) * 100)}%（${cached.toLocaleString()}/${prompt.toLocaleString()} tokens）`;
+const cacheRateLabel = computed(() => editorCacheRate(contextStats.value?.usage));
+const composerContextLabel = computed(() => {
+  const current = contextEstimateError.value
+    ? '—'
+    : (contextStats.value?.estimated_tokens?.toLocaleString() ?? '—');
+  return `${current} / ${activeModel.value.context_tokens.toLocaleString()} tokens`;
 });
+const composerContextTitle = computed(
+  () =>
+    contextEstimateError.value ||
+    `当前上下文 / 上下文窗口上限；${tokenizerLabel.value || '当前上下文为本地估算，实际用量以服务商为准。'}${contextStats.value?.compaction_opaque ? '当前仅估算可见文本，不含云端加密压缩状态。' : ''}`,
+);
 const contextLengthLabel = computed(() =>
   contextEstimateError.value
     ? '本次 token 计数不可用'
@@ -2614,7 +2613,7 @@ useTimedError(error);
                     : '本次生成失败，正文与状态未提交。'
               "
             />
-            <div class="compose-box">
+            <div class="compose-box conversation-compose-frame">
               <ExpandableTextarea
                 v-model="input"
                 label="用户输入"
@@ -2685,7 +2684,7 @@ useTimedError(error);
                 ><button v-if="busy" class="send" @click="stop">■ 停止</button
                 ><button
                   v-else
-                  class="send"
+                  class="send conversation-compose-send"
                   :disabled="
                     modelSaving ||
                     contextBusy ||
@@ -2696,20 +2695,30 @@ useTimedError(error);
                   "
                   @click="send()"
                 >
-                  发送
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M12 19V5m-6 6 6-6 6 6"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                  >发送
                 </button>
               </div>
             </div>
-            <p class="composer-meta">
+            <p class="composer-meta" aria-label="游玩上下文用量">
               <ChatGPTUsage
                 :active="activeSubscription || trackerSubscription"
                 :label="storySubscriptionLabel"
                 :error="error || activeTurn?.error"
               />
-              <span>Enter 发送 · Shift + Enter 换行</span><span>{{ actualInputLabel }}</span
-              ><span>{{ contextLengthLabel }}</span
-              ><span>缓存命中率 {{ cacheRateLabel }}</span
-              ><span>剧情与变量一同保存</span>
+              <span :title="composerContextTitle" :class="{ 'composer-stats-error': contextEstimateError }">{{
+                composerContextLabel
+              }}</span>
+              <span title="最近一次模型响应的缓存用量；未提供时不推测命中率"
+                >缓存命中率 {{ cacheRateLabel }}</span
+              >
             </p>
           </div>
         </div>

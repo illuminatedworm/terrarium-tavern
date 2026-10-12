@@ -89,7 +89,7 @@ async def main():
                     await page.get_by_role("button", name="⚙ 设置", exact=True).click()
                     # New settings must become the editor's baseline, not an unsaved rollback.
                     await page.get_by_role("button", name="half agent 模型与生成", exact=True).click()
-                    await expect(page.get_by_role("region", name="正文生成", exact=True).get_by_label("模型名称", exact=True)).to_have_value("exported-model")
+                    await expect(page.get_by_role("region", name="正文生成", exact=True).get_by_role("button", name="模型名称", exact=True)).to_have_attribute("data-value", "exported-model")
                     await page.get_by_role("button", name="通用 数据导入导出", exact=True).click()
                     # Re-entering restores a fresh working page; invalid archives stay visible as errors.
                     invalid = Path(root) / "bad.zip"
