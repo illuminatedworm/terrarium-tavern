@@ -96,6 +96,7 @@ class HistoryRecall:
                   "found": False, "remaining": self.budget.remaining, "matches": [], "rounds": []}
         if not self.budget.remaining:
             result["notice"] = "本次维护历史补查已达到3次上限；请依据已有资料完成整理，疑问保持待确认。"
+            result["error"] = result["notice"]
             self.event("memory_history_limit", {"purpose": "memory", "message": result["notice"]})
             return result
         self.budget.calls += 1
@@ -131,6 +132,7 @@ class HistoryRecall:
                 self._read(turn, radius, result)
         except (ValueError, TypeError) as error:
             result["notice"] += " 参数错误：" + str(error)
+            result["error"] = str(error)
         self.event("memory_history_recall", {"purpose": "memory", "used": self.budget.calls,
                                              "limit": HISTORY_CALL_LIMIT, "result": result})
         return result
@@ -240,6 +242,9 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
         thread.append(assistant)
         for call in calls:
             result = recall.execute(call.arguments)
-            thread.append({"role": "tool", "tool_call_id": call.id, "content": _json(result)})
+            message = {"role": "tool", "tool_call_id": call.id, "content": _json(result)}
+            if "error" in result:
+                message["_tool_error"] = True
+            thread.append(message)
         budget.continuations += 1
         continuation = True

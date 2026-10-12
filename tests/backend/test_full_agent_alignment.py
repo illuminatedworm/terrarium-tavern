@@ -434,6 +434,43 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
         await service.close()
 
 
+async def test_anthropic_failed_tool_status_survives_committed_history_and_restart(tmp_path, monkeypatch):
+    import tavern.full_agent.agent as agent_module
+
+    store, service, session = game(tmp_path)
+    requests = []
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        items = ([{"type": "tool_use", "id": "bad", "name": "read_history", "input": {}},
+                  {"type": "tool_use", "id": "good", "name": "read_state", "input": {}}]
+                 if len(requests) == 1 else [{"type": "text", "text": "继续故事"}])
+        return httpx.Response(200, json=reply("anthropic", items))
+
+    async def factory(settings, capture=None, *, request_context=None):
+        return transport(settings, route, request_context, capture)
+
+    monkeypatch.setattr(agent_module, "make_provider", factory)
+    try:
+        for _ in range(2):
+            result = service.submit(session["id"], TurnRequest(text="继续", operation_id=uuid4().hex,
+                                                               expected_revision=session["revision"]))
+            await service.tasks[result["id"]]
+            assert store.turn(result["id"])["status"] == "committed"
+            await service.close()
+            store = Store(tmp_path)
+            service = runtime(store)
+            session = store.session(session["id"])
+        assert len(requests) == 3
+        for body in requests[1:]:
+            results = [b for m in body["messages"] for b in m.get("content", [])
+                       if isinstance(b, dict) and b.get("type") == "tool_result"]
+            assert [(b["tool_use_id"], b.get("is_error", False)) for b in results] == [("bad", True), ("good", False)]
+        assert "_tool_error" not in json.dumps(requests)
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
 async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_path, monkeypatch, api):
     import tavern.full_agent.agent as agent_module

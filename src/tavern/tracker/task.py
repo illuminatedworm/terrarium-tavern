@@ -232,12 +232,19 @@ class TrackerTask:
                 self.summary, self.completed = response.content or "", True
                 return
             for call in calls:
+                tool_error = False
                 try:
                     result = await self.execute_tool(call.name, json.loads(call.arguments))
+                    # Recall returns its own validation/quota failures. Other
+                    # read tools may legitimately return a user field named error.
+                    tool_error = call.name == "tavern_recall_history" and "error" in result
                 except (ValueError, TypeError, KeyError, jsonpatch.JsonPatchException,
                         jsonpointer.JsonPointerException) as error:
                     result = {"error": self.view.text(str(error))}
+                    tool_error = True
                 message = {"role": "tool", "tool_call_id": call.id, "content": self.encoded(result)}
+                if tool_error:
+                    message["_tool_error"] = True
                 self.thread.append(message)
                 self.event("tracker_tool", {"name": call.name, "arguments": call.arguments, "result": result})
                 if call.name == "write_memory" and "error" not in result:

@@ -23,7 +23,7 @@ REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "
            "context_window_changed": "可见历史窗口或分支变化", "context_sources_changed": "请求策略变化",
            "context_prefix_changed": "已有内容或注入位置变化"}
 WIRE_FIELDS = {"role", "content", "tool_calls", "tool_call_id", "name", "_native_response",
-               "reasoning", "reasoning_details", "reasoning_content"}
+               "reasoning", "reasoning_details", "reasoning_content", "_tool_error"}
 
 
 def frame_content(source, notice, content=None):

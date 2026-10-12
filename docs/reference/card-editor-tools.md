@@ -38,6 +38,8 @@
 
 `patch_draft` 和 `revert_draft` 的 `comment` 为必填的简短操作备注，1–1000 字符，替代旧参数 `reason`。新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
+Agent 优先使用对应的专门工具：普通开场润色使用 `set_opening.narrative` 并省略 `initialization`，撤销本轮卡片修改使用 `revert_draft`；其他字段或确需跨字段原子修改时使用 `patch_draft`。`operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例和开场专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
+
 路径相对于完整文档。包装卡使用 `/data/description`，旧卡使用 `/description`。键中的 `~` 转义成 `~0`，`/` 转义成 `~1`；数组下标从 0 开始，`/-` 追加。
 
 `add/replace/test` 必须带 `value`，即使值为 null；`move/copy` 必须带 `from`。修改前需完整读取对应当前子树；读取 round_start/saved 不等同于读取当前版本。新增卡返回的完整初始文档视为已读。未知参数、无效引用和非法操作反馈给模型纠正；失败的批次不改变文档。

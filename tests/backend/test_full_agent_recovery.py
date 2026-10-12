@@ -89,6 +89,16 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         assert "expected_parameters" in requests[1].content.decode()
         assert "缺少必填参数 ref" in requests[1].content.decode()
         assert "errors.pydantic.dev" not in requests[1].content.decode()
+        returned = [item["message"] for item in saved["new_trace"] if item["message"]["role"] == "tool"]
+        assert [m.get("_tool_error", False) for m in returned] == [True, False, False]
+        if api == "anthropic":
+            messages = json.loads(requests[1].content)["messages"]
+            results = [part for message in messages for part in message.get("content", [])
+                       if isinstance(part, dict) and part.get("type") == "tool_result"]
+            assert [part.get("is_error", False) for part in results] == [True, False]
+        else:
+            assert "is_error" not in requests[1].content.decode()
+        assert "_tool_error" not in requests[1].content.decode()
         assert saved["snapshot"]["full_agent"]["handoff"]["revision"] == 1
         assert any(i["status"] == "error" for i in turn_items(store, session["id"], failed["id"]))
     finally:
@@ -111,6 +121,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         assert "BAD_ARGUMENT" not in body and '"bad"' not in body
         assert "MIXED_NATIVE" not in body and "DEPENDENT_NATIVE" not in body
         assert "MEMORY_ACCEPTED" in body
+        assert '"is_error":true' not in body and '"_tool_error"' not in body
         if api == "responses":
             assert requests[2].headers["x-codex-turn-state"] == "source-route"
             assert "x-codex-turn-state" not in requests[3].headers

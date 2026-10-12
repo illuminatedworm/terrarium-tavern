@@ -337,6 +337,47 @@ async def test_chat_completions_wire_carries_memory_and_variable_tools(story):
         await provider.close()
 
 
+async def test_anthropic_tracker_marks_execution_and_recall_failures_only(story):
+    from tavern.scripting.model_transport import ModelTransport
+    settings = story[3].for_role("background")
+    settings.api_mode = "anthropic"
+    settings.model = "fixture"
+    requests = []
+    actions = [
+        ("read_character", {"field": "extensions.diagnostic"}),
+        ("read_character", {"unexpected": True}),
+        ("tavern_recall_history", {"query": ""}),
+        ("tavern_recall_history", {"query": "NO_MATCH_924"}),
+        ("tavern_recall_history", {"query": "NO_MATCH_924"}),
+        ("tavern_recall_history", {"query": "quota_exhausted"}),
+        ("patch_state", {"operations": [], "comment": "未授权"}),
+    ]
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        first = len(requests) == 1
+        content = ([{"type": "tool_use", "id": f"call{i}", "name": name, "input": args}
+                    for i, (name, args) in enumerate(actions)] if first else [{"type": "text", "text": "done"}])
+        return httpx.Response(200, json={"content": content, "stop_reason": "tool_use" if first else "end_turn"})
+
+    provider = ModelTransport(settings, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    try:
+        work = task(story, provider)
+        work.document["data"]["extensions"]["diagnostic"] = {"error": "user-authored data", "ok": False}
+        await work.run()
+        results = [b for m in requests[1]["messages"] for b in m.get("content", [])
+                   if isinstance(b, dict) and b.get("type") == "tool_result"]
+        assert [b["tool_use_id"] for b in results] == [f"call{i}" for i in range(len(actions))]
+        assert [b.get("is_error", False) for b in results] == [False, True, True, False, False, True, True]
+        assert json.loads(results[0]["content"])["error"] == "user-authored data"
+        assert "参数错误" in json.loads(results[2]["content"])["notice"]
+        assert "3次上限" in json.loads(results[5]["content"])["error"]
+        assert "_tool_error" not in json.dumps(requests)
+        assert work.completed and work.patch is None
+    finally:
+        await provider.close()
+
+
 def test_script_lore_merge_preserves_tracker_changes_and_containers():
     from tavern.character.cards import lore_entries
     from tavern.tracker.workflow import merge_script_lore, sync_runtime_lore

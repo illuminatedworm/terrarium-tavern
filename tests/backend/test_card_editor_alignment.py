@@ -73,6 +73,55 @@ class Editor:
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
+async def test_editor_argument_failure_guides_repair_and_survives_native_replay(tmp_path, monkeypatch, api):
+    editor = Editor(tmp_path, monkeypatch, api)
+    # Reproduce the double-encoded array with unescaped prose quotes. Neither
+    # automatic JSON repair nor retrying the same input should write the draft.
+    bad = editor.tool(1, "patch_draft", {
+        "card_ref": "C1", "comment": "修改开场",
+        "operations": '[{"op":"replace","path":"/first_mes","value":"他说"你好"。SECRET_SOURCE_123"}]'})
+    good = editor.tool(2, "set_opening", {"card_ref": "C1", "index": 0, "narrative": '他说："**你好**"。'})
+
+    def results(wire):
+        if api == "anthropic":
+            return [part for message in wire for part in message.get("content", [])
+                    if isinstance(part, dict) and part.get("type") == "tool_result"]
+        return [item for item in wire if item.get("type") == "function_call_output"]
+
+    try:
+        run = await editor.run([bad, good, blocks(api, "完成")])
+        requests = [json.loads(r.content) for r in editor.requests]
+        assert "优先使用与任务对应的专门工具" in json.dumps(requests[0], ensure_ascii=False)
+        failed = results(editor.wire(editor.requests[1]))[0]
+        content = failed["content" if api == "anthropic" else "output"]
+        error = json.loads(content)["error"]
+        assert all(text in error for text in ("operations", "JSON 数组", "不要原样重试", "set_opening", "narrative"))
+        assert "SECRET_SOURCE_123" not in error
+        assert "input_value" not in error
+        if api == "anthropic":
+            assert failed["is_error"] is True
+            assert "is_error" not in results(editor.wire(editor.requests[2]))[1]
+        else:
+            assert "is_error" not in failed
+        assert "_tool_error" not in json.dumps(requests)
+        card = editor.service.edits.conversation(editor.workspace["id"])["cards"][0]
+        assert card["document"]["first_mes"] == '他说："**你好**"。'
+        assert card["base_document"]["first_mes"] == "开场一"
+        with editor.store.connection() as db:
+            trace = json.loads(db.execute("SELECT payload FROM card_editor_traces WHERE run=?", (run["id"],)).fetchone()[0])
+        returned = [m for m in trace if m["role"] == "tool"]
+        assert returned[0]["_tool_error"] is True
+        assert "_tool_error" not in returned[1]
+        # Stored context must preserve the same result on a subsequent run.
+        await editor.service.close()
+        editor.service = CardEditorService(Store(tmp_path))
+        await editor.run([blocks(api, "后续回复")])
+        assert results(editor.wire(editor.requests[-1]))[0] == failed
+    finally:
+        await editor.service.close()
+
+
+@pytest.mark.parametrize("api", ["anthropic", "responses"])
 @pytest.mark.parametrize("mode", ["runtime", "cloud"])
 async def test_editor_native_prefix_identity_and_committed_replay(tmp_path, monkeypatch, api, mode):
     editor = Editor(tmp_path, monkeypatch, api, mode)

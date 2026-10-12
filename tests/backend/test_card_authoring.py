@@ -200,6 +200,7 @@ async def test_interrupt_and_steer_abort_unexecuted_calls_without_repeating_writ
         assert current["pending"] is None
         first = followup.call_log[0]
         cancelled_index = next(i for i, m in enumerate(first) if m.get("role") == "tool" and '"cancelled": true' in m.get("content", ""))
+        assert first[cancelled_index]["_tool_error"] is True
         steering_index = next(i for i, m in enumerate(first) if m.get("role") == "user" and "保留 A" in m.get("content", ""))
         assert cancelled_index < steering_index
     finally:

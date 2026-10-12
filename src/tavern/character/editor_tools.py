@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import jsonpointer
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tavern.character.card_workflow import greeting_hash, validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
@@ -139,6 +139,26 @@ def tool_definitions():
             for name, (model, description) in SPECS.items()]
 
 
+def argument_error(name, error):
+    """Explain rejected arguments without echoing user text or Pydantic input reprs."""
+    lines = [f"{name} 参数校验失败，工具尚未执行。"]
+    for issue in error.errors(include_input=False, include_context=False, include_url=False):
+        field = ".".join(str(part) for part in issue["loc"]) or "参数根对象"
+        hint = {
+            "missing": "缺少必填字段，请按工具定义补充。",
+            "extra_forbidden": "未知字段，请移除并使用工具定义中的字段名。",
+            "list_type": "必须是 JSON 数组，直接传 [...]，不要传包含数组文本的字符串。",
+            "model_type": "必须是 JSON 对象，直接传 {...}，不要传包含对象文本的字符串。",
+            "string_type": "必须是字符串。",
+        }.get(issue["type"], issue["msg"])
+        lines.append(f"{field}：{hint}")
+        if name == "patch_draft" and issue["loc"] == ("operations",) and issue["type"] == "list_type":
+            lines.append('结构示例（路径和值需换成实际目标）："operations": [{"op": "replace", "path": "/data/description", "value": "完整新正文"}]。不要给整个数组加引号，也不要手工拼接内层 JSON。')
+            lines.append("如果只修改开场正文，优先使用 set_opening，提供 card_ref、index 和完整 narrative，省略 initialization。")
+    lines.append("按上述原因修正后再调用；不要原样重试。")
+    return "\n".join(lines)
+
+
 def report(document):
     validation = validation_report(document)
     data = normalize(document)
@@ -193,7 +213,10 @@ class EditorTools(PersonaTools):
         model = SPECS[name][0]
         if self.owner.legacy and issubclass(model, Card) and "card_ref" not in args and len(self.owner.working["cards"]) == 1:
             args["card_ref"] = self.owner.working["cards"][0]["ref"]
-        parsed = model.model_validate(args)
+        try:
+            parsed = model.model_validate(args)
+        except ValidationError as error:
+            raise ValueError(argument_error(name, error)) from None
         result = await (self.overview_call(parsed) if name == "overview" else getattr(self, name)(parsed))
         return self.view.expose(result)
 

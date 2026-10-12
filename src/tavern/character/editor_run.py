@@ -45,7 +45,8 @@ class EditorRun:
             returned = {r["tool_call_id"] for r in self.pending_calls.get("results", [])}
             for call in self.pending_calls["assistant"].get("tool_calls", []):
                 if call["id"] not in returned:
-                    result = {"role": "tool", "tool_call_id": call["id"], "content": dump({"cancelled": True, "message": "用户补充了新要求，此调用尚未执行，请重新判断"})}
+                    result = {"role": "tool", "tool_call_id": call["id"], "_tool_error": True,
+                              "content": dump({"cancelled": True, "message": "用户补充了新要求，此调用尚未执行，请重新判断"})}
                     saved["messages"].append(result)
                     self.trace.append(result)
             self.pending_calls = None
@@ -113,6 +114,8 @@ class EditorRun:
                 result = {"error": self.context.view.text(str(error))}
             encoded = dump(result)
             result_message = {"role": "tool", "tool_call_id": call["id"], "content": encoded}
+            if status == "error":
+                result_message["_tool_error"] = True
             batch.setdefault("results", []).append(result_message)
             self.context.messages.append(result_message)
             self.trace.append(result_message)
@@ -135,7 +138,7 @@ class EditorRun:
     def archived_trace(self):
         result = []
         for message in self.trace:
-            item = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id"}}
+            item = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id", "_tool_error"}}
             if isinstance(item.get("content"), str):
                 item["content"] = self.context.view.restore(item["content"])
             for call in item.get("tool_calls", []):

@@ -89,6 +89,8 @@ OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支�
 
 传输层保留 Anthropic `content` 和 Responses `output` 的块顺序、工具 ID、思考签名及加密推理，用于兼容来源的续答。编辑、脚本改写或切换模型来源后是否回放，由对应上下文记录层判定；通用剧情历史始终保留。
 
+Full Agent、Tracker、记忆历史补查和 Card Editor 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
+
 应用保存原始 `usage`，并提供统一显示字段。缓存读取或写入字段缺失表示未知，不能显示为零命中。
 
 | 接口 | 输入和输出口径 |

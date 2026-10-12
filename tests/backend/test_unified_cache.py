@@ -628,6 +628,7 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
             {"id": id_, "function": {"name": "read_history", "arguments": '{"ref":"H2"}'}} for id_ in ids]})
         for i, id_ in enumerate(ids):
             messages.append({"role": "tool", "tool_call_id": id_, "content": f"result-{id_}",
+                             "_tool_error": i == 0,
                              "_cache_breakpoint": batch == 0 and i == marked_result})
         messages.append({"role": "system", "content": f"chronological context {batch}", "_cache_static": False})
     original = copy.deepcopy(messages)
@@ -641,6 +642,8 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
         assert results["role"] == "user"
         assert [b["tool_use_id"] for b in results["content"]] == calls
         assert [b["content"] for b in results["content"]] == [f"result-{id_}" for id_ in calls]
+        assert results["content"][0]["is_error"] is True
+        assert "is_error" not in results["content"][1]
         assert f"chronological context {batch}" in context["content"][0]["text"]
     assert boundary == (None if marked_result is None else 2)
     marked = [b for m in body for b in m["content"] if "cache_control" in b]

@@ -187,6 +187,34 @@ async def test_long_history_tool_result_reaches_tracker_complete():
     assert "结尾证据" in provider.calls[1][0][-1]["content"]
 
 
+async def test_anthropic_legacy_recall_distinguishes_errors_from_empty_results():
+    from tavern.scripting.model_transport import ModelTransport
+    cfg = Settings(api_mode="anthropic", model="fixture", api_key="fixture", use_proxy=False)
+    captured = []
+    actions = [{"query": "", "turn": 1}, {"query": "NO_MATCH_924"}]
+
+    def route(req):
+        captured.append(json.loads(req.content))
+        index = len(captured) - 1
+        content = ([{"type": "tool_use", "id": f"call{index}", "name": "tavern_recall_history",
+                     "input": actions[index]}] if index < len(actions) else
+                   [{"type": "text", "text": '{"operations":[],"questions":[]}'}])
+        return httpx.Response(200, json={"content": content, "stop_reason": "end_turn"})
+
+    provider = ModelTransport(cfg, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    try:
+        await complete_with_recall(provider, request(), history=history(), settings=cfg,
+                                   budget=HistoryBudget(), phase="memory")
+        results = [b for m in captured[-1]["messages"] for b in m.get("content", [])
+                   if isinstance(b, dict) and b.get("type") == "tool_result"]
+        assert [b.get("is_error", False) for b in results] == [True, False]
+        assert "error" in json.loads(results[0]["content"])
+        assert json.loads(results[1]["content"])["found"] is False
+        assert "_tool_error" not in json.dumps(captured)
+    finally:
+        await provider.close()
+
+
 async def test_native_tool_definition_reaches_http_and_reasoning_roundtrip():
     provider = await make_provider(Settings(api_key="fixture", model="fixture", use_proxy=False))
     await provider._client.close()

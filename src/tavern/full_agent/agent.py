@@ -344,8 +344,12 @@ class FullAgent:
                 result = ToolError("INVALID_ARGUMENTS", str(error)).result
             if failed(result) and name == "patch_state":
                 result["error"]["patch_state_completed"] = self.patch_state_done
+            tool_error = failed(result)
             result = self.model_view.expose(result)
-            self.append({"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}, window_id)
+            message = {"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}
+            if tool_error:
+                message["_tool_error"] = True
+            self.append(message, window_id)
             self.event("full_agent_tool", {**activity, "result": result,
                 "duration_s": time.perf_counter() - tool_started,
                 "message": name + (" · 调用错误" if failed(result) else " · 完成")})

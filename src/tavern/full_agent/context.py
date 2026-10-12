@@ -205,7 +205,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
                       "reasoning_content", "reasoning_details", "reasoning",
-                      "_native_response", "_response_origin", "_response_digest"}
+                      "_native_response", "_response_origin", "_response_digest", "_tool_error"}
 
     def wire():
         # Role remapping must not let anchored lore join/reorder the fixed

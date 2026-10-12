@@ -126,6 +126,10 @@ def native_messages(messages, api, marker=None):
             parts = []
             if role == "tool":
                 parts = [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content}]
+                # Keep failure semantics through persistence/replay, without
+                # leaking internal metadata into APIs that have no such flag.
+                if message.get("_tool_error") is True:
+                    parts[0]["is_error"] = True
                 role = "user"
             elif (original := native_items(message, api)) is not None:
                 parts = original

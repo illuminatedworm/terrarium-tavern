@@ -303,6 +303,13 @@ def test_compaction_boundary_does_not_hide_pending_calls_and_groups_remain_whole
         replay_groups(messages[:1])
 
 
+def test_compaction_source_identity_includes_tool_failure_status():
+    from tavern.conversation.compaction import canonical, hashes
+    message = {"role": "tool", "tool_call_id": "c1", "content": "Complete source", "_tool_error": True}
+    assert canonical(message) == message
+    assert hashes([message]) != hashes([{k: v for k, v in message.items() if k != "_tool_error"}])
+
+
 async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_change():
     from tavern.conversation.compaction import hashes, rebuild, valid
     from tavern.core.models import Settings

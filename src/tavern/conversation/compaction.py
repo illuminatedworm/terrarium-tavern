@@ -11,7 +11,7 @@ from tavern.scripting.request_context import response_origin
 def canonical(message):
     value = {
         key: copy.deepcopy(message[key])
-        for key in ("role", "content", "tool_calls", "tool_call_id", "name")
+        for key in ("role", "content", "tool_calls", "tool_call_id", "name", "_tool_error")
         if message.get(key) is not None
     }
     value.setdefault("content", "")

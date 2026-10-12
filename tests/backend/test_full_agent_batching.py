@@ -114,6 +114,7 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
                        any(p.get("type") == "tool_result" for p in m["content"])]
             assert len(results) == 1 and results[0]["role"] == "user"
             assert [p["tool_use_id"] for p in results[0]["content"]] == ["call_0", "call_1"]
+            assert all(p.get("is_error", False) is (not enabled) for p in results[0]["content"])
             envelopes = [json.loads(p["content"]) for p in results[0]["content"]]
         else:
             # GenerateContent has no parallel toggle: never send invented fields.
@@ -127,6 +128,9 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
             assert next(p for p in parts if "functionCall" in p)["thoughtSignature"] == "fixture-signature"
             envelopes = [r["response"] for r in results]
         assert len(envelopes) == 2 and all(r["ok"] is enabled for r in envelopes)
+        assert "_tool_error" not in json.dumps(requests)
+        if api_mode != "anthropic":
+            assert "is_error" not in json.dumps(requests)
         state = current["snapshot"]["full_agent"]
         if enabled:
             assert state["handoff"]["text"] == actions[0][1]["content"]

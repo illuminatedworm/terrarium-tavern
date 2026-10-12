@@ -300,7 +300,7 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
 
 
 WIRE_FIELDS = {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content",
-               "reasoning_details", "reasoning", "_native_response", "_response_origin", "_response_digest"}
+               "reasoning_details", "reasoning", "_native_response", "_response_origin", "_response_digest", "_tool_error"}
 
 
 def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=None):
