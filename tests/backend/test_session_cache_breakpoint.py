@@ -39,20 +39,20 @@ def story(tmp_path):
     return store, store.session(session["id"]), replies
 
 
-def test_auto_two_replies_back_and_manual_position_survive_fork(story):
+def test_auto_second_latest_reply_and_manual_position_survive_fork(story):
     store, session, replies = story
     assert session["cache_breakpoint_auto"] is True
-    assert session["cache_breakpoint_effective_id"] == replies[0]
-    manual = store.set_cache_breakpoint(session["id"], session["revision"], False, replies[1])
+    assert session["cache_breakpoint_effective_id"] == replies[1]
+    manual = store.set_cache_breakpoint(session["id"], session["revision"], False, replies[0])
     assert manual["cache_breakpoint_auto"] is False
-    assert manual["cache_breakpoint_effective_id"] == replies[1]
-    assert Store(store.root).session(session["id"])["cache_breakpoint_message"] == replies[1]
+    assert manual["cache_breakpoint_effective_id"] == replies[0]
+    assert Store(store.root).session(session["id"])["cache_breakpoint_message"] == replies[0]
     fork = store.fork_session(session["id"], manual["head"], manual["revision"])
     assert fork["cache_breakpoint_auto"] is False
-    assert fork["cache_breakpoint_effective_id"] == fork["messages"][4]["id"]
-    automatic = store.set_cache_breakpoint(session["id"], manual["revision"], True, replies[1])
+    assert fork["cache_breakpoint_effective_id"] == fork["messages"][2]["id"]
+    automatic = store.set_cache_breakpoint(session["id"], manual["revision"], True, replies[0])
     assert automatic["cache_breakpoint_message"] is None
-    assert automatic["cache_breakpoint_effective_id"] == replies[0]
+    assert automatic["cache_breakpoint_effective_id"] == replies[1]
 
 
 def test_clipped_target_falls_back_and_invalid_manual_target_is_rejected(story):
@@ -61,7 +61,7 @@ def test_clipped_target_falls_back_and_invalid_manual_target_is_rejected(story):
         store.set_cache_breakpoint(session["id"], session["revision"], False,
                                    session["messages"][1]["id"])
     snapshot = session["snapshot"] | {"context_window": {
-        "covered_count": 3, "fingerprint": fingerprint(session["messages"][:3])}}
+        "covered_count": 5, "fingerprint": fingerprint(session["messages"][:5])}}
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), session["head"]))
     assert store.session(session["id"])["cache_breakpoint_effective_id"] is None
@@ -112,7 +112,7 @@ async def test_cache_breakpoint_endpoint_and_schema_migration(story):
     assert reopened.session(session["id"])["cache_breakpoint_message"] is None
 
 
-async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story):
+async def test_writer_turn_marks_second_latest_reply_in_responses_request(story):
     store, session, replies = story
     settings = store.settings()
     settings.foreground.api_mode = "responses"
@@ -149,9 +149,9 @@ async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed"
         committed = store.session(session["id"])
-        assert committed["cache_breakpoint_effective_id"] == replies[0]
+        assert committed["cache_breakpoint_effective_id"] == replies[1]
         assert committed["cache_breakpoint_follow"] == {
-            "interval": 5, "offset": 3, "anchor": replies[0], "progress": 1}
+            "interval": 2, "offset": 2, "anchor": replies[1], "progress": 1}
         assert len(requests) == 1
         wire = requests[0]
         assert wire["prompt_cache_options"] == {"mode": "explicit"}
@@ -160,7 +160,7 @@ async def test_writer_turn_marks_two_rounds_old_reply_in_responses_request(story
         assert len(marked) == 1
         assert marked[0]["role"] == "assistant"
         assert marked[0]["content"][0]["text"] == next(
-            message["model"] for message in session["messages"] if message["id"] == replies[0])
+            message["model"] for message in session["messages"] if message["id"] == replies[1])
     finally:
         await service.close()
         await provider.close()

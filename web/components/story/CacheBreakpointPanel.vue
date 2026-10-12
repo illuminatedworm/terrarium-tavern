@@ -23,8 +23,8 @@ const emit = defineEmits<{
   'save-retention': [value: string];
 }>();
 const automatic = ref(true);
-const interval = ref<number | string>(5);
-const offset = ref<number | string>(3);
+const interval = ref<number | string>(2);
+const offset = ref<number | string>(2);
 const retentionValue = ref('');
 watch(
   () => [props.session.id, props.retention.value],
@@ -37,8 +37,8 @@ watch(
   () => [props.session.id, props.session.revision],
   () => {
     automatic.value = props.session.cache_breakpoint_auto;
-    interval.value = props.session.cache_breakpoint_follow?.interval || 5;
-    offset.value = props.session.cache_breakpoint_follow?.offset || 3;
+    interval.value = props.session.cache_breakpoint_follow?.interval || 2;
+    offset.value = props.session.cache_breakpoint_follow?.offset || 2;
   },
   { immediate: true },
 );

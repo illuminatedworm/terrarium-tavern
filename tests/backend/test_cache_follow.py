@@ -39,18 +39,18 @@ def commit_reply(store, session, regenerate=False):
     return store.session(session["id"])
 
 
-def test_default_follow_advances_every_five_replies_to_third_latest(story):
+def test_default_follow_advances_every_two_replies_to_second_latest(story):
     store, session = story
-    assert session["cache_breakpoint_follow"] == {"interval": 5, "offset": 3, "anchor": None, "progress": 0}
+    assert session["cache_breakpoint_follow"] == {"interval": 2, "offset": 2, "anchor": None, "progress": 0}
     anchor = None
-    for count in range(1, 16):
+    for count in range(1, 7):
         session = commit_reply(store, session)
-        if count % 5 == 0:
-            anchor = session["messages"][-5]["id"]
+        if count % 2 == 0:
+            anchor = session["messages"][-3]["id"]
         assert session["cache_breakpoint_follow"] == {
-            "interval": 5, "offset": 3, "anchor": anchor, "progress": count % 5}
+            "interval": 2, "offset": 2, "anchor": anchor, "progress": count % 2}
         assert session["cache_breakpoint_effective_id"] == anchor
-        if count == 4:
+        if count == 3:
             store = Store(store.root)
             assert store.session(session["id"])["cache_breakpoint_follow"] == session["cache_breakpoint_follow"]
 
@@ -118,8 +118,8 @@ async def test_api_validation_legacy_updates_and_additive_migration(story):
     migrated = Store(store.root).session(session["id"])
     assert migrated["cache_breakpoint_auto"] is False
     assert migrated["cache_breakpoint_message"] == session["head"]
-    assert migrated["cache_breakpoint_follow"]["interval"] == 5
-    assert migrated["cache_breakpoint_follow"]["offset"] == 3
+    assert migrated["cache_breakpoint_follow"]["interval"] == 2
+    assert migrated["cache_breakpoint_follow"]["offset"] == 2
 
 
 def test_failures_maintenance_versions_and_rollover_do_not_advance(story):

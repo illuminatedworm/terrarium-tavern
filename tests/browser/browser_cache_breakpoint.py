@@ -55,19 +55,32 @@ async def main():
                     await page.goto(address)
                     await page.evaluate("id=>localStorage.setItem('tavern-session',id)", session["id"])
                     await page.reload()
-                    first = page.locator(f'[data-message-id="{replies[0]}"]')
+                    target = page.locator(f'[data-message-id="{replies[-2]}"]')
                     latest = page.locator(f'[data-message-id="{replies[-1]}"]')
-                    await expect(first.locator(".cache-breakpoint-dot")).to_be_visible()
+                    await expect(target.locator(".cache-breakpoint-dot.planned")).to_be_visible()
                     action = latest.locator(".cache-set-action")
                     assert await action.get_attribute("title")
-                    await action.click()
-                    await expect(latest.locator(".cache-breakpoint-dot")).to_be_visible()
+                    async with page.expect_response(lambda response: response.url.endswith(
+                            f"/api/sessions/{session['id']}/cache-breakpoint") and response.request.method == "PUT") as saved:
+                        await action.click()
+                    assert (await saved.value).status == 200
+                    await expect(latest.locator(".cache-breakpoint-dot.planned.manual")).to_be_visible()
                     assert store.session(session["id"])["cache_breakpoint_auto"] is False
-                    await latest.locator(".cache-breakpoint-dot").click()
-                    await expect(first.locator(".cache-breakpoint-dot")).to_be_visible()
+                    if not await page.get_by_role("button", name="缓存", exact=True).is_visible():
+                        await page.get_by_role("button", name="展开右侧栏", exact=True).click()
+                    await page.get_by_role("button", name="缓存", exact=True).click()
+                    panel = page.get_by_role("region", name="缓存断点控制")
+                    await expect(panel.get_by_label("每新增几轮跟进")).to_have_value("2")
+                    await expect(panel.get_by_label("倒数第几个 AI 回复")).to_have_value("2")
+                    await panel.get_by_label("缓存跟进方式").select_option("true")
+                    async with page.expect_response(lambda response: response.url.endswith(
+                            f"/api/sessions/{session['id']}/cache-breakpoint") and response.request.method == "PUT") as saved:
+                        await panel.get_by_role("button", name="保存跟进策略", exact=True).click()
+                    assert (await saved.value).status == 200
+                    await expect(target.locator(".cache-breakpoint-dot.planned")).to_be_visible()
                     assert store.session(session["id"])["cache_breakpoint_auto"] is True
                     await page.set_viewport_size({"width": 390, "height": 844})
-                    box = await first.locator(".cache-breakpoint-dot").bounding_box()
+                    box = await target.locator(".cache-breakpoint-dot").bounding_box()
                     assert box and box["x"] >= 0 and box["width"] >= 18
 
                     short = store.new_session(SessionCreate(card_id=card["id"]))

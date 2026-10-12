@@ -87,10 +87,10 @@ def compiled(mode, cfg):
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
 @pytest.mark.parametrize("mode", ["full_agent", "half_agent"])
-async def test_two_round_boundary_reaches_final_wire_for_all_modes(api, mode):
+async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api, mode):
     cfg = config(api)
     context, *_ = compiled(mode, cfg)
-    assert context["cache"]["message_id"] == "a1"
+    assert context["cache"]["message_id"] == "a2"
     messages = model_messages(context)
     assert all(not any(k.startswith("_cache") for k in m) for m in context["messages"])
     seen, captured = [], []
@@ -98,7 +98,7 @@ async def test_two_round_boundary_reaches_final_wire_for_all_modes(api, mode):
         body = json.loads(request.content)
         seen.append((request.url.path, body))
         if request.url.path.endswith("cachedContents"):
-            assert body["contents"][-1]["parts"][0]["text"] == "Answer 1"
+            assert body["contents"][-1]["parts"][0]["text"] == "Answer 2"
             return httpx.Response(200, json={"name": "cachedContents/test"})
         return httpx.Response(200, json=reply(api))
     async with provider(cfg, route, captured.append) as p:
@@ -108,17 +108,17 @@ async def test_two_round_boundary_reaches_final_wire_for_all_modes(api, mode):
     wire = seen[-1][1]
     if api == "gemini":
         assert wire["cachedContent"] == "cachedContents/test"
-        assert wire["contents"][0]["parts"][0]["text"] == "Question 2"
+        assert wire["contents"][0]["parts"][0]["text"] == "Question 3"
         assert "systemInstruction" not in wire
     elif api == "anthropic":
         marked = [b for m in wire["messages"] for b in m["content"] if "cache_control" in b]
-        assert len(marked) == 1 and marked[0]["text"] == "Answer 1"
+        assert len(marked) == 1 and marked[0]["text"] == "Answer 2"
         assert "dynamic handoff" in wire["messages"][-1]["content"][0]["text"]
         assert "dynamic handoff" not in str(wire["system"])
     else:
         inputs = wire["input" if api == "responses" else "messages"]
         marked = [b for m in inputs if isinstance(m.get("content"), list) for b in m["content"] if "prompt_cache_breakpoint" in b]
-        assert len(marked) == 1 and marked[0]["text"] == "Answer 1"
+        assert len(marked) == 1 and marked[0]["text"] == "Answer 2"
     assert all("test-key" not in json.dumps(item) for item in captured)
 
 
@@ -406,7 +406,7 @@ def test_branch_local_manual_and_regenerate_boundaries(mode):
     cfg = config()
     context, session, history, snapshot = compiled(mode, cfg)
     prepare_context(context, session, history[:-2], snapshot, cfg)
-    assert context["cache"]["message_id"] == "a0"
+    assert context["cache"]["message_id"] == "a1"
     session.update(cache_breakpoint_auto=False, cache_breakpoint_message="a2")
     prepare_context(context, session, history, snapshot, cfg)
     assert context["cache"]["message_id"] == "a2"
@@ -463,7 +463,7 @@ async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_s
         if request.url.path.endswith("cachedContents"):
             return httpx.Response(200, json={"name": "cachedContents/test"})
         assert body["extra_body"]["google"]["cached_content"] == "cachedContents/test"
-        assert body["messages"][0]["content"] == "Question 2"
+        assert body["messages"][0]["content"] == "Question 3"
         assert all(m["role"] != "system" for m in body["messages"])
         assert "tavern_runtime_context" in body["messages"][-1]["content"]
         return httpx.Response(200, json=reply("chat_completions"))

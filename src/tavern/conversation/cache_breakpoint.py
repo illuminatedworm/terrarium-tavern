@@ -12,15 +12,15 @@ def reply_ids(history):
             if message["role"] == "assistant" and roles.get(message.get("parent")) == "user"]
 
 
-def automatic_message_id(history, offset=3):
+def automatic_message_id(history, offset=2):
     replies = reply_ids(history)
     return replies[-offset] if len(replies) >= offset else None
 
 
 def reset_follow(history, follow=None):
     follow = follow or {}
-    return {"interval": follow.get("interval", 5), "offset": follow.get("offset", 3),
-            "anchor": automatic_message_id(history, follow.get("offset", 3)), "progress": 0}
+    return {"interval": follow.get("interval", 2), "offset": follow.get("offset", 2),
+            "anchor": automatic_message_id(history, follow.get("offset", 2)), "progress": 0}
 
 
 def advance_follow(history, follow, advance=False):
@@ -73,7 +73,7 @@ def breakpoint_reason(session, effective_id):
         return "所选回复不在实际上下文窗口，暂用固定前缀"
     if not candidate:
         follow = session.get("cache_breakpoint_follow", {})
-        if session.get("cache_breakpoint_auto", True) and len(reply_ids(session["messages"])) >= follow.get("offset", 3):
+        if session.get("cache_breakpoint_auto", True) and len(reply_ids(session["messages"])) >= follow.get("offset", 2):
             return "尚未到下次跟进，暂用固定前缀"
         return ("已完成回复不足目标位置，暂用固定前缀" if session.get("cache_breakpoint_auto", True)
                 else "手动固定于可用的固定前缀")
