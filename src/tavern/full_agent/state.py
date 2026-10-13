@@ -42,15 +42,17 @@ def rollover(state, history, handoff, keep_recent):
     state["window"] = {"id": uuid.uuid4().hex, "number": state["window"]["number"] + 1, "start": start}
 
 
-def mark_edited(snapshot, message_id, history):
+def mark_edited(snapshot, message_id, history, *, notify_ai=False):
     state = snapshot.get("full_agent")
     if state and any(m["id"] == message_id for m in history):
         state["handoff"]["stale"] = bool(state["handoff"]["text"])
         state.setdefault("edited_sources", [])
         if message_id not in state["edited_sources"]:
             state["edited_sources"].append(message_id)
-        # Retire potentially stale tool continuations, without discarding dialogue.
-        state["window"]["id"] = uuid.uuid4().hex
+        # Source staleness is factual, but retiring tool context is an explicit
+        # edit choice. Quiet edits must retain complete note/version evidence.
+        if notify_ai:
+            state["window"]["id"] = uuid.uuid4().hex
 
 
 def remap_sources(snapshot, ids):

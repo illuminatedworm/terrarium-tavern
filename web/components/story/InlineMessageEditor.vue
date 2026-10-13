@@ -8,6 +8,7 @@ const props = withDefaults(
     busy?: boolean;
     notifyChoice?: boolean | null;
     askNotify?: boolean;
+    fullAgent?: boolean;
     saveLabel?: string;
   }>(),
   { notifyChoice: null, askNotify: true, saveLabel: '保存修改' },
@@ -174,6 +175,7 @@ onBeforeUnmount(() => {
     @click.stop
   >
     <p>这次修改要提醒 AI 吗？</p>
+    <p v-if="fullAgent" class="muted">提醒 AI 会使旧工具上下文失效，可能需要重新读取笔记；不提醒则保留。</p>
     <div>
       <button type="button" :disabled="busy" @click="choose(true)">提醒 AI</button>
       <button type="button" :disabled="busy" @click="choose(false)">不提醒 AI</button>

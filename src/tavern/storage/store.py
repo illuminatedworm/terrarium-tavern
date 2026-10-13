@@ -885,7 +885,7 @@ class Store(MessageAdapters):
                 old_history = lineage(row["id"], original_messages)
                 history = lineage(row["id"], messages)
                 from tavern.full_agent.state import mark_edited
-                mark_edited(snapshot, mid, history)
+                mark_edited(snapshot, mid, history, notify_ai=notify_ai)
                 if row["id"] == revision["head"]:
                     from tavern.conversation.message_editing import NOTIFICATIONS
                     notices = [ref for ref in snapshot.get(NOTIFICATIONS, []) if ref != mid]

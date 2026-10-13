@@ -90,6 +90,10 @@ async def main():
                     await page.wait_for_function('document.querySelector(".inline-message-editor textarea").clientHeight < 60')
                     await editor.press('Control+Enter')
                     await expect(page.get_by_text('这次修改要提醒 AI 吗？', exact=True)).to_be_visible()
+                    tool_notice = page.get_by_text('提醒 AI 会使旧工具上下文失效，可能需要重新读取笔记；不提醒则保留。', exact=True)
+                    await expect(tool_notice).to_have_count(1 if mode == 'full_agent' else 0)
+                    if mode == 'full_agent':
+                        await expect(tool_notice).to_be_visible()
                     assert store.session(sid)['messages'][-1]['raw'] == original
                     await page.get_by_role('button', name='提醒 AI', exact=True).press('Escape')
                     await expect(editor).to_have_value('短文本')

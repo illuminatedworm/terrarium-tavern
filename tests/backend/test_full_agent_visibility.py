@@ -123,6 +123,46 @@ async def test_note_tool_call_text_counts_without_a_read_or_repeated_body_in_res
     assert owner.state["notes"]["clue"]["status"] == "active"
 
 
+@pytest.mark.parametrize("notify", [False, True])
+@pytest.mark.parametrize("edited_role", ["user", "assistant"])
+async def test_story_edit_only_retires_note_write_evidence_when_notifying(story, notify, edited_role):
+    store, session = story
+    service = runtime(store)
+    try:
+        result, session = await turn(service, session, Model(
+            ("write_note", {"key": "clue", "content": "Complete current note", "kind": "fact", "sources": ["H2"]}),
+            "Original reply"))
+        assert result["status"] == "committed", result["error"]
+        before = copy.deepcopy(session["snapshot"]["full_agent"])
+        target = session["messages"][-2 if edited_role == "user" else -1]
+        edited = store.edit_message(session["id"], target["id"], target["raw"] + "。",
+                                    session["revision"], notify_ai=notify)
+        current = store.session(edited["id"])
+        state = current["snapshot"]["full_agent"]
+        assert (state["window"]["id"] != before["window"]["id"]) is notify
+        assert state["notes"] == before["notes"]
+        assert state["window"]["number"] == before["window"]["number"]
+        # Exercise actual compilation and tool execution, not just window flags.
+        write = ("write_note", {"key": "clue", "content": "Updated note", "kind": "hypothesis"})
+        responses = [write]
+        if notify:
+            responses.extend([("read_note", {"key": "clue"}), write])
+        model = Model(*responses, "Next reply")
+        result, current = await turn(service, current, model)
+        assert result["status"] == "committed", result["error"]
+        previous_calls = [call for message in model.requests[0]["messages"]
+                          for call in message.get("tool_calls", [])]
+        assert any(call["function"]["name"] == "write_note" for call in previous_calls) is not notify
+        first_result = next(json.loads(message["content"]) for message in reversed(model.requests[1]["messages"])
+                            if message.get("role") == "tool" and message["tool_call_id"] == "call1")
+        assert first_result["ok"] is not notify
+        if notify:
+            assert first_result["error"]["code"] == "READ_REQUIRED"
+        assert current["snapshot"]["full_agent"]["notes"]["clue"]["content"] == "Updated note"
+    finally:
+        await service.close()
+
+
 @pytest.mark.parametrize("source", ["directory", "preview", "old_call", "opaque"])
 async def test_note_requires_current_full_text_not_directory_preview_or_old_version(owner, source):
     current = note(owner)

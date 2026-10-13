@@ -98,6 +98,7 @@ function forwardAction(
         :original="message.raw"
         :busy="savingEdit"
         :notify-choice="editingNotifyChoice"
+        :full-agent="session.agent_mode === 'full_agent'"
         @cancel="emit('cancelEdit')"
         @save="emit('saveEdit', message, $event)"
       />
