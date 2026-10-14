@@ -135,7 +135,7 @@ def export_package(store, selection):
                 elif table == "cards":
                     if db.execute("SELECT 1 FROM card_edit_runs r JOIN card_edits e ON r.workspace=e.id "
                                   "WHERE e.card=? AND r.status IN ('queued','running')", (identity,)).fetchone():
-                        raise Conflict("请等待角色卡编辑任务完成后导出")
+                        raise Conflict("请等待角色卡编辑 agent 任务完成后导出")
                     package[table].append(pin(decoded(table, row)))
                 else:
                     if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
@@ -144,6 +144,8 @@ def export_package(store, selection):
                     session = decoded(table, row)
                     session["card_data"] = pin(session["card_data"])
                     bundle = {"session": session}
+                    from tavern.advisor.transfer import export_bundle as export_advisor
+                    bundle["advisor"] = export_advisor(db, identity)
                     for related in ("messages", "full_agent_trace", "half_agent_trace"):
                         bundle[related] = [decoded(related, item) for item in
                                            db.execute(f"SELECT * FROM {related} WHERE session=? ORDER BY rowid", (identity,))]
@@ -241,6 +243,8 @@ def validate_package(store, package, blobs):
             card(value, True)
         for bundle in package["sessions"]:
             session = bundle["session"]
+            from tavern.advisor.transfer import validate_bundle as validate_advisor
+            validate_advisor(bundle.get("advisor"), session.get("channel_origin"))
             validate_row(schema, "sessions", session, {"id", "card", "head", "persona", "recipe", "created", "card_data",
                                                        "persona_data", "lore_injection_mode", "agent_mode"})
             identity(session["id"])
@@ -464,6 +468,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                             cloned["window_id"] = cloned["payload"]["window"]
                         insert(db, table, cloned)
                 adapter = bundle.get("adapter")
+                from tavern.advisor.transfer import import_bundle as import_advisor
+                import_advisor(db, row["id"], bundle.get("advisor"), ids)
                 if adapter:
                     insert(db, "message_adapter_configs", {**remap(adapter, ids), "revision": 0})
                 else:

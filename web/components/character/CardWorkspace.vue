@@ -517,12 +517,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section ref="shell" class="card-workspace" aria-label="角色卡 Agent" :inert="!!modal">
+  <section ref="shell" class="card-workspace" aria-label="角色卡编辑 agent" :inert="!!modal">
     <div class="cw-body">
       <div class="cw-dialogue" :inert="inspectorOpen && narrow">
         <header class="cw-header">
           <div class="cw-heading">
-            <h1>角色卡编辑</h1>
+            <h1>角色卡编辑 agent</h1>
             <p :title="conversationTitle">{{ conversationTitle }}</p>
           </div>
           <div class="cw-toolbar">

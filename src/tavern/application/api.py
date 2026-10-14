@@ -37,6 +37,8 @@ def create_app(data_dir=None):
     service = ModeRuntime(store)
     from tavern.character.card_editor import CardEditorService
     editor = CardEditorService(store)
+    from tavern.advisor.runtime import AdvisorService
+    advisor = AdvisorService(store, service.full.retrieval)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -59,6 +61,7 @@ def create_app(data_dir=None):
             maintenance.cancel()
             await asyncio.gather(maintenance, return_exceptions=True)
             await editor.close()
+            await advisor.close()
             await service.close()
             await store.chatgpt.close()
 
@@ -66,6 +69,9 @@ def create_app(data_dir=None):
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
+    app.state.advisor = advisor
+    from tavern.advisor.api import register_routes as register_advisor_routes
+    register_advisor_routes(app, advisor)
     from tavern.chatgpt.api import register_chatgpt_routes
     from tavern.chatgpt.errors import ChatGPTError
     register_chatgpt_routes(app, store)
@@ -200,11 +206,16 @@ def create_app(data_dir=None):
         return service.local_models.job("rebuild", rebuild)
 
     @app.post("/api/settings/probe")
-    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent"] = "foreground",
+    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent", "advisor"] = "foreground",
                     channel: Literal["standard", "chatgpt"] | None = None):
         from tavern.scripting.agent import make_provider
 
         saved_config = store.settings("full_agent" if role == "full_agent" else "half_agent", channel)
+        if role == "advisor":
+            advisor_config = store.settings_document().shared.advisor
+            saved_config.advisor = advisor_config.official_model if channel == "chatgpt" else advisor_config.model
+            if saved_config.advisor is None:
+                raise ValueError("请先配置此渠道的参谋 agent 模型")
         config = saved_config.for_role(role)
         captured = []
         from tavern.scripting.cloud_cache import reset_capability
@@ -395,6 +406,7 @@ def create_app(data_dir=None):
 
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
+        await advisor.cancel_session(sid)
         await service.delete_session(sid)
         return {"deleted": sid}
 

@@ -70,6 +70,17 @@ export interface SettingsDocument {
     providers: Provider[];
     card_editor: ModelProfile;
     preference_presets: PreferencePreset[];
+    advisor: {
+      model: ModelProfile;
+      official_model: ModelProfile | null;
+      system_prompt: string;
+      recent_exchanges: number;
+      keep_recent: number;
+      auto_compact: boolean;
+      context_strategy: 'local' | 'openai_compact';
+      max_steps: number;
+      web: { enabled: boolean; backend: 'duckduckgo' | 'searxng'; endpoint: string; timeout_seconds: number };
+    };
   };
   revisions: Record<SettingsScope, number>;
   pages: SettingsPage[];

@@ -72,6 +72,7 @@ const SettingsPanel = defineAsyncComponent({
   loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载设置…') },
   errorComponent: { render: () => h('p', { role: 'alert' }, '设置页面加载失败，请刷新页面后重试。') },
 });
+const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
 // Editing surfaces are independent of the story reader; load their code only
 // when opened, just as we do for settings.
 const CharacterEditor = defineAsyncComponent({
@@ -104,6 +105,7 @@ const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
 const sessionTitleInput = ref<HTMLInputElement>();
 const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
+const advisorSeen = ref('');
 function applyFullSession(updated: any) {
   if (session.value?.id === updated.id && updated.revision >= session.value.revision) {
     session.value = updated;
@@ -472,6 +474,13 @@ const rightOverlayQuery = window.matchMedia('(max-width: 760px)');
 const rightOverlay = ref(rightOverlayQuery.matches);
 const rightDrawerOpen = computed(
   () => rightOverlay.value && !!session.value && !pageMode.value && !layout.value.rightCollapsed,
+);
+watch(
+  rightDrawerOpen,
+  (open) => {
+    if (open) layout.value.leftCollapsed = true;
+  },
+  { immediate: true },
 );
 const leftSidebarClose = ref<HTMLButtonElement | null>(null);
 const mobileSidebarButton = ref<HTMLButtonElement | null>(null);
@@ -2760,7 +2769,11 @@ useTimedError(error);
     <aside
       v-if="session && !pageMode"
       class="right-sidebar"
-      :class="{ collapsed: layout.rightCollapsed, 'scene-active': inspectorTab === 'scene' }"
+      :class="{
+        collapsed: layout.rightCollapsed,
+        'scene-active': inspectorTab === 'scene',
+        'advisor-active': inspectorTab === 'advisor',
+      }"
       :style="{ '--right-sidebar-width': layout.rightWidth + 'px' }"
       :inert="mobileSidebar && !layout.leftCollapsed"
       @keydown.esc="rightDrawerOpen && closeRightSidebar()"
@@ -2778,6 +2791,7 @@ useTimedError(error);
       ></div>
       <button
         ref="rightSidebarToggle"
+        v-show="layout.rightCollapsed || inspectorTab !== 'advisor'"
         class="sidebar-collapse"
         @click="toggleRightSidebar"
         :aria-label="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
@@ -2785,8 +2799,28 @@ useTimedError(error);
       >
         {{ layout.rightCollapsed ? '‹' : rightOverlay ? '×' : '›' }}
       </button>
-      <div v-if="!layout.rightCollapsed" class="inspector-content">
+      <AdvisorPanel
+        v-if="advisorSeen === session.id || inspectorTab === 'advisor'"
+        v-show="!layout.rightCollapsed && inspectorTab === 'advisor'"
+        :key="session.id"
+        :session-id="session.id"
+        :story-revision="session.revision"
+        :settings="settings"
+        @close="
+          advisorSeen = session.id;
+          inspectorTab = 'mvu';
+          if (rightOverlay) closeRightSidebar();
+        "
+        @settings="
+          settingsInitialPage = 'shared.advisor';
+          settingsChannel = session.channel_origin;
+          panel = 'settings';
+        "
+        @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
+      />
+      <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
+          <button @click="inspectorTab = 'advisor'">参谋</button>
           <button
             :class="{ active: inspectorTab === 'cache' }"
             :aria-current="inspectorTab === 'cache' ? 'page' : undefined"

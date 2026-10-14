@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
@@ -50,12 +53,38 @@ def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text
     assert Store(tmp_path).settings().retrieval.protocol_prompt == "自定义检索协议"
 
 
+@pytest.mark.parametrize("fixture", ["advisor_prompt_before_independent.txt", "advisor_prompt_before_gui.txt", "advisor_prompt_before_agent_name.txt"])
+def test_advisor_default_upgrade_preserves_custom_text_and_is_idempotent(tmp_path, fixture):
+    from tavern.advisor.config import SYSTEM
+    from tavern.storage.store import Store
+
+    old = (Path(__file__).parents[1] / "fixtures" / fixture).read_text("utf-8")
+    store = Store(tmp_path)
+    config = store.settings_document()
+    config.shared.advisor.system_prompt = old
+    store.save_settings(config)
+    revision = store.settings_document().revisions["shared"]
+
+    upgraded = Store(tmp_path).settings_document()
+    assert upgraded.shared.advisor.system_prompt == SYSTEM
+    assert upgraded.revisions["shared"] == revision + 1
+    assert Store(tmp_path).settings_document() == upgraded
+
+    # Even a small user change to the old default must survive reopening.
+    custom = old + "\n\n请保留我自行补充的要求。"
+    upgraded.shared.advisor.system_prompt = custom
+    store.save_settings(upgraded)
+    saved = store.settings_document()
+    assert Store(tmp_path).settings_document() == saved
+    assert saved.shared.advisor.system_prompt == custom
+
+
 async def test_all_prompts_save_reload_and_restore_default(tmp_path):
     app = create_app(tmp_path)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             response = (await client.get("/api/settings")).json()
-            assert {item["scope"] for item in response["prompt_definitions"]} == {"full_agent", "half_agent"}
+            assert {item["scope"] for item in response["prompt_definitions"]} == {"full_agent", "half_agent", "shared"}
             system_prompts = {item["scope"]: item for item in response["prompt_definitions"]
                               if item["path"] == "system_prompt"}
             assert system_prompts["full_agent"]["default"] == FULL_AGENT_PROMPT
@@ -63,7 +92,7 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
             assert "叙事、连续性与可选剧情规划原则" in system_prompts["full_agent"]["description"]
             assert "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
             assert "前台 Writer" in system_prompts["half_agent"]["description"]
-            for scope in ("full_agent", "half_agent"):
+            for scope in ("full_agent", "half_agent", "shared"):
                 prompts = [item for item in response["prompt_definitions"] if item["scope"] == scope]
                 changes = {item["path"]: "CUSTOM " + scope + item["path"] for item in prompts}
                 saved = await client.patch(f"/api/settings/{scope}", json={"expected_revision": response["revisions"][scope], "changes": changes})

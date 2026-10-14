@@ -30,6 +30,7 @@ import SavedText from './SavedText.vue';
 import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
+import AdvisorSettings from './AdvisorSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
 const props = defineProps<{
@@ -96,6 +97,9 @@ const groups = [
 const groupLabel = (s: string) => groups.find((g) => g.scope === s)?.label || s;
 const prompts = computed(() => draft.value?.prompt_definitions.filter((p) => p.scope === scope.value) || []);
 const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.value) || prompts.value[0]);
+const advisorPrompt = computed(() =>
+  draft.value?.prompt_definitions.find((p) => p.scope === 'shared' && p.path === 'advisor.system_prompt'),
+);
 const status = computed(() =>
   !saved.value
     ? '正在读取…'
@@ -553,12 +557,38 @@ onMounted(async () => {
             @channel="channel = $event"
             :flush="editor.flush"
           />
+          <AdvisorSettings
+            v-else-if="page.key === 'advisor'"
+            :value="draft.shared.advisor"
+            :providers="draft.shared.providers"
+            :initial-channel="channel"
+            :effort-options="effortOptions"
+            :flush="editor.flush"
+            @checked="refreshAfterProbe"
+          >
+            <SavedText
+              :model-value="editor.textValue('shared', 'advisor.system_prompt')"
+              :saved-value="saved!.shared.advisor.system_prompt"
+              label="参谋 agent 系统提示词"
+              :guard="guard"
+              :saving="textBusy === 'shared.advisor.system_prompt'"
+              :error="textErrors['shared.advisor.system_prompt']"
+              @update:model-value="editor.editText('shared', 'advisor.system_prompt', $event)"
+              @save="editor.saveText('shared', 'advisor.system_prompt')"
+            />
+            <button
+              v-if="advisorPrompt"
+              @click="editor.editText('shared', 'advisor.system_prompt', advisorPrompt.default)"
+            >
+              恢复默认文本
+            </button>
+          </AdvisorSettings>
           <template v-else-if="page.key === 'editor'">
             <ModelProfileEditor
               :profile="draft.shared.card_editor"
               :providers="draft.shared.providers"
               role="card_editor"
-              label="角色卡编辑模型"
+              label="角色卡编辑 agent 模型"
               :effort-options="effortOptions"
               :flush="editor.flush"
               @checked="refreshAfterProbe"

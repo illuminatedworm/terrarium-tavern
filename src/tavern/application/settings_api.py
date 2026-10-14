@@ -43,6 +43,9 @@ def editable(value):
 
 def prompt_catalog():
     result = []
+    from tavern.advisor.config import SYSTEM
+    result.append({"scope": "shared", "path": "advisor.system_prompt", "label": "参谋 agent 系统提示词",
+                   "description": "参谋 agent 的咨询方式与项目资料说明；实际写入权限由 Runtime 控制。", "default": SYSTEM})
     for scope in ("full_agent", "half_agent"):
         defaults = getattr(SettingsDocument(), scope).model_dump()
         system_prompt = (FULL_AGENT_SYSTEM_PROMPT_DEFINITION if scope == "full_agent"
@@ -77,8 +80,9 @@ def page_catalog():
         for key, label, paths in pages:
             result.append({"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths})
     for key, label, paths in [("providers", "提供商", ["providers"]),
+                              ("advisor", "参谋 agent", ["advisor"]),
                               ("preference_presets", "常用偏好", ["preference_presets"]),
-                              ("editor", "角色卡编辑", ["card_editor"]),
+                              ("editor", "角色卡编辑 agent", ["card_editor"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
                               ("data_transfer", "数据导入导出", [])]:
@@ -115,6 +119,10 @@ def validate_document(raw):
 
 
 def invalidate_capabilities(old, new):
+    for key in ("model", "official_model"):
+        before, after = getattr(old.shared.advisor, key), getattr(new.shared.advisor, key)
+        if after is not None and (before is None or before.model_dump(exclude={"capability", "capability_key"}) != after.model_dump(exclude={"capability", "capability_key"}) or old.shared.providers != new.shared.providers):
+            after.capability, after.capability_key = "unknown", ""
     for scope, key, after in new.profiles():
         before = getattr(getattr(old, scope), key)
         if before is None or not before.provider_id or not after.provider_id:
@@ -246,6 +254,21 @@ def register_settings_routes(app, store):
 
 
 def save_probe(store, role, result, captured):
+    if role == "advisor":
+        with store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            doc = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
+            key = "official_model" if captured._settings_channel == "chatgpt" else "model"
+            profile = getattr(doc.shared.advisor, key)
+            current = doc.runtime("half_agent", captured._settings_channel)
+            current.advisor = profile
+            from tavern.scripting.request_context import response_origin
+            if profile is None or response_origin(current.for_role("advisor")) != response_origin(captured.for_role("advisor")):
+                raise Conflict("检查期间参谋 agent 模型连接已改变，请重新检查")
+            profile.capability, profile.capability_key = result.capability, result.capability_key
+            doc.revisions["shared"] += 1
+            db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))
+        return
     scope, key = {"full_agent": ("full_agent", "model"), "foreground": ("half_agent", "foreground"),
                   "background": ("half_agent", "background"), "card_editor": ("shared", "card_editor")}[role]
     with store.connection() as db:

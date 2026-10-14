@@ -15,6 +15,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `tracker/` | Half Agent 前后置维护任务、原生工具循环和变量草稿 |
 | `memories/` | 分类记忆、来源协议、投影、准出与历史补查 |
 | `full_agent/` | Full Agent 模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
+| `advisor/` | 两种模式共用的参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
 | `search/` | 召回、准入、文本解析、本地模型进程和索引 |
 | `storage/` | SQLite、事务、分支、备份与存储清理 |
 | `scripting/` | 共享模型传输、原生回复、隔离脚本、依赖和 MVU 处理 |

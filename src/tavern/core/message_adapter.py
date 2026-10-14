@@ -27,7 +27,7 @@ class MessageType:
     configurable: bool = False
     appendable: bool = False
     role: str = "system"
-    scopes: tuple = ("foreground", "full_agent", "background", "card_editor")
+    scopes: tuple = ("foreground", "full_agent", "background", "card_editor", "advisor")
 
 
 TYPES = {item.id: item for item in (
@@ -72,6 +72,10 @@ TYPES = {item.id: item for item in (
         ("persona_attachments", "引用用户角色"),
         ("persona_changes", "待保存用户角色"), ("adapt", "适配要求"), ("pressure", "窗口压力"),
         ("final_ref", "已保存回复引用"))],
+    *[MessageType("advisor_" + name, label, "tavern_advisor_" + name, True, True,
+                  scopes=("advisor",)) for name, label in (
+        ("reference", "参谋 agent 基础资料"), ("story", "参谋 agent 当前剧情与偏好"),
+        ("summary", "参谋 agent 咨询摘要"), ("notice", "参谋 agent 请求与资料提醒"))],
 )}
 SCOPES = {
     **{name: ("foreground", "full_agent") for name in ("character", "persona", "lore_constant", "lore_injected",

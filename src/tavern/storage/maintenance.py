@@ -86,6 +86,8 @@ def _plan(store, db, now):
 def storage_report(store):
     with store.connection() as db:
         report = _plan(store, db, time.time())[3]
+        from tavern.advisor.storage import cleanup_plan
+        report.update(cleanup_plan(db, store.settings(), time.time())[1])
     report["directories"] = {name: sum(p.stat().st_size for p in _files(store.root / name))
                              for name in ("blobs", "runs", "dependencies", "models")}
     report["database_bytes"] = store.path.stat().st_size
@@ -98,8 +100,10 @@ def cleanup(store, *, vacuum=False):
     files = []
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")
+        if db.execute("SELECT 1 FROM advisor_runs WHERE status IN ('queued','running')").fetchone():
+            raise Conflict("请先结束参谋 agent 咨询，再清理存储")
         if db.execute("SELECT 1 FROM card_edit_runs WHERE status IN ('queued','running')").fetchone():
-            raise Conflict("请先结束角色卡编辑任务，再清理存储")
+            raise Conflict("请先结束角色卡编辑 agent 任务，再清理存储")
         if db.execute("SELECT 1 FROM turns WHERE status IN ('queued','running','awaiting_review')").fetchone():
             raise Conflict("请先结束运行或待审核回合，再清理存储")
         if db.execute("SELECT 1 FROM context_operations WHERE status IN ('queued','running')").fetchone():
@@ -110,6 +114,10 @@ def cleanup(store, *, vacuum=False):
         from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
         prune_orphan_retrieval(db)
         _, selected, cached, report = _plan(store, db, time.time())
+        from tavern.advisor.storage import cleanup_plan
+        advisor_remove, advisor_report = cleanup_plan(db, store.settings(), time.time())
+        report.update(advisor_report)
+        db.executemany("DELETE FROM advisor_runs WHERE id=?", [(rid,) for rid in advisor_remove])
         for turn in selected:
             for event in turn["events"]:
                 payload = json.loads(db.execute("SELECT payload FROM events WHERE seq=?", (event["seq"],)).fetchone()[0])

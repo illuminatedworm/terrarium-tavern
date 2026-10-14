@@ -108,6 +108,7 @@ class Settings(BaseModel):
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor: ModelProfile | None = None
+    advisor: ModelProfile | None = None
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     full_agent: ModelProfile | None = None

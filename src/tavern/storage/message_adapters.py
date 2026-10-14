@@ -63,7 +63,7 @@ class MessageAdapters:
         document = self.settings_document()
         profiles = {"foreground": document.half_agent.foreground, "background": document.half_agent.background,
                     "full_agent": document.full_agent.model, "card_editor": document.shared.card_editor}
-        labels = {"foreground": "正文生成", "background": "Tracker", "full_agent": "Full Agent", "card_editor": "角色卡编辑"}
+        labels = {"foreground": "正文生成", "background": "Tracker", "full_agent": "Full Agent", "card_editor": "角色卡编辑 agent"}
         return {"config": config, "revision": saved["revision"], "lanes": [
             {"id": lane, "label": labels[lane], "api_mode": profiles[lane].api_mode,
              "types": catalog(lane, list(dict.fromkeys((extra if lane == "foreground" else []) +

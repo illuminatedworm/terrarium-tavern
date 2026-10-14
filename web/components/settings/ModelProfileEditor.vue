@@ -79,9 +79,11 @@ watch(
 const errorPrefix = computed(() =>
   props.role === 'full_agent'
     ? `full_agent.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
-    : props.role === 'card_editor'
-      ? 'shared.card_editor.'
-      : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
+    : props.role === 'advisor'
+      ? `shared.advisor.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
+      : props.role === 'card_editor'
+        ? 'shared.card_editor.'
+        : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
 );
 const common = computed<SettingField[]>(() => [
   { path: 'context_tokens', label: '上下文窗口（tokens）', min: 2048, max: 2000000 },

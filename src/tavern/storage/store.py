@@ -41,8 +41,11 @@ class Store(MessageAdapters):
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2", "3"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1、2 或 3")
+                if version is None or version[0] not in {"1", "2", "3", "4"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1、2、3 或 4")
+                if version[0] != "4":
+                    with closing(sqlite3.connect(root / f"before-advisor-v4-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
                 if "plot_enabled" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
@@ -172,6 +175,8 @@ class Store(MessageAdapters):
                 PRIMARY KEY(owner, scope, identity, prefix))""")
         from tavern.character.card_editor_store import initialize_editor_tables
         initialize_editor_tables(self)
+        from tavern.advisor.storage import initialize as initialize_advisor
+        initialize_advisor(self)
         self.initialize_message_adapters()
 
     @contextmanager
@@ -214,6 +219,8 @@ class Store(MessageAdapters):
         return SentBreakpoints(load, save)
 
     def recover(self):
+        with self.connection() as db:
+            db.execute("UPDATE advisor_runs SET status='error',error='应用已重启，可继续或丢弃咨询' WHERE status IN ('queued','running')")
         from tavern.character.card_editor_store import recover_editor_runs
         recover_editor_runs(self)
         with self.connection() as db:
@@ -609,6 +616,8 @@ class Store(MessageAdapters):
                        (source["channel_origin"], source["context_strategy"], source["compact_auto"], new_sid))
             db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (source["model_selection"], new_sid))
             self.copy_message_adapter(db, "story", sid, new_sid)
+            from tavern.advisor.storage import fork as fork_advisor
+            fork_advisor(db, sid, new_sid, ids)
             db.execute("UPDATE sessions SET disabled_tools=? WHERE id=?", (source["disabled_tools"], new_sid))
             db.execute("UPDATE sessions SET tool_result_options=? WHERE id=?",
                        (source["tool_result_options"], new_sid))

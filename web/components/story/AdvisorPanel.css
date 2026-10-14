@@ -1,0 +1,506 @@
+.right-sidebar.advisor-active:not(.collapsed) {
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface-sidebar);
+}
+.advisor-panel {
+  container: advisor / inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  color: var(--text-primary);
+  font: 13px/1.6 var(--font-ui);
+  background: var(--surface-sidebar);
+}
+.advisor-panel svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.advisor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 24px 18px;
+  flex-shrink: 0;
+}
+.right-sidebar .advisor-heading h2 {
+  margin: 0;
+  font: 600 21px/1.25 var(--font-ui);
+  letter-spacing: 0.06em;
+}
+.advisor-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.advisor-clear-confirm {
+  margin: 0 24px 16px;
+  padding: 12px;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.advisor-clear-confirm p {
+  margin: 0 0 8px;
+}
+.advisor-clear-confirm button + button {
+  margin-left: 8px;
+}
+.advisor-panel button {
+  font: 13px/1.4 var(--font-ui);
+}
+.advisor-icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.advisor-icon-button svg {
+  width: 23px;
+  height: 23px;
+}
+.advisor-connection {
+  display: flex;
+  gap: 10px;
+  margin: 0 24px 16px;
+  flex-shrink: 0;
+}
+.advisor-model-trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px 12px;
+  background: transparent;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+}
+.advisor-model-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.advisor-model-trigger svg {
+  transform: rotate(90deg);
+}
+.advisor-model-trigger svg.rotated {
+  transform: rotate(-90deg);
+}
+.advisor-settings-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  padding: 9px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border-control);
+}
+.advisor-settings-button svg {
+  width: 21px;
+  height: 21px;
+}
+.advisor-context-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 24px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.advisor-context-bar button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.advisor-context-bar svg {
+  width: 14px;
+  height: 14px;
+}
+.advisor-controls {
+  margin: 0 24px 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  gap: 10px;
+  overflow: auto;
+  max-height: 35%;
+  flex-shrink: 0;
+}
+.advisor-controls label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.advisor-controls p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.advisor-controls input,
+.advisor-controls select {
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+}
+.advisor-control-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.advisor-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 24px 24px;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+}
+.advisor-user-message {
+  width: fit-content;
+  max-width: 88%;
+  margin: 0 0 22px auto;
+  padding: 12px 15px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+.advisor-answer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0 0 26px;
+}
+.advisor-panel .advisor-avatar {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+  margin-top: 0;
+}
+.advisor-answer-content {
+  flex: 1;
+  min-width: 0;
+}
+.advisor-speaker {
+  display: block;
+  margin: 1px 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.advisor-answer-bubble {
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.advisor-answer-bubble .prose {
+  font: 14px/1.85 var(--font-ui);
+  color: var(--text-primary);
+  margin: 0;
+  width: auto;
+}
+.advisor-answer-bubble .prose p {
+  margin: 0 0 12px;
+}
+.advisor-answer-bubble .prose > :last-child {
+  margin-bottom: 0;
+}
+.advisor-answer-bubble .prose a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.advisor-answer-bubble .prose pre {
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.advisor-tool-record {
+  margin-top: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+}
+.advisor-tool-record summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.advisor-tool-record summary::-webkit-details-marker {
+  display: none;
+}
+.advisor-tool-record summary > svg:last-child {
+  margin-left: auto;
+  width: 13px;
+  transform: rotate(90deg);
+}
+.advisor-tool-record[open] summary > svg:last-child {
+  transform: rotate(-90deg);
+}
+.advisor-tool-record pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.7 var(--font-ui);
+  max-height: 260px;
+  overflow: auto;
+}
+.advisor-tool-record p,
+.advisor-live-tools p {
+  font-size: 12px;
+  margin: 8px 0;
+}
+.advisor-live-tools {
+  margin: 0 0 20px 38px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.advisor-compose-area {
+  flex-shrink: 0;
+  padding: 12px 24px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+.advisor-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface-input);
+  border: 1px solid var(--border-control);
+  border-radius: 12px;
+}
+.advisor-composer:focus-within {
+  border-color: var(--accent);
+}
+.advisor-composer textarea {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  min-height: 50px;
+  max-height: 120px;
+  resize: vertical;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  font: 13px/1.7 var(--font-ui);
+  color: var(--text-primary);
+}
+.advisor-composer textarea::placeholder {
+  color: var(--text-muted);
+}
+.advisor-send {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  flex-shrink: 0;
+  background: var(--accent);
+  color: var(--surface-input);
+  border: 0;
+  border-radius: 8px;
+}
+.advisor-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.advisor-send:disabled {
+  opacity: 0.35;
+}
+.advisor-send svg {
+  width: 22px;
+  height: 22px;
+}
+.advisor-compose-hint {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 9px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.advisor-token-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.advisor-empty {
+  padding: 44px 0 28px;
+}
+.advisor-empty > svg {
+  width: 38px;
+  height: 38px;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+.advisor-empty h3 {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0 0 8px;
+}
+.advisor-empty p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 22px;
+}
+.advisor-empty button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 13px 0;
+  color: var(--text-secondary);
+}
+.advisor-empty button svg {
+  width: 14px;
+  height: 14px;
+}
+.advisor-notice,
+.advisor-stale,
+.advisor-status,
+.advisor-thinking,
+.advisor-setup {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 9px;
+}
+.advisor-stale {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+.advisor-setup button {
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+.advisor-error {
+  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: 12px;
+  max-height: 110px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.advisor-error > div {
+  display: flex;
+  gap: 8px;
+  padding-top: 6px;
+}
+.advisor-error button {
+  font-size: 12px;
+}
+@container advisor (min-width: 480px) {
+  .advisor-heading {
+    padding: 24px 30px 18px;
+  }
+  .right-sidebar .advisor-heading h2 {
+    font-size: 24px;
+  }
+  .advisor-connection {
+    margin-inline: 30px;
+  }
+  .advisor-panel .advisor-model-trigger {
+    font-size: 16px;
+  }
+  .advisor-context-bar {
+    margin-inline: 30px;
+    padding-bottom: 20px;
+  }
+  .advisor-context-bar button {
+    font-size: 14px;
+  }
+  .advisor-messages {
+    padding: 14px 30px 26px;
+  }
+  .advisor-user-message {
+    font-size: 17px;
+    padding: 13px 16px;
+    margin-bottom: 26px;
+  }
+  .advisor-panel .advisor-avatar {
+    width: 34px;
+    height: 34px;
+  }
+  .advisor-speaker {
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+  .advisor-answer {
+    gap: 12px;
+    margin-bottom: 30px;
+  }
+  .advisor-answer-bubble {
+    padding: 15px 16px;
+  }
+  .advisor-answer-bubble .prose {
+    font-size: 17px;
+  }
+  .advisor-tool-record summary {
+    font-size: 14px;
+  }
+  .advisor-compose-area {
+    padding: 14px 30px 20px;
+  }
+  .advisor-composer textarea {
+    font-size: 15px;
+  }
+  .advisor-compose-hint {
+    font-size: 11px;
+  }
+}
+@media (max-width: 600px) {
+  .advisor-heading {
+    padding: 18px 16px 14px;
+  }
+  .advisor-connection {
+    margin: 0 16px 14px;
+  }
+  .advisor-context-bar {
+    margin: 0 16px;
+  }
+  .advisor-controls {
+    margin: 0 16px 10px;
+  }
+  .advisor-messages {
+    padding: 10px 16px 18px;
+  }
+  .advisor-compose-area {
+    padding: 12px 16px max(14px, env(safe-area-inset-bottom));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .advisor-panel * {
+    transition: none !important;
+  }
+}

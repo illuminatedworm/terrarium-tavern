@@ -14,7 +14,7 @@ defineProps<{ text: string; role?: string; status?: 'intermediate' | 'streaming'
     </span>
     <div class="cw-message-body">
       <div class="cw-message-meta">
-        <strong>{{ role === 'user' ? '你' : '角色卡编辑' }}</strong>
+        <strong>{{ role === 'user' ? '你' : '角色卡编辑 agent' }}</strong>
         <small v-if="status" :class="{ 'cw-working': status === 'streaming' }">{{
           status === 'streaming' ? '处理中' : status === 'interrupted' ? '未完成' : '中间回复'
         }}</small>

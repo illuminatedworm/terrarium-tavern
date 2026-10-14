@@ -13,6 +13,8 @@ def backup(store: Store, destination: Path):
     if destination.exists():
         raise ValueError("备份目标已存在，请使用新文件名")
     with store.connection() as db:
+        if db.execute("SELECT 1 FROM advisor_runs WHERE status IN ('queued','running')").fetchone():
+            raise ValueError("请等待参谋 agent 结束或停止后备份")
         if db.execute("SELECT 1 FROM card_edit_runs WHERE status IN ('queued','running')").fetchone():
             raise ValueError("请等待编辑任务完成后备份")
         if db.execute("SELECT 1 FROM turns WHERE status IN ('queued','running')").fetchone():

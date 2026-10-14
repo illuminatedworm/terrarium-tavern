@@ -6,6 +6,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tavern.advisor.config import SYSTEM as ADVISOR_PROMPT
+from tavern.advisor.config import AdvisorConfig
 from tavern.character.editor_config import CardEditorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
@@ -33,6 +35,12 @@ LEGACY_FULL_AGENT_PROMPT_HASHES = {
     "d72b35768688226ad359f3fdc8dcb04286633b4da808a8ee6aa70f7f47e8e00b",
     "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e",
     "7ee23c619af1a6cb406489c4c9316a8457e2161d68d1ef5feba332c8fdb267ea",
+}
+
+LEGACY_ADVISOR_PROMPT_HASHES = {
+    "f7071ba980f49b6cb9889c4652bcf9b9d2392a130e208bed162324ed185c8e44",
+    "86617163b364451f012f2e8810d1580433a3db6ab2381c9c6df7a7e4e95e7659",
+    "b1224d17c30b83d2b0c8fc9951e38f19b56a8ce3b45c2b9f93a8ea96ed8803ad",
 }
 
 
@@ -145,6 +153,7 @@ class SharedSettings(StrictSettings):
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
+    advisor: AdvisorConfig = Field(default_factory=AdvisorConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     local_models: LocalResources = Field(default_factory=LocalResources)
     network: Network = Field(default_factory=Network)
@@ -189,6 +198,15 @@ class SettingsDocument(StrictSettings):
             provider = next(p for p in self.shared.providers if p.id == profile.provider_id)
             if scope != "shared" and provider_channel(provider) != ("chatgpt" if key.startswith("official_") else "standard"):
                 raise ValueError("模型配置与渠道不一致，请在对应渠道中选择供应商")
+        for key in ("model", "official_model"):
+            profile = getattr(self.shared.advisor, key)
+            if profile is None or (not profile.provider_id and not profile.model):
+                continue
+            provider = next((p for p in self.shared.providers if p.id == profile.provider_id), None)
+            if provider is None:
+                raise ValueError("提供商仍被参谋 agent 模型引用，请先切换参谋 agent 的提供商")
+            if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
+                raise ValueError("参谋 agent 模型配置与渠道不一致")
         return self
 
     def runtime(self, mode="half_agent", channel=None) -> Settings:
@@ -214,6 +232,7 @@ class SettingsDocument(StrictSettings):
                                         "official_foreground", "official_background", "default_channel"})
         data["runtime_mode"] = mode
         data.update(self.shared.model_dump())
+        data.pop("advisor", None)  # Advisor has its own operation-local projection.
         data.update(providers=providers, channel_origin=channel)
         data["local_models"].update(agent.local_runtime.model_dump())
         data.update(full_agent=full_profile.model_dump(),
@@ -339,6 +358,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         if fingerprint(raw["full_agent"].get("system_prompt")) in LEGACY_FULL_AGENT_PROMPT_HASHES:
             raw["full_agent"]["system_prompt"] = FULL_AGENT_PROMPT
             changed_scopes.add("full_agent")
+        advisor = raw.get("shared", {}).get("advisor", {})
+        if fingerprint(advisor.get("system_prompt")) in LEGACY_ADVISOR_PROMPT_HASHES:
+            advisor["system_prompt"] = ADVISOR_PROMPT
+            changed_scopes.add("shared")
         for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
                            ("half_agent", "background"), ("shared", "card_editor")):
             profile = raw.setdefault(scope, {}).setdefault(key, {})
@@ -370,7 +393,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     half["local_runtime"] = deepcopy(local)
     full = {**common, "local_runtime": deepcopy(local), "model": (old.full_agent or old.foreground).model_dump(),
             "tools": old.full_agent_config.model_dump(), "system_prompt": old.full_agent_system_prompt}
-    shared = {key: deepcopy(values[key]) for key in SharedSettings.model_fields if key in values}
+    shared = {key: deepcopy(values[key]) for key in SharedSettings.model_fields if key in values and key != "advisor"}
     shared["card_editor"] = (old.card_editor or old.background).model_dump()
     shared["local_models"] = {key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields}
     result = SettingsDocument(full_agent=full, half_agent=half, shared=shared).model_dump()
@@ -414,7 +437,8 @@ def from_runtime(value: Settings) -> SettingsDocument:
         doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
         doc.full_agent.system_prompt = value.full_agent_system_prompt
     setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
-    shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields}
+    shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields if key != "advisor"}
+    shared["advisor"] = doc.shared.advisor.model_dump()
     shared["providers"] = [p for p in shared["providers"] if not p["id"].startswith("unconfigured-")]
     shared["local_models"] = {key: deepcopy(data["local_models"][key]) for key in LocalResources.model_fields}
     doc.shared = SharedSettings.model_validate(shared)

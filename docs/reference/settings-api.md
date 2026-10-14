@@ -2,6 +2,8 @@
 
 本文供修改设置客户端、迁移逻辑和配置存储的开发者使用。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
+参谋 agent 配置位于 `shared.advisor`，设置文档仍为版本 2。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[Advisor 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+
 ## ChatGPT 账号接口
 
 提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档仍为版本 2；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
@@ -31,7 +33,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 |---|---|---|
 | `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model` |
 | `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background` |
-| `shared` | 提供商与密钥、角色卡编辑模型、本地模型文件、网络和清理参数 | `card_editor` |
+| `shared` | 提供商与密钥、角色卡编辑 agent 模型、本地模型文件、网络和清理参数 | `card_editor` |
 
 两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，保存方式不再授予写入权限。
 
@@ -90,7 +92,7 @@ Content-Type: application/json
 
 ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
-导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及角色卡编辑对话/草稿；完整目录迁移使用 CLI 完整备份。
+导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及角色卡编辑 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 
 ## 消息适配
 

@@ -55,7 +55,7 @@ def initialize(store):
                             call["function"]["arguments"] = view.restore(call["function"]["arguments"])
                 db.execute("INSERT OR IGNORE INTO card_editor_traces VALUES (?,?)", (latest[0], dump(messages)))
         db.execute("DELETE FROM card_edits")
-        db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version','3')")
+        db.execute("UPDATE meta SET value='3' WHERE key='schema_version' AND value IN ('1','2')")
 
 
 class Conversations:

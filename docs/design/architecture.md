@@ -1,6 +1,6 @@
 # 应用架构与职责
 
-应用提供 Half Agent 和 Full Agent 两种游玩模式，另有独立的角色卡编辑工作区。本文说明共享层与 Half Agent 的职责；Full Agent 的模型循环见[独立设计](full-agent.md)，Card Editor 见[编辑工作区](card-editor.md)。
+应用提供 Half Agent 和 Full Agent 两种游玩模式，另有独立的角色卡编辑 agent 工作区。本文说明共享层与 Half Agent 的职责；Full Agent 的模型循环见[独立设计](full-agent.md)，Card Editor 见[编辑工作区](card-editor.md)。
 
 ```mermaid
 flowchart TD

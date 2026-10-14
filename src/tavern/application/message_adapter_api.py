@@ -14,7 +14,7 @@ class AdapterUpdate(BaseModel):
 def register_message_adapter_routes(app, store):
     @app.get("/api/message-adapter/types")
     async def adapter_types(lane: str = "foreground"):
-        if lane not in ("foreground", "background", "full_agent", "card_editor"):
+        if lane not in ("foreground", "background", "full_agent", "card_editor", "advisor"):
             raise ValueError("未知模型调用链")
         recipe = recipe_types(store.settings_document().half_agent.context_recipe.model_dump())
         extra = [b["message_type"] for b in recipe["blocks"] if b.get("message_type")] if lane == "foreground" else []
