@@ -3,6 +3,8 @@ import copy
 import hashlib
 import json
 import uuid
+from collections.abc import Callable
+from contextlib import aclosing
 
 from kohakuterrarium.llm.base import BaseLLMProvider, ChatResponse, LLMConfig, NativeToolCall
 from openai import AsyncOpenAI
@@ -37,6 +39,7 @@ from tavern.scripting.protocols import (
 from tavern.scripting.reasoning import anthropic_thinking, gemini_effort, gemini_thinking
 from tavern.scripting.request_context import identity_headers, response_origin
 from tavern.scripting.sent_breakpoints import APIS, FIELD, SentBreakpoints, marked_boundaries
+from tavern.scripting.sse import stream_events
 
 
 class ModelTransport(BaseLLMProvider):
@@ -380,20 +383,21 @@ class ModelTransport(BaseLLMProvider):
                 if self.request_context:
                     self.request_context.receive(api, response.headers)
                 return response
-            await response.aread()
             try:
-                payload = response.json()
-            except ValueError:
-                payload = {}
-            selected = preset(cfg)
-            fields = [selected.get("field", "cachedContent"), *selected["request"]]
-            retry = (attempt == 0 and diagnostic["status"] == "sent"
-                     and not (self.request_context and self.request_context.identity_rejection(api, payload))
-                     and cache_rejection(response.status_code, payload, fields, resource=bool(resource)))
-            if not retry:
+                await response.aread()
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = {}
+                selected = preset(cfg)
+                fields = [selected.get("field", "cachedContent"), *selected["request"]]
+                retry = (attempt == 0 and diagnostic["status"] == "sent"
+                         and not (self.request_context and self.request_context.identity_rejection(api, payload))
+                         and cache_rejection(response.status_code, payload, fields, resource=bool(resource)))
+                if not retry:
+                    response.raise_for_status()
+            finally:
                 await response.aclose()
-                response.raise_for_status()
-            await response.aclose()
             fallback = "服务商拒绝缓存参数或缓存对象已过期；已完整发送上下文"
             if resource:
                 await invalidate_object(self, resource)
@@ -472,7 +476,22 @@ class ModelTransport(BaseLLMProvider):
             self.response_capture(copy.deepcopy(self.last_response_record))
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
 
-    async def _complete_chat(self, messages, **kwargs):
+    async def chat_complete_with_preview(self, messages, on_text: Callable[[str], None], **kwargs) -> ChatResponse:
+        """Preview deltas without losing the authoritative response and metadata."""
+        return await self.chat_complete(messages, on_text=on_text, **kwargs)
+
+    async def _complete_chat(self, messages, *, on_text=None, **kwargs):
+        if self.settings.model_request_mode == "stream":
+            # Complete callers still need the full response (including tool calls),
+            # but may receive it incrementally over HTTP before validation.
+            async with aclosing(self._consume_stream(messages, **kwargs)) as chunks:
+                async for chunk in chunks:
+                    if on_text:
+                        on_text(chunk)
+            return self._completed_response
+        return await self._complete_request(messages, **kwargs)
+
+    async def _complete_request(self, messages, **kwargs):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
@@ -483,24 +502,31 @@ class ModelTransport(BaseLLMProvider):
             await response.aclose()
 
     async def _stream_chat(self, messages, *, tools=None, **kwargs):
+        if self.settings.model_request_mode == "non_stream":
+            response = await self._complete_request(messages, tools=tools, **kwargs)
+            if response.finish_reason in ("length", "content_filter"):
+                raise ValueError("模型回复未完整结束，本回合未提交")
+            yield response.content
+            return
+        async with aclosing(self._consume_stream(messages, tools=tools, **kwargs)) as chunks:
+            async for chunk in chunks:
+                yield chunk
+
+    async def _consume_stream(self, messages, *, tools=None, **kwargs):
+        self._completed_response = None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         response = await self._send(messages, tools, True, kwargs)
         state = StreamState(self.settings.api_mode)
         try:
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    continue
-                event = json.loads(data)
+            async for event in stream_events(response):
                 delta = state.feed(event)
                 if delta:
                     yield delta
             result = self._finish(state.finish())
             if result.finish_reason in ("length", "content_filter"):
                 raise ValueError("模型流未完整结束，本回合未提交")
+            self._completed_response = result
         finally:
             await response.aclose()

@@ -1,6 +1,7 @@
 """ChatGPT plan requests over public Responses, preserving Terrarium's provider contract."""
 import copy
 import json
+from contextlib import aclosing
 
 import httpx
 
@@ -12,20 +13,7 @@ from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.native_response import prepare_messages
 from tavern.scripting.protocols import definitions, response_input, response_tools
 from tavern.scripting.request_context import response_origin
-
-
-async def stream_events(response):
-    """SSE allows multiple data lines and an event ending at EOF."""
-    data = []
-    async for line in response.aiter_lines():
-        if line.startswith("data:"):
-            data.append(line[5:].lstrip(" "))
-        elif not line and data:
-            value, data = "\n".join(data), []
-            if value != "[DONE]":
-                yield json.loads(value)
-    if data and "\n".join(data) != "[DONE]":
-        yield json.loads("\n".join(data))
+from tavern.scripting.sse import stream_events
 
 
 class ChatGPTProvider(ModelTransport):
@@ -197,13 +185,16 @@ class ChatGPTProvider(ModelTransport):
             if response is not None:
                 await response.aclose()
 
-    async def _complete_chat(self, messages, **kwargs):
+    async def _complete_chat(self, messages, *, on_text=None, **kwargs):
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
-        async for _ in self._consume(messages, tools, kwargs):
-            pass
+        async with aclosing(self._consume(messages, tools, kwargs)) as chunks:
+            async for chunk in chunks:
+                if on_text:
+                    on_text(chunk)
         return self._completed_response
 
     async def _stream_chat(self, messages, *, tools=None, **kwargs):
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
-        async for chunk in self._consume(messages, tools, kwargs):
-            yield chunk
+        async with aclosing(self._consume(messages, tools, kwargs)) as chunks:
+            async for chunk in chunks:
+                yield chunk

@@ -7,6 +7,13 @@ export interface TurnEvent {
   payload: Record<string, any>;
 }
 
+/** A model step can become tool activity or be rejected after text was previewed. */
+export function turnDraft(current: string, event: TurnEvent): string {
+  if (typeof event.payload.text !== 'string') return current;
+  if (event.kind === 'text_reset') return event.payload.text;
+  return event.kind === 'text' ? current + event.payload.text : current;
+}
+
 export function eventCursor() {
   let sequence = 0;
   return (event: TurnEvent): boolean => {

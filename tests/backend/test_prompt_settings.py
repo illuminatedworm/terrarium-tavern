@@ -60,7 +60,8 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
                               if item["path"] == "system_prompt"}
             assert system_prompts["full_agent"]["default"] == FULL_AGENT_PROMPT
             assert system_prompts["half_agent"]["default"] == DEFAULT_SYSTEM_PROMPT
-            assert "维护记忆和剧情状态" in system_prompts["full_agent"]["description"]
+            assert "叙事、连续性与可选剧情规划原则" in system_prompts["full_agent"]["description"]
+            assert "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
             assert "前台 Writer" in system_prompts["half_agent"]["description"]
             for scope in ("full_agent", "half_agent"):
                 prompts = [item for item in response["prompt_definitions"] if item["scope"] == scope]

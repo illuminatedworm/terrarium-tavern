@@ -43,7 +43,7 @@ def background_records(events):
             phase = "maintenance"
         if kind == "provider_request" and payload.get("purpose") in ("narrative", "maintenance"):
             phase = payload["purpose"]
-        if kind == "text":
+        if kind in ("text", "text_reset"):
             phase = "narrative"
             continue
         purpose = payload.get("purpose", phase if kind == "activity" else "runtime")

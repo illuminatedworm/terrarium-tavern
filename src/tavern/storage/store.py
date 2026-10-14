@@ -1152,6 +1152,9 @@ class Store(MessageAdapters):
             if result.rowcount != 1:
                 raise Conflict("此回合没有待审核变更")
             db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
+            if clear_draft:
+                db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                           (tid, "text_reset", dump({"text": ""}), time.time()))
             db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                        (tid, "cancelled", dump({"reason": "review_rejected", "resumable": False}), time.time()))
         return self.turn(tid)
@@ -1216,6 +1219,20 @@ class Store(MessageAdapters):
                 (tid, kind, dump(payload), time.time()),
             )
             return cur.lastrowid
+
+    def write_turn_draft(self, tid: str, text: str, *, replace: bool = False) -> None:
+        """Persist a provisional preview and its replay event in one transaction.
+
+        Draft writes cannot change committed history or resurrect a stopped turn.
+        Replacement is required when a tool preamble/rejected reply is discarded.
+        """
+        with self.connection() as db:
+            value = "?" if replace else "draft || ?"
+            changed = db.execute(f"UPDATE turns SET draft={value} WHERE id=? AND status='running'", (text, tid))
+            if changed.rowcount != 1:
+                raise Conflict("回合已结束，不能继续更新正文预览")
+            db.execute("INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
+                       (tid, "text_reset" if replace else "text", dump({"text": text}), time.time()))
 
     def events(self, tid, after=0):
         with self.connection() as db:

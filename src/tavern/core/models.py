@@ -116,6 +116,7 @@ class Settings(BaseModel):
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
+    model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
     def for_role(self, role="foreground"):
         if role == "full_agent" and self._full_runtime is not None:

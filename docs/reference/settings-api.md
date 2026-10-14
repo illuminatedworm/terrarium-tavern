@@ -43,6 +43,8 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 读取与写入
 
+`shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.network` 设置页面，支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点不受影响。Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
+
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。
 
 `GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。不联网、不修改设置或模型列表缓存；`description` 在 Gemini 原生预算档位中包含对应思考 tokens。设置页和输入框共用此接口，ChatGPT 官方仍使用账号模型目录。

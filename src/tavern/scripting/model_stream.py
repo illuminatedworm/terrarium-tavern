@@ -14,6 +14,19 @@ class StreamState:
 
     def feed(self, event):
         api = self.api
+        if not isinstance(event, dict):
+            raise ValueError("模型流事件格式无效，本回合未提交")
+        if "error" in event or event.get("type") == "error":
+            raise ValueError("模型流返回错误，本回合未提交")
+        if self.done:
+            # Chat Completions/Gemini can report usage after the terminal chunk.
+            # Content or tool fragments after completion must never become story.
+            if ((api == "chat_completions" and event.get("choices"))
+                    or (api == "gemini" and event.get("candidates"))
+                    or (api in ("responses", "anthropic") and event.get("type") != "ping")):
+                raise ValueError("模型完成事件之后仍有响应内容，本回合未提交")
+            if event.get("type") == "ping":
+                return ""
         if api == "responses":
             kind = event.get("type")
             self.response_output.accept(event)
@@ -45,6 +58,8 @@ class StreamState:
                 for field in ("name", "arguments"):
                     item["function"][field] += call.get("function", {}).get(field) or ""
             if choice.get("finish_reason"):
+                if choice["finish_reason"] not in ("stop", "tool_calls", "length", "content_filter"):
+                    raise ValueError("模型流结束原因无效，本回合未提交")
                 self.done = True
                 self.result["finish_reason"] = choice["finish_reason"]
             return delta.get("content") or ""

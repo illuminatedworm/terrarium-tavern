@@ -18,6 +18,7 @@ from tavern.full_agent.content import lore_references
 from tavern.full_agent.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
+from tavern.full_agent.preview import TurnPreview
 from tavern.full_agent.protocol import ToolError, TurnError, failed
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
@@ -61,6 +62,7 @@ class FullAgent:
             if request.update_variables else None)
         self.resumed = progress is not None
         self.final_response = None
+        self.preview = TurnPreview(store, tid)
         self.context_epoch = ""
         self.native_epoch = ""
         saved_context = (progress or {}).get("request_context", {})
@@ -210,8 +212,14 @@ class FullAgent:
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
+                self.preview.replace("")
                 try:
-                    response = await provider.chat_complete(provider_messages(provider, model_messages(compiled), self.settings), extra_body=tool_options)
+                    messages = provider_messages(provider, model_messages(compiled), self.settings)
+                    complete = getattr(provider, "chat_complete_with_preview", None)
+                    if complete:
+                        response = await complete(messages, self.preview.append, extra_body=tool_options)
+                    else:
+                        response = await provider.chat_complete(messages, extra_body=tool_options)
                 except Exception as error:
                     record = getattr(provider, "last_response_record", {})
                     if record.get("error"):
@@ -220,6 +228,10 @@ class FullAgent:
                 self.event("usage", {"usage": response.usage or {}, "calls": 1,
                                       "duration_s": time.perf_counter() - started})
                 calls = getattr(provider, "last_tool_calls", []) or []
+                if calls:
+                    # Text preceding tool calls is intermediate activity, not story.
+                    # Do this before validating/executing the batch, including failures.
+                    self.preview.replace("")
                 if self.settings.context_strategy == "openai_compact":
                     from tavern.full_agent.compaction import capture_checkpoint
                     if capture_checkpoint(self.state, compiled, self.settings, provider,
@@ -250,8 +262,9 @@ class FullAgent:
                     text = response.content or ""
                     if not text.strip():
                         raise ValueError("Full Agent 没有返回故事正文，本回合未提交")
-                    self.store.set_turn(self.tid, draft=text)
-                    self.store.event(self.tid, "text", {"text": text})
+                    # Terminal Responses items can supply text not present in deltas.
+                    # Reconcile by replacement so completion never duplicates a preview.
+                    self.preview.replace(text)
                     self.final_response = self.response_message(response, provider, calls)
                     return text
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
@@ -283,6 +296,7 @@ class FullAgent:
             await provider.close()
 
     def reject_reply(self, response, provider, correction):
+        self.preview.replace("")
         message = self.response_message(response, provider, [])
         message["_full_agent_rejected"] = True
         self.append(message, self.state["window"]["id"])

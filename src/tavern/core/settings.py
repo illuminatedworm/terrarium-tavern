@@ -141,6 +141,7 @@ class LocalResources(StrictSettings):
 
 
 class SharedSettings(StrictSettings):
+    model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)

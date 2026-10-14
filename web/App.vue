@@ -57,7 +57,7 @@ import StateTree from './components/story/StateTree.vue';
 import WorkRecords from './components/records/WorkRecords.vue';
 import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
-import { observeTurn } from './lib/turnStream';
+import { observeTurn, turnDraft } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
 import {
   contextKind,
@@ -1341,14 +1341,15 @@ function observe(id: string) {
   const sid = session.value.id,
     token = viewScope.current();
   // Rebuild from sequence zero on reopen instead of appending replay to a draft snapshot.
+  const ownsTurn = () => viewScope.owns(token) && activeTurn.value?.id === id;
   draft.value = '';
   trace.value = [];
   events = observeTurn(
     id,
-    () => viewScope.owns(token),
+    ownsTurn,
     (event) => {
-      if (event.kind === 'text') {
-        draft.value += event.payload.text;
+      if (event.kind === 'text' || event.kind === 'text_reset') {
+        draft.value = turnDraft(draft.value, event);
         void scroll();
       } else {
         trace.value.push(event);
@@ -1371,7 +1372,7 @@ function observe(id: string) {
     async () => {
       try {
         const [turn, updated] = await Promise.all([api(`/turns/${id}`), api(`/sessions/${sid}`)]);
-        if (!viewScope.owns(token)) return;
+        if (!ownsTurn()) return;
         const following = followLatest.value,
           top = chat.value?.scrollTop || 0;
         const completedReply =
@@ -1390,7 +1391,7 @@ function observe(id: string) {
         busy.value = false;
         session.value = updated;
         await nextTick();
-        if (!viewScope.owns(token)) return;
+        if (!ownsTurn()) return;
         if (following && completedReply) {
           if (storyView.value === 'dialogue') await navigateMessage(completedReply.id);
           else pendingReplyStart.value = completedReply.id;
@@ -1402,7 +1403,7 @@ function observe(id: string) {
         await load();
         await refreshContextStats();
       } catch (e: any) {
-        if (viewScope.owns(token)) {
+        if (ownsTurn()) {
           error.value = e.message;
           busy.value = false;
         }
@@ -2509,7 +2510,9 @@ useTimedError(error);
                           : updatingVariables
                             ? '正在更新变量'
                             : busy
-                              ? '正在书写'
+                              ? isFullAgent
+                                ? '正文预览 · 未保存'
+                                : '正在书写'
                               : '未提交草稿'
                       }}</span>
                     </div>

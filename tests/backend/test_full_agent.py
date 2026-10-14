@@ -895,7 +895,8 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"}
-        assert "Must succeed exactly once" in definitions["patch_state"]["description"]
+        assert "When variable updates are authorized, submit exactly one successful patch this turn" in definitions["patch_state"]["description"]
+        assert "validation failures may be corrected and retried and do not count as success" in definitions["patch_state"]["description"]
         assert not any(m.get("content", "").startswith("本轮须调用 patch_state") for m in wire["messages"])
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]

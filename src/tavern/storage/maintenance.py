@@ -115,7 +115,7 @@ def cleanup(store, *, vacuum=False):
                 payload = json.loads(db.execute("SELECT payload FROM events WHERE seq=?", (event["seq"],)).fetchone()[0])
                 if not isinstance(payload, dict):
                     payload = {"message": str(payload)}
-                if event["kind"] == "text":
+                if event["kind"] in ("text", "text_reset"):
                     db.execute("DELETE FROM events WHERE seq=?", (event["seq"],))
                 else:
                     compact = {"detail_expired": True, "purpose": payload.get("purpose", "runtime"),

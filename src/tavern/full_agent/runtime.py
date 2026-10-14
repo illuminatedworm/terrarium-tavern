@@ -186,6 +186,7 @@ class FullAgentRuntime:
             pending = {"messages": [output] if reused else [user, output], "before": before,
                        "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace,
                        "message_edit_notified": list(snapshot.get(NOTIFICATIONS, []))}
+            agent.preview.replace(text)
             finish_turn(self.store, tid, session, pending, snapshot)
         except asyncio.CancelledError:
             self.store.set_turn(tid, status="cancelled", error="用户取消，草稿未提交")
