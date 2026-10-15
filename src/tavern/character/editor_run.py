@@ -4,8 +4,6 @@ import copy
 import json
 import time
 
-from kohakuterrarium.llm.base import ToolSchema
-
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_runtime_config import editor_runtime_config
@@ -14,6 +12,8 @@ from tavern.core.message_adapter import provider_messages
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation
 from tavern.storage.store import dump
+from tavern.web.client import WebTools
+from tavern.web.cloud import WebSession
 
 
 class EditorRun:
@@ -38,7 +38,11 @@ class EditorRun:
         self.pending_calls = copy.deepcopy(progress.get("pending_calls") if progress else None)
         saved = copy.deepcopy(progress["context"] if progress else self.edits.context(self.wid))
         self.rolled = bool(progress and progress.get("rolled"))
-        self.definitions = tool_definitions()
+        self.web_session = WebSession(self.cfg.card_editor_config.web.mode, self.cfg, "card_editor", self.event,
+                                      failed=bool(progress and progress.get("web_fallback")))
+        self.definitions = self.web_session.definitions(tool_definitions())
+        self.web = WebTools(self.cfg.web, self.cfg.network, service.web_transport,
+                            mode=self.cfg.card_editor_config.web.mode, event=self.event)
         # Steering must close an old batch before a new user message reaches the
         # provider. Never execute a stale proposed mutation after changed intent.
         if progress and self.request.get("text", "").strip() and self.pending_calls:
@@ -72,7 +76,19 @@ class EditorRun:
         self.edits.save_progress(self.wid, self.rid, {"working": self.working, "base": self.base,
             "current_refs": self.current_refs, "context": self.context.saved(), "trace": self.trace,
             "pending_calls": self.pending_calls, "persona_reads": self.persona_reads,
-            "persona_changes": self.persona_changes, "calls": self.calls, "rolled": self.rolled})
+            "persona_changes": self.persona_changes, "calls": self.calls, "rolled": self.rolled,
+            "web_fallback": self.web_session.failed})
+
+    def web_fallback(self):
+        self.definitions = self.web_session.definitions(tool_definitions())
+        # Switching only the search executor must not discard this unfinished
+        # turn's completed reads/results on a later resume.
+        self.context.refresh_tool_policy()
+        self.save()
+        if self.calls >= (12 if self.legacy else self.cfg.card_editor_config.max_steps):
+            raise ValueError("本次模型调用额度已用完，可继续使用本地搜索")
+        self.calls += 1
+        self.event("model_call", {"call": self.calls, "model": self.cfg.model, "search_fallback": True})
 
     def response(self, provider, text, calls):
         message = {"role": "assistant", "content": text}
@@ -137,7 +153,7 @@ class EditorRun:
     def archived_trace(self):
         result = []
         for message in self.trace:
-            item = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id", "_tool_error"}}
+            item = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id", "_tool_error", "web_sources"}}
             if isinstance(item.get("content"), str):
                 item["content"] = self.context.view.restore(item["content"])
             for call in item.get("tool_calls", []):
@@ -183,13 +199,13 @@ class EditorRun:
         self.save()
         await self.execute_pending()
         maximum = 12 if self.legacy else self.cfg.card_editor_config.max_steps
-        for index in range(maximum):
-            self.calls = index + 1
+        for _ in range(maximum):
+            if self.calls >= maximum:
+                break
+            self.calls += 1
             messages = self.context.prepare()
             if self.context.must_rollover:
                 self.event("context_warning", {"message": "编辑上下文达到窗口上限，要求换窗；原文仍完整保留"})
-            definitions = self.definitions
-            schemas = [ToolSchema(name=d["function"]["name"], description=d["function"]["description"], parameters=d["function"]["parameters"]) for d in definitions]
             self.save()
             tokens = self.context.tokens()
             self.event("model_call", {"call": self.calls, "model": self.cfg.model})
@@ -198,8 +214,11 @@ class EditorRun:
             options = {"parallel_tool_calls": False}
             if self.context.must_rollover:
                 options["tool_choice"] = {"type": "function", "function": {"name": "new_context"}}
-            async for chunk in provider.chat(provider_messages(provider, messages, self.cfg), tools=schemas, extra_body=options):
-                if chunk:
+            async for chunk in self.web_session.chat(provider, provider_messages(provider, messages, self.cfg), tool_definitions(),
+                                                    extra_body=options, on_fallback=self.web_fallback):
+                if chunk is None:
+                    text = ""
+                elif chunk:
                     text += chunk
                     self.event("text", {"text": chunk})
             self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,

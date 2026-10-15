@@ -17,7 +17,7 @@ from tavern.character.card_workflow import validate_document
 from tavern.character.cards import diagnose, normalize
 from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.models import ContextRecipe, PersonaEdit
-from tavern.core.settings import SettingsDocument
+from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.search.retrieval_config import ModelProfile
 from tavern.storage.store import Conflict, dump, uid
@@ -124,6 +124,8 @@ def export_package(store, selection):
             if not selection.include_api_keys:
                 for provider in raw["shared"]["providers"]:
                     provider["api_key"] = ""
+                for name in ("exa", "tavily"):
+                    raw["shared"]["web"][name]["api_key"] = ""
             package["settings"] = {"document": raw, "browser": browser_preferences(selection.browser_preferences)}
         for table in ("personas", "cards", "sessions"):
             for identity in dict.fromkeys(getattr(selection, table)):
@@ -233,7 +235,7 @@ def validate_package(store, package, blobs):
     try:
         preferences = package.get("settings")
         if preferences is not None:
-            SettingsDocument.model_validate(preferences["document"])
+            preferences["document"] = migrate_settings(preferences["document"]).model_dump()
             browser_preferences(preferences.get("browser", {}))
         for persona in package["personas"]:
             validate_row(schema, "personas", persona, {"id", "version", "name", "description"})
@@ -381,12 +383,14 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 current = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 if expected_revisions != current.revisions:
                     raise Conflict("个人设置已改变，请重新预览后导入")
-                incoming = SettingsDocument.model_validate(package["settings"]["document"])
+                incoming = migrate_settings(package["settings"]["document"])
                 if not package.get("includes_api_keys"):
                     # Preserve local secrets only for the exact same provider identity and endpoint.
                     keys = {(p.id, p.base_url): p.api_key for p in current.shared.providers}
                     for provider in incoming.shared.providers:
                         provider.api_key = keys.get((provider.id, provider.base_url), "")
+                    for name in ("exa", "tavily"):
+                        getattr(incoming.shared.web, name).api_key = getattr(current.shared.web, name).api_key
                 incoming.revisions = {scope: revision + 1 for scope, revision in current.revisions.items()}
                 for profile in (incoming.full_agent.model, incoming.half_agent.foreground,
                                 incoming.half_agent.background, incoming.shared.card_editor):

@@ -6,7 +6,6 @@ import time
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
-from kohakuterrarium.llm.base import ToolSchema
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.advisor.context import (
@@ -19,7 +18,6 @@ from tavern.advisor.context import (
 )
 from tavern.advisor.storage import AdvisorStore
 from tavern.advisor.tools import AdvisorTools, definitions
-from tavern.advisor.web import WebTools
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
@@ -28,6 +26,8 @@ from tavern.core.tokens import request_tokens
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation, response_origin
 from tavern.storage.store import Conflict, dump, uid
+from tavern.web.client import WebTools
+from tavern.web.cloud import WebSession
 
 
 class ConsultationRequest(BaseModel):
@@ -70,13 +70,16 @@ class AdvisorService:
         for exchange in state["exchanges"]:
             exchange["stale"] = any(current_sources.get(mid) != value for mid, value in exchange["story_sources"].items())
             exchange.pop("story_sources")
+            exchange["trace"] = [{k: v for k, v in row.items() if k in {"role", "content", "tool_calls", "tool_call_id", "web_sources", "web_activity"}}
+                                 for row in exchange["trace"]]
         state["context"] = {key: state["context"].get(key) for key in ("summary", "through", "created", "strategy")}
         return state
 
     def preview(self, sid):
         state, session = self.data.get(sid), self.store.session(sid)
         cfg, config = runtime_config(self.store, session, state["options"])
-        return compile_context(freeze_story(self.store, session), config, cfg, state["exchanges"], state["context"], [], definitions(session["agent_mode"], config.web.enabled))
+        web = WebSession(config.web.mode, cfg, "advisor")
+        return compile_context(freeze_story(self.store, session), config, cfg, state["exchanges"], state["context"], [], web.definitions(definitions(session["agent_mode"])))
 
     def options(self, sid, request):
         state, session = self.data.get(sid), self.store.session(sid)
@@ -179,26 +182,37 @@ class AdvisorRun:
         progress = run["progress"]
         self.story, self.context = progress["story"], progress["context"]
         self.trace, self.preference, self.pending = progress["trace"], progress["preference"], progress["pending"]
+        self.web_events = progress.get("web_events", [])
+        self.web_sources = progress.get("web_sources", [])
         self.exchanges = self.data.get(self.sid)["exchanges"]
         self.view = ModelView()
         self.view.reserved = set(progress.get("reserved", self.context.get("reserved", []))) | set(HANDLE.findall(dump([self.story, self.exchanges, self.request["text"]])))
         for raw in progress.get("view", self.context.get("view", [])):
             self.view.bind(raw)
-        self.definitions = definitions(self.story["agent_mode"], config.web.enabled)
+        self.web_session = WebSession(config.web.mode, cfg, "advisor", self.event, failed=progress.get("web_fallback", False))
+        self.base_definitions = definitions(self.story["agent_mode"])
+        self.definitions = self.web_session.definitions(self.base_definitions)
         self.tools = AdvisorTools(self)
-        self.web = WebTools(config.web, cfg.network, service.web_transport)
+        self.web = WebTools(cfg.web, cfg.network, service.web_transport, mode=config.web.mode, event=self.event)
         self.context_prepared = progress.get("context_prepared", False)
         self.calls = 0
         self.request_context = ProviderRequestContext(str(uuid5(NAMESPACE_URL, "advisor:" + self.sid)), rid, "consultation", self.store.device_id())
 
     def event(self, kind, payload):
+        if kind == "web_activity":
+            self.web_events.append(copy.deepcopy(payload))
+        if kind == "web_sources":
+            sources = {row["url"]: row for row in self.web_sources}
+            sources.update({row["url"]: row for row in payload["sources"]})
+            self.web_sources = list(sources.values())
         if kind not in {"provider_request", "provider_response"}:
             self.data.event(self.rid, kind, payload)
 
     def save(self):
         progress = {"story": self.story, "context": self.context, "trace": self.trace, "preference": self.preference,
                     "pending": self.pending, "view": list(self.view.forward), "identity": context_identity(self.cfg, self.config),
-                    "context_prepared": self.context_prepared, "reserved": sorted(self.view.reserved)}
+                    "context_prepared": self.context_prepared, "reserved": sorted(self.view.reserved),
+                    "web_fallback": self.web_session.failed, "web_events": self.web_events, "web_sources": self.web_sources}
         with self.store.connection() as db:
             db.execute("UPDATE advisor_runs SET progress=? WHERE id=?", (dump(progress), self.rid))
 
@@ -206,6 +220,11 @@ class AdvisorRun:
         pending = [{"role": "system", "message_type": "advisor_notice", "runtime_phase": "body", "content": "以下当前用户咨询的引用为 Q1。只有其中的明确修改要求可以授权更新本轮偏好。"},
                    {"role": "user", "content": self.request["text"]}, *self.trace]
         return compile_context(self.story, self.config, self.cfg, self.exchanges, self.context, pending, self.definitions, self.view)
+
+    def web_fallback(self):
+        self.definitions = self.web_session.definitions(self.base_definitions)
+        self.request_slot()
+        self.save()
 
     def check_preference_write(self, db=None):
         if db is None:
@@ -324,12 +343,17 @@ class AdvisorRun:
         # Portable complete tool history is independent of the model origin.
         trace = []
         for message in self.trace:
-            row = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id"}}
+            row = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id",
+                "web_sources", "_native_response", "_response_origin", "_response_digest", "reasoning"}}
             if isinstance(row.get("content"), str):
                 row["content"] = self.view.restore(row["content"])
             for call in row.get("tool_calls", []):
                 call["function"]["arguments"] = self.view.restore(call["function"]["arguments"])
             trace.append(row)
+        if trace and self.web_events:
+            trace[-1]["web_activity"] = copy.deepcopy(self.web_events)
+        if trace and self.web_sources:
+            trace[-1]["web_sources"] = copy.deepcopy(self.web_sources)
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             self.data.ensure(db, self.sid)
@@ -360,11 +384,12 @@ class AdvisorRun:
             self.save()
             self.event("response_started", {})
             text = ""
-            schemas = [ToolSchema(**d["function"]) for d in self.definitions]
             self.request_slot()
-            async for chunk in provider.chat(provider_messages(provider, compiled["runtime_messages"], self.cfg), tools=schemas,
-                                             extra_body={"parallel_tool_calls": True}):
-                if chunk:
+            async for chunk in self.web_session.chat(provider, provider_messages(provider, compiled["runtime_messages"], self.cfg), self.base_definitions,
+                                             extra_body={"parallel_tool_calls": True}, on_fallback=self.web_fallback):
+                if chunk is None:
+                    text = ""
+                elif chunk:
                     text += chunk
                     self.event("text", {"text": chunk})
             calls = getattr(provider, "last_tool_calls", []) or []

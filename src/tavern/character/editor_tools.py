@@ -15,6 +15,7 @@ from tavern.character.editor_reads import after_patch, known, remember
 from tavern.core.model_view import hidden_field
 from tavern.core.tokens import count_text
 from tavern.storage.store import dump
+from tavern.web.tools import SPECS as WEB_SPECS
 
 
 class Arguments(BaseModel):
@@ -137,6 +138,7 @@ SPECS = {
     "search_history": (HistorySearch, "Search this authoring conversation only; returns H handles and labeled previews. Includes user requests and final replies, not gameplay."),
     "read_history": (HistoryRead, "Read a full authoring message and its durable tool exchanges. Use it to verify approved constraints or recover results that left the active context."),
     **PERSONA_SPECS,
+    **WEB_SPECS,
 }
 
 
@@ -214,7 +216,7 @@ class EditorTools(PersonaTools):
             raise ValueError(f"修改前请先完整读取 {ref} 的 {path or '根对象'}；当前上下文中没有该字段有效的完整版本，请用 read_field 读取 current。")
 
     async def execute(self, name, raw):
-        if name not in SPECS:
+        if name not in SPECS or (name in WEB_SPECS and name not in {d.get("function", {}).get("name") for d in self.owner.definitions}):
             raise ValueError("工具不可用")
         args = json.loads(raw) if isinstance(raw, str) else copy.deepcopy(raw)
         model = SPECS[name][0]
@@ -229,6 +231,12 @@ class EditorTools(PersonaTools):
 
     async def overview_call(self, args):
         return self.overview(args.card_ref)
+
+    async def web_search(self, args):
+        return await self.owner.web.search(args.query, args.limit, args.objective)
+
+    async def read_webpage(self, args):
+        return await self.owner.web.read(args.url)
 
     async def read_field(self, args):
         pointer = self.view.pointer(args.path, restore=True)

@@ -47,7 +47,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void) {
       if (disposed || token !== generation) return;
       const event = JSON.parse(message.data) as AdvisorEvent;
       if (!cursor.accept(event)) return;
-      if (event.kind === 'response_started') streaming.value = '';
+      if (event.kind === 'response_started' || event.kind === 'response_restarted') streaming.value = '';
       else if (event.kind === 'text') streaming.value += event.payload.text;
       else if (event.kind === 'context_warning' || event.kind === 'compacting')
         notice.value = event.payload.message;

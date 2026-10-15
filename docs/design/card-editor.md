@@ -2,6 +2,8 @@
 
 Card Editor 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-editor.md)，工具详见[协议](../reference/card-editor-tools.md)。
 
+联网工具与参谋 agent 复用 `web/` 模块，以 `shared.card_editor_config.web.mode` 独立授权，服务和密钥使用 `shared.web`。运行、工具目录和上下文预览按同一模式生成；云端搜索只用于主请求，强制 `new_context` 时不启用。服务降级、来源链接和请求重启事件属于持久的用户可见活动，日志合并不得跨 `response_restarted` 合并文本。网页资料不扩大草稿、persona 或保存权限。
+
 用户明确要求时还可通过四个用户角色工具列出、读取、新增和修改 persona 名称及介绍。普通制卡不自动加载用户角色库。工具声明和系统策略限定明确意图，request_ref 必须指向本任务最新用户消息；助手提议和旧授权不能替代当前要求。
 
 ## 数据所有权

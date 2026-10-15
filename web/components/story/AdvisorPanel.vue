@@ -9,6 +9,8 @@ import ModelSelect from '../settings/ModelSelect.vue';
 import StoryProse from './AdvisorProse.vue';
 import AdvisorIcon from './AdvisorIcon.vue';
 import AdvisorPreview from './AdvisorPreview.vue';
+import WebSources from '../common/WebSources.vue';
+import { webActivityLabel, webSources } from '../../lib/webSearch';
 
 const props = defineProps<{ sessionId: string; storyRevision: number; settings: SettingsDocument }>();
 const emit = defineEmits<{ close: []; settings: []; preferenceSaved: [] }>();
@@ -70,6 +72,12 @@ const unavailable = computed(
     !state.value?.effective.model_selection?.model || !state.value?.effective.model_selection?.provider_id,
 );
 const tools = computed(() => events.value.filter((e) => ['tool_started', 'tool_finished'].includes(e.kind)));
+const webActivities = computed(() => events.value.filter((e) => e.kind === 'web_activity'));
+const liveSources = computed(() =>
+  webSources(
+    events.value.filter((e) => e.kind === 'web_sources').map((e) => ({ web_sources: e.payload.sources })),
+  ),
+);
 const lastStats = computed(
   () => [...events.value].reverse().find((e) => e.kind === 'context_stats')?.payload,
 );
@@ -297,6 +305,13 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
           <div class="advisor-answer-content">
             <span class="advisor-speaker">参谋 agent</span>
             <div class="advisor-answer-bubble"><StoryProse :text="exchange.response" /></div>
+            <WebSources :sources="webSources(exchange.trace)" />
+            <details v-if="exchange.trace.some((m) => m.web_activity?.length)" class="advisor-tool-record">
+              <summary>联网服务记录</summary>
+              <p v-for="(item, i) in exchange.trace.flatMap((m) => m.web_activity || [])" :key="i">
+                {{ webActivityLabel(item) }}
+              </p>
+            </details>
             <p v-if="exchange.stale" class="advisor-stale">此讨论依据的剧情已变更</p>
             <details v-if="callCount(exchange.trace)" class="advisor-tool-record">
               <summary>
@@ -328,9 +343,9 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
                 {{ running ? '正在思考…' : '本次咨询尚未完成' }}
               </p>
             </div>
-          </div>
-        </article></template
-      >
+            <WebSources :sources="liveSources" />
+          </div></article
+      ></template>
       <details v-if="tools.length && (running || pending)" class="advisor-live-tools">
         <summary>
           正在查阅与处理 · {{ tools.filter((e) => e.kind === 'tool_finished').length }} 项完成
@@ -339,6 +354,10 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
           {{ toolLabels[event.payload.tool] || event.payload.tool }} ·
           {{ event.kind === 'tool_started' ? '开始' : event.payload.result?.error ? '失败' : '完成' }}
         </p>
+      </details>
+      <details v-if="webActivities.length && (running || pending)" class="advisor-live-tools" open>
+        <summary>联网服务</summary>
+        <p v-for="event in webActivities" :key="event.seq">{{ webActivityLabel(event.payload) }}</p>
       </details>
     </div>
     <div class="advisor-compose-area">

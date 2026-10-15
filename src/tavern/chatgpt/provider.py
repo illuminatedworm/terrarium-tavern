@@ -14,6 +14,7 @@ from tavern.scripting.native_response import prepare_messages
 from tavern.scripting.protocols import definitions, response_input, response_tools
 from tavern.scripting.request_context import response_origin
 from tavern.scripting.sse import stream_events
+from tavern.web.cloud import HOSTED_TOOL, WebSearchUnavailable, search_failure, source_links
 
 
 class ChatGPTProvider(ModelTransport):
@@ -28,6 +29,7 @@ class ChatGPTProvider(ModelTransport):
         self._closed = False
         self._allowed_tools = set()
         self._completed_response = None
+        self._cloud_search = False
         super().__init__(settings, key, capture, http_client=http_client, request_context=request_context)
 
     async def close(self):
@@ -76,6 +78,10 @@ class ChatGPTProvider(ModelTransport):
             body["prompt_cache_key"] = self.request_context.session_id
         extra = kwargs.get("extra_body") or {}
         choice = extra.get("tool_choice", "auto")
+        self._cloud_search = bool(kwargs.get("_web_search") and kwargs.get("_web_role") in {"advisor", "card_editor"}
+                                  and kwargs.get("_web_role") == getattr(self, "operation_purpose", None)
+                                  and choice in ("auto", "required") and threshold is None
+                                  and not kwargs.get("_maintenance_instructions"))
         selected = definitions(tools)
         if isinstance(choice, dict):
             forced = choice.get("function", choice).get("name")
@@ -91,7 +97,12 @@ class ChatGPTProvider(ModelTransport):
                                 "tools": response_tools(selected)}], tool_choice=choice,
                         parallel_tool_calls=bool(extra.get("parallel_tool_calls", False)))
         elif choice == "required":
-            raise ValueError("当前请求没有可调用的工具")
+            if not self._cloud_search:
+                raise ValueError("当前请求没有可调用的工具")
+        if self._cloud_search:
+            body.setdefault("tools", []).append(copy.deepcopy(HOSTED_TOOL))
+            body["include"].append("web_search_call.action.sources")
+            body["tool_choice"] = choice
         return body
 
     async def _send(self, messages, tools, stream, kwargs):
@@ -137,6 +148,11 @@ class ChatGPTProvider(ModelTransport):
             raise ChatGPTError("ChatGPT 响应未完整结束，本轮未提交", code="incomplete_response",
                                request_id=self._request_id())
         for item in payload.get("output", []):
+            if item.get("type") == "web_search_call":
+                if not self._cloud_search:
+                    raise ChatGPTError("模型返回了未授权的云端搜索，本轮未提交", code="invalid_tool_call")
+                if item.get("status") in {"failed", "incomplete"}:
+                    raise ChatGPTError("云端搜索未完成", code="web_search_failed")
             if item.get("type") == "function_call":
                 if item.get("namespace") != "tavern" or item.get("name") not in self._allowed_tools:
                     raise ChatGPTError("模型返回了未授权的工具调用，本轮未提交", code="invalid_tool_call")
@@ -144,13 +160,18 @@ class ChatGPTProvider(ModelTransport):
         # authentication material. Only diagnostic metadata is subject to token-pattern redaction.
         if payload.get("diagnostics") is not None:
             payload = {**payload, "diagnostics": redact(payload["diagnostics"], (self.key,))}
-        return super()._finish(payload)
+        result = super()._finish(payload)
+        sources = source_links(payload)
+        if sources:
+            self._last_assistant_extra_fields["web_sources"] = sources
+        return result
 
     async def _consume(self, messages, tools, kwargs):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         self._completed_response = None
         response = None
+        event_sink = kwargs.get("_web_event") or (lambda kind, payload: None)
         try:
             response = await self._send(messages, tools, True, kwargs)
             state = StreamState("responses")
@@ -159,6 +180,9 @@ class ChatGPTProvider(ModelTransport):
                 if not isinstance(event, dict):
                     raise ChatGPTError("ChatGPT 流事件格式无效，本轮未提交", code="invalid_stream")
                 kind = event.get("type")
+                if self._cloud_search and kind in {"response.web_search_call.in_progress", "response.web_search_call.searching", "response.web_search_call.completed"}:
+                    event_sink("web_activity", {"service": "openai", "auth_mode": "oauth", "operation": "search",
+                        "call_id": event.get("item_id"), "status": "completed" if kind.endswith(".completed") else "started"})
                 if kind in ("response.failed", "response.incomplete", "error"):
                     payload = event.get("response", event)
                     if kind == "error" and "error" not in payload:
@@ -173,8 +197,12 @@ class ChatGPTProvider(ModelTransport):
                 raise ChatGPTError("ChatGPT 连接在完成事件之前结束，本轮未提交", code="stream_incomplete",
                                    request_id=self._request_id())
             self._completed_response = self._finish(state.finish())
+            if self._last_assistant_extra_fields.get("web_sources"):
+                event_sink("web_sources", {"sources": self._last_assistant_extra_fields["web_sources"]})
         except ChatGPTError as error:
             self._record_error(error)
+            if self._cloud_search and search_failure(error):
+                raise WebSearchUnavailable("云端搜索不可用") from None
             raise
         except (httpx.HTTPError, json.JSONDecodeError):
             error = ChatGPTError("ChatGPT 连接中断或响应无效，本轮未提交", code="stream_interrupted",

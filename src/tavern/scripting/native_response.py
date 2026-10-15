@@ -26,6 +26,10 @@ def portable(message):
     result = copy.deepcopy(message)
     for key in (*REASONING_FIELDS, "_native_response", "_response_origin", "_response_digest"):
         result.pop(key, None)
+    if result.get("web_sources") and isinstance(result.get("content"), str):
+        # A model/account switch invalidates native items, not the public evidence.
+        result["content"] += "\n\n网页来源：\n" + "\n".join(
+            f"{row['title']} — {row['url']}" for row in result["web_sources"])
     return result
 
 

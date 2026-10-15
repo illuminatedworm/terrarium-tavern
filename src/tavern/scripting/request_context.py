@@ -115,6 +115,7 @@ class OperationContexts:
 def configure_operation(provider, context, event, purpose):
     """Also used for injected providers, so test and production lifecycles agree."""
     provider.request_context = context
+    provider.operation_purpose = purpose
     if hasattr(provider, "settings") and hasattr(provider, "key"):
         context.bind(response_origin(provider.settings, provider.key))
     provider.response_capture = lambda record: event("provider_response", {"purpose": purpose, **record})

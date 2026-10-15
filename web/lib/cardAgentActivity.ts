@@ -1,3 +1,5 @@
+import { webActivityLabel } from './webSearch';
+
 export interface EditorEvent {
   seq: number;
   kind: string;
@@ -36,6 +38,8 @@ const labels: Record<string, string> = {
   read_persona: '读取用户角色',
   create_persona: '新增用户角色',
   update_persona: '修改用户角色',
+  web_search: '搜索网页',
+  read_webpage: '读取网页',
 };
 export function mergeEditorEvents(current: EditorEvent[], incoming: EditorEvent[]) {
   const events = new Map(current.map((event) => [event.seq, event]));
@@ -53,6 +57,15 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
         title: '思考与处理',
         target: `第 ${p.call} 次模型请求`,
         status: 'requested',
+      });
+    } else if (event.kind === 'web_activity') {
+      const id = `web-${p.action_id || p.call_id || event.seq}`;
+      actions.set(id, {
+        id,
+        seq: actions.get(id)?.seq ?? event.seq,
+        title: webActivityLabel(p),
+        target: p.operation === 'read' ? '网页提取' : '联网搜索',
+        status: p.status === 'started' ? 'running' : p.status === 'fallback' ? 'completed' : p.status,
       });
     } else if (event.kind === 'tool_started' || event.kind === 'tool_finished') {
       const id = p.action_id;
@@ -128,7 +141,10 @@ export function editorActivityBlocks(events: EditorEvent[], runStatus: string): 
   let current: TextStep | undefined;
   for (const event of ordered) {
     if (event.kind === 'model_call') current = undefined;
-    else if (event.kind === 'text' && typeof event.payload.text === 'string') {
+    else if (event.kind === 'response_restarted') {
+      if (current) current.text = '';
+      current = undefined;
+    } else if (event.kind === 'text' && typeof event.payload.text === 'string') {
       if (!current) {
         current = { id: `text-${event.seq}`, seq: event.seq, text: '', hasTools: false };
         texts.push(current);

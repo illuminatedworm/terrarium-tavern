@@ -17,10 +17,13 @@ def signature(working):
 
 
 class EditorContext:
+    def refresh_tool_policy(self):
+        self.policy = fingerprint([SYSTEM, self.owner.definitions, self.owner.cfg.reasoning_effort, self.owner.cfg.reasoning_format])
+
     def __init__(self, saved, owner):
         self.owner = owner
         self.origin = response_origin(owner.cfg)
-        self.policy = fingerprint([SYSTEM, owner.definitions, owner.cfg.reasoning_effort, owner.cfg.reasoning_format])
+        self.refresh_tool_policy()
         history = owner.edits.messages(owner.wid)
         seed = {"documents": [c["document"] for c in owner.working["cards"]], "history": [m["content"] for m in history]}
         self.reason = None

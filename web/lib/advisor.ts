@@ -17,6 +17,8 @@ export interface AdvisorExchange {
   trace: Array<{
     role: string;
     content: string;
+    web_sources?: Array<{ url: string; title: string }>;
+    web_activity?: Array<Record<string, any>>;
     tool_calls?: Array<{ function: { name: string; arguments: string } }>;
   }>;
 }

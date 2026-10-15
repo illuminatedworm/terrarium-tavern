@@ -82,7 +82,8 @@ def page_catalog():
     for key, label, paths in [("providers", "提供商", ["providers"]),
                               ("advisor", "参谋 agent", ["advisor"]),
                               ("preference_presets", "常用偏好", ["preference_presets"]),
-                              ("editor", "角色卡编辑 agent", ["card_editor"]),
+                              ("editor", "角色卡编辑 agent", ["card_editor", "card_editor_config"]),
+                              ("web", "联网服务", ["web"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
                               ("data_transfer", "数据导入导出", [])]:
@@ -91,7 +92,9 @@ def page_catalog():
 
 
 def public_settings(doc):
+    from tavern.web.config import public_web
     result = doc.model_dump()
+    result["shared"]["web"] = public_web(doc.shared.web)
     for provider in result["shared"]["providers"]:
         provider["has_api_key"] = bool(provider.pop("api_key"))
     result.update(pages=page_catalog(), prompt_definitions=prompt_catalog())
@@ -182,6 +185,8 @@ def register_settings_routes(app, store):
                 raise Conflict("设置已在其他窗口改变，请重新载入后再修改；当前草稿仍保留")
             raw = old.model_dump()
             for path, value in payload.changes.items():
+                if scope == "shared" and path.startswith("web") and "has_api_key" in path.split("."):
+                    raise ValueError("密钥状态只能由服务器更新")
                 if any(part in {"capability", "capability_key"} for part in path.split(".")):
                     raise ValueError("模型能力只能通过连接检查更新")
                 try:
@@ -198,6 +203,13 @@ def register_settings_routes(app, store):
                             raise ValueError("供应商渠道创建后不可修改；请在另一渠道新建连接")
                         if not provider.get("api_key"):
                             provider["api_key"] = existing.get(provider.get("id"), {}).get("api_key", "")
+                if scope == "shared" and isinstance(value, dict):
+                    from tavern.web.config import merge_web_secrets
+                    if path == "web":
+                        value = merge_web_secrets(value, original)
+                    elif path in {"web.exa", "web.tavily"}:
+                        name = path.split(".")[1]
+                        value = merge_web_secrets({name: value}, {name: original})[name]
                 if isinstance(value, dict):
                     # Parent profile writes cannot forge server-owned capability fields either.
                     def protect(v, o):

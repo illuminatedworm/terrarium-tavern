@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.search.retrieval_config import ModelProfile
+from tavern.web.config import AgentWebConfig
 
 SYSTEM = """你是角色扮演游戏的参谋 agent 和辅助，另有一个 Agent 独立执行角色扮演，你能查看它产生的正文和资料。你负责和用户讨论当前故事、回答普通问题、查资料、推演后续和提出行动建议。按问题自然作答，不必每轮都列选项，也不续写正文。
 
@@ -25,15 +26,6 @@ SYSTEM = """你是角色扮演游戏的参谋 agent 和辅助，另有一个 Age
 你可以读但不可改 handoff、note、plot、分类记忆、角色卡、世界书和变量。只有用户本轮明确要求保存、追加、替换或清空本轮偏好时，才调用 update_turn_preference；讨论、引述和你的建议都不构成授权。先了解当前偏好，保留未被要求修改的部分。工具接收的是待保存的修改，本次咨询正常完成并成功提交后才生效；失败或未提交的不能说成已保存。"""
 
 
-class WebConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    enabled: bool = True
-    # DuckDuckGo HTML needs no credential; SearXNG is an optional user-owned endpoint.
-    backend: Literal["duckduckgo", "searxng"] = "duckduckgo"
-    endpoint: str = ""
-    timeout_seconds: int = Field(default=25, ge=5, le=120, strict=True)
-
-
 class AdvisorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: ModelProfile = Field(default_factory=lambda: ModelProfile(provider_id="", model=""))
@@ -44,4 +36,4 @@ class AdvisorConfig(BaseModel):
     auto_compact: bool = True
     context_strategy: Literal["local", "openai_compact"] = "local"
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
-    web: WebConfig = Field(default_factory=WebConfig)
+    web: AgentWebConfig = Field(default_factory=AgentWebConfig)

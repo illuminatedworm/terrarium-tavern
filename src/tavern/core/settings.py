@@ -29,6 +29,7 @@ from tavern.core.prompts import (
 from tavern.core.update_policy import Policy
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
+from tavern.web.config import WebConfig, migrate_web_settings
 
 LEGACY_FULL_AGENT_PROMPT_HASHES = {
     "2ab331d1d01ab9ffeeb9436e27af00b7425f7aed7b1a685e5d38081a84dc7727",
@@ -154,6 +155,7 @@ class SharedSettings(StrictSettings):
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
     card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
     advisor: AdvisorConfig = Field(default_factory=AdvisorConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     local_models: LocalResources = Field(default_factory=LocalResources)
     network: Network = Field(default_factory=Network)
@@ -320,6 +322,8 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
+        if migrate_web_settings(raw.setdefault("shared", {})):
+            changed_scopes.add("shared")
         providers = {p["id"]: p for p in raw.get("shared", {}).get("providers", [])}
         standard = next((p["id"] for p in providers.values() if provider_channel(p) == "standard"), "")
         for scope, keys in (("full_agent", ("model",)), ("half_agent", ("foreground", "background"))):

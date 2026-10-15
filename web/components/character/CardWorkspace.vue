@@ -250,7 +250,17 @@ function observe(id: string) {
       statsError.value = '';
     }
     if (event.kind === 'context_warning') notice.value = event.payload.message;
-    if (['model_call', 'text', 'tool_started', 'tool_finished'].includes(event.kind))
+    if (
+      [
+        'model_call',
+        'text',
+        'tool_started',
+        'tool_finished',
+        'web_activity',
+        'web_sources',
+        'response_restarted',
+      ].includes(event.kind)
+    )
       activities.value[id] = mergeEditorEvents(activities.value[id] || [], [event]);
     // tool_finished follows persistence of the working draft. Refresh the
     // opt-in unfinished preview; keep the completed draft selected by default.

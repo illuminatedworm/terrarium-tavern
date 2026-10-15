@@ -31,6 +31,8 @@ import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
+import WebSettings from './WebSettings.vue';
+import WebModeSettings from './WebModeSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
 const props = defineProps<{
@@ -560,6 +562,8 @@ onMounted(async () => {
           <AdvisorSettings
             v-else-if="page.key === 'advisor'"
             :value="draft.shared.advisor"
+            :services="draft.shared.web"
+            @services="navigate('shared.web')"
             :providers="draft.shared.providers"
             :initial-channel="channel"
             :effort-options="effortOptions"
@@ -584,6 +588,11 @@ onMounted(async () => {
             </button>
           </AdvisorSettings>
           <template v-else-if="page.key === 'editor'">
+            <WebModeSettings
+              :value="draft.shared.card_editor_config.web"
+              :services="draft.shared.web"
+              @services="navigate('shared.web')"
+            />
             <ModelProfileEditor
               :profile="draft.shared.card_editor"
               :providers="draft.shared.providers"
@@ -619,6 +628,7 @@ onMounted(async () => {
               /></label>
             </fieldset>
           </template>
+          <WebSettings v-else-if="page.key === 'web'" :value="draft.shared.web" />
           <LocalResourceSettings
             v-else-if="page.key === 'local'"
             :settings="draft.shared"

@@ -135,7 +135,11 @@ def register_conversation_routes(app, editor):
     @app.get(base + "/{wid}/tools")
     async def tools(wid: str):
         editor.edits.conversation(wid)
-        return tool_definitions()
+        from tavern.web.cloud import WebSession
+        cfg = editor_runtime_config(editor.store, wid, {})
+        progress = editor.edits.progress(wid)
+        return WebSession(cfg.card_editor_config.web.mode, cfg, "card_editor",
+                          failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
 
     @app.get(base + "/{wid}/context")
     async def context(wid: str):
@@ -153,6 +157,9 @@ def register_conversation_routes(app, editor):
             definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
             persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {}, request={}, reads={})
+        from tavern.web.cloud import WebSession
+        owner.definitions = WebSession(owner.cfg.card_editor_config.web.mode, owner.cfg, "card_editor",
+                                       failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
         owner.context = EditorContext(copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner)
         owner.tools = EditorTools(owner)
         if payload.text:
@@ -179,6 +186,8 @@ def register_conversation_routes(app, editor):
         messages = owner.context.prepare()
         from tavern.core.message_adapter import WIRE_FIELDS, adapt_messages, adapter_snapshot
         messages = [{k: v for k, v in message.items() if k in WIRE_FIELDS} for message in adapt_messages(messages, owner.cfg)[0]]
-        return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": owner.definitions, "estimated_tokens": owner.context.tokens(),
+        tools = ([d for d in owner.definitions if d.get("function", {}).get("name") == "new_context"]
+                 if owner.context.must_rollover else owner.definitions)
+        return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": tools, "estimated_tokens": owner.context.tokens(),
                 "context_limit": owner.cfg.context_tokens, "preview_only": True,
                 "note": "只读预览；尚未执行模型和工具，不包含后续工具读取结果。"}

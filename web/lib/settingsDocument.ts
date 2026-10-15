@@ -38,6 +38,22 @@ export interface PreferencePreset {
   name: string;
   content: string;
 }
+export type WebMode = 'off' | 'auto' | 'local';
+export type WebService = 'exa' | 'tavily' | 'searxng' | 'duckduckgo';
+export interface WebKeyService {
+  enabled: boolean;
+  auth_mode: 'keyless' | 'api_key';
+  api_key?: string;
+  has_api_key?: boolean;
+}
+export interface WebSettings {
+  order: WebService[];
+  exa: WebKeyService;
+  tavily: WebKeyService;
+  searxng: { enabled: boolean; endpoint: string };
+  duckduckgo: { enabled: boolean };
+  timeout_seconds: number;
+}
 export interface SettingsPage {
   id: string;
   scope: SettingsScope;
@@ -69,6 +85,7 @@ export interface SettingsDocument {
   shared: SettingsObject & {
     providers: Provider[];
     card_editor: ModelProfile;
+    web: WebSettings;
     preference_presets: PreferencePreset[];
     advisor: {
       model: ModelProfile;
@@ -79,7 +96,7 @@ export interface SettingsDocument {
       auto_compact: boolean;
       context_strategy: 'local' | 'openai_compact';
       max_steps: number;
-      web: { enabled: boolean; backend: 'duckduckgo' | 'searxng'; endpoint: string; timeout_seconds: number };
+      web: { mode: WebMode };
     };
   };
   revisions: Record<SettingsScope, number>;

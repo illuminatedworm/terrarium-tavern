@@ -16,6 +16,7 @@ class CardEditorService:
         self.store, self.edits = store, EditorStore(store)
         self.tasks = {}
         self.provider_factory = None
+        self.web_transport = None
 
     async def close(self):
         await asyncio.gather(*(self.cancel(rid) for rid in list(self.tasks)), return_exceptions=True)

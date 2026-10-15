@@ -25,6 +25,7 @@ from tavern.search.retrieval_config import (
     RetrievalSettings,
     api_root,
 )
+from tavern.web.config import WebConfig
 
 LoreInjectionMode = Literal["conversation", "st_top"]
 ReasoningEffort = Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -117,6 +118,7 @@ class Settings(BaseModel):
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
+    web: WebConfig = Field(default_factory=WebConfig)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
     def for_role(self, role="foreground"):

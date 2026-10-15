@@ -26,6 +26,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   const textErrors = ref<Record<string, string>>({});
   const token = ref('');
   const secretChanged = ref(false);
+  const webSecretChanged = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
   let disposed = false;
@@ -94,6 +95,8 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
       error.value = '';
       if (scope === 'shared' && sent.providers?.some((provider: { api_key?: string }) => provider.api_key))
         secretChanged.value = true;
+      if (scope === 'shared' && Object.keys(sent).some((path) => /^web\.(exa|tavily)\.api_key$/.test(path)))
+        webSecretChanged.value = true;
       updated(response);
     } catch (e) {
       error.value = String(e);
@@ -190,6 +193,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   }
   function pageChanged(page: SettingsPage) {
     if (page.id === 'shared.providers' && secretChanged.value) return true;
+    if (page.id === 'shared.web' && webSecretChanged.value) return true;
     return (
       !!draft.value &&
       !!baseline.value &&
@@ -224,6 +228,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
         applying = false;
         updated(response);
         if (page.id === 'shared.providers') secretChanged.value = false;
+        if (page.id === 'shared.web') webSecretChanged.value = false;
       } catch (e) {
         error.value = String(e);
       } finally {

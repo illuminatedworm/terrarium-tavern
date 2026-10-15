@@ -48,6 +48,9 @@ class Store(MessageAdapters):
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
+                if "mode" not in raw.get("shared", {}).get("advisor", {}).get("web", {"mode": "auto"}):
+                    with closing(sqlite3.connect(root / f"settings-before-web-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
                 if "plot_enabled" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
                     backup_path = root / f"before-plot-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:

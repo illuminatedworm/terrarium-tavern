@@ -45,6 +45,25 @@ describe('settings acknowledgements', () => {
     const rebased = rebaseSettings(saved, draft, clone(saved), 'shared', { providers: sent });
     expect(rebased.shared.providers[0].api_key).toBe('second');
   });
+  it('acknowledges a shared search key leaf without retaining or resending it', () => {
+    const saved = fixture();
+    saved.shared.web = {
+      exa: { enabled: true, auth_mode: 'api_key', has_api_key: true },
+    } as SettingsDocument['shared']['web'];
+    const draft = clone(saved);
+    draft.shared.web.exa.api_key = 'search-secret';
+    const rebased = rebaseSettings(saved, draft, clone(saved), 'shared', {
+      'web.exa.api_key': 'search-secret',
+    });
+    expect(rebased.shared.web.exa.api_key).toBeUndefined();
+    expect(difference(saved.shared, rebased.shared)).toEqual({});
+    draft.shared.web.exa.api_key = '';
+    const cleared = clone(saved);
+    cleared.shared.web.exa.has_api_key = false;
+    expect(rebaseSettings(saved, draft, cleared, 'shared', { 'web.exa.api_key': '' }).shared.web.exa).toEqual(
+      cleared.shared.web.exa,
+    );
+  });
   it('uses leaf paths while preserving null and atomic ordered arrays', () => {
     expect(
       difference(

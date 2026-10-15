@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import type { Provider, SettingsDocument } from '../../lib/settingsDocument';
+import type { Provider, SettingsDocument, WebSettings } from '../../lib/settingsDocument';
 import { blankChannelProfile, channelProviders, type Channel } from '../../lib/channels';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import ModelProfileEditor from './ModelProfileEditor.vue';
+import WebModeSettings from './WebModeSettings.vue';
 const props = defineProps<{
   value: SettingsDocument['shared']['advisor'];
+  services: WebSettings;
   providers: Provider[];
   initialChannel?: Channel;
   effortOptions: Array<{ value: string; label: string }>;
   flush: () => Promise<unknown>;
 }>();
-defineEmits<{ checked: [] }>();
+defineEmits<{ checked: []; services: [] }>();
 const channel = ref<Channel>(props.initialChannel || 'standard');
 const profile = computed(() =>
   channel.value === 'chatgpt' ? props.value.official_model : props.value.model,
@@ -73,30 +75,7 @@ function create() {
         >每次发送或继续的模型请求上限<input v-model.number="value.max_steps" type="number" min="2" max="100"
       /></label>
     </fieldset>
-    <fieldset>
-      <legend>联网查阅</legend>
-      <label class="settings-check"
-        ><span>允许搜索和读取公共网页</span><input v-model="value.web.enabled" type="checkbox"
-      /></label>
-      <template v-if="value.web.enabled"
-        ><label
-          >搜索服务<select v-model="value.web.backend">
-            <option value="duckduckgo">DuckDuckGo · 无需密钥</option>
-            <option value="searxng">SearXNG</option>
-          </select></label
-        >
-        <label v-if="value.web.backend === 'searxng'"
-          >SearXNG 服务地址<input
-            v-model="value.web.endpoint"
-            type="url"
-            placeholder="https://search.example.org"
-        /></label>
-        <label
-          >请求超时（秒）<input v-model.number="value.web.timeout_seconds" type="number" min="5" max="120"
-        /></label>
-        <p class="muted">使用通用网络设置；网页仅作为参考，搜索受服务可用性影响。</p></template
-      >
-    </fieldset>
+    <WebModeSettings :value="value.web" :services="services" @services="$emit('services')" />
     <fieldset>
       <legend>参谋 agent 系统提示词</legend>
       <slot />

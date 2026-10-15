@@ -4,18 +4,18 @@ import gzip
 import httpx
 import pytest
 
-from tavern.advisor.config import WebConfig
-from tavern.advisor.web import WebTools
 from tavern.search.retrieval_config import Network
+from tavern.web.client import WebTools
+from tavern.web.config import WebConfig
 
 
 @pytest.fixture
 def web_factory(monkeypatch):
     async def verified(url):
         return url
-    monkeypatch.setattr("tavern.advisor.web.public_url", verified)
+    monkeypatch.setattr("tavern.web.client.public_url", verified)
     def factory(handler, **options):
-        return WebTools(WebConfig(**options), Network(api_proxy=False), httpx.MockTransport(handler))
+        return WebTools(WebConfig(exa={"enabled": False}, tavily={"enabled": False}, **options), Network(api_proxy=False), httpx.MockTransport(handler))
     return factory
 
 
@@ -40,13 +40,13 @@ async def test_unavailable_search_and_disabled_network_are_reported(web_factory)
     client = web_factory(lambda r: httpx.Response(202, text='<form id="challenge-form">verify</form>'))
     with pytest.raises(ValueError, match="验证"):
         await client.search("资料", 3)
-    client.config.enabled = False
+    client.mode = "off"
     with pytest.raises(ValueError, match="关闭"):
         await client.read("https://example.org")
 
 
 async def test_private_webpage_is_not_read():
-    from tavern.advisor.web import public_url
+    from tavern.web.client import public_url
     with pytest.raises(ValueError, match="公共"):
         await public_url("http://127.0.0.1/private")
     with pytest.raises(ValueError, match="HTTP"):

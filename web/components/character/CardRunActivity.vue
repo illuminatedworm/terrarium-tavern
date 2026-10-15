@@ -13,6 +13,8 @@ import type { EditorRun } from '../../lib/cardEditor';
 import AgentActivityItem from '../story/AgentActivityItem.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardMessage from './CardMessage.vue';
+import WebSources from '../common/WebSources.vue';
+import { webSources } from '../../lib/webSearch';
 
 const props = defineProps<{ run: EditorRun; events?: EditorEvent[] }>();
 const emit = defineEmits<{ contentChange: [] }>();
@@ -22,6 +24,13 @@ const loading = ref(false);
 const error = ref('');
 let alive = true;
 const live = computed(() => ['queued', 'running'].includes(props.run.status));
+const sources = computed(() =>
+  webSources(
+    mergeEditorEvents(saved.value, props.events || [])
+      .filter((e) => e.kind === 'web_sources')
+      .map((e) => ({ web_sources: e.payload.sources })),
+  ),
+);
 const blocks = computed(() => {
   const result = editorActivityBlocks(mergeEditorEvents(saved.value, props.events || []), props.run.status);
   return result.length ? result : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
@@ -105,7 +114,7 @@ onBeforeUnmount(() => {
         <summary>
           <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">工具与过程</span>
           <span v-if="loaded || block.actions.length" class="cw-run-count">
-            {{ tools(block.actions).length }} 次工具调用<span v-if="requests(block.actions).length">
+            {{ tools(block.actions).length }} 项工具与联网活动<span v-if="requests(block.actions).length">
               · {{ requests(block.actions).length }} 次请求</span
             >
           </span>
@@ -136,6 +145,7 @@ onBeforeUnmount(() => {
         </div>
       </details>
     </template>
+    <WebSources :sources="sources" />
   </div>
 </template>
 
