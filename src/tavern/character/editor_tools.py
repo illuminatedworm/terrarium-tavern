@@ -34,15 +34,15 @@ class Overview(Arguments):
 
 class TextFile(Arguments):
     path: str = Field(min_length=1, description="Absolute path of an ordinary local file on the backend computer, supplied by the user. No URLs, network shares, directories or devices. Maximum source size: 32 MiB.")
-    offset: int = Field(default=1, ge=1, description="Starting physical line, 1-based. Continue using next_offset from the previous result.")
-    limit: int = Field(default=200, ge=1, le=1000, description="Maximum lines to return. The page also stops before exceeding 20,000 characters, without splitting a line. A single longer line is rejected.")
+    offset: int = Field(default=1, ge=1, description="Starting physical line, 1-based; default 1, minimum 1, no fixed upper bound. Continue using next_offset. Beyond the final line (or for an empty file), returns empty text, has_more=false and next_offset=null.")
+    limit: int = Field(default=200, ge=1, le=1000, description="Maximum lines to return, 1–1000 inclusive; default 200. The page also stops before exceeding 20,000 characters, without splitting a line. A single longer line is rejected.")
     encoding: str | None = Field(default=None, min_length=1, description="Optional text encoding such as gb18030. By default detect Unicode BOM, otherwise decode UTF-8 strictly. No replacement characters.")
 
 
 class DocumentFile(Arguments):
     path: str = Field(min_length=1, description="Absolute local .docx or .xlsx path on the backend computer, supplied by the user. Maximum source: 32 MiB; ZIP: 4096 entries and 128 MiB expanded; conversion: 30 seconds and 8 million Markdown characters.")
-    offset: int = Field(default=0, ge=0, description="Zero-based Unicode character offset in the converted Markdown, NOT a line or byte offset. Continue using next_offset; keep the source file unchanged between pages.")
-    limit: int = Field(default=12000, ge=1, le=30000, description="Maximum Unicode characters returned from converted Markdown. A page may cross paragraph or table boundaries.")
+    offset: int = Field(default=0, ge=0, description="Zero-based Unicode character offset in converted Markdown, NOT a line or byte offset; default 0, minimum 0, no fixed upper bound. At or past the end returns empty markdown, has_more=false and next_offset=null. Continue using next_offset; keep the source file unchanged between pages.")
+    limit: int = Field(default=12000, ge=1, le=30000, description="Maximum Unicode characters returned from converted Markdown, 1–30000 inclusive; default 12000. A page may cross paragraph or table boundaries.")
 
 
 class Read(Card):
@@ -99,9 +99,9 @@ class Revert(Card):
 
 class Opening(Card):
     action: Literal["update", "add", "remove", "move"] = Field(default="update", description="Opening operation.")
-    index: int = Field(ge=0, description="Zero-based opening index; 0 is first_mes, followed by alternate_greetings. add inserts before index (or appends at count).")
+    index: int = Field(ge=0, description="Required zero-based opening index: 0 is first_mes, followed by alternate_greetings. With N current openings, add accepts 0..N inclusive (N appends); update/remove/move accept 0..N-1 inclusive.")
     narrative: str | None = Field(default=None, description="Complete opening text for add/update. Preserve valid inline InitVar/data blocks and their hiding regex, including during status-display migration; hidden initialization is not a model-written panel.")
-    to_index: int | None = Field(default=None, ge=0, description="Destination index for move, in the resulting opening list.")
+    to_index: int | None = Field(default=None, ge=0, description="Required for move: zero-based destination in the resulting opening list, 0..N-1 inclusive for N current openings (N-1 moves to the end). Omit for other actions; default null.")
 
 
 class Skill(Arguments):
@@ -122,14 +122,14 @@ class HistoryRead(Arguments):
 
 
 class DisplayAssertion(Arguments):
-    sample_index: int = Field(default=0, ge=0, description="0 tests the selected opening; 1..N test samples in order, as assistant output.")
+    sample_index: int = Field(default=0, ge=0, description="Index in [selected opening, *samples], 0..len(samples) inclusive; default 0 tests the selected opening, 1 tests samples[0], and len(samples) tests the last sample when present.")
     selector: str = Field(min_length=1, description="CSS selector that must match exactly one rendered display element.")
     text: str = Field(description="Expected complete textContent, with outer whitespace trimmed, after initialization.")
     after_text: str | None = Field(default=None, description="Expected text after state_patch is applied and the display is rebuilt with the updated snapshot, as in the MVU sidebar.")
 
 
 class Probe(Card):
-    index: int = Field(default=0, ge=0, description="Opening to initialize in a temporary local sandbox; 0 selects first_mes.")
+    index: int = Field(default=0, ge=0, description="Zero-based opening to initialize in a temporary local sandbox: 0 selects first_mes, then alternate_greetings. Range 0..N-1 inclusive for N current openings; default 0. Other openings are not tested.")
     samples: list[str] = Field(default_factory=list, max_length=10, description="Optional complete text examples on which to observe input/output regex transformations. No model calls are made.")
     display_assertions: list[DisplayAssertion] = Field(default_factory=list, max_length=30, description="Render output HTML in an isolated browser and verify expected DOM text. Use for MVU frontend migration; an empty list does not verify rendering. Read references/regex-display.md.")
     state_patch: list[Operation] = Field(default_factory=list, max_length=100, description="Optional temporary JSON Patch relative to stat_data, applied through Runtime to test after_text. No card or story state is saved.")
@@ -253,7 +253,7 @@ class EditorTools(PersonaTools):
         return await self.owner.web.search(args.query, args.limit, args.objective)
 
     async def read_webpage(self, args):
-        return await self.owner.web.read(args.url)
+        return await self.owner.web.read(args.url, args.offset, args.limit, service=args.service)
 
     async def read_text_file(self, args):
         return await asyncio.to_thread(read_text_file, self.view.restore(args.path),

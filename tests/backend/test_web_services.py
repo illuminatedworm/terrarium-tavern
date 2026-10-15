@@ -1,4 +1,4 @@
-"""Deterministic wire contracts, complete sources, fallback and cancellation."""
+"""Deterministic wire contracts, bounded external results, fallback and cancellation."""
 import asyncio
 import json
 
@@ -8,6 +8,7 @@ import pytest
 from tavern.search.retrieval_config import Network
 from tavern.web.client import EXA_MAX_CHARACTERS, WebTools, public_url
 from tavern.web.config import WebConfig
+from tavern.web.results import MAX_SEARCH_CHARS, MAX_SNIPPET_CHARS, READ_DEFAULT_LIMIT, exa_search_rows
 
 
 @pytest.fixture
@@ -63,14 +64,17 @@ async def test_exa_search_handshake_auth_discovery_and_release(make_web, mode, e
     web = make_web(route, exa={"auth_mode": mode, "api_key": "fixture-exa-key"})
     result = await web.search("原著", 3, objective)
     assert result["service"] == "exa" and result["auth_mode"] == mode
-    assert result["text"] == complete and result["results"][0]["url"] == "https://example.org/source"
+    assert "text" not in result and result["results"][0]["url"] == "https://example.org/source"
+    assert len(result["results"][0]["snippet"]) == MAX_SNIPPET_CHARS
+    assert result["results"][0]["snippet_truncated"] and result["content_truncated"]
+    assert "摘要尾部" not in json.dumps(result, ensure_ascii=False)
     assert [json.loads(r.content)["method"] for r in requests[:-1]] == ["initialize", "notifications/initialized", "tools/list", "tools/call"]
     assert requests[-1].method == "DELETE"
     assert "fixture-session" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("mode", ["keyless", "api_key"])
-async def test_tavily_search_and_extract_auth_and_full_text(make_web, mode):
+async def test_tavily_search_and_extract_auth_and_bounded_text(make_web, mode):
     seen = []
     text = "完整正文" * 10000 + "网页原文尾部"
     def route(request):
@@ -88,11 +92,14 @@ async def test_tavily_search_and_extract_auth_and_full_text(make_web, mode):
     search = await web.search("query", 5)
     assert search["results"] == [{"url": "https://example.org", "title": "来源", "snippet": "定位摘要"}]
     assert "private-id" not in json.dumps(search) and "opaque-request-id" not in json.dumps(search)
-    assert (await web.read("https://example.org"))["text"] == text
+    page = await web.read("https://example.org")
+    assert page["text"] == text[:READ_DEFAULT_LIMIT]
+    assert page["next_offset"] == READ_DEFAULT_LIMIT and page["has_more"]
+    assert page["total_chars"] == len(text) and page["source_truncated"] is None
     assert len(seen) == 2
 
 
-async def test_exa_fetch_explicit_full_content_limit(make_web):
+async def test_exa_fetch_ceiling_is_distinct_from_returned_page_limit(make_web):
     source = "全文" * 5000 + "末尾必须保留"
     def content(params):
         assert params == {"name": "web_fetch_exa", "arguments": {"urls": ["https://example.org"], "maxCharacters": EXA_MAX_CHARACTERS}}
@@ -101,17 +108,15 @@ async def test_exa_fetch_explicit_full_content_limit(make_web):
     assert result["service"] == "exa" and result["text"].endswith(source)
 
 
-async def test_truncated_extraction_falls_back_without_returning_partial_text(make_web):
+async def test_truncated_extraction_is_labeled_without_discarding_useful_text(make_web):
     def route(request):
         if request.url.host == "mcp.exa.ai":
             return exa_response(request, {"content": [{"type": "text", "text": "部分正文 [content truncated]"}]})
-        if request.url.host == "api.tavily.com":
-            return httpx.Response(200, json={"failed_results": [{"url": "https://example.org"}], "results": []})
-        return httpx.Response(200, headers={"content-type": "text/html"}, text="<p>完整读取尾部</p>")
+        pytest.fail("A usable truncated source must not trigger another service")
     result = await make_web(route).read("https://example.org")
-    assert result["service"] == "local" and result["text"] == "完整读取尾部"
-    assert [a["status"] for a in result["attempts"]] == ["error", "error", "completed"]
-    assert "部分正文" not in json.dumps(result)
+    assert result["service"] == "exa" and result["text"] == "部分正文 [content truncated]"
+    assert result["source_truncated"] is True and not result["has_more"]
+    assert [a["status"] for a in result["attempts"]] == ["completed"]
 
 
 async def test_bounded_ordered_fallback_logs_reasons_and_keeps_zero_results(make_web):
@@ -193,16 +198,126 @@ async def test_malformed_mcp_and_tavily_responses_are_not_empty_success(make_web
         await web.search("query", 1)
 
 
-async def test_exa_character_cap_and_oversized_decoded_page_are_not_returned(make_web, monkeypatch):
+async def test_exa_cap_marks_partial_source_and_oversized_download_is_rejected(make_web, monkeypatch):
     monkeypatch.setattr("tavern.web.client.EXA_MAX_CHARACTERS", 100)
     def route(request):
         if request.url.host == "mcp.exa.ai":
             return exa_response(request, {"content": [{"type": "text", "text": "a" * 100}]})
         return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"x" * (8 * 1024 * 1024 + 1))
     web = make_web(route, tavily={"enabled": False})
+    page = await web.read("https://example.org", limit=20)
+    assert page["text"] == "a" * 20 and page["source_truncated"] is True and page["next_offset"] == 20
     with pytest.raises(ValueError, match="8 MiB") as error:
-        await web.read("https://example.org")
+        await web.read("https://example.org", service="local")
     assert "截断" in str(error.value)
+
+
+@pytest.mark.parametrize("service", ["exa", "tavily", "searxng", "duckduckgo"])
+async def test_search_limits_records_snippets_and_source_events_for_every_service(make_web, service):
+    events = []
+    def route(request):
+        if service == "exa":
+            text = "\n---\n".join(f"Title: 来源{i}\nURL: https://example.org/{i}\nHighlights: " + "摘要" * 4000 for i in range(3))
+            return exa_response(request, {"content": [{"type": "text", "text": text}]})
+        if service == "duckduckgo":
+            return httpx.Response(200, text="".join(f'<a class="result__a" href="https://example.org/{i}">来源{i}</a><a class="result__snippet">' + "摘要" * 4000 + "</a>" for i in range(3)))
+        return httpx.Response(200, json={"results": [{"url": f"https://example.org/{i}", "title": f"来源{i}", "content": "摘要" * 4000} for i in range(3)]})
+    web = make_web(route, exa={"enabled": service == "exa"}, tavily={"enabled": service == "tavily"},
+                   searxng={"endpoint": "https://search.example.org", "enabled": service == "searxng"},
+                   duckduckgo={"enabled": service == "duckduckgo"})
+    web.event = lambda kind, payload: events.append((kind, payload))
+    result = await web.search("query", 1)
+    assert len(result["results"]) == result["returned_results"] == 1
+    assert result["available_results"] == 3 and result["results_truncated"]
+    assert result["results"][0]["snippet_truncated"]
+    assert len(result["results"][0]["snippet"]) == MAX_SNIPPET_CHARS
+    assert "text" not in result and "https://example.org/1" not in json.dumps(result)
+    assert [p["sources"] for k, p in events if k == "web_sources"] == [[{"url": "https://example.org/0", "title": "来源0"}]]
+
+
+async def test_search_total_budget_and_unknown_exa_format_fallback(make_web):
+    def route(request):
+        if request.url.host == "mcp.exa.ai":
+            return exa_response(request, {"content": [{"type": "text", "text": "unrecognized transcript" * 10000}]})
+        return httpx.Response(200, json={"results": [{"url": f"https://example.org/{i}", "title": "题" * 1000,
+                                                     "content": "摘" * 9000} for i in range(12)]})
+    result = await make_web(route).search("query", 10)
+    assert result["service"] == "tavily" and "格式无法识别" in result["attempts"][0]["reason"]
+    assert len(result["results"]) <= 10 and result["results_truncated"] and result["content_truncated"]
+    assert sum(len(row[key]) for row in result["results"] for key in ("title", "url", "snippet")) <= MAX_SEARCH_CHARS
+    assert "unrecognized transcript" not in json.dumps(result)
+
+
+def test_exa_record_boundaries_allow_crlf_and_no_separator_but_not_unknown_zero():
+    rows = exa_search_rows("Title: 一\r\nPublished Date: 2026-10-15\r\nAuthor: 原作者\r\nURL: https://example.org/1\r\nHighlights: 甲\r\n"
+                           "Title: 二\r\nURL: https://example.org/2\r\nHighlights: 乙")
+    assert [r["title"] for r in rows] == ["一", "二"]
+    assert "Published Date: 2026-10-15" in rows[0]["snippet"] and "Author: 原作者" in rows[0]["snippet"]
+    assert rows[0]["snippet"].endswith("Highlights: 甲") and rows[1]["snippet"] == "Highlights: 乙"
+    assert exa_search_rows("No search results found. Please try a different query.") == []
+    with pytest.raises(ValueError, match="格式无法识别"):
+        exa_search_rows("unknown layout")
+
+
+@pytest.mark.parametrize("service", ["exa", "tavily", "local"])
+async def test_web_pages_reassemble_unicode_and_report_eof(make_web, service):
+    text = "首行🌊\n" + "中文表格|值\n" * 2200 + "独有的尾部"
+    def route(request):
+        if service == "exa":
+            return exa_response(request, {"content": [{"type": "text", "text": text}]})
+        if service == "tavily":
+            return httpx.Response(200, json={"results": [{"url": "https://example.org", "raw_content": text, "truncated": True}]})
+        return httpx.Response(200, headers={"content-type": "text/plain; charset=utf-8"}, text=text)
+    web = make_web(route)
+    first = await web.read("https://example.org", service=service)
+    assert first["returned_chars"] == READ_DEFAULT_LIMIT and first["text"] == text[:READ_DEFAULT_LIMIT]
+    second = await web.read("https://example.org", first["next_offset"], 30000, service=first["service"])
+    assert first["text"] + second["text"] == text
+    assert second["has_more"] is False and second["next_offset"] is None
+    assert second["total_chars"] == len(text)
+    assert second["source_truncated"] is ({"exa": None, "tavily": True, "local": False}[service])
+    for offset in (len(text), len(text) + 20):
+        empty = await web.read("https://example.org", offset, service=service)
+        assert empty["text"] == "" and not empty["has_more"] and empty["next_offset"] is None
+
+
+async def test_pinned_service_never_changes_extractor_on_failure_or_disable(make_web):
+    seen = []
+    def route(request):
+        seen.append(request.url.host)
+        return httpx.Response(503)
+    web = make_web(route)
+    with pytest.raises(ValueError, match="offset=0"):
+        await web.read("https://example.org", 12000, service="tavily")
+    assert seen == ["api.tavily.com"]
+    web.config.tavily.enabled = False
+    with pytest.raises(ValueError, match="未启用"):
+        await web.read("https://example.org", 12000, service="tavily")
+    assert seen == ["api.tavily.com"]
+
+
+async def test_secret_redaction_precedes_page_boundaries(make_web):
+    secret = "fixture-long-secret"
+    text = "开头" + secret + "尾部"
+    web = make_web(lambda r: httpx.Response(200, json={"results": [{"url": "https://example.org", "raw_content": text}]}),
+                   exa={"enabled": False}, tavily={"api_key": secret})
+    one = await web.read("https://example.org", limit=5)
+    two = await web.read("https://example.org", one["next_offset"], service=one["service"])
+    assert one["text"] + two["text"] == "开头[REDACTED]尾部"
+    assert one["total_chars"] == len("开头[REDACTED]尾部")
+
+
+async def test_partial_http_response_is_not_marked_as_complete_source(make_web):
+    web = make_web(lambda r: httpx.Response(206, headers={"content-type": "text/plain", "content-range": "bytes 0-3/20"}, text="part"))
+    result = await web.read("https://example.org", service="local")
+    assert result["text"] == "part" and result["source_truncated"] is True and result["has_more"] is False
+
+
+@pytest.mark.parametrize("arguments", [{"offset": -1}, {"offset": True}, {"offset": "1"}, {"limit": 0},
+                                      {"limit": 30001}, {"limit": 1.5}, {"service": "unknown"}])
+async def test_web_page_arguments_are_rejected_before_network(make_web, arguments):
+    with pytest.raises(ValueError):
+        await make_web(lambda r: pytest.fail("Invalid arguments must not dispatch")).read("https://example.org", **arguments)
 
 
 async def test_invalid_result_url_falls_back_and_known_keys_never_enter_results(make_web):

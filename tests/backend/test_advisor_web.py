@@ -27,13 +27,19 @@ async def test_search_returns_source_links_and_explicit_navigation_snippets(web_
     assert result["results"] == [{"title": "时间线", "url": "https://example.org/timeline", "snippet": "定位摘要"}]
 
 
-async def test_compressed_page_is_decoded_once_and_entire_text_returned(web_factory):
+async def test_compressed_page_is_decoded_once_and_returned_as_lossless_pages(web_factory):
     source = '<html><title>完整来源</title><body><p>' + ('很长的资料' * 20000) + '</p><script>不能执行</script><p>原文最后一行</p></body></html>'
     client = web_factory(lambda r: httpx.Response(200, headers={"content-type": "text/html; charset=utf-8", "content-encoding": "gzip"}, content=gzip.compress(source.encode())))
     result = await client.read("https://example.org/source")
     assert result["title"] == "完整来源"
-    assert "很长的资料" * 20000 in result["text"]
-    assert result["text"].endswith("原文最后一行") and "不能执行" not in result["text"]
+    assert len(result["text"]) == 12000 and result["has_more"]
+    pages = [result["text"]]
+    while result["has_more"]:
+        result = await client.read("https://example.org/source", result["next_offset"], 30000, service=result["service"])
+        pages.append(result["text"])
+    combined = "".join(pages)
+    assert "很长的资料" * 20000 in combined
+    assert combined.endswith("原文最后一行") and "不能执行" not in combined
 
 
 async def test_unavailable_search_and_disabled_network_are_reported(web_factory):

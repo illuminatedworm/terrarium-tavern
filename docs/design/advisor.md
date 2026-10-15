@@ -10,7 +10,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 官方自动模式在公开 Responses 请求中将原生 `web_search` 与 `tavern` namespace 并列，并请求 `web_search_call.action.sources`；本地搜索函数同时隐藏。只允许 Advisor／Card Editor 主请求启用，维护请求与其他 Agent 不启用。搜索专属故障最多重试当前模型请求一次，原有已执行工具不重放，未完成文本通过 `response_restarted` 撤回；模式降级随未完成进度保存。账号、额度和断流错误不冒充搜索故障。
 
-云端输出项和引用注解完整保存在原生附件中，工具续答按原模型／账号绑定回放；来源链接另作为可移植 `web_sources` 保存并展示。`web_activity` 记录服务、鉴权模式、状态与降级原因，不包含密钥。网页工具结果不因窗口预算截断，服务错误、正文上限与合法零命中分别处理。
+云端输出项和引用注解完整保存在原生附件中，工具续答按原模型／账号绑定回放；来源链接另作为可移植 `web_sources` 保存并展示。`web_activity` 记录服务、鉴权模式、状态与降级原因，不包含密钥。本地搜索统一限量来源与摘要，网页按字符分页；每次实际返回的片段完整持久化并送往模型，不在传输阶段再次截断。服务错误、上游截断、返回量限制与合法零命中分别标记，见[联网工具协议](../reference/web-tools.md)。
 
 运行前校验故事的不可变渠道。参谋 agent 角色使用独立模型配置，不从 Writer、Tracker 或 Full Agent 推断供应商。模型连接检查、能力失效、提示词保存、设置页撤回及消息适配均接入共享设置机制。
 
@@ -20,7 +20,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 一轮开始时冻结当前分支、剧情与状态，工具续答读取同一版本。当前用户咨询引用为 Q1；剧情使用 H 引用，世界书 L 引用，Half Agent 记忆 R 引用，旧咨询 C 引用。真实存储身份、来源指纹和版本仅供程序定位与冲突校验，业务文本经 ModelView 投影；保存时恢复原始内容。云端压缩和续接保留可逆编号映射。
 
-消息适配提供 `advisor_reference`、`advisor_story`、`advisor_summary`、`advisor_notice`。预览和实际运行共用编译器，最终投影后计数，不用字符数估算 tokens。已选单块始终完整，超量不能静默截断。
+消息适配提供 `advisor_reference`、`advisor_story`、`advisor_summary`、`advisor_notice`。预览和实际运行共用编译器，最终投影后计数，不用字符数估算 tokens。已选内部资料块及本次工具返回的片段始终完整，超量不能在传输阶段静默截断。
 
 参谋 agent 咨询历史与剧情分开存储。咨询摘要只承接按完整交流退出的旧咨询，最近咨询与当前未完成工具交换保持原文。主故事追加新剧情不会使旧咨询摘要成为当前事实；修改或撤销摘要依据、模型/账号/关键规则变更时从原文重建。云端 checkpoint 仅属于参谋 agent，不读取主 Agent 的不透明状态。整理中断保存已处理的完整批次，可续接。
 
@@ -39,7 +39,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 | `search_memory` | Half Agent 使用，沿用 Tracker 的 query，返回完整匹配记忆及来源状态 |
 | `read_story_context` | field 为 handoff/plot/turn_preference/persona；只读，缺失不生成 |
 | `search_consultation` / `read_consultation` | query/limit、ref；查阅当前分支旧咨询 |
-| `web_search` / `read_webpage` | query/limit/可选 objective、url；返回外部来源摘要或完整提取文本、实际服务与降级记录 |
+| `web_search` / `read_webpage` | 搜索使用 query/limit/可选 objective；网页使用 url/offset/limit/可选 service。返回有界摘要或提取片段、续读位置、截断状态、实际服务与尝试记录，见[联网工具协议](../reference/web-tools.md) |
 | `update_turn_preference` | action 为 append/replace/clear，content、request_ref=Q1；仅明确用户指令授权 |
 
 不注册故事写入、脚本执行或主 Agent 换窗工具。工具 allowlist 在执行时再次检查。用户意图由模型根据真实当前提问判断，Runtime 校验引用、字段、故事修订和互斥状态，不通过关键词猜测授权。

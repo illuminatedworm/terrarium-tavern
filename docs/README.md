@@ -30,10 +30,11 @@
 | 独立参谋 agent 上下文、工具与偏好提交 | [Advisor 参谋 agent 设计](design/advisor.md) |
 | 编辑草稿、连续上下文与保存 | [角色卡编辑 agent 设计](design/card-editor.md) |
 | 制卡工具、引用与续接接口 | [Card Editor 工具协议](reference/card-editor-tools.md) |
+| 外部搜索限量、网页分页与来源完整性 | [联网工具协议](reference/web-tools.md) |
 | 缓存断点、传输记录和对象生命周期 | [缓存控制](design/cache-control.md) |
 | 跟进间隔和目标位置的成本取舍 | [缓存成本模型](design/cache-cost.md) |
 | 模型可见数据、短编号与可逆编辑 | [模型数据边界](design/model-data-boundary.md) |
-| 已选文本的完整发送与容量约束 | [文本完整性](design/text-integrity.md) |
+| 内部文本完整发送与外部资料限量 | [文本完整性](design/text-integrity.md) |
 
 ## 接口与开发维护
 

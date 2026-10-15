@@ -16,8 +16,8 @@
 |---|---|
 | `read_text_file` | `path`、可选 `offset=1`（物理行，1-based）、`limit=200`（1–1000 行）、`encoding`；每页按完整行返回最多 20,000 字符，附 `encoding/text/offset/returned_lines/has_more/next_offset` |
 | `read_document` | `path`、可选 `offset=0`（转换后 Markdown 的 Unicode 字符位置，0-based）、`limit=12000`（1–30000 字符）；DOCX/XLSX 离线转换，返回 `format/markdown/offset/returned_chars/total_chars/has_more/next_offset/limitations` |
-| `web_search` | `query`、可选 `limit`（1–10，默认 5）及 `objective`；返回搜索摘要、来源、实际服务及降级记录。官方自动模式改为服务端原生 `web_search`，不同时暴露本地搜索函数 |
-| `read_webpage` | `url`；完整返回服务提取的正文及来源，已知截断或超限时降级／报错。仅接受公共 HTTP(S) 地址 |
+| `web_search` | `query`、可选 `limit`（1–10，默认 5）及 `objective`；本地限制来源数量，每条摘要最多 2,000 字符，URL／标题／摘要合计最多 20,000 字符，并标记省略。官方自动模式改为服务端原生搜索，详见[联网协议](web-tools.md) |
+| `read_webpage` | `url`、可选 `offset=0`（Unicode 字符）、`limit=12000`（1–30000）、`service`；返回提取文本片段和续读位置。续读沿用实际服务，上游截断明确标记，不把片段当作全文，详见[联网协议](web-tools.md) |
 | `overview` | 可选 `card_ref`；查看当前目录或指定卡的根路径、格式、字段用途/类型/大小 |
 | `read_field` | `card_ref`、JSON Pointer `path`；空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回完整原文 |
 | `search_entries` | `card_ref`、`query`；空查询列出全部。提供标题、定位路径及明确标识的摘要，修改前读取全文 |
@@ -26,9 +26,9 @@
 | `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
 | `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
 | `revert_draft` | `card_ref`、`comment`；程序恢复本轮开始前的整张卡，新创建的卡则从本轮移除，其他卡保持不变 |
-| `set_opening` | `card_ref`、`action=update/add/remove/move`、`index`、新增/修改须传完整 `narrative`，移动使用 `to_index` |
+| `set_opening` | `card_ref`、`action=update/add/remove/move`、必填 `index`；N 个开场时新增接受 0–N，其余接受 0–N−1，均含两端。新增/修改须传完整 `narrative`；移动须传 0-based 的 `to_index`（0–N−1，移动后的位置），其余操作省略 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
-| `test_draft` | `card_ref`、`index=0`、可选完整文本 `samples`、`display_assertions`、`state_patch`；检查初始化、正则转换、脚本启动和指定 DOM 值，临时补丁用于验证更新后显示，返回实际结果、日志和未测范围 |
+| `test_draft` | `card_ref`、`index=0`（0-based，0–N−1，N 为开场数量）、可选完整文本 `samples`、`display_assertions`、`state_patch`；断言 sample_index 范围 0–len(samples)，0 为所选开场，1 对应 samples[0]。检查初始化、正则、脚本和 DOM 值，临时补丁验证更新后显示，返回结果、日志和未测范围 |
 | `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md、references/regex-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
 | `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
@@ -47,7 +47,7 @@
 
 Office 使用 MarkItDown 的 DOCX/XLSX 转换器，XLSX 按工作表原顺序组织 Markdown；不执行宏、公式重算或图片 OCR，公式依赖已保存的缓存值，无缓存的单元格可能没有结果。ZIP 最多 4096 个条目，解压总量最多 128 MiB；独立转换进程最长 30 秒，超时或取消会终止并回收。转换后 Markdown 超过 800 万字符时拒绝。损坏、加密或超限均返回工具错误，要求处理或拆分源文件。
 
-Office 分页按 Python Unicode 字符计数，可能跨越段落或表格；不是行号、字节或 token 数。转换结果不缓存或另存，每次读取当前文件，连续分页期间源文件应保持不变。外部文件允许有界读取，每个已返回片段仍完整送往模型；活动日志的摘要不影响正文。无需新增上传、配置或数据库迁移。
+Office 分页按 Python Unicode 字符计数，可能跨越段落或表格；不是行号、字节或 token 数。offset 最小为 0，无固定上界，到达或超过末尾返回空 markdown、has_more=false、next_offset=null；文本文件 offset 最小为 1，超过末尾同样返回空页。转换结果不缓存或另存，每次读取当前文件，连续分页期间源文件应保持不变。外部文件允许有界读取，每个已返回片段仍完整送往模型；活动日志的摘要不影响正文。无需新增上传、配置或数据库迁移。
 
 ## 路径与修改
 

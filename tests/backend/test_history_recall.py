@@ -88,6 +88,18 @@ def test_returned_history_includes_full_long_text():
     assert recall.sources["m2"]["exposed_excerpts"][0].endswith("隐藏尾句")
 
 
+def test_search_limit_counts_history_segments_and_radius_zero_reads_only_center():
+    recall = HistoryRecall(history(), Settings(), HistoryBudget())
+    result = recall.execute({"query": "银戒", "limit": 1})
+    assert {item["turn"] for item in result["matches"]} == {2}
+    assert [item["role"] for item in result["matches"]] == ["user", "assistant"]
+    centered = recall.execute({"turn": 2, "radius": 0})
+    assert {item["turn"] for item in centered["rounds"]} == {2}
+    assert len(centered["rounds"]) == 2
+    edge = HistoryRecall(history(), Settings(), HistoryBudget()).execute({"turn": 1, "radius": 2})
+    assert {item["turn"] for item in edge["rounds"]} == {1, 2, 3}
+
+
 async def test_three_tools_then_final_response_and_no_future_batch_visibility():
     provider = Provider([
         ("", [call(1, {"query": "银戒"})]), ("", [call(2, {"turn": 2, "radius": 0})]),

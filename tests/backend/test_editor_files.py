@@ -100,7 +100,8 @@ def test_text_pages_preserve_encoding_newlines_and_eof(tmp_path, encoding):
         offset = result["next_offset"]
     assert "".join(pages) == original
     assert path.read_bytes() == original.encode(encoding)
-    assert read_text_file(str(path), offset=999, encoding=encoding)["text"] == ""
+    empty = read_text_file(str(path), offset=999, encoding=encoding)
+    assert empty["text"] == "" and not empty["has_more"] and empty["next_offset"] is None
 
 
 def test_text_default_and_character_limits_are_complete_lines(tmp_path):
@@ -200,7 +201,9 @@ async def test_real_office_worker_and_lossless_character_pagination(tmp_path, fo
             break
         offset = result["next_offset"]
     assert "".join(pages) == markdown
-    assert convert_document(str(path), len(markdown) + 10, 23)["markdown"] == ""
+    for offset in (len(markdown), len(markdown) + 10):
+        empty = convert_document(str(path), offset, 23)
+        assert empty["markdown"] == "" and not empty["has_more"] and empty["next_offset"] is None
     assert path.read_bytes() == original
 
 

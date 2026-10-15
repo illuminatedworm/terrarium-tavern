@@ -32,9 +32,9 @@ HISTORY_TOOL = {
             "properties": {
                 "query": {"type": "string", "description": "人物、物品、承诺等关键词，用空格分隔", "maxLength": 300},
                 "turn": {"type": "integer", "minimum": 1,
-                         "description": "搜索返回的历史段编号，从1开始，开场白独立一段；不是记忆周期轮数"},
-                "radius": {"type": "integer", "minimum": 0, "maximum": 2, "description": "读取前后段数，默认1"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 8, "description": "搜索命中上限，默认5"},
+                         "description": "搜索返回的历史段编号，1-based，有效范围为1到当前可查历史段总数（含两端）。按段读取时必填；开场白独立一段，不是记忆周期轮数。"},
+                "radius": {"type": "integer", "minimum": 0, "maximum": 2, "default": 1, "description": "按段读取时中心段前、后各额外读取多少历史段，0–2（含两端），默认1；0只读中心段，到历史边界时不超出可用段。"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 5, "description": "关键词搜索最多命中的历史段数，1–8（含两端），默认5；不是消息条数。一段中多条消息均命中时，会分别返回定位摘要。"},
             },
         },
     },

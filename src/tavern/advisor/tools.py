@@ -144,7 +144,7 @@ class AdvisorTools:
         if name == "web_search":
             return await o.web.search(args.query, args.limit, args.objective)
         if name == "read_webpage":
-            return await o.web.read(args.url)
+            return await o.web.read(args.url, args.offset, args.limit, service=args.service)
         if name == "update_turn_preference":
             o.check_preference_write()
             if args.action == "clear" and args.content:

@@ -16,7 +16,7 @@ from tests.backend.test_chatgpt_integration import connected_store, story
 
 
 @pytest.mark.parametrize("agent", ["advisor", "card_editor"])
-async def test_shared_web_full_results_reach_model_and_off_is_enforced(tmp_path, monkeypatch, agent):
+async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path, monkeypatch, agent):
     app, store, session, advisor = setup(tmp_path)
     doc = store.settings_document()
     doc.shared.web.exa.enabled = False
@@ -25,7 +25,7 @@ async def test_shared_web_full_results_reach_model_and_off_is_enforced(tmp_path,
     doc.shared.web.tavily.auth_mode = "api_key"
     doc.shared.card_editor.context_tokens = 200000
     store.save_settings(doc)
-    source = "完整网页资料" * 10000 + "模型必须收到尾部"
+    source = "网页资料" * 5000 + "模型必须收到第二页尾部"
     requests = []
     async def public(url):
         return url
@@ -36,7 +36,8 @@ async def test_shared_web_full_results_reach_model_and_off_is_enforced(tmp_path,
         if request.url.path == "/search":
             return httpx.Response(200, json={"results": [{"title": "来源", "url": "https://example.org", "content": "定位信息"}]})
         return httpx.Response(200, json={"results": [{"url": "https://example.org", "raw_content": source}]})
-    provider = ToolLLM([("web_search", {"query": "背景"}), ("read_webpage", {"url": "https://example.org"})])
+    provider = ToolLLM([("web_search", {"query": "背景"}), ("read_webpage", {"url": "https://example.org"}),
+                       ("read_webpage", {"url": "https://example.org", "offset": 12000, "service": "tavily"})])
     if agent == "advisor":
         service = advisor
         service.web_transport = httpx.MockTransport(route)
@@ -55,9 +56,15 @@ async def test_shared_web_full_results_reach_model_and_off_is_enforced(tmp_path,
         assert service.edits.run(run["id"])["status"] == "completed"
         assert service.edits.get(workspace["id"])["document"] == card["document"]
         doc.shared.card_editor_config.web.mode = "off"
-    assert len(requests) == 2
+    assert len(requests) == 3
+    assert "模型必须收到第二页尾部" not in dump(provider.call_log[2])
     final_wire = dump(provider.call_log[-1])
-    assert source in final_wire and "private-tavily-key" not in final_wire
+    assert source[:12000] in final_wire and source[12000:] in final_wire and "private-tavily-key" not in final_wire
+    results = [json.loads(m["content"]) for m in provider.call_log[-1] if m.get("role") == "tool"]
+    pages = [r for r in results if "returned_chars" in r]
+    assert [p["offset"] for p in pages] == [0, 12000]
+    assert [p["has_more"] for p in pages] == [True, False]
+    assert "".join(p["text"] for p in pages) == source
     store.save_settings(doc)
     blocked = ToolLLM([("web_search", {"query": "不能执行"})])
     if agent == "advisor":
@@ -67,7 +74,7 @@ async def test_shared_web_full_results_reach_model_and_off_is_enforced(tmp_path,
         run = service.submit(workspace["id"], CardEditorRequest(text="查证", expected_revision=0, operation_id=uid()))
         await service.tasks[run["id"]]
         assert service.edits.run(run["id"])["status"] == "completed"
-    assert len(requests) == 2
+    assert len(requests) == 3
     assert not {t.name for t in blocked.schemas[0]} & {"web_search", "read_webpage"}
     assert "error" in dump(blocked.call_log[-1])
     await service.close()
