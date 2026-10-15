@@ -150,9 +150,12 @@ def register_conversation_routes(app, editor):
 
     def preview_owner(wid, payload):
         workspace = editor.edits.conversation(wid)
+        with editor.store.connection() as db:
+            environment = editor.edits.environment_snapshot(db, workspace)
         progress = editor.edits.progress(wid)
         working = progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
         owner = SimpleNamespace(store=editor.store, edits=editor.edits, wid=wid, rid="preview", legacy=False,
+            environment=environment,
             working=copy.deepcopy(working), cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
             definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
@@ -190,4 +193,4 @@ def register_conversation_routes(app, editor):
                  if owner.context.must_rollover else owner.definitions)
         return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": tools, "estimated_tokens": owner.context.tokens(),
                 "context_limit": owner.cfg.context_tokens, "preview_only": True,
-                "note": "只读预览；尚未执行模型和工具，不包含后续工具读取结果。"}
+                "note": "只读预览；尚未执行模型和工具，不包含后续工具读取结果。未保存的环境快照仅供预览，首次发送时才固定。"}

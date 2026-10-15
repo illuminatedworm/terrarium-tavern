@@ -32,6 +32,7 @@ class MessageType:
 
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
+    MessageType("editor_environment", "对话时间与系统环境", scopes=("card_editor",)),
     MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
     MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
     MessageType("user", "用户输入", role="user"),

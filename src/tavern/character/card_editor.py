@@ -30,7 +30,7 @@ class CardEditorService:
             prior = db.execute("SELECT id FROM card_edit_runs WHERE workspace=? AND operation=?", (wid, request.operation_id)).fetchone()
             if prior:
                 return self.edits.run(prior[0])
-            self.edits.check(db, wid, request.expected_revision, idle=False)
+            workspace = self.edits.check(db, wid, request.expected_revision, idle=False)
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("当前已有运行中的编辑任务")
             pending = db.execute("SELECT run,payload FROM card_editor_progress WHERE workspace=?", (wid,)).fetchone()
@@ -45,10 +45,14 @@ class CardEditorService:
             cfg = editor_runtime_config(self.store, wid, payload)
             if not self.provider_factory:
                 require_model_connection(cfg)
+            now = time.time()
+            if not workspace.get("environment"):
+                workspace["environment"] = self.edits.environment_snapshot(db, workspace, now)
+                self.edits.write(db, workspace, increment=False)
             if request.text.strip():
                 payload["_input_ref"] = self.edits.message(db, wid, "user", request.text, rid)
             db.execute("INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",
-                       (rid, wid, request.operation_id, dump(payload), time.time()))
+                       (rid, wid, request.operation_id, dump(payload), now))
             db.execute("UPDATE card_editor_conversations SET updated=? WHERE id=?", (time.time(), wid))
         # A queued task can be stopped before its coroutine runs. Persist its
         # baseline now so shutdown/immediate cancellation remains resumable.

@@ -13,6 +13,7 @@ import type { EditorRun } from '../../lib/cardEditor';
 import AgentActivityItem from '../story/AgentActivityItem.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardMessage from './CardMessage.vue';
+import CardModelRequests from './CardModelRequests.vue';
 import WebSources from '../common/WebSources.vue';
 import { webSources } from '../../lib/webSearch';
 
@@ -22,6 +23,7 @@ const saved = ref<EditorEvent[]>([]);
 const loaded = ref(false);
 const loading = ref(false);
 const error = ref('');
+const opened = ref<Record<string, boolean>>({});
 let alive = true;
 const live = computed(() => ['queued', 'running'].includes(props.run.status));
 const sources = computed(() =>
@@ -37,6 +39,11 @@ const blocks = computed(() => {
 });
 const tools = (actions: EditorAction[]) => actions.filter((step) => !step.id.startsWith('model-'));
 const requests = (actions: EditorAction[]) => actions.filter((step) => step.id.startsWith('model-'));
+
+function toggleBlock(id: string, event: Event) {
+  opened.value[id] = (event.currentTarget as HTMLDetailsElement).open;
+  emit('contentChange');
+}
 
 async function load() {
   if (loading.value || loaded.value) return;
@@ -97,6 +104,7 @@ onBeforeUnmount(() => {
   <div class="cw-run-sequence" :data-run-id="run.id" aria-label="本回合工具与过程">
     <p v-if="loading" class="run-note" role="status">正在读取过程记录…</p>
     <p v-if="error" class="run-error" role="alert">{{ error }} <button @click="load">重试</button></p>
+    <p v-if="run.error" class="run-error" role="alert">{{ run.error }}</p>
     <template v-for="block in blocks" :key="block.id">
       <CardMessage
         v-if="block.kind === 'assistant'"
@@ -104,26 +112,28 @@ onBeforeUnmount(() => {
         :status="block.status"
         :data-activity-id="block.id"
       />
+      <CardModelRequests
+        v-else-if="!tools(block.actions).length && requests(block.actions).length"
+        class="cw-request-only"
+        :requests="requests(block.actions)"
+      />
       <details
         v-else
         class="cw-run"
         :class="`run-${run.status}`"
-        :open="live"
-        @toggle="emit('contentChange')"
+        :open="opened[block.id] ?? live"
+        @toggle="toggleBlock(block.id, $event)"
       >
         <summary>
           <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">工具与过程</span>
           <span v-if="loaded || block.actions.length" class="cw-run-count">
-            {{ tools(block.actions).length }} 项工具与联网活动<span v-if="requests(block.actions).length">
-              · {{ requests(block.actions).length }} 次请求</span
-            >
+            {{ tools(block.actions).length }} 项工具与联网活动
           </span>
           <span class="cw-run-status" :aria-live="live ? 'polite' : undefined">{{
             actionStatus(run.status)
           }}</span>
         </summary>
         <div class="cw-run-body">
-          <p v-if="run.error && block.id === blocks[0]?.id" class="run-error" role="alert">{{ run.error }}</p>
           <AgentActivityItem
             v-for="step in tools(block.actions)"
             :key="step.id"
@@ -133,12 +143,11 @@ onBeforeUnmount(() => {
             endpoint=""
             :note="step.truncated ? '这里只展示日志摘要；模型读取的原文保持完整。' : undefined"
           />
-          <details v-if="requests(block.actions).length" class="run-requests">
-            <summary>模型请求记录 · {{ requests(block.actions).length }} 次</summary>
-            <p v-for="step in requests(block.actions)" :key="step.id" class="run-model-call">
-              {{ step.target }}
-            </p>
-          </details>
+          <CardModelRequests
+            v-if="requests(block.actions).length"
+            class="run-requests"
+            :requests="requests(block.actions)"
+          />
           <p v-if="!block.actions.length" class="run-note">
             {{ live ? '等待模型或工具记录…' : '本回合没有工具调用记录。' }}
           </p>
@@ -212,18 +221,13 @@ onBeforeUnmount(() => {
 .cw-run-body :deep(.agent-activity) {
   margin: 8px 0 0;
 }
-.run-model-call {
-  margin: 12px 0 4px;
-  font-size: 11px;
-  color: var(--text-muted);
+.cw-request-only {
+  margin: 0 0 16px 52px;
 }
 .run-requests {
-  padding: 8px 0 0;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  font-size: 11px;
-  color: var(--text-muted);
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
 }
 .run-note {
   color: var(--text-muted);
@@ -235,11 +239,9 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 @media (max-width: 620px) {
-  .cw-run {
+  .cw-run,
+  .cw-request-only {
     margin-left: 0;
-  }
-  .cw-run-count > span {
-    display: none;
   }
 }
 </style>

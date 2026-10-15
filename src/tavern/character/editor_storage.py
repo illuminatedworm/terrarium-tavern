@@ -5,6 +5,7 @@ import time
 
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
+from tavern.character.editor_environment import capture_environment
 from tavern.core.model_view import ModelView
 from tavern.storage.store import Conflict, dump, uid
 
@@ -66,8 +67,27 @@ class Conversations:
         return {**dict(row), **json.loads(row["payload"]), "model_selection": json.loads(row["model_selection"])}
 
     def write(self, db, workspace, *, increment=True):
+        payload = {"cards": workspace["cards"], "state": workspace["state"]}
+        if workspace.get("environment"):
+            payload["environment"] = workspace["environment"]
         db.execute("UPDATE card_editor_conversations SET payload=?,revision=revision+?,updated=? WHERE id=?",
-                   (dump({"cards": workspace["cards"], "state": workspace["state"]}), int(increment), time.time(), workspace["id"]))
+                   (dump(payload), int(increment), time.time(), workspace["id"]))
+
+    def environment_snapshot(self, db, workspace, timestamp=None):
+        if workspace.get("environment"):
+            return copy.deepcopy(workspace["environment"])
+        # Old conversations can recover their first request's time, but cannot
+        # reconstruct the OS used then. Never silently present today's OS as it.
+        first = db.execute("""SELECT r.created FROM card_editor_messages m
+            LEFT JOIN card_edit_runs r ON r.id=m.run
+            WHERE m.workspace=? AND m.role='user' ORDER BY m.seq LIMIT 1""", (workspace["id"],)).fetchone()
+        snapshot = capture_environment(first[0] if first and first[0] is not None else timestamp)
+        if first:
+            snapshot["legacy"] = True
+            if first[0] is None:
+                snapshot["local_time"] = "未记录（首次请求日志已清理）"
+                snapshot["utc_offset"] = "未记录"
+        return snapshot
 
     def check(self, db, wid, revision, idle=True):
         workspace = self.load(db, wid)

@@ -25,6 +25,7 @@ import CardRunActivity from './CardRunActivity.vue';
 import CardMessage from './CardMessage.vue';
 import CardDraftPreview from './CardDraftPreview.vue';
 import CardSkills from './CardSkills.vue';
+import CardFileReference from './CardFileReference.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
 import ReferenceTag from './ReferenceTag.vue';
 import ConversationModelControls from '../settings/ConversationModelControls.vue';
@@ -333,7 +334,9 @@ async function openModal(name: string) {
   if (name === 'rename') title.value = workspace.value?.title || '';
   await nextTick();
   const target =
-    dialogInput.value || modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
+    dialogInput.value ||
+    modalOverlay.value?.querySelector<HTMLElement>('[data-initial-focus]') ||
+    modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
   target?.focus({ preventScroll: true });
 }
 function closeModal() {
@@ -341,6 +344,14 @@ function closeModal() {
   const trigger = modalTrigger;
   modalTrigger = null;
   void nextTick(() => (trigger?.isConnected ? trigger : composer.value)?.focus({ preventScroll: true }));
+}
+async function addFileReference(path: string) {
+  if (busy.value || active.value) return;
+  input.value += `${input.value && !input.value.endsWith('\n') ? '\n' : ''}参考本地文件：${path}\n`;
+  closeModal();
+  await nextTick();
+  composer.value?.focus();
+  composer.value?.setSelectionRange(input.value.length, input.value.length);
 }
 function confirmCardAction() {
   const kind = modal.value;
@@ -559,9 +570,9 @@ onBeforeUnmount(() => {
               <div v-if="workspace && !workspace.messages.length" class="cw-empty">
                 <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span>
                 <h2>从一个想法开始</h2>
-                <p>讨论人物、世界或互动情境，也可以引用角色卡和用户角色作为资料。</p>
-                <p>制作新卡时，先讨论方案，确认后生成可审阅的草稿。</p>
-                <p>适配导入卡或迁移状态栏，可使用输入区的“内置技能”。</p>
+                <p>讨论人物、世界或互动情境，引用角色卡、用户角色或本地文件作为资料。</p>
+                <p>开启联网后可搜索、读取网页；本地支持文本、DOCX 和 XLSX 文件。</p>
+                <p>先讨论方案，再审阅草稿；适配导入卡、迁移状态栏可用“内置技能”。</p>
               </div>
               <template v-for="entry in timeline" :key="entry.key">
                 <CardRunActivity
@@ -629,6 +640,14 @@ onBeforeUnmount(() => {
                 @click="referencePicker.show()"
               >
                 <CardWorkspaceIcon name="plus" />引用角色
+              </button>
+              <button
+                class="cw-reference-add cw-quiet"
+                type="button"
+                :disabled="busy || !!active"
+                @click="openModal('file')"
+              >
+                <CardWorkspaceIcon name="file" />引用本地文件
               </button>
               <ReferenceTag
                 v-for="item in workspace?.cards"
@@ -858,13 +877,22 @@ onBeforeUnmount(() => {
   <Teleport to="body"
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
-        :class="{ 'cw-skills-modal': modal === 'skills' }"
-        :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'skills' ? '内置技能' : '制卡对话操作'"
+        :class="{ 'cw-skills-modal': modal === 'skills', 'cw-file-modal': modal === 'file' }"
+        :label="
+          modal === 'form'
+            ? '编辑角色卡草稿'
+            : modal === 'skills'
+              ? '内置技能'
+              : modal === 'file'
+                ? '引用本地文件'
+                : '制卡对话操作'
+        "
         :size="['form', 'adapter'].includes(modal) ? 'large' : modal === 'skills' ? 'medium' : 'small'"
         @close="closeModal"
       >
+        <CardFileReference v-if="modal === 'file'" @add="addFileReference" @cancel="closeModal" />
         <CardSkills
-          v-if="modal === 'skills'"
+          v-else-if="modal === 'skills'"
           :cards="items"
           :selected="current?.ref || ''"
           :disabled="busy || !!active"

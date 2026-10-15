@@ -16,6 +16,8 @@ export interface EditorAction {
   result?: string;
   truncated?: boolean;
   duration?: number;
+  model?: string;
+  searchFallback?: boolean;
 }
 const labels: Record<string, string> = {
   overview: '查看角色卡概览',
@@ -59,6 +61,8 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
         title: '思考与处理',
         target: `第 ${p.call} 次模型请求`,
         status: 'requested',
+        model: typeof p.model === 'string' ? p.model : undefined,
+        searchFallback: p.search_fallback === true,
       });
     } else if (event.kind === 'web_activity') {
       const id = `web-${p.action_id || p.call_id || event.seq}`;

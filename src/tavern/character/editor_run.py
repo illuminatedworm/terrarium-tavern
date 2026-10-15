@@ -24,6 +24,7 @@ class EditorRun:
         self.cfg = editor_runtime_config(self.store, self.wid, self.request)
         with self.store.connection() as db:
             workspace = self.edits.load(db, self.wid)
+        self.environment = workspace.get("environment")
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
         self.working = copy.deepcopy(progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]})
         self.base = copy.deepcopy(progress["base"] if progress else self.working)
