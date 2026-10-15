@@ -54,6 +54,13 @@ export interface WebSettings {
   duckduckgo: { enabled: boolean };
   timeout_seconds: number;
 }
+export interface CardEditorConfig {
+  system_prompt: string;
+  max_steps: number;
+  pressure_ratio: number;
+  handoff_tokens: number;
+  web: { mode: WebMode };
+}
 export interface SettingsPage {
   id: string;
   scope: SettingsScope;
@@ -85,6 +92,7 @@ export interface SettingsDocument {
   shared: SettingsObject & {
     providers: Provider[];
     card_editor: ModelProfile;
+    card_editor_config: CardEditorConfig;
     web: WebSettings;
     preference_presets: PreferencePreset[];
     advisor: {

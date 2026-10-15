@@ -127,7 +127,7 @@ async def test_editor_argument_failure_guides_repair_and_survives_native_replay(
     try:
         run = await editor.run([bad, good, blocks(api, "完成")])
         requests = [json.loads(r.content) for r in editor.requests]
-        assert "优先使用与任务对应的专门工具" in json.dumps(requests[0], ensure_ascii=False)
+        assert "选择与任务对应的专门工具" in json.dumps(requests[0], ensure_ascii=False)
         failed = results(editor.wire(editor.requests[1]))[0]
         content = failed["content" if api == "anthropic" else "output"]
         error = json.loads(content)["error"]

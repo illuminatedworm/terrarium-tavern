@@ -24,7 +24,7 @@ function create() {
 }
 </script>
 <template>
-  <div class="advisor-settings">
+  <div class="agent-settings advisor-settings">
     <ChannelSwitch v-model="channel" />
     <p class="muted">参谋 agent 与故事使用同一渠道，供应商和模型可以独立选择。</p>
     <ModelProfileEditor
@@ -45,7 +45,7 @@ function create() {
     </div>
     <fieldset>
       <legend>故事与咨询上下文</legend>
-      <div class="advisor-setting-grid">
+      <div class="agent-setting-grid">
         <label
           >默认带入近期交流（轮）<input
             v-model.number="value.recent_exchanges"
@@ -82,49 +82,3 @@ function create() {
     </fieldset>
   </div>
 </template>
-<style scoped>
-.advisor-settings {
-  display: grid;
-  gap: 14px;
-}
-.advisor-settings fieldset {
-  min-width: 0;
-  padding: 18px;
-  margin: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  display: grid;
-  gap: 12px;
-}
-.advisor-settings legend {
-  padding: 0 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-.advisor-settings label {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-}
-.advisor-setting-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.advisor-settings .settings-check {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.advisor-settings .muted {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.7;
-}
-@media (max-width: 640px) {
-  .advisor-setting-grid {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

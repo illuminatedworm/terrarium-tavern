@@ -491,6 +491,48 @@
 .settings-shell .settings-detail .settings-channel input[type='number'] {
   width: 65px;
 }
+.agent-settings {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.agent-settings > fieldset {
+  min-width: 0;
+  padding: 18px;
+  margin: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.agent-settings > fieldset > legend {
+  padding: 0 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.agent-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.settings-shell .agent-settings .settings-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.agent-settings .muted {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+@media (max-width: 640px) {
+  .agent-setting-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .settings-prompt-layout {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);

@@ -76,9 +76,8 @@ function move(index: number, delta: number) {
       仅在服务失败时尝试下一项；正常零结果不会触发降级。SearXNG 未填写地址时跳过。网页读取保留本地
       HTML／文本读取作为最终备选，超过 8 MiB 明确报错。
     </p>
-    <p class="muted">
-      免 key 有服务商限额；自有 key 使用所属账号的额度，本应用不升级套餐。使用通用网络设置。
-    </p>
+    <p class="muted">免 key 有服务商限额；自有 key 使用所属账号的额度，本应用不升级套餐。</p>
+    <p class="muted">本地接入跟随「网络与代理 → 模型接口请求使用代理」，不跟随提供商开关。</p>
   </div>
 </template>
 <style scoped>

@@ -48,6 +48,9 @@ class Store(MessageAdapters):
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
+                if "system_prompt" not in raw.get("shared", {}).get("card_editor_config", {}):
+                    with closing(sqlite3.connect(root / f"settings-before-editor-prompt-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
                 if "mode" not in raw.get("shared", {}).get("advisor", {}).get("web", {"mode": "auto"}):
                     with closing(sqlite3.connect(root / f"settings-before-web-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)

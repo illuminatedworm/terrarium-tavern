@@ -44,8 +44,12 @@ def editable(value):
 def prompt_catalog():
     result = []
     from tavern.advisor.config import SYSTEM
+    from tavern.character.editor_config import SYSTEM as EDITOR_SYSTEM
     result.append({"scope": "shared", "path": "advisor.system_prompt", "label": "参谋 agent 系统提示词",
                    "description": "参谋 agent 的咨询方式与项目资料说明；实际写入权限由 Runtime 控制。", "default": SYSTEM})
+    result.append({"scope": "shared", "path": "card_editor_config.system_prompt", "label": "角色卡编辑 agent 系统提示词",
+                   "description": "角色卡编辑 agent 的创作方式与工作规则；保存后从下一次发送或继续生效，工具权限仍由 Runtime 控制。",
+                   "default": EDITOR_SYSTEM})
     for scope in ("full_agent", "half_agent"):
         defaults = getattr(SettingsDocument(), scope).model_dump()
         system_prompt = (FULL_AGENT_SYSTEM_PROMPT_DEFINITION if scope == "full_agent"

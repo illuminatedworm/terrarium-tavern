@@ -21,7 +21,7 @@ const active = computed(() =>
         <option value="off">关闭</option>
       </select></label
     >
-    <p class="muted">普通渠道使用本地接入；本地实现仍需联网。搜索失败会依次降级并显示原因。</p>
+    <p class="muted">普通渠道使用本地接入，失败自动降级。本地接入跟随通用代理设置，不跟随提供商开关。</p>
     <p v-if="value.mode !== 'off'" class="muted">
       共享本地搜索顺序：{{ active || '未启用服务' }}。网页提取依次使用已启用的 Exa /
       Tavily，最后使用本地网页读取。

@@ -2,7 +2,6 @@
 import copy
 import json
 
-from tavern.character.editor_config import SYSTEM
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
@@ -18,7 +17,14 @@ def signature(working):
 
 class EditorContext:
     def refresh_tool_policy(self):
-        self.policy = fingerprint([SYSTEM, self.owner.definitions, self.owner.cfg.reasoning_effort, self.owner.cfg.reasoning_format])
+        self.policy = fingerprint([self.owner.cfg.card_editor_config.system_prompt, self.owner.definitions,
+                                   self.owner.cfg.reasoning_effort, self.owner.cfg.reasoning_format])
+
+    def system_message(self):
+        # Use the operation snapshot verbatim, including an explicitly empty
+        # prompt. The default is only for old settings missing this field.
+        return {"role": "system", "message_type": "root_system", "runtime_phase": "header",
+                "content": self.owner.cfg.card_editor_config.system_prompt, "_cache_static": True}
 
     def __init__(self, saved, owner):
         self.owner = owner
@@ -57,7 +63,7 @@ class EditorContext:
             self.frames, self.seen = copy.deepcopy(saved["frames"]), list(saved["seen"])
             self.epoch = saved["epoch"]
         else:
-            self.messages = [{"role": "system", "message_type": "root_system", "runtime_phase": "header", "content": SYSTEM, "_cache_static": True}]
+            self.messages = [self.system_message()]
             floor = owner.working["state"].get("history_floor", 0)
             for message in history:
                 if message["seq"] >= floor or message["ref"] in owner.current_refs:
@@ -126,7 +132,7 @@ class EditorContext:
         kept = [m for m in history if m["run"] in keep_runs or m["ref"] in self.owner.current_refs]
         self.owner.working["state"]["history_floor"] = min((m["seq"] for m in kept), default=0)
         self.owner.working["state"]["window"] = self.owner.working["state"].get("window", 0) + 1
-        self.messages = [{"role": "system", "message_type": "root_system", "runtime_phase": "header", "content": SYSTEM, "_cache_static": True}]
+        self.messages = [self.system_message()]
         self.frames = {}
         self.seen = [m["ref"] for m in history]
         for message in kept:

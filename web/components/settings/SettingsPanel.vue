@@ -31,8 +31,8 @@ import SaveStatus from './SaveStatus.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
+import CardEditorSettings from './CardEditorSettings.vue';
 import WebSettings from './WebSettings.vue';
-import WebModeSettings from './WebModeSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
 const props = defineProps<{
@@ -101,6 +101,11 @@ const prompts = computed(() => draft.value?.prompt_definitions.filter((p) => p.s
 const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.value) || prompts.value[0]);
 const advisorPrompt = computed(() =>
   draft.value?.prompt_definitions.find((p) => p.scope === 'shared' && p.path === 'advisor.system_prompt'),
+);
+const cardEditorPrompt = computed(() =>
+  draft.value?.prompt_definitions.find(
+    (p) => p.scope === 'shared' && p.path === 'card_editor_config.system_prompt',
+  ),
 );
 const status = computed(() =>
   !saved.value
@@ -587,47 +592,34 @@ onMounted(async () => {
               恢复默认文本
             </button>
           </AdvisorSettings>
-          <template v-else-if="page.key === 'editor'">
-            <WebModeSettings
-              :value="draft.shared.card_editor_config.web"
-              :services="draft.shared.web"
-              @services="navigate('shared.web')"
+          <CardEditorSettings
+            v-else-if="page.key === 'editor'"
+            :value="draft.shared.card_editor_config"
+            :profile="draft.shared.card_editor"
+            :providers="draft.shared.providers"
+            :services="draft.shared.web"
+            :effort-options="effortOptions"
+            :flush="editor.flush"
+            @checked="refreshAfterProbe"
+            @services="navigate('shared.web')"
+          >
+            <SavedText
+              :model-value="editor.textValue('shared', 'card_editor_config.system_prompt')"
+              :saved-value="saved!.shared.card_editor_config.system_prompt"
+              label="角色卡编辑 agent 系统提示词"
+              :guard="guard"
+              :saving="textBusy === 'shared.card_editor_config.system_prompt'"
+              :error="textErrors['shared.card_editor_config.system_prompt']"
+              @update:model-value="editor.editText('shared', 'card_editor_config.system_prompt', $event)"
+              @save="editor.saveText('shared', 'card_editor_config.system_prompt')"
             />
-            <ModelProfileEditor
-              :profile="draft.shared.card_editor"
-              :providers="draft.shared.providers"
-              role="card_editor"
-              label="角色卡编辑 agent 模型"
-              :effort-options="effortOptions"
-              :flush="editor.flush"
-              @checked="refreshAfterProbe"
-            />
-            <fieldset>
-              <legend>制卡运行</legend>
-              <label
-                >每次发送或继续的模型请求上限<input
-                  v-model.number="draft.shared.card_editor_config.max_steps"
-                  type="number"
-                  min="2"
-                  max="100"
-              /></label>
-              <label
-                >上下文提醒比例<input
-                  v-model.number="draft.shared.card_editor_config.pressure_ratio"
-                  type="number"
-                  min="0.25"
-                  max="0.9"
-                  step="0.05"
-              /></label>
-              <label
-                >创作进度上限（tokens）<input
-                  v-model.number="draft.shared.card_editor_config.handoff_tokens"
-                  type="number"
-                  min="128"
-                  max="16384"
-              /></label>
-            </fieldset>
-          </template>
+            <button
+              v-if="cardEditorPrompt"
+              @click="editor.editText('shared', 'card_editor_config.system_prompt', cardEditorPrompt.default)"
+            >
+              恢复默认文本
+            </button>
+          </CardEditorSettings>
           <WebSettings v-else-if="page.key === 'web'" :value="draft.shared.web" />
           <LocalResourceSettings
             v-else-if="page.key === 'local'"
