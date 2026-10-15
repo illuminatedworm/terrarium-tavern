@@ -38,6 +38,10 @@
 
 上述组件不能被本项目重新许可为仅限非商业用途。GPL／AGPL 对组合程序及分发的义务可能与本项目的非商业限制冲突，不能仅靠保留声明解决。这里记录来源与风险，不宣称本项目已完成兼容性确认；详见[许可审查与发行边界](../docs/development/licensing.md)。其他 Python 依赖仍适用各自许可。
 
+## Office 文档解析
+
+角色卡编辑 agent 使用 [Microsoft MarkItDown](https://github.com/microsoft/markitdown)（MIT）提供的 DOCX/XLSX 转换器。所选格式依赖包括 Mammoth（BSD-2-Clause）、lxml（BSD-3-Clause）、pandas（BSD-3-Clause）和 openpyxl（MIT），其余传递依赖沿用各自许可证，版本以 `uv.lock` 为准。
+
 ## 角色卡规范
 
 本项目参考以下规范实现角色卡读写：

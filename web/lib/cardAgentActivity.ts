@@ -20,6 +20,8 @@ export interface EditorAction {
 const labels: Record<string, string> = {
   overview: '查看角色卡概览',
   read_field: '读取字段',
+  read_text_file: '读取文本文件',
+  read_document: '读取 Office 文档',
   search_entries: '搜索世界书',
   patch_draft: '修改草稿',
   set_text_field: '编辑文本字段',
