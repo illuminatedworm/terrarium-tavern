@@ -1,170 +1,97 @@
 # Terrarium Tavern
 
-**让设定在需要时进入故事，让记忆随故事逐步积累。**
+Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的本地角色扮演应用，兼容 SillyTavern 的部分角色卡与世界书格式。项目围绕长篇互动叙事，提供角色卡管理、世界书检索、剧情分支和故事记忆，探索如何在有限上下文中维持设定与故事的连续性。
 
-实验阶段 · Windows 10/11 / Linux（Bash） · Python 3.12 · Vue 3 · TypeScript 5.8
+目前处于实验阶段，支持 Windows 10/11 和 Linux（Bash）。
 
-Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的本地角色扮演应用。本项目类似 Silly Tavern 且兼容其部分生态，围绕长篇互动叙事组织角色卡、世界书、对话分支和剧情记忆，探索如何在有限上下文中维持设定与故事的连续性。
+![Terrarium Tavern 阅读界面：示例角色卡“雾港来信”的开场](docs/images/story.png)
 
-项目目前处于实验阶段，面向本机使用，提供 Windows PowerShell 和 Linux Bash 脚本。支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；模型通过 Chat Completions、Responses、Anthropic Messages 或 Gemini 接入，不同功能部分可以使用不同模型。
+示例角色卡“雾港来信”的开场与阅读界面。
 
-## 许可
+<details>
+<summary>角色卡编辑界面</summary>
 
-**本项目原创代码及随附原创资料严格禁止任何形式的商业用途**，采用 [Terrarium Tavern 非商业许可 1.1](LICENSE/PROJECT_LICENSE.md)。除禁止商用及为落实该限制所需的调整外，授权结构基本遵从 Apache 2.0：允许非商业使用、修改和免费再分发，保留署名、修改声明、专利授权及防御性终止、商标和免责规则，不额外要求公开源码。商业托管、收费分发、广告变现和企业内部业务使用等均不在授权范围内。
+![Terrarium Tavern 角色卡编辑界面：林间的角色设定](docs/images/card-editor.png)
 
-这是改编后的独立许可，**不是 Apache-2.0，也不是与 Apache-2.0 二选一的双重许可**；以上为摘要，正式授权以许可全文为准。当前依赖中的 GPL／AGPL 兼容性仍有待解决，详见[许可审查与发行边界](docs/development/licensing.md)。
+角色设定、开场、世界书和脚本可在同一编辑页中管理。
 
-Kohaku Terrarium 部分继续适用其原有的 [KohakuTerrarium License 1.0](LICENSE/KohakuTerrarium.txt)，其他第三方组件也保留各自许可。本项目属于“源码可用、仅限非商业用途”。完整范围及第三方声明见 [LICENSE/](LICENSE/README.md)。
+</details>
 
-## 核心设计
+## 主要功能
 
-### 两种独立运行模式
+- **按剧情检索世界书。** 结合关键词、BM25 全文检索和可选的本地向量检索、重排。相关条目插入触发它的对话位置，随对应剧情保留或退出上下文。
+- **管理角色卡与故事。** 支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡；可编辑剧情、重新生成回复，并从选定进度创建独立分支。
+- **查看和调整生成过程。** 可预览上下文中的剧情、设定与记忆，并在工作记录中查看检索和整理过程。参谋 agent 可查阅当前剧情、检索资料；角色卡编辑 agent 可协助修改草稿和适配卡片。
 
-创建故事时可选择 **Half Agent** 或 **Full Agent**。旧会话默认 Half Agent，剧情分支继承原模式。
+创建故事时可选择两种运行模式，各自独立配置模型与参数：
 
-| 模式 | 写作与记忆 | 上下文管理 |
-|---|---|---|
-| Half Agent | Writer 写正文，Tracker 整理分类记忆、分析变量 | 本地滚动窗口或官方云端 compact；Tracker 周期维护独立运行 |
-| Full Agent | 一个 Agent 通过工具检索、维护笔记、更新变量并生成正文 | 当前窗口 + handoff + 可搜索原始历史 + 模型主动换窗 |
+| 模式 | 写作与记忆方式 |
+|---|---|
+| **Half Agent** | Writer 专注正文，后台 Tracker 按周期积累分类记忆、分析变量。记忆可查看来源和手工修订。 |
+| **Full Agent** | 一个 Agent 通过工具检索设定与历史、维护笔记、更新变量并生成正文，跨上下文窗口时通过交接笔记续接。 |
 
-Full Agent 保留自动世界书检索与中途注入，也允许模型自拟 query 调用同一索引。记忆采用随窗口携带的交接笔记与按需读取的自由笔记，不运行后台分类记忆整理。操作见 [Full Agent 使用指南](docs/guides/full-agent.md)，机制见 [Full Agent 架构](docs/design/full-agent.md)。
+模式说明见 [Half Agent 窗口与记忆](docs/guides/history-maintenance-settings.md)和 [Full Agent 使用指南](docs/guides/full-agent.md)。
 
-### 在对话中途注入世界书
+## 安装与启动
 
-不同于 ST 默认的顶部可变世界书条目注入，本应用的上下文设计中，只有常驻条目被注入到顶部且不会变化。
+准备 **Python、Node.js 22+ 和 Git**。克隆仓库或下载并解压源码，在项目根目录运行安装脚本。脚本通过 uv 准备 Python 3.12 和锁定依赖，构建前端并下载 Chromium。
 
-而基于历史消息召回的世界书条目，采用 **mid-conversation system prompt** 的注入方式：把检索到的相关设定作为系统消息，放在对话历史中与其对应的位置。
-
-条目与触发它的剧情进度关联，在上下文中保持位置，并不因重复命中而变更位置或复制。随着对应消息退出上下文，条目一同退出并进入冷却。
-
-这让世界书注入具有明确的时机与生命周期，借助“近因效应”的原理提升条目效果。
-
-### 多路世界书索引与检索
-
-世界书检索结合**关键词匹配、BM25 全文检索和可选的 embedding 检索**，并可使用 reranker 模型进一步筛选。关键词与 BM25 路线不需要 GPU，这也是默认方案。embedding 检索和 reranker 使用本地 Qwen3 模型。
-
-各路候选经过融合、相关性准入和预算检查，递归触发也遵循相同约束。每组条目注入存在上限数量，宁缺毋滥。
-
-三路并行召回并启用 reranker 时，即便只使用 Qwen3 0.6B 系列模型，在 RTX 12G 显卡上已能够达到低延迟快响应、高召回准确率之间的良好平衡。
-
-### Half Agent：周期性触发的积累式记忆
-
-后台按周期整理已提交剧情，默认每五轮触发一次；历史即将退出上下文时，还会检查相关剧情是否已经完成记忆整理。
-
-记忆采用增量操作，逐步积累当前进展、变化与经历、未完成事项和待确认内容。已有条目不会仅因本轮没有被提到就消失，手工修订受到保护。模型负责判断事实与变化，程序负责回填原文来源、校验引用并提交状态。用户可以查看来源、编辑条目或手动重建记忆。
-
-## 技术路线
-
-前端使用 **Vue 3、TypeScript 和 Vite**；后端使用 **Python、FastAPI 和 SQLite**，以 Kohaku Terrarium 作为 agent 运行基座，借助隔离的 Chromium 环境运行角色卡脚本。
-
-- **前台写作（Writer）**：负责叙事，普通正文生成不调用工具。
-- **后台整理（Tracker）**：负责积累式记忆、按需变量分析，以及经用户授权的设定维护。
-- **角色扮演运行时**：负责检索、上下文组装、分支、权限和事务提交。模型输出与脚本处理成功后，正文和状态才一起生效。
-
-上述 Writer / Tracker / Roleplay Runtime 属于 Half Agent。Full Agent 使用独立的单模型工具循环和轻量执行宿主，共享检索、存储、模型传输和卡片脚本等底层能力。
-
-## 安装
-
-准备好 **Python、Node.js 22+ 和 Git**。项目运行环境固定为 Python 3.12，安装脚本通过 uv 管理依赖和所需的 Python 版本。
-
-克隆本仓库，或下载并解压源码后，在项目根目录打开 PowerShell：
+**Windows（PowerShell）**
 
 ```powershell
-.\setup.ps1
+.\setup.ps1 -Proxy ''
 .\start.ps1
 ```
 
-安装脚本会安装锁定依赖、构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+此安装命令使用直连；需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
 
-安装依赖和下载资源时，视网络环境可能需要代理。安装脚本默认直连，可通过 `-Proxy` 指定完整 HTTP(S) 代理地址（含协议与端口）：
-
-```powershell
-.\setup.ps1 -Proxy '<代理服务地址>'
-```
-
-不需要代理时，可显式使用 `setup.ps1 -Proxy ''`。
-
-模型 API 的代理在应用设置中单独配置。若需本地向量检索和重排，使用 `setup.ps1 -LocalRetrieval` 安装额外依赖，再在应用设置中下载并预热模型；这条路线目前需要支持 CUDA 的 NVIDIA GPU。
-
-停止服务：
-
-```powershell
-.\stop.ps1
-```
-
-自定义端口使用 `start.ps1 -Port 8001`，自定义数据目录使用 `start.ps1 -Data 'D:\MyStories'`。详细说明见[安装与维护](docs/guides/maintenance.md)。
-
-Linux 下可使用根目录的 Bash 脚本：
+**Linux（Bash）**
 
 ```bash
 ./setup.sh
 ./start.sh
-# 自定义端口和数据目录
-./start.sh --port 8001 --data '/path/to/My Stories'
-./stop.sh --port 8001
 ```
 
-`setup.sh` 默认沿用环境中的代理，可用 `--proxy '<HTTP(S) 代理地址>'` 指定代理，或用 `--proxy ''` 禁用安装代理；本地检索依赖使用 `--local-retrieval`。已有 uv 时直接使用，否则在 `.cache/uv/` 中安装 uv，避免修改系统 Python。Chromium 缺少系统库时，可运行 `.venv/bin/python -m playwright install-deps chromium` 安装所需系统依赖（可能需要 sudo）。
+Linux 安装默认沿用环境中的代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定。Chromium 若提示系统库缺失，运行 `.venv/bin/python -m playwright install-deps chromium` 补齐，按系统提示提供 sudo 权限。
+
+启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。停止服务使用 Windows 的 `.\stop.ps1` 或 Linux 的 `./stop.sh`。
+
+默认检索使用关键词与 BM25，可在 CPU 上运行。本地向量检索和重排需要支持 CUDA 的 NVIDIA GPU：安装时添加 `-LocalRetrieval`（Windows）或 `--local-retrieval`（Linux），再到应用设置中下载、预热模型。模型 API 的代理在应用设置中单独配置。
+
+端口、数据目录、备份与升级见[安装与维护](docs/guides/maintenance.md)，本地模型配置见[世界书检索](docs/guides/retrieval.md)。
 
 ## 开始使用
 
-1. **配置模型**：在“设置 → 通用 → 提供商”添加连接，再分别配置 full agent 或 half agent 的模型。两种模式参数独立；half agent 内的正文生成和后台整理也分别选择模型。普通参数自动保存，提示词点击绿色勾保存；详见[设置说明](docs/guides/settings.md)。后台历史补查等功能需要模型支持工具调用。
-2. **导入角色卡**：可以先试用 `samples/雾港来信.json`；`samples/星航状态卡.json` 用于体验 HTML/MVU，**使用前需启用该卡的脚本权限**。
-3. **开始故事**：选择角色卡、运行模式、用户身份和开场。Full Agent 需要支持原生工具调用的模型，并独立配置连接、模型与预算。需要更新变量或修改设定时，按界面提示明确授权。
-4. **查看与调整**：通过上下文预览查看注入内容，通过后台记录了解整理过程；可编辑记忆、重新生成回复，或从选定进度创建独立分支。
+1. **配置模型。** 在“设置 → 通用 → 提供商”添加连接，再到对应运行模式的“模型与生成”选择提供商和模型。Half Agent 的正文生成与后台整理分别配置；Full Agent 和 Tracker 的相关能力需要工具调用支持。普通参数自动保存，提示词通过绿色勾保存。
+2. **导入角色卡。** 从侧栏“角色卡”导入文件。[雾港来信](samples/雾港来信.json)可用于体验文本故事，[星航状态卡](samples/星航状态卡.json)用于体验 HTML/MVU，使用前需启用该卡的脚本权限。
+3. **开始故事。** 点击“开始新故事”，选择角色卡、运行模式、模型渠道、用户身份和开场。变量更新与设定修改按界面提示授权。
+4. **阅读与调整。** 在对话中续写行动，按需编辑、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。
 
-支持通过官方 **Sign in with ChatGPT** 连接符合资格的付费账号，让各 Agent 使用订阅额度。入口为“设置 → 通用 → 提供商 → ChatGPT 订阅”；登录后仍需分别选择各 Agent 的提供商和模型。配置及参数限制见[使用 ChatGPT 订阅](docs/guides/settings.md#使用-chatgpt-订阅)。
+模型接入支持 Chat Completions、Responses、Anthropic Messages 和 Gemini。API 连接与 ChatGPT 订阅接入的操作见[设置指南](docs/guides/settings.md)。
 
-数据默认位于 `data/`，其中包含游玩剧情、角色资源和模型配置。ChatGPT 登录凭据单独保护，不随备份或数据导出迁移；换机后需重新连接。
+剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前应备份数据目录；ChatGPT 账号在换机后需重新连接。
 
 ## 当前局限与未完部分
 
-- **角色卡编辑 agent 仍比较粗糙。** 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。请人工审阅修改结果，尤其是初始化、脚本与世界书用途的调整。
-- **角色卡兼容范围有限。** 项目不是完整的 SillyTavern 运行环境，不能保证任意扩展、远程脚本或复杂 MVU 卡片都能直接使用，详见[兼容范围](docs/guides/compatibility.md)。
-- **长篇叙事质量仍在探索。** 通过开发者个人游玩体验，初步确认中篇体验较好。具体模型、系统提示词、各种机制的参数数字都显著影响体验质量。
-- **记忆系统对模型智能有要求** 由于记忆系统的复杂性和格式化输出要求，经测试，GPT-5.6-Luna 故障、错误率极高，至少需要配置 GPT-5.6-Terra 水平的模型才能正常工作。
-- **无法破限或者效果有限** 本项目不支持 ST 社区中常见的重型预设。
-
-  > 当前 ST 社区所用的各种破限重型预设，往往基于情景诱导、role 伪装欺骗等提示词编织操作，还需要辅以前端显示处理。
-  > 开发者个人认为，此类沉重的提示词工程有妨碍输出质量之可能，且容易降低 AI API 缓存命中率。
-  > 同时基于开发者个人趣味，破限功能长期不作考虑和实现。
-
-- **Half Agent 的 Agent 化程度有限** 该模式中只有后台 tracker 和角色卡编辑 agent 才算严格意义上的 AI agent。前台 writer 实质是持有零工具的聊天助手。Full Agent 是独立实验路线，实际叙事质量需要另行验证。
-
-  > 这是有意的，开发者个人观察后认为：当前各家模型后训练过于注重 agentic 和 coding，writer 若进入 agent 思维链路会“变得机械”，不利于角色扮演/创意写作。
+- **角色卡编辑 agent 仍比较粗糙。** 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。修改结果需要人工审阅，尤其是初始化、脚本与世界书用途的调整。
+- **角色卡兼容范围有限。** 当前适配了 SillyTavern 的部分格式与接口。扩展、远程脚本和复杂 MVU 卡片需要逐卡确认，详见[兼容范围](docs/guides/compatibility.md)。
+- **长篇叙事质量仍在探索。** 开发者个人游玩体验初步确认中篇体验较好。具体模型、系统提示词和各项机制的参数都显著影响体验质量。
+- **记忆系统对模型智能有要求。** 记忆整理涉及复杂判断和格式化输出。开发者测试中，GPT-5.6-Luna 的故障、错误率较高，正常运行至少需要 GPT-5.6-Terra 或相近能力的模型。
+- **重型破限预设的兼容性有限。** ST 社区的这类预设通常依赖情景诱导、角色伪装和前端显示处理。开发者认为，沉重的提示词工程可能影响输出质量与 API 缓存命中率；破限功能处于长期开发范围之外。
+- **Half Agent 的 Agent 化程度有限。** 该模式将正文生成与工具操作分开，Writer 负责写作，Tracker 负责后台维护。开发者观察认为，当前模型的 agent 与编程训练倾向可能使写作变得机械，因此保留这一分工。Full Agent 是独立实验路线，实际叙事质量仍需验证。
 
 ## 文档与开发
 
-[文档导航](docs/README.md)按使用、设计、接口和开发维护组织完整资料。
+[文档导航](docs/README.md)收录完整的使用、设计和开发资料。常用入口：[角色卡编辑](docs/guides/card-editor.md) · [历史与分支](docs/guides/story-history.md) · [参谋 agent](docs/guides/advisor.md)。
 
-- 配置与操作：[设置](docs/guides/settings.md) · [Full Agent](docs/guides/full-agent.md) · [Half Agent 窗口与记忆](docs/guides/history-maintenance-settings.md)
-- 资料与历史：[角色卡编辑](docs/guides/card-editor.md) · [世界书检索](docs/guides/retrieval.md) · [历史与分支](docs/guides/story-history.md)
-- 缓存与用量：[提示缓存](docs/guides/prompt-cache.md) · [Token 计数](docs/guides/token-counting.md)
-- 开发：[架构](docs/design/architecture.md) · [项目目录](docs/development/structure.md) · [验证与发行](docs/development/validation.md)
+前端使用 Vue 3、TypeScript 和 Vite，后端使用 Python、FastAPI 和 SQLite，Agent 运行基座为 Kohaku Terrarium，角色卡脚本在隔离的 Chromium 中运行。开发说明见[应用架构](docs/design/architecture.md)、[项目目录](docs/development/structure.md)及[开发、测试与发行](docs/development/validation.md)。
 
-常用开发命令：
+## 许可与致谢
 
-```powershell
-npm.cmd run dev            # 同时启动后端与 Vite，访问 http://127.0.0.1:5173，前端修改即时更新
-npm.cmd run dev:web        # 仅启动 Vite；需另行运行 .\start.ps1
-npm.cmd run build
-.\build.ps1               # 更新 dist/ 和后端使用的静态页面
-npm.cmd test
-.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal
-```
+本项目原创代码及随附原创资料采用 [Terrarium Tavern 非商业许可 1.1](LICENSE/PROJECT_LICENSE.md)，仅限非商业使用、修改和免费再分发。授权范围以许可全文为准。
 
-也可直接运行 `.\run-dev.ps1`。若 8000 端口已有本项目后端，开发脚本会复用它；否则会启动后端并在退出时关闭。访问 8000 端口仍使用上次构建的页面；需要更新该页面时运行 `.\build.ps1`（等同于 `npm.cmd run build`）。
+Kohaku Terrarium 及其他第三方组件保留各自许可，详见[许可范围](LICENSE/README.md)。当前依赖中的 GPL／AGPL 许可兼容性仍有待解决，见[许可审查与发行边界](docs/development/licensing.md)。
 
-Linux 开发时运行 `./run-dev.sh`，构建时运行 `./build.sh`；测试使用 `npm test` 和 `.venv/bin/python -m pytest -q tests/backend -n 4 --dist worksteal`。仅检查少量 Python 用例时省略并行参数；更多说明见[验证与发行](docs/development/validation.md)。`npm run dev` 目前仍是 Windows PowerShell 入口。
-
-## 致谢
-
-- Kohaku Terrarium：提供 agent 运行基座，是本项目的重要基础。
-- SillyTavern：角色卡、世界书和互动叙事工作流的重要灵感来源。
-- MagVarUpdate：提供 MVU 变量更新核心。
-- Tavern Helper：为角色卡脚本接口适配提供参考。
-- 角色卡规范、Vue、FastAPI、tiktoken 等项目及其贡献者。
+Kohaku Terrarium 提供 Agent 运行基座，SillyTavern 提供角色扮演工作流的参考，MagVarUpdate 提供 MVU 核心，Tavern Helper 提供脚本接口适配的参考。其他组件及贡献者见[第三方声明](LICENSE/THIRD_PARTY_NOTICES.md)。
 
 Powered by **KohakuTerrarium**。Copyright 2024–2026 Shih-Ying Yeh (KohakuBlueLeaf) and contributors。
-
-致谢项目及其他第三方组件的来源、固定版本与许可说明见 [LICENSE/THIRD_PARTY_NOTICES.md](LICENSE/THIRD_PARTY_NOTICES.md)。

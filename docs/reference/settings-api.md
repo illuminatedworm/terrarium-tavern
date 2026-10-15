@@ -1,8 +1,8 @@
 # 设置持久化与 API
 
-本文供修改设置客户端、迁移逻辑和配置存储的开发者使用。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档仍为版本 2。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[Advisor 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`，设置文档仍为版本 2。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
@@ -23,7 +23,9 @@
 
 API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调由独立的 `127.0.0.1` 临时监听器处理，路径固定为 `/auth/callback`。`generation` 是授权会话的非秘密版本，仅用于账号切换后刷新客户端缓存。
 
-模型列表接口保持 `models: string[]`，订阅模式额外返回 `model_details`：每项包含 `id/display_name`，目录提供能力时还包含 `supported_reasoning_levels: [{effort, description}]`、`default_reasoning_level` 和 `unavailable_reasoning_levels: [{effort, reason}]`。支持档位为账号目录与当前订阅接口契约的交集，保留目录顺序。可操作的 ChatGPT 错误响应包含 `detail/code/upstream_status/request_id/usage_url`；不能从额度错误自行推算套餐重置时间，也不能回退至其他计费凭据。
+模型列表接口保持 `models: string[]`，订阅模式额外返回 `model_details`：每项包含 `id/display_name`，目录提供能力时还包含 `supported_reasoning_levels: [{effort, description}]`、`default_reasoning_level` 和 `unavailable_reasoning_levels: [{effort, reason}]`。支持档位为账号目录与当前订阅接口契约的交集，保留目录顺序。
+
+可操作的 ChatGPT 错误响应包含 `detail/code/upstream_status/request_id/usage_url`；不能从额度错误自行推算套餐重置时间，也不能回退至其他计费凭据。
 
 ## 配置范围与修订号
 
@@ -31,21 +33,23 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
-| `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model` |
-| `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background` |
-| `shared` | 提供商与密钥、角色卡编辑 agent 模型、本地模型文件、网络和清理参数 | `card_editor` |
+| `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model`、`official_model` |
+| `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background`、`official_foreground`、`official_background` |
+| `shared` | 提供商、参谋 agent、角色卡编辑 agent、联网服务、本地模型、偏好及清理参数 | `card_editor`、`advisor.model`、`advisor.official_model` |
 
-两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，保存方式不再授予写入权限。
+两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围中的模型能力检查失效，因此一次响应可能包含多个范围的新修订号。客户端应合并响应中的实际值，不能只递增提交范围的本地计数。
 
-`SettingsDocument.runtime(mode)` 生成一次操作的深拷贝配置。正在执行的回合继续使用开始时的快照；保存后的配置用于后续操作。Full Agent 与 Card Editor 都有明确模型配置，不在运行时继承 Half Agent 模型。
+`SettingsDocument.runtime(mode)` 生成一次操作的深拷贝配置。正在执行的回合继续使用开始时的快照；保存后的配置用于后续操作。Full Agent 与 角色卡编辑 agent 都有明确模型配置，不在运行时继承 Half Agent 模型。
 
 `full_agent.tools.parallel_tool_calls` 为严格布尔值，默认 `true`；旧设置缺少此字段时自动采用开启值。它对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent；通过 `PATCH /api/settings/full_agent` 的 `changes` 传入 `{"tools.parallel_tool_calls":false}` 可关闭。
 
 ## 读取与写入
 
-`shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.network` 设置页面，支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点不受影响。Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
+`shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.network` 设置页面，支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点使用各自请求。
+
+Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。
 
@@ -73,7 +77,7 @@ Content-Type: application/json
 
 成功响应为完整的公开设置文档。下一次修改使用响应中的修订号。数组整体更新；更新 `shared.providers` 时应保留其余提供商。已有提供商的 `api_key` 留空或省略表示保留密钥，不能通过空字符串清空它。
 
-字段路径使用点分形式，例如 `model.reply_tokens`，不是 JSON Pointer。提供商引用、预算关联及字段类型在整个文档上统一校验，失败时不写入部分配置。`capability` 和 `capability_key` 由连接检查维护，客户端不能通过普通设置写入伪造其值。旧扁平 `PUT /api/settings` 不受支持。
+字段路径使用点分形式，例如 `model.reply_tokens`。提供商引用、预算关联和字段类型整体验证后写入。`capability` 与 `capability_key` 由连接检查维护；设置更新统一使用分范围 PATCH 接口。
 
 常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`；三者不能仅包含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表，设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只作为可复用内容，不自动关联或更新会话的 `turn_preference`。
 
@@ -98,7 +102,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 模型配置的 `message_adapter` 字典整体写入，例如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`；省略类型使用程序默认值。只允许覆盖类型目录中 `configurable=true` 的项。
 
-`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_editor`。
+`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_editor`、`advisor`。
 
 对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`；制卡使用 `GET/PUT /api/card-editor/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整的新值。这个修订号独立于剧情／草稿修订号，运行中也可保存。下一次模型调用读取新值，同次调用的重试保持原快照。
 
@@ -132,11 +136,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-数据库 schema 与设置文档当前都为 2；剧情快照中的 `memory_document.version` 为 1，属于独立的数据格式。
+当前数据库为 **schema 4**，设置文档为 **version 2**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-打开 schema 1 数据库时，存储层先只读检查版本和配置，再在数据目录生成 `settings-before-v2-*.sqlite3` 备份，随后迁移设置；编辑工作区事务迁移完成后写入 schema 3。schema 1/2 升级前另生成 `before-card-editor-v3-*.sqlite3` 备份，旧编辑对话保持原身份。未知数据库版本在执行建表操作前被拒绝。
+存储层接受 schema 1–4，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
 
-迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的 Card Editor 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移范围是设置和数据库格式，不代表任意历史程序版本的对话语义都受支持。
+迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的角色卡编辑 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 
 其他配置迁移由同一设置层管理：
 

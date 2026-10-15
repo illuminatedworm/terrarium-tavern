@@ -1,18 +1,20 @@
 # 应用架构与职责
 
-应用提供 Half Agent 和 Full Agent 两种游玩模式，另有独立的角色卡编辑 agent 工作区。本文说明共享层与 Half Agent 的职责；Full Agent 的模型循环见[独立设计](full-agent.md)，Card Editor 见[编辑工作区](card-editor.md)。
+应用由两种游玩模式、参谋 agent 和角色卡编辑 agent 组成，共享模型传输、检索和存储能力。各运行时分别管理工作上下文与写入范围，设计说明见 [Full Agent](full-agent.md)、[参谋 agent](advisor.md)和[角色卡编辑 agent](card-editor.md)。
 
 ```mermaid
 flowchart TD
     UI[Vue 界面] --> API[FastAPI 与模式路由]
     API --> HALF[Half Agent Runtime]
     API --> FULL[Full Agent Runtime]
-    API --> EDIT[Card Editor]
+    API --> EDIT[角色卡编辑 agent]
+    API --> ADVISOR[参谋 agent]
     HALF --> WRITER[Writer 正文]
     HALF --> TRACKER[Tracker 维护]
     HALF --> SHARED[共享存储、检索、传输与脚本能力]
     FULL --> SHARED
     EDIT --> SHARED
+    ADVISOR --> SHARED
 ```
 
 ## 正式角色与职责
@@ -21,13 +23,15 @@ flowchart TD
 |---|---|---|
 | Writer | 演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；常规正文一次生成，零工具，不调度 Tracker 或提交状态 |
 | Tracker | 分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
-| Card Editor | 独立编辑和适配角色卡草稿 | [character/card_editor.py](../../src/tavern/character/card_editor.py)；不读取剧情，用户审阅后保存书架卡片 |
+| 角色卡编辑 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_editor.py](../../src/tavern/character/card_editor.py)；用户审阅后保存书架卡片 |
+| 参谋 agent | 查阅故事、咨询与联网；按明确要求更新本轮偏好 | [advisor/runtime.py](../../src/tavern/advisor/runtime.py)；使用独立咨询记录和偏好草稿 |
+| Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
 | Half Agent Runtime | 回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
 | 模式路由 | 将故事操作交给对应引擎 | [application/modes.py](../../src/tavern/application/modes.py)；Full Agent 不调用 Writer／Tracker 编排 |
 
-Writer 和 Tracker 通过 Runtime 管理的回合草稿交换数据，不直接委派。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
+Writer 和 Tracker 的调用及草稿交换由 Runtime 统一编排。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
 
-`scripting/agent.py` 的 `TurnAgent` 适配 Writer 与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本，不能与 `RoleplayRuntime` 混淆。
+`scripting/agent.py` 的 `TurnAgent` 适配 Writer 与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本；`RoleplayRuntime` 负责整个回合的调度和提交。
 
 ## 数据所有权与事务
 
@@ -47,9 +51,9 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 ## 设置与恢复
 
-设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent 和 Card Editor 各有明确模型配置。界面“后台工作记录”汇集 Runtime 事件，不只包含 Tracker 请求。
+设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和角色卡编辑 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
 
-数据库为 schema 3，打开前检查格式；schema 1/2 先备份再迁移，未知版本不执行建表。设置字段及迁移见[设置 API](../reference/settings-api.md)。
+数据库为 schema 4；schema 1–3 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
 
 剧情快照持续保留，恢复和回复版本切换使用对应快照。详细诊断可以清理，但剧情、分支及恢复所需记录不作为旧日志删除。存储策略见[安装与维护](../guides/maintenance.md#清理与资源保留)。
 
@@ -69,4 +73,4 @@ Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 
 
 外部依赖先下载、哈希缓存和离线打包。卡级缓存及已落盘的旧会话依赖可以复用，解析后回填卡级清单；每个故事仍有自己的依赖清单。运行阶段不任意联网，兼容范围见[矩阵](../guides/compatibility.md)。
 
-服务只监听 loopback，并校验 Host/Origin。密钥保存在后端本地配置，设置响应不返回密钥原文；备份包含密钥，应按私有数据保管。窗口、日志、索引和模型权重有不同生命周期。
+服务只监听 loopback，并校验 Host/Origin。API 密钥保存在后端配置，设置响应只提供配置状态；完整备份包含这些密钥，需按私有数据保存。ChatGPT 凭据单独绑定当前安装，迁移后重新连接。窗口、日志、索引和模型权重有不同生命周期。

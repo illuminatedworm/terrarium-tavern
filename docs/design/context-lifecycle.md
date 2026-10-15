@@ -1,6 +1,6 @@
 # Half Agent 上下文生命周期
 
-本文说明 Writer 的上下文编排、本地滚动窗口、云端 compact 和记忆覆盖。Full Agent 使用[独立工作窗口](full-agent.md#工作窗口与追加记录)。两种模式共享压缩协议与操作服务，但分别规划来源及切回本地的行为。
+Writer 的上下文由配方、本地滚动窗口或云端 compact，以及 Tracker 记忆覆盖共同管理。Full Agent 使用[独立工作窗口](full-agent.md#工作窗口与追加记录)。两种模式共享压缩协议与操作服务，但分别规划来源及切回本地的行为。
 
 ## 编排与资料标签
 
@@ -12,7 +12,7 @@
 
 默认编排让历史正文、本次输入锚定的世界书和当前输入连续出现，之后追加后置要求、作者注、记忆及状态。滚动世界书始终贴近对应锚点，其位置不随再次命中改变。
 
-下面只展示剧情与一个本次输入锚点，不包含固定系统规则和配方的其他部分：
+以下示例展示剧情与当前输入锚点的相对位置：
 
 ```json
 [
@@ -42,7 +42,7 @@
 
 运行时用字段标签标识来源，不额外注入字段用途说明，也不根据字段名限定作者实际写入的内容。具体含义由模型结合卡片原文和上下文理解。固定字段改变时按现有机制重建基线；后置要求继续按下述动态记录规则更新或撤销。
 
-其他顶层字段的去向：`name`／`nickname` 用于身份及宏；`first_mes`／`alternate_greetings` 只将用户选中的一个开场作为普通 assistant 剧情，未选开场不注入。`creator_notes`、`creator`、`tags`、`character_version` 留在卡片信息中，作者备注不等于运行时作者注。`character_book` 沿用世界书准入机制；`extensions` 仅按已支持的扩展解释，不整包注入。
+其他顶层字段的去向：`name`／`nickname` 用于身份及宏；`first_mes`／`alternate_greetings` 只将用户选中的一个开场作为普通 assistant 剧情，未选开场不注入。`creator_notes`、`creator`、`tags`、`character_version` 留在卡片信息中，作者备注作为卡片元数据保存，运行时作者注由配方配置。`character_book` 沿用世界书准入机制；`extensions` 仅按已支持的扩展解释，不整包注入。
 
 Half Agent 的 Tracker 使用独立维护上下文：`name`、`description`、`personality`、`scenario` 位于 `tavern_tracker_input` 的结构化 `character` 资料中。卡内系统要求、后置要求和示例不作为维护指令注入，需要编辑时通过工具读取。记忆参考池仅选取描述、性格、场景等设定资料，示例与未选开场不进入剧情证据。资料与剧情的区别由现有维护契约处理，不另加字段用途说明。
 

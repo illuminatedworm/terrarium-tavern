@@ -59,7 +59,8 @@ def encoded(value):
 
 def descriptions():
     parts = [DESCRIPTION_MARKER, "",
-             "以下为源码中的工具级英文 description 全文，未删节；参数字段定义见前文和完整工具协议。示例相互独立，使用同一虚构场景、默认返回选项；剧情规划示例已开启功能，变量示例已获本轮授权，设定写入与笔记修改示例的目标当前全文已在上下文中。",
+             "<details>", "<summary>查看工具描述原文与 JSON 示例</summary>", "",
+             "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。参数与错误恢复见[完整协议](full-agent-tools.md)。",
              ""]
     assert set(EXAMPLES) == set(SPECS)
     for name, (_, description) in SPECS.items():
@@ -76,12 +77,13 @@ def descriptions():
         "| `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |",
         "| `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |",
         "| `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |", "",
-        "其余工具无动态追加描述。工具是否下发由会话开关及设定授权决定；变量授权在执行时检查。", ""])
+        "工具目录由会话开关及设定授权确定，变量授权在执行时检查。动态追加描述见上表。", "",
+        "</details>", ""])
     return "\n".join(parts)
 
 
 def errors():
-    parts = [ERROR_MARKER, "", "`retryable=true` 表示修正原因后可再次调用，并非原样重试。", "",
+    parts = [ERROR_MARKER, "", "`retryable=true` 表示处理 `next_action` 指出的原因后可再次调用。", "",
              "| code | 可修正重试 | 默认 next_action |", "|---|---|---|"]
     parts.extend(f"| `{code}` | {'是' if retry else '否'} | {action} |"
                  for code, (retry, action) in RECOVERY.items())

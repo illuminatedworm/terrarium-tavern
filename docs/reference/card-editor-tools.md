@@ -1,4 +1,4 @@
-# Card Editor 工具与接口
+# 角色卡编辑 agent 工具与接口
 
 工具运行在本轮未提交进度上，完整结束后共同更新独立卡片草稿及用户明确要求的用户角色；模型不能保存书架卡片，用户角色修改则直接保存到用户角色库。参数由 [editor_tools.py](../../src/tavern/character/editor_tools.py) 的严格类型生成，实际请求、预览和运行时校验共用目录。
 
@@ -41,13 +41,13 @@
 
 ## 外部文件读取
 
-两个工具仅接受后端电脑的绝对本地普通文件路径，返回的 `path` 为解析后的绝对路径；不支持 URL、网络共享、设备、目录或文件写入。源文件均不得超过 32 MiB。文件内容只是参考资料，不是用户授权或工具指令；不替代 `read_field` 对当前草稿字段的完整读取。
+两个文件工具只读后端电脑上的普通文件，要求绝对本地路径，返回解析后的绝对 `path`。源文件上限为 32 MiB，URL、网络共享、设备和目录作为无效路径处理。内容作为外部参考；写入权限按用户请求与工具规则校验，草稿读取依据由 `read_field` 建立。
 
 文本保留原换行、空行和内容，CSV 不改成表格。默认根据 BOM 识别 Unicode 编码，无 BOM 使用 UTF-8；其他编码可指定如 `gb18030`，失败不使用替换字符。单行超过 20,000 字符时报出行号并要求拆分；空文件或超过末尾返回空文本。工具不扫描全文计算总行数。返回页受行数和字符数共同限制，从 `next_offset` 继续，末页为 null。
 
 Office 使用 MarkItDown 的 DOCX/XLSX 转换器，XLSX 按工作表原顺序组织 Markdown；不执行宏、公式重算或图片 OCR，公式依赖已保存的缓存值，无缓存的单元格可能没有结果。ZIP 最多 4096 个条目，解压总量最多 128 MiB；独立转换进程最长 30 秒，超时或取消会终止并回收。转换后 Markdown 超过 800 万字符时拒绝。损坏、加密或超限均返回工具错误，要求处理或拆分源文件。
 
-Office 分页按 Python Unicode 字符计数，可能跨越段落或表格；不是行号、字节或 token 数。offset 最小为 0，无固定上界，到达或超过末尾返回空 markdown、has_more=false、next_offset=null；文本文件 offset 最小为 1，超过末尾同样返回空页。转换结果不缓存或另存，每次读取当前文件，连续分页期间源文件应保持不变。外部文件允许有界读取，每个已返回片段仍完整送往模型；活动日志的摘要不影响正文。无需新增上传、配置或数据库迁移。
+Office 分页按 Python Unicode 字符计数，可能跨越段落或表格，单位为字符。offset 最小为 0，无固定上界，到达或超过末尾返回空 markdown、has_more=false、next_offset=null；文本文件 offset 最小为 1，超过末尾同样返回空页。转换结果不缓存或另存，每次读取当前文件，连续分页期间源文件应保持不变。外部文件允许有界读取，每个已返回片段仍完整送往模型；活动日志的摘要不影响正文。
 
 ## 路径与修改
 
@@ -65,11 +65,11 @@ Agent 优先使用对应的专门工具：世界书正文、标题、人物介�
 
 开场编号 0 对应 first_mes，其余对应 alternate_greetings。新增和修改需要完整 narrative；删除最后一个开场应改为空文本。有效的内联初始化与隐藏正则须原位保留，移动开场时随完整原文一起移动。共用默认初值使用世界书 [InitVar]，开场专属完整初值使用该开场 <initvar>；不提供独立初始化参数，不生成关联元数据或隐藏覆盖来源。
 
-本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。正则字段的类型、缺少 findRegex/replaceString、HTML 误入模型通道会给出静态警告。正则无规则时返回 skipped，有规则时仅报告 observed 转换结果，不等于界面验证。
+本地检查使用临时状态、内嵌和已缓存依赖，超时上限 30 秒；不会发起模型请求。正则字段的类型、缺少 findRegex/replaceString、HTML 误入模型通道会给出静态警告。正则无规则时返回 skipped，有规则时返回 observed 转换结果；界面显示通过 DOM 断言检查。
 
-`display_assertions` 的每项含 `sample_index`（0 为所选开场，1..N 为 samples）、CSS `selector`、期望 `text` 和可选 `after_text`。工具在禁止联网的独立页面中加载实际展示 HTML 和兼容 SDK，要求选择器唯一且完整 textContent（去除首尾空白）一致。`state_patch` 为相对 stat_data 的 JSON Patch，通过 Runtime 应用到临时快照后重建页面检查 after_text；不改变草稿、故事或权限。缺少断言时明确报告前端未测，缺少更新断言时报告更新后的显示未测。完整用例见内置 references/regex-display.md。
+`display_assertions` 的每项含 `sample_index`（0 为所选开场，1..N 为 samples）、CSS `selector`、期望 `text` 和可选 `after_text`。工具在离线的独立页面中加载实际展示 HTML 和兼容 SDK，要求选择器唯一且完整 textContent（去除首尾空白）一致。`state_patch` 为相对 stat_data 的 JSON Patch，通过 Runtime 应用到临时快照后重建页面检查 after_text；不改变草稿、故事或权限。缺少断言时明确报告前端未测，缺少更新断言时报告更新后的显示未测。完整用例见内置 references/regex-display.md。
 
-passed、failed、blocked 及 untested 各有含义，不能用 passed 代表全部动态和叙事效果已验证。
+`passed`、`failed`、`blocked` 和 `untested` 分别表示对应检查通过、失败、受阻和未测试，适用范围以该项检查为准；动态交互与叙事质量需单独评估。
 
 初始化诊断还提示损坏的 initvar 标签、被误标为 tracker_mvu 的 [InitVar] 条目、工作流记录覆盖内联数据及需要单独验证的开场增量指令；[InitVar] 数据不因含结构标记而误报为 Writer 更新规则。
 

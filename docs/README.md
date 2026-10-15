@@ -1,6 +1,6 @@
 # 文档导航
 
-文档面向使用者、角色卡作者和开发者，描述当前仓库实现。Half Agent 与 Full Agent 使用独立的模型编排和记忆机制；模式专属页面在标题或开头注明。
+按安装、使用、角色卡制作和开发任务查阅。Half Agent 与 Full Agent 的模型编排和记忆机制分别说明。
 
 ## 开始使用
 
@@ -16,6 +16,7 @@
 | 移除已经注入的世界书内容 | [中途注入移除](guides/lore-removal.md) |
 | 理解预计输入与实际用量 | [Token、字符与字节](guides/token-counting.md) |
 | 配置缓存位置与排查读取情况 | [提示缓存](guides/prompt-cache.md) |
+| 调整应用消息的角色与标签 | [消息类型与适配](guides/message-adapter.md) |
 
 ## 理解实现
 
@@ -27,9 +28,9 @@
 | Half Agent 消息编排、窗口和覆盖水位 | [上下文生命周期](design/context-lifecycle.md) |
 | Half Agent 分类记忆与来源协议 | [记忆一致性](design/memory-consistency.md) |
 | Full Agent 窗口、笔记与恢复 | [Full Agent 架构](design/full-agent.md) |
-| 独立参谋 agent 上下文、工具与偏好提交 | [Advisor 参谋 agent 设计](design/advisor.md) |
+| 独立参谋 agent 上下文、工具与偏好提交 | [参谋 agent 设计](design/advisor.md) |
 | 编辑草稿、连续上下文与保存 | [角色卡编辑 agent 设计](design/card-editor.md) |
-| 制卡工具、引用与续接接口 | [Card Editor 工具协议](reference/card-editor-tools.md) |
+| 制卡工具、引用与续接接口 | [角色卡编辑 agent 工具协议](reference/card-editor-tools.md) |
 | 外部搜索限量、网页分页与来源完整性 | [联网工具协议](reference/web-tools.md) |
 | 缓存断点、传输记录和对象生命周期 | [缓存控制](design/cache-control.md) |
 | 跟进间隔和目标位置的成本取舍 | [缓存成本模型](design/cache-cost.md) |
@@ -47,4 +48,4 @@
 | 开发运行、测试选择、实测与打包 | [验证与发行](development/validation.md) |
 | 原创和第三方许可、发行未决事项 | [许可范围与发行维护](development/licensing.md)、[许可文件](../LICENSE/README.md) |
 
-原始日志、私人剧情、数据库和凭据不进入文档。文档维护约定见[开发入口](development/structure.md#文档维护)。
+文档组织与维护约定见[开发入口](development/structure.md#文档维护)。

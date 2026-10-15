@@ -1,4 +1,4 @@
-# Advisor 参谋 agent 设计
+# 参谋 agent 设计
 
 Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor/`。复用模型传输、消息适配、分词器、只读故事服务和检索准入，不进入 Writer／Tracker 编排，也不复用 Full Agent 的写入草稿。
 
@@ -8,7 +8,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 `shared.advisor.web.mode` 与 `shared.card_editor_config.web.mode` 分别控制两个 Agent 的 `off/auto/local` 权限，服务设置集中在 `shared.web`。`web/` 模块承载 Exa Streamable HTTP MCP、Tavily Search/Extract 及旧搜索实现。旧参谋配置迁移到共享设置前备份，保留原开关、端点和超时；默认服务顺序升级为 Exa、Tavily、SearXNG、DuckDuckGo。密钥脱敏、清除、页撤回和选择性导出沿用设置 API。
 
-官方自动模式在公开 Responses 请求中将原生 `web_search` 与 `tavern` namespace 并列，并请求 `web_search_call.action.sources`；本地搜索函数同时隐藏。只允许 Advisor／Card Editor 主请求启用，维护请求与其他 Agent 不启用。搜索专属故障最多重试当前模型请求一次，原有已执行工具不重放，未完成文本通过 `response_restarted` 撤回；模式降级随未完成进度保存。账号、额度和断流错误不冒充搜索故障。
+官方自动模式在公开 Responses 请求中将原生 `web_search` 与 `tavern` namespace 并列，并请求 `web_search_call.action.sources`；本地搜索函数同时隐藏。只允许 Advisor／角色卡编辑 agent 主请求启用，维护请求与其他 Agent 不启用。搜索专属故障最多重试当前模型请求一次，原有已执行工具不重放，未完成文本通过 `response_restarted` 撤回；模式降级随未完成进度保存。账号、额度和断流错误不冒充搜索故障。
 
 云端输出项和引用注解完整保存在原生附件中，工具续答按原模型／账号绑定回放；来源链接另作为可移植 `web_sources` 保存并展示。`web_activity` 记录服务、鉴权模式、状态与降级原因，不包含密钥。本地搜索统一限量来源与摘要，网页按字符分页；每次实际返回的片段完整持久化并送往模型，不在传输阶段再次截断。服务错误、上游截断、返回量限制与合法零命中分别标记，见[联网工具协议](../reference/web-tools.md)。
 
@@ -20,7 +20,7 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 
 一轮开始时冻结当前分支、剧情与状态，工具续答读取同一版本。当前用户咨询引用为 Q1；剧情使用 H 引用，世界书 L 引用，Half Agent 记忆 R 引用，旧咨询 C 引用。真实存储身份、来源指纹和版本仅供程序定位与冲突校验，业务文本经 ModelView 投影；保存时恢复原始内容。云端压缩和续接保留可逆编号映射。
 
-消息适配提供 `advisor_reference`、`advisor_story`、`advisor_summary`、`advisor_notice`。预览和实际运行共用编译器，最终投影后计数，不用字符数估算 tokens。已选内部资料块及本次工具返回的片段始终完整，超量不能在传输阶段静默截断。
+消息适配提供 `advisor_reference`、`advisor_story`、`advisor_summary`、`advisor_notice`。预览和实际运行共用编译器，最终投影后使用分词器计数。已选内部资料与工具返回片段完整保存并送入模型，超量时提示。
 
 参谋 agent 咨询历史与剧情分开存储。咨询摘要只承接按完整交流退出的旧咨询，最近咨询与当前未完成工具交换保持原文。主故事追加新剧情不会使旧咨询摘要成为当前事实；修改或撤销摘要依据、模型/账号/关键规则变更时从原文重建。云端 checkpoint 仅属于参谋 agent，不读取主 Agent 的不透明状态。整理中断保存已处理的完整批次，可续接。
 

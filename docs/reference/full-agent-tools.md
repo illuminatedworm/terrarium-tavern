@@ -2,7 +2,7 @@
 
 工具只操作当前分支的回合草稿，最终正文、脚本处理与必要审核成功后统一提交。模型负责语义判断；Runtime 负责身份、权限、版本与事务。工具结果和角色／世界书／历史资料不能自行授权操作。
 
-全部 17 个工具的目录、参数、描述全文与逐工具示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。本协议不兼容旧工具名称、点分读取路径或旧回合续接格式，不执行存档迁移或数据删除。
+全部 17 个工具的目录、参数及源码示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。工具调用使用当前目录和 JSON Pointer 路径，存档迁移由存储层处理。
 
 ## 参数与数据边界
 
@@ -28,7 +28,9 @@ set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最
 
 ## 变量路径与唯一成功提交
 
-read_state 默认 scope="mvu"，根对象为投影后的 stat_data；scope="full" 读取全部模型可见运行时状态，包含 stat_data；scope="other" 读取同一状态中除顶层 stat_data 之外的字段。path 相对于所选范围，使用 JSON Pointer，空串读取整个范围，缺失路径返回 text:"null"，没有 stat_data 时 mvu 返回 {}。所有范围都过滤内部账本与 MVU 元数据，full 不开放内部数据。只有完整 mvu 或 full 中的完整 stat_data 可作为非空变量补丁的上下文依据，other 不授予该依据。旧工具调用中的 variables／story 分别按 mvu／full 兼容解析及回放，新工具目录只提供 mvu／full／other。父对象替换会保留隐藏字段，数组下标按模型可见项定位，由程序映射到实际存储位置。
+read_state 默认 scope="mvu"，根对象为投影后的 stat_data；scope="full" 读取全部模型可见运行时状态，包含 stat_data；scope="other" 读取同一状态中除顶层 stat_data 之外的字段。path 相对于所选范围，使用 JSON Pointer，空串读取整个范围，缺失路径返回 text:"null"，没有 stat_data 时 mvu 返回 {}。所有范围都过滤内部账本与 MVU 元数据，full 不开放内部数据。只有完整 mvu 或 full 中的完整 stat_data 可作为非空变量补丁的上下文依据，other 供读取其他运行时字段。
+
+旧工具调用中的 variables／story 分别按 mvu／full 兼容解析及回放，新工具目录只提供 mvu／full／other。父对象替换会保留隐藏字段，数组下标按模型可见项定位，由程序映射到实际存储位置。
 
 | 目标 | 默认变量作用域的 path |
 |---|---|
@@ -61,7 +63,7 @@ revise_content 接受 1–100 项受限动作及 comment：
 
 只开放普通叙事条目，包含停用条目。脚本、HTML 执行入口、tracker_mvu、runtime_init、传统 InitVar 和执行配置受保护；不能借新文本引入执行内容。无关字段、开场白和扩展保持原样。身份、别名、数组位置及原配置由程序维护，工具不接受整卡替换或任意 JSON Patch。
 
-仅本轮 allow_content_edit 授予设定写入权限；automatic／review 只决定实际变量或设定修改是否审核，不授予任何写入权限。删除和修改角色系统／后置字段不另加审批。关闭某类读取会阻止对应已有目标的修改，新增普通条目不依赖读取开关。
+本轮 `allow_content_edit` 授予设定写入权限，`automatic`／`review` 决定实际修改的保存方式。角色系统及后置字段沿用同一权限。读取与写入工具分别启停；已有目标的完整当前内容仍在上下文时可以修改，缺少依据时须先启用相应读取工具并补读。新增普通条目直接按参数和权限校验。
 
 ## 记忆与换窗
 
@@ -69,7 +71,7 @@ write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 
 
 write_note 完整替换内容；覆盖已有键或 archive_note 归档前，当前完整正文须已在上下文，否则先 read_note。工具参数中的完整当前正文也算，成功写入后不必重复读取。新 key 无需读取，覆盖归档键重新激活。目录和搜索摘要不算完整正文。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
 
-handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 的 content 参数只替换笔记；new_context 使用 handoff 参数保存交接并同时换窗，不再接受 content 参数。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
+handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 的 content 参数只替换笔记；`new_context` 使用 `handoff` 参数保存交接并同时换窗。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
 
 new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
 
@@ -95,7 +97,7 @@ new_context 必须单独调用。任何包含它的多工具批次都在执行�
 
 ## 请求预算与草稿生命周期
 
-max_steps 默认 24，范围 2–100，按模型请求次数计数。工具续答和换窗均计入。运行时内部执行上限，禁止向模型注入调用额度、剩余次数、倒计时或最后一次调用提醒；不提供通知开关或消息适配项。额度耗尽时报告 BUDGET_EXHAUSTED 并停止本轮，保留未提交进度。手动续接获得新请求额度，已成功工具及 patch_state_completed 对应的后端提交标记保持不变。
+`max_steps` 默认 24，范围 2–100，按工具循环的模型请求计数，包含工具续答和本地换窗；云端整理使用独立请求并另行记录用量。额度耗尽时返回 `BUDGET_EXHAUSTED` 并保留进度，显式继续获得新额度，保留成功工具及 `patch_state_completed` 的后端标记。
 
 | 情况 | 正式剧情 | 草稿与恢复 |
 |---|---|---|
@@ -111,7 +113,7 @@ max_steps 默认 24，范围 2–100，按模型请求次数计数。工具续�
 
 ## 错误码（由源码生成）
 
-`retryable=true` 表示修正原因后可再次调用，并非原样重试。
+`retryable=true` 表示处理 `next_action` 指出的原因后可再次调用。
 
 | code | 可修正重试 | 默认 next_action |
 |---|---|---|

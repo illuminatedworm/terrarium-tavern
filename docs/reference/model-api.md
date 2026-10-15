@@ -1,6 +1,6 @@
 # 模型接入与参数映射
 
-本文记录应用如何编译模型请求。表中的模型匹配规则和缓存档位是本项目的参数预设，不能用于推断任意中转的实际能力。用户配置步骤见[设置指南](../guides/settings.md)。
+模型请求由应用按提供商、协议和模型配置编译。下表列出本项目的参数预设，接入服务的实际能力需通过连接与请求结果确认。配置步骤见[设置指南](../guides/settings.md)。
 
 ## 连接与协议
 
@@ -31,13 +31,13 @@
 - 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
 - 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。订阅档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
 
-实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类；Writer、Tracker、Full Agent、Card Editor、脚本嵌套调用和探测共用同一入口。字段要求依据 [OpenAI 订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。后续章节的通用协议／缓存预设不覆盖订阅分支的限制。
+实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类；Writer、Tracker、Full Agent、参谋 agent、角色卡编辑 agent、脚本嵌套调用和探测共用同一入口。字段要求依据 [OpenAI 订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。后续章节的通用协议／缓存预设不覆盖订阅分支的限制。
 
 ## 请求身份
 
 会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
 
-Half Agent 前台使用剧情会话 UUID，Tracker 前置、后置、重建和脚本调用按会话与用途派生身份。Full Agent 的失败续接保持同一会话身份，分支使用新身份；Card Editor 每个编辑对话有独立稳定身份。
+Half Agent 前台使用剧情会话 UUID，Tracker 前置、后置、重建和脚本调用按会话与用途派生身份。Full Agent 的失败续接保持同一会话身份，分支使用新身份；角色卡编辑 agent 每个编辑对话有独立稳定身份。
 
 Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作、重生成、模型、提供商或认证变化后清除。日志只记录其存在与摘要，不记录认证头。实现见 [request_context.py](../../src/tavern/scripting/request_context.py)，各模式的上下文记录层负责原生回复的持久化与失效判断。
 
@@ -60,7 +60,7 @@ OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支�
 
 应用将 Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos 名称归入 adaptive 路线。Opus 4.5 仅单独发送 effort；已知旧模型不能接受文字档位时，在请求前提示。未知中转别名采用标准字段，由服务商校验。
 
-旧配置中的兼容映射保留：Claude 的 `minimal` 映射为 `low`；不支持 `xhigh` 而支持 `max` 的匹配型号映射为 `max`，Opus 4.5 映射为 `high`。Gemini 3 的 `xhigh` 映射为 `HIGH`，Pro 的 `minimal` 映射为 `LOW`。这些重复档位不再作为对应接口的新选项提供。被标记为不能关闭思考的型号选择 `none` 时会报错；Gemini 原生不支持的档位会在请求前提示重选。
+旧配置中的兼容映射保留：Claude 的 `minimal` 映射为 `low`；不支持 `xhigh` 而支持 `max` 的匹配型号映射为 `max`，Opus 4.5 映射为 `high`。Gemini 3 的 `xhigh` 映射为 `HIGH`，Pro 的 `minimal` 映射为 `LOW`。新配置使用表中的规范档位，旧值在请求时转换。被标记为不能关闭思考的型号选择 `none` 时会报错；Gemini 原生不支持的档位会在请求前提示重选。
 
 协议依据见 [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning)、[Claude effort](https://platform.claude.com/docs/en/build-with-claude/effort)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking) 与 [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai.md)。预算数值为本项目预设。
 
@@ -89,7 +89,7 @@ OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支�
 
 传输层保留 Anthropic `content` 和 Responses `output` 的块顺序、工具 ID、思考签名及加密推理，用于兼容来源的续答。编辑、脚本改写或切换模型来源后是否回放，由对应上下文记录层判定；通用剧情历史始终保留。
 
-Full Agent、Tracker、记忆历史补查和 Card Editor 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
+Full Agent、Tracker、记忆历史补查和 角色卡编辑 agent 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
 
 应用保存原始 `usage`，并提供统一显示字段。缓存读取或写入字段缺失表示未知，不能显示为零命中。
 

@@ -1,6 +1,6 @@
-# Card Editor 独立创作工作区
+# 角色卡编辑 agent 独立创作工作区
 
-Card Editor 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-editor.md)，工具详见[协议](../reference/card-editor-tools.md)。
+角色卡编辑 agent 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-editor.md)，工具详见[协议](../reference/card-editor-tools.md)。
 
 联网工具与参谋 agent 复用 `web/` 模块，以 `shared.card_editor_config.web.mode` 独立授权，服务和密钥使用 `shared.web`。本地搜索限量来源和摘要，网页按字符分页并标记上游截断，续读可指定原提取服务，见[联网协议](../reference/web-tools.md)。运行、工具目录和上下文预览按同一模式生成；云端搜索只用于主请求，强制 `new_context` 时不启用。服务降级、来源链接和请求重启事件属于持久的用户可见活动，日志合并不得跨 `response_restarted` 合并文本。网页资料不扩大草稿、persona 或保存权限。
 
@@ -10,7 +10,7 @@ Card Editor 有独立对话、资料引用和草稿，不读取游玩会话、�
 
 `shared.card_editor_config.system_prompt` 是角色卡编辑 agent 主提示词的唯一配置来源，默认值为内置规则；新配置和恢复默认使用当前版本，已有保存内容不随默认文本更新而被覆盖。设置 API 的提示词目录、预览、任务开始和换窗均读取该字段，允许明确保存空文本，不用隐式默认值补回。任务内使用配置快照；下一次发送或续接时，提示词变化使上下文策略指纹失效，保留待提交草稿与已配对工具结果，并重新建立读取证据。旧设置增加该字段前备份，设置导入导出携带完整自定义文本。
 
-schema 3 的 `card_editor_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
+`card_editor_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
 
 `card_editor_messages` 保存完整用户输入与最终回复，以会话内 H 编号引用；`card_editor_traces` 保存完整工具交换。`card_edit_contexts` 保存当前请求前缀、可逆编号映射和窗口状态。它们独立于可清理的动作诊断。
 
@@ -42,13 +42,17 @@ schema 3 的 `card_editor_conversations` 保存会话版本、标题、单调引
 
 ## 长对话
 
-不按固定运行记录数量删旧上下文。到配置的 70% 比例提醒，达到窗口上限只接受单独 new_context；混合换窗批次不执行。token 估算包括工具定义和原生续答。
+上下文按 token 占用管理，默认达到容量的 70% 时提醒，达到上限后要求单独调用 `new_context`。混合换窗批次返回错误，估算包含工具定义和原生续答。
 
 换窗保存 handoff，保留确认方案、卡片目录、当前任务输入和最近两轮完整用户/最终回复，旧工具交换一起退出。原文仍可通过 history 工具读取。模型或协议变化重建兼容上下文；恢复时维持卡片和文档引用含义。单个已选角色卡或内部原文不截断、分页或摘要替代；外部资料按工具协议有界读取，每次返回的片段完整保留。
 
 ## 本地沙盒
 
-`test_draft` 复用 ScriptRuntime，用临时状态启动一个指定开场，检查初始化、脚本启动及正则样例；浏览器上下文禁止网络，宿主只接受本地日志/事件，不开放额外模型调用。不解析下载新依赖，不修改故事、脚本权限或卡片。缺失模块、超时、执行错误和未测项目分别报告。正则转换只报告 observed（无规则则 skipped），前端通过 display_assertions 验证真实 DOM；可选 state_patch 经 Runtime 应用到临时快照后重建展示验证 after_text。测试与页面共用 `compat/presentation.ts` 和变量宏逻辑：独立 MVU 面板按右栏检查，否则检查所有正文／Markdown／HTML 内容块，不只取第一个代码块。测试不从补丁日志推导 HTML，不把初始化成功报告为前端成功。
+`test_draft` 使用 ScriptRuntime 和临时状态检查指定开场的初始化、脚本启动及正则样例。沙盒离线运行，只使用内嵌或已缓存依赖，宿主接口限于本地日志和事件；缺少依赖、超时、执行错误和未测试项分别返回状态。
+
+正则转换记录 observed，无规则时记录 skipped。`display_assertions` 检查实际 DOM，`state_patch` 经 Runtime 应用到临时快照后重建页面，再检查 `after_text`。初始化、转换和显示各自记录结果。
+
+测试与页面共用 `compat/presentation.ts` 和变量宏逻辑：独立 MVU 面板按右栏检查，其余情形检查全部正文、Markdown 和 HTML 内容块。草稿、正式故事和脚本权限保持原值。
 
 两种模式共用 writer 叙事、tracker_mvu 变量规则与 runtime_init 初始化的分流及静态检查。普通制卡和 MVU 设计不要求目标模式；可选 target_mode 只记录用户的兼容性目标，特殊脚本能力影响方案时才需明确。共用 runtime-guide.md 与适配资料解释执行差异，不为 Full Agent 另设规则迁移流程。开场工具只编辑完整原文，保留有效内联初值，不创建独立关联或隐藏初值副本。
 
@@ -58,6 +62,6 @@ schema 3 的 `card_editor_conversations` 保存会话版本、标题、单调引
 
 旧 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层；多卡操作必须明确目标。旧 new-context 只复制完成的单卡草稿，不复制旧聊天或未提交修改。
 
-打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，最后写入 schema 3。旧程序因此在写入前拒绝打开新格式。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
+打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，随后与参谋数据表初始化一同完成当前 schema 4 的升级。回退旧程序使用升级前备份。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
 
 界面：[CardWorkspace.vue](../../web/components/character/CardWorkspace.vue)。运行和上下文：[editor_run.py](../../src/tavern/character/editor_run.py)、[editor_context.py](../../src/tavern/character/editor_context.py)。回归：[test_card_authoring.py](../../tests/backend/test_card_authoring.py)、[test_card_editor_alignment.py](../../tests/backend/test_card_editor_alignment.py)、[浏览器验收](../../tests/browser/browser_card_authoring.py)。真实模型评测显式运行 tools/evaluate_card_editor.py，使用隔离数据与累计 60 请求计数，报告仅保存到忽略目录。
