@@ -46,7 +46,7 @@ watch(
   height: 36px;
   overflow: hidden;
   border-radius: 9px;
-  background: linear-gradient(145deg, rgb(169 157 232 / 0.3), rgb(169 157 232 / 0.1));
+  background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.3), rgb(var(--accent-rgb) / 0.1));
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
   color: var(--accent-hover);
   font: 500 16px var(--font-ui);

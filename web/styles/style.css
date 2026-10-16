@@ -1,35 +1,52 @@
-/* Night-terrarium palette: ink canvas, frosted chrome, calm reading surface.
+/* Graphite palette: neutral cool-grey canvas, frosted chrome, muted steel-blue accent.
    Solid surfaces stay opaque so sticky rows and popovers never show text through;
    translucent glass materials live in glass.css. Reading preferences remain user-owned. */
 :root {
-  --canvas: #0e1015;
-  --surface-base: #15171d;
-  --surface-sidebar: #171920;
-  --surface-panel: #1d2028;
-  --surface-input: #111319;
-  --surface-hover: #262a34;
-  --surface-active: #2f3341;
+  /* Palette: every hue in the app derives from these channels ("R G B"), so a
+     scheme change edits only this group. Glass tints and glows live here too. */
+  --canvas-rgb: 13 14 16;
+  --glass-rgb: 23 25 28;
+  --glass-hi-rgb: 29 31 35;
+  --well-rgb: 7 8 10;
+  --accent-rgb: 143 164 186;
+  --accent-hover-rgb: 176 192 210;
+  --focus-rgb: 160 182 205;
+  --moss-rgb: 140 176 168;
+  --glow-1-rgb: 88 104 132;
+  --glow-2-rgb: 66 112 112;
+  --glow-3-rgb: 78 88 112;
+  --glow-4-rgb: 140 114 88;
+  --danger-rgb: 240 155 155;
+  --warning-rgb: 230 192 136;
+  --on-accent: #0f1318;
+  --canvas: rgb(var(--canvas-rgb));
+  --surface-base: #151618;
+  --surface-sidebar: #17181b;
+  --surface-panel: #1c1e21;
+  --surface-input: #111214;
+  --surface-hover: #25272b;
+  --surface-active: #2e3136;
   /* Hairlines are translucent so they read the same on glass and on solid panes. */
   --border-subtle: rgb(255 255 255 / 0.065);
   --border-control: rgb(255 255 255 / 0.11);
-  --border-strong: #545a6c;
-  --text-primary: #dcdbe4;
-  --text-secondary: #b1b0bf;
-  --text-muted: #8e8fa1;
-  --text-faint: #6f7184;
-  --accent: #a99de8;
-  --accent-hover: #c3b9f5;
-  --accent-soft: rgb(169 157 232 / 0.16);
-  --accent-glow: rgb(169 157 232 / 0.35);
-  --moss: #86c9b5;
-  --text-story: #cbc9d3;
-  --text-dialogue: #c9bdeb;
-  --focus-ring: #b8acff;
-  --scrollbar: #4a4f60;
-  --danger: #f09b9b;
-  --danger-surface: rgb(240 155 155 / 0.12);
+  --border-strong: #50545c;
+  --text-primary: #dcdde0;
+  --text-secondary: #afb2b8;
+  --text-muted: #8b8f97;
+  --text-faint: #6c7078;
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.16);
+  --accent-glow: rgb(var(--accent-rgb) / 0.35);
+  --moss: rgb(var(--moss-rgb));
+  --text-story: #c9cbcf;
+  --text-dialogue: #b8c5d3;
+  --focus-ring: rgb(var(--focus-rgb));
+  --scrollbar: #4a4e56;
+  --danger: rgb(var(--danger-rgb));
+  --danger-surface: rgb(var(--danger-rgb) / 0.12);
   --success: #8fd0aa;
-  --warning: #e6c088;
+  --warning: rgb(var(--warning-rgb));
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;

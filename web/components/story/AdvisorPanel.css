@@ -177,9 +177,9 @@
   max-width: 88%;
   margin: 0 0 22px auto;
   padding: 12px 15px;
-  border: 1px solid rgb(169 157 232 / 0.22);
+  border: 1px solid rgb(var(--accent-rgb) / 0.22);
   border-radius: 14px 14px 4px 14px;
-  background: linear-gradient(160deg, rgb(169 157 232 / 0.22), rgb(169 157 232 / 0.1));
+  background: linear-gradient(160deg, rgb(var(--accent-rgb) / 0.22), rgb(var(--accent-rgb) / 0.1));
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.8;
@@ -286,7 +286,7 @@
   align-items: flex-end;
   gap: 10px;
   padding: 10px;
-  background: rgb(8 9 13 / 0.38);
+  background: rgb(var(--well-rgb) / 0.38);
   border: 1px solid var(--border-control);
   border-radius: 16px;
   transition:
@@ -294,8 +294,8 @@
     box-shadow 0.18s var(--ease-out);
 }
 .advisor-composer:focus-within {
-  border-color: rgb(184 172 255 / 0.55);
-  box-shadow: 0 0 0 3px rgb(169 157 232 / 0.12);
+  border-color: rgb(var(--focus-rgb) / 0.55);
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.12);
 }
 .advisor-composer textarea {
   flex: 1;
