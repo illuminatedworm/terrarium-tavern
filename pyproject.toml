@@ -27,6 +27,7 @@ dependencies = [
   "filelock>=3.18,<4",
   "markitdown[docx,xlsx]>=0.1.8,<0.2",
   "tiktoken>=0.12,<1",
+  "google-genai>=2.31.0,<3",
 ]
 
 [project.optional-dependencies]

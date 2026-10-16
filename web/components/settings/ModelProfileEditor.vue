@@ -6,6 +6,7 @@ import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import CacheSettingsEditor from './CacheSettingsEditor.vue';
 import MessageAdapterEditor from './MessageAdapterEditor.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
+import { geminiControls } from '../../lib/geminiCapabilities';
 import { useModelCatalog } from '../../lib/modelCatalog';
 import { modelEffortOptions } from '../../lib/reasoningEffort';
 import { useApiReasoning } from '../../lib/apiReasoning';
@@ -31,6 +32,7 @@ const feedback = ref('');
 const cacheValid = ref(true);
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
+const gemini = computed(() => geminiControls(props.profile.api_mode, props.profile.model));
 const { details: apiReasoning, note: reasoningNote } = useApiReasoning(
   () => props.profile,
   () => !subscription.value,
@@ -106,7 +108,7 @@ const common = computed<SettingField[]>(() => [
       !subscription.value,
     ),
   },
-  ...(!subscription.value
+  ...(!subscription.value && gemini.value.sampling
     ? [
         { path: 'temperature', label: '温度 temperature', optional: true, min: 0, max: 2, step: 'any' },
         { path: 'top_p', label: '核采样 top_p', optional: true, min: 0, max: 1, step: 'any' },
@@ -114,7 +116,7 @@ const common = computed<SettingField[]>(() => [
     : []),
 ]);
 const advanced = computed<SettingField[]>(() => [
-  ...(!subscription.value && props.profile.api_mode !== 'responses'
+  ...(!subscription.value && gemini.value.sampling && props.profile.api_mode !== 'responses'
     ? [{ path: 'top_k', label: '候选数 top_k', optional: true, min: 0 }]
     : []),
   ...(!subscription.value && props.profile.api_mode === 'chat_completions'
@@ -198,7 +200,7 @@ async function action(check: boolean) {
             <option value="chat_completions">Chat Completions</option>
             <option value="responses">Responses</option>
             <option value="anthropic">Anthropic Messages</option>
-            <option value="gemini">Gemini GenerateContent</option>
+            <option value="gemini">Google GenAI · Gemini</option>
           </select></label
         >
         <label v-if="!subscription"
@@ -246,6 +248,9 @@ async function action(check: boolean) {
       ><slot name="common-extra"
     /></SettingsFields>
     <p v-if="!subscription" class="muted">{{ reasoningNote }}</p>
+    <p v-if="!subscription && !gemini.sampling" class="muted">
+      当前 Gemini 模型已废弃温度、top-p、top-k，由服务端控制采样；此前保存的这些值不发送。
+    </p>
     <p v-if="subscription" class="muted">
       输出预留预算用于本地上下文计算，不是服务端输出上限。ChatGPT
       订阅通道不支持温度、采样及显式缓存控制；普通渠道的模型配置独立保存。
@@ -261,7 +266,7 @@ async function action(check: boolean) {
         @validity="cacheValid = $event"
       />
       <p v-if="!subscription" class="muted">
-        采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
+        可用的采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
       </p>
     </details>
     <details class="settings-advanced">

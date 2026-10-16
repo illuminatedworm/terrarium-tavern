@@ -42,6 +42,10 @@
 
 角色卡编辑 agent 使用 [Microsoft MarkItDown](https://github.com/microsoft/markitdown)（MIT）提供的 DOCX/XLSX 转换器。所选格式依赖包括 Mammoth（BSD-2-Clause）、lxml（BSD-3-Clause）、pandas（BSD-3-Clause）和 openpyxl（MIT），其余传递依赖沿用各自许可证，版本以 `uv.lock` 为准。
 
+## Google GenAI SDK
+
+Gemini 原生接入使用 Google 官方 [python-genai](https://github.com/googleapis/python-genai)（Python 包 `google-genai`，Apache-2.0）。准确版本及其 google-auth 等传递依赖以 [uv.lock](../uv.lock) 为准，许可原文随各依赖发行包保留。本项目通过其公开 API 调用生成、流式响应、模型目录与缓存对象，不包含修改后的 SDK 源码。
+
 ## 角色卡规范
 
 本项目参考以下规范实现角色卡读写：

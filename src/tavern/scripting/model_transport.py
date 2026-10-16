@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import aclosing
 
+import httpx
 from kohakuterrarium.llm.base import BaseLLMProvider, ChatResponse, LLMConfig, NativeToolCall
 from openai import AsyncOpenAI
 
@@ -17,6 +18,7 @@ from tavern.core.cache_policy import (
     preset,
     retention_request,
 )
+from tavern.core.gemini_capabilities import gemini_controls
 from tavern.core.message_adapter import adapt_messages, adapter_snapshot
 from tavern.core.tokens import counting_info, request_tokens
 from tavern.scripting.cloud_cache import (
@@ -26,6 +28,7 @@ from tavern.scripting.cloud_cache import (
     gemini_object,
     invalidate_object,
 )
+from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import attachment, prepare_messages
 from tavern.scripting.protocols import (
@@ -47,7 +50,11 @@ class ModelTransport(BaseLLMProvider):
         super().__init__(LLMConfig(model=settings.model, temperature=settings.temperature,
                                    max_tokens=settings.reply_tokens))
         self.settings, self.key, self.capture = settings, key, capture
-        self._client = AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=http_client)
+        self._http = (http_client if http_client is not None else httpx.AsyncClient(
+            proxy=(settings.proxy or None) if settings.use_proxy else None, timeout=120, trust_env=False))
+        self._client = (None if settings.api_mode == "gemini" else
+                        AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=self._http))
+        self._genai = None
         self.capability_key = capability_key(settings, key)
         self._last_usage, self._last_assistant_extra_fields = {}, {}
         self.usage_history = []
@@ -63,7 +70,13 @@ class ModelTransport(BaseLLMProvider):
 
     @property
     def http(self):
-        return self._client._client
+        return self._client._client if self._client else self._http
+
+    @property
+    def genai(self):
+        if self._genai is None:
+            self._genai = GenAITransport(self.settings.base_url, self.settings.api_path, self.key, self.http)
+        return self._genai
 
     async def _recover_from_overflow(self, current, state):
         return None
@@ -85,10 +98,6 @@ class ModelTransport(BaseLLMProvider):
         result["raw_usage"] = [u["raw_usage"] for u in self.usage_history]
         return result
 
-    @property
-    def gemini_headers(self):
-        return {"x-goog-api-key": self.key}
-
     def with_model(self, name):
         if not name or name == self.config.model:
             return self
@@ -106,7 +115,14 @@ class ModelTransport(BaseLLMProvider):
         return clone
 
     async def close(self):
-        await self._client.close()
+        try:
+            if self._genai is not None:
+                await self._genai.close()
+        finally:
+            if self._client:
+                await self._client.close()
+            else:
+                await self.http.aclose()
 
     def _breakpoint_history(self):
         return (self.request_context.sent_breakpoints
@@ -138,6 +154,9 @@ class ModelTransport(BaseLLMProvider):
         messages, _ = prepare_messages(messages, response_origin(cfg, self.key))
         maximum = kwargs.get("max_tokens", self.config.max_tokens)
         temperature = kwargs.get("temperature", self.config.temperature)
+        sampling, _ = gemini_controls(api, cfg.model)
+        if not sampling:
+            temperature = None
         extra = kwargs.get("extra_body") or {}
         choice = extra.get("tool_choice", "auto")
         if api == "chat_completions":
@@ -146,7 +165,7 @@ class ModelTransport(BaseLLMProvider):
                 body.update(tools=definitions(tools), tool_choice=choice,
                             parallel_tool_calls=extra.get("parallel_tool_calls", False))
             for field in ("top_p", "top_k", "frequency_penalty", "presence_penalty"):
-                if getattr(cfg, field) is not None:
+                if getattr(cfg, field) is not None and (sampling or field not in ("top_p", "top_k")):
                     body[field] = getattr(cfg, field)
             if cfg.reasoning_effort != "default":
                 effort = gemini_effort(cfg.model, cfg.reasoning_effort)
@@ -212,9 +231,9 @@ class ModelTransport(BaseLLMProvider):
                 generation = {"maxOutputTokens": maximum}
                 if temperature is not None:
                     generation["temperature"] = temperature
-                if cfg.top_p is not None:
+                if cfg.top_p is not None and sampling:
                     generation["topP"] = cfg.top_p
-                if cfg.top_k is not None:
+                if cfg.top_k is not None and sampling:
                     generation["topK"] = cfg.top_k
                 thinking = gemini_thinking(cfg.model, cfg.reasoning_effort)
                 if thinking:
@@ -241,7 +260,8 @@ class ModelTransport(BaseLLMProvider):
     async def _prepare(self, messages, tools, stream, kwargs, *, fallback=None):
         cfg, api = self.settings, self.settings.api_mode
         messages, invalid_native = prepare_messages(messages, response_origin(cfg, self.key))
-        if cfg.cache.mode == "runtime" and not any(m.get("_cache_breakpoint") for m in messages):
+        explicit = gemini_controls(api, cfg.model)[1]
+        if explicit and cfg.cache.mode == "runtime" and not any(m.get("_cache_breakpoint") for m in messages):
             # Standalone editor/maintenance calls can opt in without a story history.
             # Annotated story messages explicitly exclude dynamic system content.
             target = None
@@ -254,7 +274,7 @@ class ModelTransport(BaseLLMProvider):
                 messages = copy.deepcopy(messages)
                 messages[target]["_cache_breakpoint"] = True
         selected = preset(cfg)
-        planned = next((i for i, m in enumerate(messages) if m.get("_cache_breakpoint")), None)
+        planned = next((i for i, m in enumerate(messages) if explicit and m.get("_cache_breakpoint")), None)
         diagnostic = {"mode": cfg.cache.mode, "status": "cloud", "planned_index": planned,
                       "sent_index": None, "reason": fallback, "kind": selected["kind"]}
         if invalid_native:
@@ -264,6 +284,8 @@ class ModelTransport(BaseLLMProvider):
                               message_id=messages[planned].get("_cache_message_id"))
         marker, params, resource = None, (retention_request(cfg) if cfg.cache.mode == "cloud" and not fallback else {}), None
         diagnostic["retention"] = effective_retention(cfg)[1]
+        if not explicit:
+            diagnostic.update(mode="cloud", reason="当前 Gemini 模型仅支持隐式缓存，本地缓存配置不适用")
         if cfg.cache.mode == "runtime":
             reason = fallback or DISABLED.get(self.capability_key)
             if (not reason and planned is None and selected["kind"] != "implicit"
@@ -288,7 +310,10 @@ class ModelTransport(BaseLLMProvider):
                 if selected["kind"] == "block":
                     marker = selected
                 elif selected["kind"] == "implicit":
-                    diagnostic.update(status="cloud", sent_index=None, reason="该模型由服务端管理缓存前缀，仅发送时效参数")
+                    diagnostic.update(status="cloud", sent_index=None, reason=(
+                        "当前 Gemini 模型仅支持隐式缓存，不发送显式缓存对象、断点或时效参数"
+                        if not gemini_controls(api, cfg.model)[1] else
+                        "该模型由服务端管理缓存前缀，仅发送时效参数"))
         body = self._body(messages, tools, stream, marker, params, kwargs)
         if resource:
             if api == "gemini":
@@ -347,7 +372,7 @@ class ModelTransport(BaseLLMProvider):
         messages, _, adapter_warnings = adapt_messages(messages, cfg, snapshot)
         url = endpoint(cfg.base_url, api, cfg.model, stream=stream, api_path=cfg.api_path)
         headers = ({"x-api-key": self.key, "anthropic-version": "2023-06-01"} if api == "anthropic" else
-                   self.gemini_headers if api == "gemini" else {"Authorization": "Bearer " + self.key})
+                   {"Authorization": "Bearer " + self.key})
         if self.request_context:
             self.request_context.bind(response_origin(cfg, self.key))
             headers.update(self.request_context.headers(api))
@@ -404,6 +429,48 @@ class ModelTransport(BaseLLMProvider):
             if not resource or response.status_code != 404:
                 DISABLED[self.capability_key] = fallback
         raise ValueError("缓存降级请求失败")
+
+    async def _gemini_events(self, messages, tools, stream, kwargs):
+        """Use public SDK calls; only retry an explicitly rejected cache before output."""
+        cfg = self.settings
+        snapshot = adapter_snapshot(cfg)
+        messages, _, warnings = adapt_messages(messages, cfg, snapshot)
+        fallback = None
+        for attempt in range(2):
+            body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
+            diagnostic.update(adapter_revision=snapshot["revision"], adapter_warnings=warnings,
+                              transport="google-genai")
+
+            def capture(request):
+                self._capture(messages, tools, json.loads(request.content), diagnostic, str(request.url), request)
+
+            emitted = False
+            try:
+                if stream:
+                    async with aclosing(self.genai.stream(cfg.model, body, capture)) as events:
+                        async for payload, headers in events:
+                            emitted = True
+                            self._response_headers = {k: v for k, v in headers.items()
+                                                      if k.lower() in ("request-id", "x-request-id")}
+                            yield payload
+                else:
+                    payload, headers = await self.genai.generate(cfg.model, body, capture)
+                    self._response_headers = {k: v for k, v in headers.items()
+                                              if k.lower() in ("request-id", "x-request-id")}
+                    yield payload
+                return
+            except httpx.HTTPStatusError as error:
+                try:
+                    payload = error.response.json()
+                except ValueError:
+                    payload = {}
+                if (emitted or attempt or not resource or not cache_rejection(
+                        error.response.status_code, payload, ["cachedContent"], resource=True)):
+                    raise
+                fallback = "服务商拒绝缓存对象或缓存对象已过期；已完整发送上下文"
+                await invalidate_object(self, resource)
+                if error.response.status_code != 404:
+                    DISABLED[self.capability_key] = fallback
 
     def _finish(self, payload):
         api = self.settings.api_mode
@@ -495,6 +562,10 @@ class ModelTransport(BaseLLMProvider):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
+        if self.settings.api_mode == "gemini":
+            async with aclosing(self._gemini_events(messages, tools, False, kwargs)) as events:
+                async for payload in events:
+                    return self._finish(payload)
         response = await self._send(messages, tools, False, kwargs)
         try:
             return self._finish(response.json())
@@ -517,8 +588,19 @@ class ModelTransport(BaseLLMProvider):
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
-        response = await self._send(messages, tools, True, kwargs)
         state = StreamState(self.settings.api_mode)
+        if self.settings.api_mode == "gemini":
+            async with aclosing(self._gemini_events(messages, tools, True, kwargs)) as events:
+                async for event in events:
+                    delta = state.feed(event)
+                    if delta:
+                        yield delta
+                result = self._finish(state.finish())
+                if result.finish_reason in ("length", "content_filter"):
+                    raise ValueError("模型流未完整结束，本回合未提交")
+                self._completed_response = result
+            return
+        response = await self._send(messages, tools, True, kwargs)
         try:
             async for event in stream_events(response):
                 delta = state.feed(event)

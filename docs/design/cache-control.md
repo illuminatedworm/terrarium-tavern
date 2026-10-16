@@ -50,11 +50,13 @@ Full Agent 一轮中的工具续答不推进正文断点。Writer、Tracker 和�
 | Chat Completions | 使用模型预设或自定义内容块标记；Google 兼容扩展可引用 Gemini 对象 |
 | Responses | 受支持的匹配路线发送 `prompt_cache_breakpoint` 和 `prompt_cache_options` |
 | Anthropic Messages | 发送原生 `cache_control` 内容块标记 |
-| Gemini GenerateContent | 创建 `cachedContents`，生成时引用 `cachedContent` 并发送后缀 |
+| Google GenAI · Gemini | 支持显式缓存的 2.5／3 型号通过官方 SDK 创建 `cachedContents`，生成时引用 `cachedContent` 并发送后缀；4 及后续仅使用隐式缓存 |
 
 自动匹配是代码预设，不探测中转能力。更早的 GPT/o 系列按匹配规则使用隐式策略和保留参数；未知模型需要自定义格式，否则降级云端。自定义字段不能覆盖模型、消息、工具、采样或控制字段。
 
 原生接口只把固定前缀编为顶层系统指令，动态上下文保留对应历史位置。工具权限、变量更新和强制换窗仍由应用执行校验。
+
+Gemini 原生不接受自定义内容块标记与附加缓存 JSON，界面隐藏对应控件并说明旧值不发送。Gemini 4 及后续不提供本地控制、时效或剧情断点入口；预览与请求诊断均标为云端隐式缓存，完整发送所有上下文。既有设置和会话跟进策略仍保存，切回支持的协议／型号时可继续使用。
 
 ## OpenAI 已发送端点
 

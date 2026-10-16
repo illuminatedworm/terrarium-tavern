@@ -15,6 +15,8 @@
 
 显式填写的 API 路径按原值拼接。模型列表从本地持久缓存读取，只有点击“更新模型列表”才请求提供商；缓存按提供商、接口地址、协议和密钥隔离，更新失败保留原列表。
 
+`gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 Roleplay Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
+
 请求使用提供商的密钥；缺少密钥时可从 `TAVERN_API_KEY` 读取。本地免密端点也需要非空占位值，例如 `local`。HTTP 客户端使用应用内 API 代理配置，不继承 shell 的代理环境变量。
 
 ## ChatGPT 订阅模式
@@ -52,7 +54,7 @@ Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作
 | Chat Completions | none、minimal、low、medium、high、xhigh、max；Gemini 名称按 Gemini 兼容规则收窄 | `reasoning_effort` 或 `reasoning.effort`，由模型高级设置选择 |
 | Responses | none、minimal、low、medium、high、xhigh、max | `reasoning.effort` |
 | Anthropic Messages | low、medium、high；匹配 adaptive 的型号另有 max，支持时另有 xhigh；可关闭的型号另有 none | 匹配 adaptive 的模型使用 `thinking.type=adaptive` 和 `output_config.effort` |
-| Gemini 3 | 按型号提供 minimal、low、medium、high 的子集；3.8/3.7 Flash 仅 low、medium、high | `generationConfig.thinkingConfig.thinkingLevel` |
+| Gemini 3／4 | 按型号提供 minimal、low、medium、high 的子集；3.8/3.7 Flash 和 4 仅 low、medium、high | `generationConfig.thinkingConfig.thinkingLevel` |
 | Gemini 2.5 原生 | minimal=128、low=1024、medium=4096、high=8192、xhigh=16384 思考 tokens；支持关闭时另有 none=0；Flash-Lite 不提供 minimal | `generationConfig.thinkingConfig.thinkingBudget`，界面显示对应预算 |
 | Gemini 2.5 Chat 兼容 | low、medium、high；支持关闭时另有 none | 使用 Chat 的思考字段，由服务商将文字档位转换为预算 |
 
@@ -66,6 +68,8 @@ OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支�
 
 模型映射还控制采样参数和强制工具选择。不能强制指定工具时，传输层使用 `auto` 并仅暴露目标工具；Full Agent 的换窗要求仍由运行时校验。维护模型匹配规则时，应同时核对参数编译与运行时权限，不只修改界面选项。
 
+Gemini 3.6 Flash、3.5 Flash-Lite 及后续型号已废弃 `temperature`、`top_p`、`top_k`：原生和 Chat 兼容配置隐藏这些控件，请求层也不发送已保存值或单次调用覆盖值，并在界面说明由服务端控制采样。较早型号保留可用控件；未知中转别名不凭猜测关闭参数。SDK 对部分嵌套消息字段使用等价的 protobuf snake_case 名称，实际发送形式以请求日志为准。依据：[Google 参数迁移说明](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6)。
+
 ## 缓存时效
 
 时效字段为每个模型的 `cache.retention`。`default` 或不适用的已保存值解析为当前协议与模型匹配规则中的最低档。下表是应用提供的选项及发送字段，单价不由应用定义。
@@ -77,11 +81,14 @@ OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支�
 | GPT-5.5 Chat／Responses | `24h` | `prompt_cache_retention` |
 | GPT-5、5.1、5.2、5.4、4.1 Chat／Responses | `in_memory`、`24h` | `prompt_cache_retention` |
 | 其他匹配 GPT 及 o1/o3/o4 的路线 | `in_memory` | `prompt_cache_retention` |
-| Gemini 原生／Google Chat 兼容显式对象 | `5m`、`15m`、`1h`、`24h` | 创建 `cachedContents` 时换算成秒字符串 `ttl` |
+| 支持显式缓存的 Gemini 2.5／3 原生或 Google Chat 兼容 | `5m`、`15m`、`1h`、`24h` | 创建 `cachedContents` 时换算成秒字符串 `ttl` |
+| Gemini 4 及后续 | 无本地时效档位 | 仅服务端隐式缓存，不创建或引用显式对象 |
 
 协议优先参与匹配。Claude 经 Responses 接入不会获得 Anthropic 内容块标记；Gemini 模型经 Anthropic Messages 接入时使用 Anthropic 档位。未知协议组合或不支持的自定义内容块格式不提供时效选项。
 
 云端模式下，OpenAI 路线仍发送独立时效字段；Claude 原生仅在用户明确保存时效后发送顶层自动 `cache_control`。Claude Chat 兼容和 Gemini 隐式云端模式不发送时效。旧自定义 JSON 中的时效可以迁移到此选项，显式选择优先。
+
+Google GenAI 原生模式不显示自定义断点字段、JSON 值与附加缓存 JSON，也不发送这些已保存值。Gemini 4 及后续还隐藏本地缓存控制、断点和时效入口；完整上下文仍按稳定前缀顺序发送。原配置保留以便切换回支持的协议或型号，界面明确标明哪些值不适用，不重写用户数据。依据：[Google 缓存说明](https://ai.google.dev/gemini-api/docs/caching)。
 
 本地控制的协议标记、Gemini 对象生命周期及降级行为见[缓存设计](../design/cache-control.md)。跟进间隔属于会话，时效属于当前模式的正文模型；两者的保存范围不同。
 
@@ -106,4 +113,5 @@ Full Agent、Tracker、记忆历史补查和 角色卡编辑 agent 在生成工�
 - [core/cache_policy.py](../../src/tavern/core/cache_policy.py)：端点拼接、缓存预设、时效及用量归一化。
 - [core/provider.py](../../src/tavern/core/provider.py)：密钥、代理和 HTTP 客户端。
 - [scripting/model_transport.py](../../src/tavern/scripting/model_transport.py)、[model_stream.py](../../src/tavern/scripting/model_stream.py)：最终请求、流式解析与降级。
+- [scripting/genai_transport.py](../../src/tavern/scripting/genai_transport.py)：Google 官方 SDK、操作级 HTTP 记录与取消时资源回收。
 - [test_model_api_modes.py](../../tests/backend/test_model_api_modes.py)、[test_unified_cache.py](../../tests/backend/test_unified_cache.py)：协议序列化和缓存行为。

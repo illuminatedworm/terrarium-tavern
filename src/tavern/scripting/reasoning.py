@@ -50,6 +50,8 @@ OPENAI_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 def gemini_levels(model, *, native=True):
     name = model.lower()
+    if re.search(r"(?:^|/)gemini-(?:[4-9]|[1-9]\d)(?=$|[.-])", name):
+        return ["low", "medium", "high"]
     if re.search(r"gemini-3(?=$|[.-])", name):
         if re.search(r"gemini-3\.1-flash-lite-image(?=$|[-:])", name):
             return ["minimal", "high"]
@@ -80,7 +82,7 @@ def reasoning_capabilities(api, model):
                 "思考档位按 Anthropic Messages 及当前模型匹配；默认不发送思考参数。")
     elif api == "gemini" or (api == "chat_completions" and "gemini" in model.lower()):
         levels = gemini_levels(model, native=api == "gemini")
-        if api == "gemini" and not re.search(r"gemini-3(?=$|[.-])", model.lower()):
+        if api == "gemini" and not _gemini_thinking_level(model):
             descriptions = {effort: f"{GEMINI_BUDGETS[effort]} 思考 tokens" for effort in levels}
             note = "此接口使用思考 token 预算，各档位显示对应预算；默认不发送思考参数。"
         else:
@@ -115,7 +117,7 @@ def anthropic_thinking(model, effort):
 
 def gemini_effort(model, effort):
     name = model.lower()
-    modern = bool(re.search(r"gemini-3(?=$|[.-])", name))
+    modern = _gemini_thinking_level(model)
     if effort == "none" and (modern or re.search(r"gemini-2\.5-pro(?=$|-)", name)):
         raise ValueError(f"{model} 不支持关闭思考；请选择默认或其他思考档位")
     if modern:
@@ -132,9 +134,14 @@ def gemini_thinking(model, effort):
     selected = gemini_effort(model, effort)
     if selected == "default":
         return {}
-    if re.search(r"gemini-3(?=$|[.-])", model.lower()):
+    if _gemini_thinking_level(model):
         return {"thinkingLevel": selected.upper(), "includeThoughts": True}
     if selected not in gemini_levels(model):
         raise ValueError(f"{model} 不支持 {effort} 思考档位；请选择默认或其他思考档位")
     budget = GEMINI_BUDGETS[selected]
     return {"thinkingBudget": budget, "includeThoughts": True}
+
+
+def _gemini_thinking_level(model):
+    match = re.search(r"(?:^|/)gemini-(\d+)(?=$|[.-])", model.lower())
+    return bool(match and int(match[1]) >= 3)

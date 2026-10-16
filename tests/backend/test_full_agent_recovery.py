@@ -87,7 +87,8 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         saved = store.full_agent_progress(failed["id"])
         assert "BAD_ARGUMENT" in requests[1].content.decode()  # same-turn correction still sees the error
         assert "expected_parameters" in requests[1].content.decode()
-        assert "缺少必填参数 ref" in requests[1].content.decode()
+        # SDK serialization may escape Unicode; assert the actual JSON text.
+        assert "缺少必填参数 ref" in json.dumps(json.loads(requests[1].content), ensure_ascii=False)
         assert "errors.pydantic.dev" not in requests[1].content.decode()
         returned = [item["message"] for item in saved["new_trace"] if item["message"]["role"] == "tool"]
         assert [m.get("_tool_error", False) for m in returned] == [True, False, False]

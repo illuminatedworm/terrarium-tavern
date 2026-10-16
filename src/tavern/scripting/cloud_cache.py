@@ -7,7 +7,7 @@ from datetime import datetime
 
 import httpx
 
-from tavern.core.cache_policy import effective_retention, endpoint, fingerprint
+from tavern.core.cache_policy import effective_retention, fingerprint
 from tavern.core.tokens import count_text
 from tavern.scripting.protocols import native_messages, native_tools
 
@@ -82,15 +82,8 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
         old = OBJECTS.get(slot)
         if old and old["digest"] == digest and old["expires"] > time.time() + 10:
             return {**old, "boundary": boundary, "slot": slot}, None
-        url = endpoint(settings.base_url, "gemini", resource="cachedContents", api_path=settings.api_path)
         try:
-            response = await provider.http.post(url, headers=provider.gemini_headers,
-                                                json={**prefix, "ttl": f"{ttl}s"})
-            if response.status_code >= 400:
-                if response.status_code in (404, 405):
-                    DISABLED[cap] = f"服务商不支持创建 Gemini 缓存对象（HTTP {response.status_code}）"
-                return None, f"创建缓存对象失败（HTTP {response.status_code}），完整发送上下文"
-            payload = response.json()
+            payload = await provider.genai.create_cache(prefix, f"{ttl}s")
             name = payload.get("name", "")
             # Never send the credential to a URL returned by the service.
             if not re.fullmatch(r"cachedContents/[A-Za-z0-9_-]+", name):
@@ -102,11 +95,15 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
             OBJECTS[slot] = entry
             if old and old["name"] != name:
                 try:
-                    await provider.http.delete(endpoint(settings.base_url, "gemini", resource=old["name"], api_path=settings.api_path),
-                                               headers=provider.gemini_headers)
-                except httpx.HTTPError:
+                    await provider.genai.delete_cache(old["name"])
+                except (httpx.HTTPError, ValueError, TypeError):
                     pass  # The old object has a bounded TTL.
             return copy.deepcopy(entry), None
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            if status in (404, 405):
+                DISABLED[cap] = f"服务商不支持创建 Gemini 缓存对象（HTTP {status}）"
+            return None, f"创建缓存对象失败（HTTP {status}），完整发送上下文"
         except (httpx.HTTPError, ValueError, TypeError):
             return None, "创建缓存对象不可用，完整发送上下文"
 
@@ -115,7 +112,6 @@ async def invalidate_object(provider, entry):
     if entry:
         OBJECTS.pop(entry["slot"], None)
         try:
-            await provider.http.delete(endpoint(provider.settings.base_url, "gemini", resource=entry["name"], api_path=provider.settings.api_path),
-                                       headers=provider.gemini_headers)
-        except httpx.HTTPError:
+            await provider.genai.delete_cache(entry["name"])
+        except (httpx.HTTPError, ValueError, TypeError):
             pass

@@ -5,6 +5,7 @@ import time
 import httpx
 
 from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.reasoning import reasoning_capabilities
 from tavern.search.retrieval_config import ApiMode, ModelProfile
 
@@ -66,15 +67,24 @@ def register_model_routes(app, store):
                            (key, json.dumps(result, ensure_ascii=False)))
             return result
         mode = profile.api_mode
-        headers = ({"x-goog-api-key": provider.api_key} if mode == "gemini" else
-                   {"x-api-key": provider.api_key, "anthropic-version": "2023-06-01"} if mode == "anthropic" else
+        headers = ({"x-api-key": provider.api_key, "anthropic-version": "2023-06-01"} if mode == "anthropic" else
                    {"Authorization": f"Bearer {provider.api_key}"}) if provider.api_key else {}
         proxy = (config.network.proxy or None) if config.network.api_proxy and provider.use_proxy else None
         try:
             async with httpx.AsyncClient(proxy=proxy, trust_env=False, timeout=30) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                payload = response.json()
+                if mode == "gemini":
+                    if not provider.api_key:
+                        raise ValueError("Google GenAI 需要 API Key；本地免密端点请在提供商设置中填写 local")
+                    sdk = GenAITransport(provider.base_url, profile.api_path, provider.api_key, client)
+                    try:
+                        names = await sdk.list_models()
+                        payload = {"models": [{"name": name} for name in names]}
+                    finally:
+                        await sdk.close()
+                else:
+                    response = await client.get(url, headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
             data = payload.get("models" if mode == "gemini" else "data") if isinstance(payload, dict) else None
             if not isinstance(data, list):
                 raise ValueError("模型接口未返回有效的模型列表")

@@ -98,6 +98,8 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
     fail = False
 
     def client(**kwargs):
+        if "transport" in kwargs:
+            return real_client(**kwargs)  # SDK observer forwards through the configured proxy client.
         assert kwargs["proxy"] is None
         assert kwargs["trust_env"] is False
 

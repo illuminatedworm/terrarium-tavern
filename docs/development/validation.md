@@ -26,7 +26,7 @@
 | 工具事件与流式显示 | `test_full_agent_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts`；浏览器 `browser_full_agent_streaming` |
 | 检索与上下文 | `test_hybrid_retrieval.py`、`test_conversation_lore.py`、`test_tokens.py` |
 | 制卡、脚本与变量 | `test_card_authoring.py`、`test_card_editor.py`、`test_runtime.py`、`test_script_permissions.py`、`test_mvu_compatibility.py`；浏览器 `browser_card_editor`、`browser_mvu_panel`、`browser_mvu_formats` |
-| 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py` |
+| 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py`、`test_genai_transport.py`；Gemini 设置浏览器 `browser_genai` |
 | 历史阅读 | `storyHistory.test.ts`；浏览器 `browser_history_navigation`、`browser_history_rendering` |
 | 存储、备份和发行 | `test_backup.py`、`test_session_fork.py`、`test_repository_hygiene.py`、`test_release_quality.py` |
 | Full Agent 工具文档 | `test_full_agent_documentation.py`；`tools/export_full_agent_tools.py --check` |

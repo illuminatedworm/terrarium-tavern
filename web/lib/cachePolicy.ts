@@ -1,3 +1,5 @@
+import { geminiControls } from './geminiCapabilities';
+
 export interface CacheSettings {
   mode: 'cloud' | 'runtime';
   preset: 'auto' | 'custom';
@@ -13,7 +15,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     (
       {
         anthropic: 'Anthropic Messages',
-        gemini: 'Gemini GenerateContent',
+        gemini: 'Google GenAI · Gemini',
         chat_completions: 'Chat Completions',
         responses: 'Responses',
       } as Record<string, string>
@@ -30,6 +32,19 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     nativeFamily && family && family !== nativeFamily
       ? `模型名称属于 ${family}，接入方式仍为 ${apiLabel}。缓存档位按接入协议匹配；切换模型名称不会自动更改接口方式。`
       : '';
+  if (!geminiControls(api, model).explicitCache) {
+    return {
+      model,
+      apiLabel,
+      protocolNote,
+      kind: '',
+      value: '',
+      enabled: false,
+      explicit: false,
+      note: '当前 Gemini 模型仅支持隐式缓存，缓存前缀和时效由服务端管理；已保存的本地缓存参数不发送。',
+      options: [] as Array<{ value: string; label: string }>,
+    };
+  }
   let kind = '';
   let values: string[] = [];
   const customClaude =
@@ -43,9 +58,8 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     kind = 'anthropic';
     values = ['5m', '1h'];
   } else if (
-    ['gemini', 'chat_completions'].includes(api) &&
-    cache.preset !== 'custom' &&
-    (api === 'gemini' || name.includes('gemini'))
+    api === 'gemini' ||
+    (api === 'chat_completions' && cache.preset !== 'custom' && name.includes('gemini'))
   ) {
     kind = 'gemini';
     values = ['5m', '15m', '1h', '24h'];
@@ -120,10 +134,12 @@ function baseCachePreset(
   value?: unknown;
   request?: Record<string, unknown>;
 } {
+  if (!geminiControls(api, model).explicitCache) return { kind: 'implicit' };
+  if (api === 'gemini') return { kind: 'gemini' };
   if (cache.preset === 'custom') return { kind: 'block', field: cache.field, value: cache.value };
   const name = model.toLowerCase();
   if (!cacheRetention(model, api, cache).explicit) return { kind: 'implicit' };
-  if (api === 'gemini' || (api !== 'anthropic' && name.includes('gemini'))) return { kind: 'gemini' };
+  if (api !== 'anthropic' && name.includes('gemini')) return { kind: 'gemini' };
   if (api === 'anthropic' || (api === 'chat_completions' && name.includes('claude')))
     return {
       kind: 'block',

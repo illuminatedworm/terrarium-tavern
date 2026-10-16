@@ -3,6 +3,7 @@
 import copy
 
 from tavern.core.cache_policy import fingerprint
+from tavern.core.gemini_capabilities import gemini_controls
 from tavern.memories.memory import window_history
 
 
@@ -112,6 +113,9 @@ def prepare_context(context, session, history, snapshot, settings):
     target = effective_message_id(current, settings)
     trace = context["trace"]
     at = context_breakpoint_index(trace, target)
+    explicit = gemini_controls(settings.api_mode, settings.model)[1]
+    if not explicit:
+        at = None
     messages = context["messages"]
     leading = True
     for index, message in enumerate(messages):
@@ -120,7 +124,8 @@ def prepare_context(context, session, history, snapshot, settings):
         if not fixed:
             leading = False
         entry["cache_static"] = fixed
-    context["cache"] = {"mode": settings.cache.mode, "status": "planned" if settings.cache.mode == "runtime" else "cloud",
+    context["cache"] = {"mode": settings.cache.mode if explicit else "cloud",
+                        "status": "planned" if explicit and settings.cache.mode == "runtime" else "cloud",
                         "planned_index": at, "message_id": trace[at].get("message_id") if at is not None else None,
                         "source": trace[at]["source"] if at is not None else None,
                         "scope": session["id"],

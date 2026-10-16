@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+from google.genai import types as genai_types
 
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.models import Settings
@@ -68,7 +69,8 @@ def assert_images(body, api, expected=IMAGES):
                 assert part["source"]["type"] == "base64"
                 found.append((part["source"]["media_type"], part["source"]["data"]))
             elif "inlineData" in part:
-                found.append((part["inlineData"]["mimeType"], part["inlineData"]["data"]))
+                blob = genai_types.Blob.model_validate(part["inlineData"])
+                found.append((blob.mime_type, base64.b64encode(blob.data).decode()))
     assert found == expected
     assert all(data not in "".join(text) for _, data in expected)
     return body[key]

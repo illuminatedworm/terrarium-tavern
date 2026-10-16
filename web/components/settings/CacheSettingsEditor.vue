@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, useId, watch, type Ref } from 'vue';
 import { cachePreset, type CacheSettings } from '../../lib/cachePolicy';
+import { geminiControls } from '../../lib/geminiCapabilities';
 const props = defineProps<{ cache: CacheSettings; model: string; api: string }>();
 const emit = defineEmits<{ validity: [valid: boolean] }>();
 const valueText = ref('');
@@ -67,6 +68,16 @@ watch(
   },
 );
 const selected = computed(() => cachePreset(props.model, props.api, props.cache));
+const explicitCache = computed(() => geminiControls(props.api, props.model).explicitCache);
+const customCache = computed(() => props.api !== 'gemini' && explicitCache.value);
+watch(customCache, (enabled) => {
+  if (!enabled) {
+    errors.value = {};
+    valueText.value = JSON.stringify(props.cache.value, null, 2);
+    requestText.value = JSON.stringify(props.cache.request, null, 2);
+    emit('validity', true);
+  }
+});
 function edit(kind: 'value' | 'request', event: Event) {
   const text = (event.target as HTMLTextAreaElement).value;
   if (kind === 'value') valueText.value = text;
@@ -87,66 +98,77 @@ function edit(kind: 'value' | 'request', event: Event) {
 <template>
   <section aria-label="提示缓存" class="cache-settings" data-setting-path="cache">
     <h4>提示缓存</h4>
-    <label
-      >缓存控制<select v-model="cache.mode" aria-label="缓存控制">
-        <option value="cloud">云端默认</option>
-        <option value="runtime">本地运行时控制</option>
-      </select></label
-    >
-    <p v-if="cache.mode === 'cloud'" class="muted">
-      不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
+    <p v-if="!explicitCache" class="muted">
+      当前 Gemini 模型仅支持云端隐式缓存。显式缓存对象、断点和时效不可用，此前保存的本地缓存参数不发送。
     </p>
     <template v-else>
-      <p class="muted">
-        断点默认每新增 2 轮推进一次，每次定位到倒数第 2 个已完成 AI
-        回复，也可在对话中手动固定。断点不代表已命中缓存。
-      </p>
       <label
-        >参数格式<select v-model="cache.preset" aria-label="参数格式">
-          <option value="auto">按模型和接口自动匹配</option>
-          <option value="custom">自定义参数</option>
+        >缓存控制<select v-model="cache.mode" aria-label="缓存控制">
+          <option value="cloud">云端默认</option>
+          <option value="runtime">本地运行时控制</option>
         </select></label
       >
-      <p v-if="selected.kind === 'gemini'" class="muted">
-        由运行时创建和引用 Gemini 缓存对象，无需填写资源 ID。服务商不支持时明确降级为云端默认。
+      <p v-if="cache.mode === 'cloud'" class="muted">
+        不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
       </p>
-      <p v-else-if="selected.kind === 'unknown'" class="muted">
-        没有匹配的断点格式。请选择自定义参数；未配置时使用云端默认。
-      </p>
-      <p v-else-if="selected.kind === 'implicit'" class="muted">
-        当前模型由服务端管理缓存前缀，不发送显式断点；时效可在右侧缓存页选择。
-      </p>
-      <p v-else-if="cache.preset === 'auto'" class="muted">
-        匹配参数：{{ selected.field }} = {{ JSON.stringify(selected.value) }}。模型名称匹配不保证服务商支持。
-      </p>
-      <template v-if="cache.preset === 'custom'">
-        <label>断点字段名<input v-model="cache.field" :list="editorId" aria-label="断点字段名" /></label>
-        <datalist :id="editorId">
-          <option value="cache_control" />
-          <option value="prompt_cache_breakpoint" />
-        </datalist>
-        <label
-          >断点 JSON 值<textarea
-            :value="valueText"
-            aria-label="断点 JSON 值"
-            :aria-invalid="!!errors.value"
-            rows="3"
-            @input="edit('value', $event)"
-          />
-        </label>
-        <p v-if="errors.value" role="alert">{{ errors.value }}</p>
+      <template v-else>
+        <p class="muted">
+          断点默认每新增 2 轮推进一次，每次定位到倒数第 2 个已完成 AI
+          回复，也可在对话中手动固定。断点不代表已命中缓存。
+        </p>
+        <label v-if="customCache"
+          >参数格式<select v-model="cache.preset" aria-label="参数格式">
+            <option value="auto">按模型和接口自动匹配</option>
+            <option value="custom">自定义参数</option>
+          </select></label
+        >
+        <p v-if="selected.kind === 'gemini'" class="muted">
+          由运行时创建和引用 Gemini 缓存对象，无需填写资源 ID。服务商不支持时明确降级为云端默认。
+        </p>
+        <p v-else-if="selected.kind === 'unknown'" class="muted">
+          没有匹配的断点格式。请选择自定义参数；未配置时使用云端默认。
+        </p>
+        <p v-else-if="selected.kind === 'implicit'" class="muted">
+          当前模型由服务端管理缓存前缀，不发送显式断点；时效可在右侧缓存页选择。
+        </p>
+        <p v-else-if="cache.preset === 'auto'" class="muted">
+          匹配参数：{{ selected.field }} =
+          {{ JSON.stringify(selected.value) }}。模型名称匹配不保证服务商支持。
+        </p>
+        <template v-if="customCache && cache.preset === 'custom'">
+          <label>断点字段名<input v-model="cache.field" :list="editorId" aria-label="断点字段名" /></label>
+          <datalist :id="editorId">
+            <option value="cache_control" />
+            <option value="prompt_cache_breakpoint" />
+          </datalist>
+          <label
+            >断点 JSON 值<textarea
+              :value="valueText"
+              aria-label="断点 JSON 值"
+              :aria-invalid="!!errors.value"
+              rows="3"
+              @input="edit('value', $event)"
+            />
+          </label>
+          <p v-if="errors.value" role="alert">{{ errors.value }}</p>
+        </template>
+        <template v-if="customCache">
+          <label
+            >附加请求参数（JSON，可留 {}）<textarea
+              :value="requestText"
+              aria-label="附加请求参数（JSON，可留 {}）"
+              :aria-invalid="!!errors.request"
+              rows="3"
+              @input="edit('request', $event)"
+            />
+          </label>
+          <p v-if="errors.request" role="alert">{{ errors.request }}</p>
+          <p class="muted">仅在本地控制生效时发送。不能覆盖模型、消息、工具和输出额度；云端降级时不发送。</p>
+        </template>
+        <p v-else class="muted">
+          Google GenAI 使用原生缓存对象，不支持自定义断点字段和附加缓存 JSON；此前保存的这些值不发送。
+        </p>
       </template>
-      <label
-        >附加请求参数（JSON，可留 {}）<textarea
-          :value="requestText"
-          aria-label="附加请求参数（JSON，可留 {}）"
-          :aria-invalid="!!errors.request"
-          rows="3"
-          @input="edit('request', $event)"
-        />
-      </label>
-      <p v-if="errors.request" role="alert">{{ errors.request }}</p>
-      <p class="muted">仅在本地控制生效时发送。不能覆盖模型、消息、工具和输出额度；云端降级时不发送。</p>
     </template>
   </section>
 </template>

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from google.genai import types as genai_types
 from pydantic import ValidationError
 
 from tavern.conversation.cache_breakpoint import model_messages, prepare_context
@@ -602,7 +603,9 @@ async def test_gemini_native_uses_model_supported_thinking_control(model, effort
     cfg.model = model
     def route(request):
         body = json.loads(request.content)
-        assert body["generationConfig"]["thinkingConfig"] == {**thinking, "includeThoughts": True}
+        # Google's SDK may use protobuf snake_case aliases inside nested fields.
+        actual = genai_types.ThinkingConfig.model_validate(body["generationConfig"]["thinkingConfig"])
+        assert actual.model_dump(by_alias=True, exclude_none=True) == {**thinking, "includeThoughts": True}
         return httpx.Response(200, json=reply("gemini"))
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "hello"}])

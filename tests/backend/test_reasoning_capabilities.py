@@ -3,6 +3,7 @@ import json
 
 import httpx
 import pytest
+from google.genai import types as genai_types
 
 from tavern.application.api import create_app
 from tavern.scripting.reasoning import anthropic_thinking, gemini_thinking, reasoning_capabilities
@@ -18,6 +19,7 @@ from tests.backend.test_unified_cache import config, provider, reply
     ("anthropic", "claude-sonnet-4-5", ["none"]),
     ("anthropic", "gemini-3.8-flash", ["none", "low", "medium", "high"]),
     ("gemini", "gemini-3.8-flash-high", ["low", "medium", "high"]),
+    ("gemini", "gemini-4-argon", ["low", "medium", "high"]),
     ("chat_completions", "gemini-3.8-flash-high", ["low", "medium", "high"]),
     ("gemini", "gemini-3-pro-preview", ["low", "high"]),
     ("gemini", "gemini-3.1-flash-lite-image", ["minimal", "high"]),
@@ -49,7 +51,8 @@ async def test_advertised_tiers_compile_without_aliasing(api, model, levels):
                 else:
                     assert body["output_config"] == {"effort": effort}
             else:
-                thinking = body["generationConfig"]["thinkingConfig"]
+                thinking = genai_types.ThinkingConfig.model_validate(
+                    body["generationConfig"]["thinkingConfig"]).model_dump(by_alias=True, exclude_none=True)
                 if "thinkingLevel" in thinking:
                     assert thinking["thinkingLevel"] == effort.upper()
                 else:

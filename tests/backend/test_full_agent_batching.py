@@ -86,7 +86,7 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
             parts = ([{"functionCall": {"id": f"call_{i}", "name": name, "args": args}}
                       for i, (name, args) in enumerate(actions)] if first else [{"text": "Narrative"}])
             if first:
-                parts[0]["thoughtSignature"] = "fixture-signature"
+                parts[0]["thoughtSignature"] = "Zml4dHVyZS1zaWduYXR1cmU="
             result = {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
         return httpx.Response(200, json=result)
 
@@ -125,7 +125,7 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
             parts = [p for m in requests[1]["contents"] for p in m["parts"]]
             results = [p["functionResponse"] for p in parts if "functionResponse" in p]
             assert [r["id"] for r in results] == ["call_0", "call_1"]
-            assert next(p for p in parts if "functionCall" in p)["thoughtSignature"] == "fixture-signature"
+            assert next(p for p in parts if "functionCall" in p)["thoughtSignature"] == "Zml4dHVyZS1zaWduYXR1cmU="
             envelopes = [r["response"] for r in results]
         assert len(envelopes) == 2 and all(r["ok"] is enabled for r in envelopes)
         assert "_tool_error" not in json.dumps(requests)

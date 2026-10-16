@@ -8,6 +8,8 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tavern.core.gemini_capabilities import gemini_controls
+
 API_MODES = ("chat_completions", "responses", "anthropic", "gemini")
 RESERVED = {"model", "messages", "input", "contents", "system", "systemInstruction", "instructions",
             "tools", "tool_choice", "toolConfig", "stream", "stream_options", "generationConfig",
@@ -70,12 +72,14 @@ def fingerprint(value):
 def retention_policy(settings):
     """Only advertise documented retention controls for the selected wire protocol."""
     api, cache, model = settings.api_mode, settings.cache, settings.model.lower()
+    if not gemini_controls(api, model)[1]:
+        return None, ()
     claude_marker = cache.preset != "custom" or (cache.field == "cache_control"
                     and isinstance(cache.value, dict) and cache.value.get("type") == "ephemeral")
     if claude_marker and (api == "anthropic" or api == "chat_completions" and (
             "claude" in model or cache.preset == "custom")):
         return "anthropic", ("5m", "1h")
-    if api in ("gemini", "chat_completions") and cache.preset != "custom" and (api == "gemini" or "gemini" in model):
+    if api == "gemini" or api == "chat_completions" and cache.preset != "custom" and "gemini" in model:
         return "gemini", ("5m", "15m", "1h", "24h")
     if api not in ("chat_completions", "responses"):
         return None, ()
@@ -114,11 +118,18 @@ def retention_request(settings):
 
 def _preset(settings):
     cache = settings.cache
+    if not gemini_controls(settings.api_mode, settings.model)[1]:
+        return {"kind": "implicit", "request": {}}
+    if settings.api_mode == "gemini":
+        # Native Gemini has no arbitrary content-block cache markers or cache
+        # extension JSON. The UI explains that saved controls for other APIs do
+        # not apply; retain those values for switching back without data loss.
+        return {"kind": "gemini", "request": {}}
     if cache.preset == "custom":
         return {"kind": "block", "field": cache.field, "value": copy.deepcopy(cache.value),
                 "request": copy.deepcopy(cache.request)}
     model = settings.model.lower()
-    if settings.api_mode == "gemini" or (settings.api_mode != "anthropic" and "gemini" in model):
+    if settings.api_mode != "anthropic" and "gemini" in model:
         return {"kind": "gemini", "request": copy.deepcopy(cache.request)}
     if settings.api_mode == "anthropic" or (settings.api_mode == "chat_completions" and "claude" in model):
         return {"kind": "block", "field": "cache_control", "value": {"type": "ephemeral"},
