@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { onMounted, ref } from 'vue';
 import { api } from '../../lib/api';
@@ -47,7 +48,9 @@ useTimedError(error);
   <section class="editor-page">
     <div class="editor-header">
       <div>
-        <button class="quiet" @click="emit('back')">← 返回</button>
+        <button class="quiet editor-back" @click="emit('back')">
+          <Icon name="arrow-left" :size="16" />返回
+        </button>
         <h1>用户角色</h1>
         <p class="muted">名字之外，也写下外貌、身份、性格、能力、背景和希望保留的边界。</p>
       </div>
@@ -74,7 +77,7 @@ useTimedError(error);
             notice = '';
           "
         >
-          ＋ 新用户角色</button
+          <Icon name="plus" :size="16" />新用户角色</button
         ><button
           v-for="p in items"
           class="persona-item"

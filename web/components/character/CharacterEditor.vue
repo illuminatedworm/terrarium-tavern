@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
 import LoreFilter from './LoreFilter.vue';
@@ -470,12 +471,14 @@ useTimedError(error);
   <section ref="editorRoot" class="editor-page">
     <div class="editor-header">
       <div class="character-header-main">
-        <button class="quiet" @click="emit('back')">← 返回</button>
+        <button class="quiet editor-back" @click="emit('back')">
+          <Icon name="arrow-left" :size="16" />返回
+        </button>
         <div class="character-heading">
           <CharacterPortrait
             :src="session ? sessionPortraitUrl(session) : cardPortraitUrl(card)"
             :name="data.name"
-            size="detail"
+            size="card"
             fit="contain"
           />
           <div>
@@ -489,7 +492,7 @@ useTimedError(error);
           v-if="!props.session && !props.draftMode && !card._draftOnly"
           class="editor-export"
           :href="`/api/cards/${card.id}/export`"
-          >导出角色卡 ↓</a
+          ><Icon name="import" :size="16" />导出角色卡</a
         >
         <button
           ref="restoreButton"
@@ -499,7 +502,7 @@ useTimedError(error);
           :aria-controls="restorePopoverId"
           @click="requestRestore"
         >
-          恢复原稿状态
+          <Icon name="refresh" :size="15" />恢复原稿状态
         </button>
         <button class="primary" :disabled="busy || agentRunning || card._draftOnly" @click="save">
           {{ props.draftMode ? '保存草稿' : props.session ? '保存对话世界书' : '保存角色' }}
@@ -587,7 +590,7 @@ useTimedError(error);
             </button>
           </details>
           <div class="toolbar">
-            <button :disabled="busy" @click="addGreeting">＋ 添加候选开场</button
+            <button :disabled="busy" @click="addGreeting"><Icon name="plus" :size="16" />添加候选开场</button
             ><button v-if="deletedGreetings.length" :disabled="busy" @click="undoDeleteGreeting">
               撤销删除开场白
             </button>
@@ -605,8 +608,8 @@ useTimedError(error);
             ST 方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
           </p>
           <div class="toolbar">
-            <button @click="addLore">＋ 添加条目</button
-            ><button @click="loreFile?.click()">导入世界书 JSON</button
+            <button @click="addLore"><Icon name="plus" :size="16" />添加条目</button
+            ><button @click="loreFile?.click()"><Icon name="import" :size="16" />导入世界书 JSON</button
             ><input ref="loreFile" type="file" accept=".json" hidden @change="importLore" />
           </div>
           <LoreFilter :filter="loreFilter" :count="filteredLore.length" :total="entries.length" />

@@ -50,7 +50,7 @@ async def main():
                     await page.get_by_role("button", name="开始新故事", exact=True).click()
                     await page.get_by_role("button", name=f"选择角色卡 {card['name']}").click()
                     await page.get_by_label("运行模式", exact=True).select_option(mode)
-                    await page.get_by_role("button", name="进入故事 →", exact=True).click()
+                    await page.get_by_role("button", name="进入故事", exact=True).click()
                     await page.locator(".story").wait_for()
                     saved = await page.context.storage_state()
                     await page.close()

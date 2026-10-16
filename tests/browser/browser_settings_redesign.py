@@ -24,6 +24,8 @@ async def main():
         recipe.blocks = [b for b in recipe.blocks if b.source not in
                          ('system_prompt', 'description', 'personality', 'scenario')]
         recipe.blocks.insert(2, ContextBlock(id='character', source='character', depth=2, priority=90))
+        # The picker cannot choose an empty model, so give the round trip a real original.
+        settings.full_agent.model.model = 'original-full-model'
         app.state.store.save_settings(settings)
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
@@ -46,7 +48,7 @@ async def main():
                     await page.get_by_role('button', name='设置', exact=True).click()
                     dialog = page.get_by_role('dialog', name='设置', exact=True)
                     await page.get_by_role('button', name='full agent 模型与生成', exact=True).wait_for()
-                    await expect(page.get_by_role('status')).to_have_text('✓ 已保存')
+                    await expect(page.get_by_role('status')).to_have_text('已保存')
                     initial_height = await dialog.evaluate('e=>e.getBoundingClientRect().height')
                     async def read():
                         return (await (await page.request.get(address+'/api/settings')).json())
@@ -88,11 +90,11 @@ async def main():
                     await saved()
                     # Text drafts are outside the automatic-save object.
                     await select('full agent 提示词')
-                    text = page.get_by_role('textbox', name='系统提示词', exact=True)
+                    text = page.get_by_role('textbox', name='顶级规则/引导', exact=True)
                     field = page.locator('.saved-text-field').first
                     assert await field.evaluate('e => { const box = e.querySelector("textarea").getBoundingClientRect(); const button = e.querySelector(".expand-editor").getBoundingClientRect(); return button.left >= box.left && box.right - button.right >= 20 && button.top >= box.top && button.bottom <= box.bottom }')
                     await text.fill('尚未保存的独立提示词')
-                    save_button = page.get_by_role('button', name='保存此文本：系统提示词', exact=True)
+                    save_button = page.get_by_role('button', name='保存此文本：顶级规则/引导', exact=True)
                     await expect(save_button).to_be_visible()
                     assert await field.evaluate('e => { const save = e.querySelector(".text-save").getBoundingClientRect(); const expand = e.querySelector(".expand-editor").getBoundingClientRect(); const box = e.querySelector("textarea").getBoundingClientRect(); return save.right < expand.left && save.bottom <= box.bottom && save.top >= box.top }')
                     await page.screenshot(path=str(output/'prompt-inline.png'))
@@ -107,20 +109,20 @@ async def main():
                     async def fail_text(route):
                         await route.abort('failed')
                     await page.route('**/api/settings/full_agent', fail_text)
-                    await page.get_by_role('button', name='保存此文本：系统提示词', exact=True).click()
+                    await page.get_by_role('button', name='保存此文本：顶级规则/引导', exact=True).click()
                     await expect(page.locator('.saved-text-error')).to_be_visible()
                     assert (await read())['full_agent']['system_prompt'] == before['full_agent']['system_prompt']
                     await page.unroute('**/api/settings/full_agent', fail_text)
-                    await page.get_by_role('button', name='保存此文本：系统提示词', exact=True).click()
-                    await expect(page.get_by_role('button', name='保存此文本：系统提示词', exact=True)).to_have_count(0)
+                    await page.get_by_role('button', name='保存此文本：顶级规则/引导', exact=True).click()
+                    await expect(page.get_by_role('button', name='保存此文本：顶级规则/引导', exact=True)).to_have_count(0)
                     await saved()
                     assert (await read())['full_agent']['system_prompt'] == '尚未保存的独立提示词'
                     assert (await read())['half_agent']['system_prompt'] == before['half_agent']['system_prompt']
                     await page.get_by_role('button', name='撤回本页修改', exact=True).click()
                     await expect(text).to_have_value(before['full_agent']['system_prompt'])
                     # Expanded editing uses the same explicit commit, and closing is guarded.
-                    await page.get_by_role('button', name='放大编辑：系统提示词', exact=True).click()
-                    expanded = page.get_by_role('dialog', name='编辑：系统提示词', exact=True)
+                    await page.get_by_role('button', name='放大编辑：顶级规则/引导', exact=True).click()
+                    expanded = page.get_by_role('dialog', name='编辑：顶级规则/引导', exact=True)
                     await expanded.get_by_role('textbox').fill('应当放弃')
                     await expanded.get_by_role('button', name='关闭放大编辑').click()
                     await expect(confirm).to_be_visible()
@@ -257,7 +259,7 @@ async def main():
                         if width == 360:
                             assert await page.evaluate("document.querySelector('.settings-header').getBoundingClientRect().bottom <= document.querySelector('.settings-mobile-nav').getBoundingClientRect().top + 1")
                             await page.get_by_role('combobox', name='设置页面', exact=True).select_option('full_agent.prompts')
-                            await expect(page.get_by_role('textbox',name='系统提示词',exact=True)).to_be_visible()
+                            await expect(page.get_by_role('textbox',name='顶级规则/引导',exact=True)).to_be_visible()
                             await page.screenshot(path=str(output/'mobile-prompt.png'))
                             await page.get_by_role('combobox', name='设置页面', exact=True).select_option('full_agent.model')
                     assert not errors, errors

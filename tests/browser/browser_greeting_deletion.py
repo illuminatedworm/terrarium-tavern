@@ -60,7 +60,7 @@ async def check(base):
         await page.evaluate('(key)=>sessionStorage.setItem(key,"keep")', other_key)
         await page.get_by_label('开场白', exact=True).fill('未保存的开场')
         await delete(6)
-        await page.get_by_role('button', name='← 返回', exact=True).click()
+        await page.get_by_role('button', name='返回', exact=True).click()
         await page.locator('.card-side-item').filter(has_text=data['name']).first.click()
         await expect(page.get_by_label('开场白', exact=True)).to_have_value('未保存的开场')
         await expect(page.get_by_text('有未保存修改', exact=False)).to_be_visible()
@@ -210,7 +210,7 @@ async def check(base):
         await page.get_by_role('button', name=f"选择角色卡 {data['name']}", exact=True).click()
         await page.get_by_role('tab', name='开场 6', exact=True).click()
         assert '独立内容 7' in await page.get_by_role('tabpanel').inner_text()
-        await page.get_by_role('button', name='进入故事 →', exact=True).click()
+        await page.get_by_role('button', name='进入故事', exact=True).click()
         await page.locator('.story').wait_for()
         assert not errors, errors
         await browser.close()

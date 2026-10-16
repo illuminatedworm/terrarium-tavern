@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import { computed, ref, watch } from 'vue';
 import StorySetup from './StorySetup.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
@@ -31,11 +32,14 @@ watch(
     @settings="(channel, mode) => emit('settings', channel, mode)"
   />
   <section v-else class="editor-page story-setup">
-    <button class="quiet" @click="emit('back')">← 返回</button>
+    <button class="quiet editor-back" @click="emit('back')"><Icon name="arrow-left" :size="16" />返回</button>
     <div class="story-steps"><span class="active">1 · 选择角色卡</span><span>2 · 用户与开场</span></div>
     <h1>开始新故事</h1>
     <p class="muted">先选择一张角色卡，再设置用户身份和开场。</p>
-    <input v-model="search" class="story-card-search" aria-label="搜索角色卡" placeholder="搜索角色卡…" />
+    <div class="story-card-search">
+      <Icon name="search" :size="16" />
+      <input v-model="search" aria-label="搜索角色卡" placeholder="搜索角色卡…" />
+    </div>
     <div class="story-card-list">
       <button
         v-for="card in filtered"
@@ -49,7 +53,7 @@ watch(
         <span class="story-card-description"
           ><strong>{{ card.name }}</strong>
           <p>{{ description(card) }}</p></span
-        ><span aria-hidden="true">→</span>
+        >
       </button>
     </div>
     <p v-if="!cards.length" class="muted">书架中暂无角色卡。请先从左侧“角色卡”页导入。</p>

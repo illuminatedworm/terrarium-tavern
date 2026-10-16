@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../../lib/api';
@@ -79,7 +80,9 @@ useTimedError(error);
 <template>
   <StoryLoading v-if="busy" creating :name="data.name" />
   <section v-else class="editor-page story-setup">
-    <button class="quiet" @click="emit('back')">← 重新选择角色卡</button>
+    <button class="quiet editor-back" @click="emit('back')">
+      <Icon name="arrow-left" :size="16" />重新选择角色卡
+    </button>
     <div class="story-steps">
       <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 用户与开场</span>
     </div>
@@ -128,7 +131,8 @@ useTimedError(error);
         <label v-if="!personaId">临时用户名称<input v-model="personaName" /></label>
         <p v-else class="persona-preview">{{ personas.find((p) => p.id === personaId)?.description }}</p>
         <button class="primary" :disabled="busy || (!personaId && !personaName.trim())" @click="start">
-          {{ busy ? '正在准备…' : '进入故事 →' }}
+          {{ busy ? '正在准备…' : '进入故事'
+          }}<Icon v-if="!busy" name="arrow-right" :size="16" class="enter-icon" />
         </button>
       </div>
       <div class="story-opening">

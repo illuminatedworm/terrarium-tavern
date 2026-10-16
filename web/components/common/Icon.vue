@@ -33,6 +33,7 @@ const icons: Record<string, string> = {
   'chevron-up': '<path d="m6 14.5 6-6 6 6"/>',
   'arrow-up': '<path d="M12 19.5v-15M6 10.5l6-6 6 6"/>',
   'arrow-down': '<path d="M12 4.5v15M6 13.5l6 6 6-6"/>',
+  'arrow-right': '<path d="M4.5 12h15M13.5 6l6 6-6 6"/>',
   'arrow-left': '<path d="M19.5 12h-15M10.5 6l-6 6 6 6"/>',
   refresh:
     '<path d="M4.5 11.5a7.5 7.5 0 0 1 12.9-4.7L20 9.3"/><path d="M20 4.5v4.8h-4.8"/><path d="M19.5 12.5a7.5 7.5 0 0 1-12.9 4.7L4 14.7"/><path d="M4 19.5v-4.8h4.8"/>',
@@ -61,6 +62,7 @@ const icons: Record<string, string> = {
     '<path d="M20 4C13 4 8.3 8.4 6.8 14.6L5.5 19.5l4.9-1.3C16.6 16.7 20 11.5 20 4Z"/><path d="M5.5 19.5 13 12"/>',
   external:
     '<path d="M14 4.5h5.5V10M19.5 4.5 11 13"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
+  file: '<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5l-5-5Z"/><path d="M14 3.5v5h5M9 13h6M9 16.5h4"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   more: '<path d="M6 12h.1M12 12h.1M18 12h.1"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',

@@ -222,9 +222,6 @@ main {
   border-color: rgb(var(--accent-rgb) / 0.42);
   background: rgb(var(--accent-rgb) / 0.15);
 }
-.new-story > .icon:first-child:not(:only-child) {
-  margin: 0;
-}
 .panel-subhead {
   margin: 14px 8px 6px;
   color: var(--text-faint);
@@ -314,8 +311,8 @@ main {
 .card-side-item.active > span:last-child {
   color: #fff;
 }
-.session-open .character-portrait,
-.card-side-item .character-portrait {
+.session-list .session-open .character-portrait,
+.session-list .card-side-item .character-portrait {
   width: 38px;
   height: 38px;
   border-radius: 11px;
@@ -607,9 +604,6 @@ main {
   color: var(--text-muted);
   font-size: var(--fs-2xs);
   white-space: nowrap;
-}
-.inspector-tabs button > .icon:first-child:not(:only-child) {
-  margin: 0;
 }
 .inspector-tabs button:hover:not(:disabled) {
   border-color: transparent;

@@ -72,6 +72,37 @@ describe('settings acknowledgements', () => {
       ),
     ).toEqual({ 'model.temperature': null, blocks: ['b', 'a'] });
   });
+  it('creates nullable channel profiles atomically and edits existing profiles by leaf', () => {
+    const profile = { model: 'official', reply_tokens: 2048 };
+    expect(difference({ official_model: null }, { official_model: profile })).toEqual({
+      official_model: profile,
+    });
+    expect(
+      difference({ advisor: { official_model: null } }, { advisor: { official_model: profile } }),
+    ).toEqual({ 'advisor.official_model': profile });
+    expect(
+      difference({ official_model: profile }, { official_model: { ...profile, reply_tokens: 4096 } }),
+    ).toEqual({ 'official_model.reply_tokens': 4096 });
+    expect(difference({ official_model: profile }, { official_model: null })).toEqual({
+      official_model: null,
+    });
+  });
+  it('keeps edits made while a nullable channel profile is being created', () => {
+    const saved = fixture();
+    saved.full_agent.official_model = null;
+    const draft = clone(saved);
+    draft.full_agent.official_model = { ...draft.full_agent.model, model: 'official' };
+    const sent = difference(saved.full_agent, draft.full_agent);
+    const response = clone(draft);
+    response.revisions.full_agent = 1;
+    draft.full_agent.official_model.reply_tokens = 4096;
+    const rebased = rebaseSettings(saved, draft, response, 'full_agent', sent);
+    expect(rebased.full_agent.official_model).toEqual(draft.full_agent.official_model);
+    expect(rebased.full_agent.model).toEqual(saved.full_agent.model);
+    expect(difference(response.full_agent, rebased.full_agent)).toEqual({
+      'official_model.reply_tokens': 4096,
+    });
+  });
   it('accepts server updates to an untouched mode without copying the edited mode into it', () => {
     const saved = fixture();
     const draft = clone(saved);

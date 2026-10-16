@@ -162,7 +162,9 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
 <template>
   <section class="advisor-panel" aria-label="参谋 agent 聊天">
     <header class="advisor-heading">
-      <h2>参谋</h2>
+      <h2>
+        <span class="advisor-mark" aria-hidden="true"><AdvisorIcon name="compass" /></span>参谋
+      </h2>
       <div class="advisor-heading-actions">
         <button :disabled="running || loading || !state" @click="confirmClear = !confirmClear">
           清空对话

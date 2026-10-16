@@ -28,7 +28,7 @@
   flex: 1 1 0;
   min-width: 0;
 }
-.story-title .character-portrait {
+.story-heading .story-title .character-portrait {
   width: 36px;
   height: 36px;
   border-radius: 11px;
@@ -140,9 +140,6 @@
   color: var(--text-secondary);
   font-size: var(--fs-sm);
   white-space: nowrap;
-}
-.story-tools button > .icon:first-child:not(:only-child) {
-  margin: 0;
 }
 .story-tools button:hover:not(:disabled) {
   background: var(--hover-wash);
@@ -269,7 +266,7 @@
   color: #d8ad39;
 }
 .message .avatar,
-.message-meta .character-portrait {
+.message .message-meta .character-portrait {
   width: 30px;
   height: 30px;
   flex: none;
@@ -655,9 +652,6 @@
   padding: 5px 16px 5px 13px;
   border-radius: var(--radius-pill);
   font-size: var(--fs-sm);
-}
-.compose-bottom .send > .icon:first-child:not(:only-child) {
-  margin: 0;
 }
 .compose-bottom .send.stop {
   border: 1px solid var(--danger-edge);

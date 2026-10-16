@@ -91,7 +91,7 @@ async def main():
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.locator(".cw-message")).to_have_count(6)
                     assert await page.locator('.cw-message.assistant').evaluate_all("""messages => messages.every(message =>
-                        message.previousElementSibling?.matches('.cw-run') &&
+                        message.previousElementSibling?.matches('.cw-run-sequence') &&
                         message.previousElementSibling.dataset.runId === message.dataset.messageRun)""")
                     await page.get_by_role("navigation", name="卡片信息").get_by_role("button", name="预览", exact=True).click()
                     await expect(page.get_by_role("region", name="当前草稿阅读预览")).to_contain_text("UI 修改结果")

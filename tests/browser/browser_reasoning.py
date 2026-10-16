@@ -68,7 +68,7 @@ async def main():
                             group, target = {
                                 'full agent 模型与生成': ('full agent', 'full_agent.model'),
                                 'half agent 模型与生成': ('half agent', 'half_agent.model'),
-                                '通用 角色卡编辑': ('通用', 'shared.editor'),
+                                '通用 角色卡编辑 agent': ('通用', 'shared.editor'),
                             }[label]
                             await page.locator('.settings-mode-buttons').get_by_role('button', name=group, exact=True).click()
                             await page.get_by_role('combobox', name='设置页面', exact=True).select_option(target)
@@ -125,7 +125,7 @@ async def main():
                     await tiers(writer.get_by_role('button', name='思考强度', exact=True), ['default', 'low', 'medium', 'high', 'xhigh', 'max'])
                     await saved()
                     await page.screenshot(path=str(output / 'half-agent.png'))
-                    await select('通用 角色卡编辑')
+                    await select('通用 角色卡编辑 agent')
                     await tiers(effort, ['default', 'low', 'medium', 'high'])
 
                     # The additional protocol note stays accessible in the existing fixed modal.
@@ -139,7 +139,7 @@ async def main():
                         await select('full agent 模型与生成')
                         await tiers(effort, ['default', 'low', 'medium', 'high'])
                         height = await dialog.evaluate('e=>e.getBoundingClientRect().height')
-                        await select('通用 角色卡编辑')
+                        await select('通用 角色卡编辑 agent')
                         await tiers(effort, ['default', 'low', 'medium', 'high'])
                         assert abs(await dialog.evaluate('e=>e.getBoundingClientRect().height') - height) < 1
                         assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')

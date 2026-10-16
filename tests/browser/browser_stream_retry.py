@@ -23,6 +23,10 @@ async def main():
     with tempfile.TemporaryDirectory() as root:
         app = create_app(root)
         store = app.state.store
+        # Half Agent sends only when both Writer and Tracker models are configured.
+        cfg = store.settings()
+        cfg.foreground.model = cfg.background.model = "fixture"
+        store.save_settings(cfg)
         card = store.import_card(json.dumps({"name": "流式与重试检查",
                                              "first_mes": "旧剧情。\n\n" * 200}).encode(), "card.json")
         session = store.new_session(SessionCreate(card_id=card["id"]))

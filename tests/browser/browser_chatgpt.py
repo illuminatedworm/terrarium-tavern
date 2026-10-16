@@ -28,7 +28,7 @@ async def viewport_ok(page, label):
 async def settings_page(page, page_id):
     group, key = page_id.split(".")
     groups = {"shared": "通用", "full_agent": "full agent", "half_agent": "half agent"}
-    labels = {"providers": "提供商", "model": "模型与生成", "editor": "角色卡编辑"}
+    labels = {"providers": "提供商", "model": "模型与生成", "editor": "角色卡编辑 agent"}
     dialog = page.get_by_role("dialog", name="设置", exact=True)
     if not await dialog.is_visible():
         settings = page.get_by_role("button", name="设置", exact=True)
@@ -90,10 +90,10 @@ async def main():
                 await page.goto(base)
                 dialog = await settings_page(page, "shared.providers")
                 height = (await dialog.bounding_box())["height"]
-                await dialog.get_by_role("button", name="添加提供商", exact=True).click()
+                await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                await dialog.get_by_role("button", name="连接 ChatGPT 账号", exact=True).click()
                 provider = dialog.locator(".provider-editor").last
                 await provider.get_by_label("名称", exact=True).fill("ChatGPT 订阅测试")
-                await provider.get_by_label("认证方式", exact=True).select_option("chatgpt_subscription")
                 before = app.state.store.settings_document()
                 await provider.get_by_role("button", name="Continue with ChatGPT", exact=True).click()
                 await expect(provider.get_by_text("请在系统浏览器中完成授权。十分钟内有效。", exact=False)).to_be_visible()
@@ -102,6 +102,7 @@ async def main():
                 await expect(welcome).to_be_visible()
                 assert await dialog.evaluate("element => element.inert || element.closest('[inert]') !== null")
                 await welcome.get_by_role("button", name="知道了", exact=True).click()
+                await provider.locator("summary").click()
                 await expect(provider.get_by_text("已连接 · 已启用 ChatGPT 订阅使用", exact=True)).to_be_visible()
                 assert abs((await dialog.bounding_box())["height"] - height) < 1
                 current = app.state.store.settings_document()
@@ -154,6 +155,8 @@ async def main():
                 assert all(secret not in markup for secret in (ACCESS, REFRESH, "fixture-id-token-only"))
 
                 dialog = await settings_page(page, "full_agent.model")
+                await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                await dialog.get_by_role("button", name="配置模型连接", exact=True).click()
                 await choose_menu(dialog.get_by_role("button", name="提供商", exact=True), label="ChatGPT 订阅测试")
                 await expect(dialog.get_by_label("输出预留预算（tokens）", exact=True)).to_be_visible()
                 assert not await dialog.get_by_label("接口方式", exact=True).count()
@@ -162,17 +165,18 @@ async def main():
                 await expect(dialog.get_by_text("已更新 1 个模型，列表已缓存。", exact=True)).to_be_visible()
                 await choose_model(dialog.get_by_role("button", name="模型名称", exact=True), "fixture")
                 for _ in range(50):
-                    if app.state.store.settings_document().full_agent.model.model == "fixture":
+                    if app.state.store.settings_document().full_agent.official_model.model == "fixture":
                         break
                     await asyncio.sleep(0.1)
-                assert app.state.store.settings_document().full_agent.model.model == "fixture"
+                assert app.state.store.settings_document().full_agent.official_model.model == "fixture"
                 effort = dialog.get_by_role("button", name="思考强度", exact=True)
                 await choose_menu(effort, "xhigh")
                 await expect(effort).to_have_attribute("data-value", "xhigh")
                 await expect(await menu_option(effort, "xhigh")).to_have_text("超高（xhigh）")
                 await expect(await menu_option(effort, "ultra")).to_have_attribute("aria-disabled", "true")
                 assert await (await menu_option(effort, "none")).count() == 0
-                checks.append("official reasoning levels and selectable xhigh")
+                assert app.state.store.settings_document().full_agent.model == before.full_agent.model
+                checks.append("official reasoning levels and selectable xhigh, unchanged ordinary API model")
                 await expect(dialog.get_by_text("使用 ChatGPT 订阅", exact=True)).to_be_visible()
                 checks.append("account catalogue, fixed protocol, unsupported controls, output budget label")
                 await context.close()
@@ -185,7 +189,9 @@ async def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(base)
                     dialog = await settings_page(page, "shared.providers")
+                    await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
                     provider = dialog.locator(".provider-editor").last
+                    await provider.locator("summary").click()
                     await provider.get_by_role("button", name="Continue with ChatGPT", exact=True).scroll_into_view_if_needed()
                     await viewport_ok(page, label + ":providers")
                     await page.screenshot(path=str(OUTPUT / f"{label}-providers.png"))

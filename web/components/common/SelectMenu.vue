@@ -78,8 +78,16 @@ function position() {
   popup.value.style.maxHeight = `${Math.min(420, Math.max(100, space))}px`;
   positionPopover(popup.value, trigger.value);
 }
+// Scroll only the option list. scrollIntoView would also scroll the page section
+// that contains the popover in the DOM, and an outside scroll closes the menu.
 function scrollActive() {
-  list.value?.querySelector<HTMLElement>(`[id="${activeId.value}"]`)?.scrollIntoView({ block: 'nearest' });
+  const box = list.value;
+  const option = box?.querySelector<HTMLElement>(`[id="${activeId.value}"]`);
+  if (!box || !option) return;
+  const view = box.getBoundingClientRect();
+  const item = option.getBoundingClientRect();
+  if (item.top < view.top) box.scrollTop -= view.top - item.top;
+  else if (item.bottom > view.bottom) box.scrollTop += item.bottom - view.bottom;
 }
 function close(restoreFocus = false) {
   popup.value?.hidePopover();
@@ -138,9 +146,25 @@ function keydown(event: KeyboardEvent) {
     scrollActive();
   }
 }
+// The menu follows its trigger while the surrounding page scrolls and closes only
+// once the trigger leaves the scrolled area. Scroll events arrive a frame late, so
+// closing on any scroll would also dismiss a menu opened right after a scroll.
 function onScroll(event: Event) {
   if (event.target instanceof Node && popup.value?.contains(event.target)) return;
-  close();
+  const box = trigger.value?.getBoundingClientRect();
+  const area =
+    event.target instanceof Element
+      ? event.target.getBoundingClientRect()
+      : { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth };
+  if (
+    !box ||
+    box.bottom < area.top ||
+    box.top > area.bottom ||
+    box.right < area.left ||
+    box.left > area.right
+  )
+    close();
+  else position();
 }
 function toggled(event: Event) {
   open.value = (event as ToggleEvent).newState === 'open';

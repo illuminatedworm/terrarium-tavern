@@ -25,7 +25,7 @@ onBeforeUnmount(() => clearTimeout(timer));
     :data-state="state"
     role="status"
   >
-    <span v-if="state === '已保存'" aria-hidden="true">✓</span> {{ state }}
+    <span class="save-dot" aria-hidden="true"></span>{{ state }}
   </span>
 </template>
 <style scoped>

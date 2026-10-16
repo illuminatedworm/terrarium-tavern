@@ -181,6 +181,19 @@ watch([input, quickEffort, () => props.modelProfile], () => scheduleStats());
 watch(items, (value) => {
   if (!value.some((c) => c.ref === selected.value)) selected.value = value[0]?.ref || '';
 });
+// The unfinished-version view should show what the round has changed: when the
+// selected card has no pending edit, follow the first card that does.
+function pendingChanged(card: EditorCard) {
+  const committed = workspace.value?.cards.find((c) => c.ref === card.ref);
+  return JSON.stringify(card.document) !== JSON.stringify(committed?.document);
+}
+watch([pendingView, () => workspace.value?.pending?.cards], () => {
+  const pending = pendingView.value ? workspace.value?.pending?.cards : undefined;
+  if (!pending) return;
+  const current = pending.find((c) => c.ref === selected.value);
+  const changed = pending.find(pendingChanged);
+  if (changed && (!current || !pendingChanged(current))) selected.value = changed.ref;
+});
 watch(modal, (value) => {
   const background = shell.value?.closest<HTMLElement>('.shell');
   if (background) background.inert = !!value;
@@ -577,6 +590,7 @@ onBeforeUnmount(() => {
     <div class="cw-body">
       <div class="cw-dialogue" :inert="inspectorOpen && narrow">
         <header class="cw-header">
+          <span class="cw-agent-mark" aria-hidden="true"><CardWorkspaceIcon name="pen" /></span>
           <div class="cw-heading">
             <h1>角色卡编辑 agent</h1>
             <p :title="conversationTitle">{{ conversationTitle }}</p>

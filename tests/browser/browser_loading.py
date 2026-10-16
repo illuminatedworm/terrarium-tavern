@@ -95,7 +95,7 @@ async def main():
                     await page.get_by_role('button',name='开始新故事',exact=True).click()
                     await page.get_by_role('button',name='选择角色卡 载入测试角色',exact=True).click()
                     await page.route('**/api/sessions', delayed)
-                    await page.get_by_role('button',name='进入故事 →',exact=True).click()
+                    await page.get_by_role('button',name='进入故事',exact=True).click()
                     await expect(loading).to_contain_text('正在进入新故事')
                     await page.screenshot(path=str(output/'new-story-loading.png'))
                     await expect(loading).to_have_count(0,timeout=15000)

@@ -123,7 +123,7 @@ export function setPath(value: SettingsObject, path: string, replacement: any) {
   const owner = parts.reduce((item, part) => item[part], value);
   owner[key] = clone(replacement);
 }
-/** Arrays are atomic (provider lists and recipes); scalar edits use leaf paths. */
+/** Arrays and newly created objects are atomic; existing object edits use leaf paths. */
 export function difference(before: SettingsObject, after: SettingsObject, prefix = ''): SettingsObject {
   const result: SettingsObject = {};
   for (const key of Object.keys(after)) {
@@ -134,10 +134,14 @@ export function difference(before: SettingsObject, after: SettingsObject, prefix
       value &&
       typeof value === 'object' &&
       !Array.isArray(value) &&
+      // Nullable channel profiles must be created before their children can be patched or rebased.
+      before?.[key] &&
+      typeof before[key] === 'object' &&
+      !Array.isArray(before[key]) &&
       !(prefix.endsWith('cache') && (key === 'value' || key === 'request')) &&
       key !== 'message_adapter'
     ) {
-      Object.assign(result, difference(before?.[key] || {}, value, path));
+      Object.assign(result, difference(before[key], value, path));
     } else result[path] = clone(value);
   }
   return result;

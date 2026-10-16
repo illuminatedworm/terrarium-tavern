@@ -23,13 +23,30 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 24px 24px 18px;
+  padding: 18px 20px 16px;
   flex-shrink: 0;
 }
 .right-sidebar .advisor-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 11px;
   margin: 0;
-  font: 600 21px/1.25 var(--font-ui);
+  font: 600 var(--fs-xl) / 1.25 var(--font-ui);
   letter-spacing: 0.06em;
+}
+.advisor-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  color: var(--ivory);
+  background:
+    radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.4), transparent 62%),
+    linear-gradient(150deg, rgb(var(--glow-1-rgb) / 0.6), rgb(var(--glow-2-rgb) / 0.38));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.22),
+    0 8px 20px -10px rgb(var(--glow-1-rgb) / 0.9);
 }
 .advisor-heading-actions {
   display: flex;

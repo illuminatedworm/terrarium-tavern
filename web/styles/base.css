@@ -172,15 +172,21 @@ button:disabled {
   opacity: 0.42;
   cursor: not-allowed;
 }
-/* Icons sit on the text baseline and keep a fixed gap before a label. */
+/* A leading icon turns a button into a centred row with a fixed gap before its
+   label. Zero specificity, so any layout class (rail, list rows) still wins. */
+:where(button:has(> .icon:first-child)) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
 button > .icon,
 a > .icon {
-  vertical-align: -0.24em;
   flex: none;
 }
-button > .icon:first-child:not(:only-child),
-a > .icon:first-child:not(:only-child) {
+a > .icon:first-child {
   margin-right: 6px;
+  vertical-align: -0.24em;
 }
 .primary,
 .send {

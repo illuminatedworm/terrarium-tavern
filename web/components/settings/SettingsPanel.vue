@@ -28,6 +28,7 @@ import DataTransferSettings from './DataTransferSettings.vue';
 import type { TransferResult } from '../../lib/dataTransfer';
 import SavedText from './SavedText.vue';
 import SaveStatus from './SaveStatus.vue';
+import Icon from '../common/Icon.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
@@ -96,6 +97,8 @@ const groups = [
   { scope: 'half_agent', label: 'half agent' },
   { scope: 'shared', label: '通用' },
 ];
+const groupIcon = (s: string) =>
+  s === 'full_agent' ? 'sparkle' : s === 'half_agent' ? 'feather' : 'sliders';
 const groupLabel = (s: string) => groups.find((g) => g.scope === s)?.label || s;
 const prompts = computed(() => draft.value?.prompt_definitions.filter((p) => p.scope === scope.value) || []);
 const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.value) || prompts.value[0]);
@@ -278,8 +281,10 @@ onMounted(async () => {
 <template>
   <div class="settings-shell" :inert="pendingAction !== null">
     <header class="settings-header">
+      <span class="settings-mark" aria-hidden="true"><Icon name="cog" :size="19" /></span>
       <h2>设置</h2>
       <div class="settings-search">
+        <Icon name="search" :size="16" />
         <input
           v-model="query"
           type="search"
@@ -303,7 +308,7 @@ onMounted(async () => {
     <div v-else class="settings-layout">
       <nav class="settings-pages" aria-label="设置页面">
         <div v-for="group in groups" :key="group.scope" class="settings-nav-group">
-          <h3>{{ group.label }}</h3>
+          <h3><Icon :name="groupIcon(group.scope)" :size="14" />{{ group.label }}</h3>
           <button
             v-for="item in draft.pages.filter((p) => p.scope === group.scope)"
             :key="item.id"
@@ -346,13 +351,17 @@ onMounted(async () => {
       </div>
       <div class="settings-detail" @change="changed">
         <div class="settings-detail-heading">
-          <h3>{{ groupLabel(scope) }} · {{ page?.label }}</h3>
+          <div>
+            <div class="settings-crumb">{{ groupLabel(scope) }}</div>
+            <h3>{{ page?.label }}</h3>
+          </div>
           <button
             v-if="page && page.key !== 'data_transfer'"
+            class="quiet"
             :disabled="busy || !editor.pageChanged(page)"
             @click="editor.undo(page)"
           >
-            撤回本页修改
+            <Icon name="refresh" :size="15" />撤回本页修改
           </button>
         </div>
         <p class="settings-scope-note">

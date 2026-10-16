@@ -24,6 +24,8 @@ async def main():
         session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"]))
         doc = store.settings_document()
         doc.half_agent.foreground.model = "exported-model"
+        # Half Agent sends only when the Tracker model is configured too.
+        doc.half_agent.background.model = "exported-tracker"
         store.save_settings(doc)
         app.state.service.provider_factory = lambda: ScriptedLLM(["导入后的故事继续了。"])
         sock = socket.socket()
