@@ -64,6 +64,8 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 让测试直接使用当前工作树源码，无需预先可编辑安装项目。
+pythonpath = ["src"]
 # Keep only failed runs' temporary stores so passing suites do not pile up on disk.
 tmp_path_retention_policy = "failed"
 tmp_path_retention_count = 1
