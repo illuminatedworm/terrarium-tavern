@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,8 @@ async def main():
                 await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
             await page.get_by_role("button", name="⚙ 设置", exact=True).click()
             dialog = page.get_by_role("dialog", name="设置")
+            # SettingsPanel loads lazily; measure the frame only once its layout exists.
+            await dialog.locator(".settings-layout").wait_for()
             initial = (await dialog.bounding_box())["height"]
             configuration = (await (await page.request.get(BASE + '/api/settings')).json())
             async def navigate(item):
@@ -88,11 +91,12 @@ async def main():
                 await assert_viewport(page, label + item['id'])
                 assert abs((await dialog.bounding_box())["height"] - initial) < 1
                 checked.append(label + ":" + item['id'])
+            await navigate(next(item for item in configuration['pages'] if item['id']=='shared.storage'))
             await page.locator(".storage-report").wait_for()
             await page.screenshot(path=str(OUTPUT / f"settings-{label}.png"))
             await navigate(next(item for item in configuration['pages'] if item['id']=='half_agent.prompts'))
-            await dialog.get_by_role("button", name="放大编辑：系统提示词", exact=True).click()
-            editor = page.get_by_role("dialog", name="编辑：系统提示词", exact=True)
+            await dialog.get_by_role("button", name="放大编辑：顶级规则/引导", exact=True).click()
+            editor = page.get_by_role("dialog", name="编辑：顶级规则/引导", exact=True)
             editor_height = (await editor.bounding_box())["height"]
             await editor.get_by_role("textbox").fill("很长的提示词。\n" * 100)
             assert abs((await editor.bounding_box())["height"] - editor_height) < 1
@@ -115,7 +119,9 @@ async def main():
                 await page.get_by_placeholder("说些什么，或描述你的行动…").fill("前往灯塔")
             stats = await (await counted.value).json()
             assert stats["token_counting"]["unit"] == "tokens"
-            await page.get_by_text(f"本次预计输入 {stats['estimated_tokens']:,} tokens", exact=True).wait_for()
+            # Composer shows "current / context window tokens" for the counted draft.
+            await page.locator(".composer-meta").get_by_text(
+                re.compile(rf"^{stats['estimated_tokens']:,} / [\d,]+ tokens$")).wait_for()
             await page.get_by_role("button", name="发送", exact=True).click()
             await page.locator('.message.assistant').nth(1).wait_for(timeout=30000)
             await page.get_by_role("button", name="发送", exact=True).wait_for()
