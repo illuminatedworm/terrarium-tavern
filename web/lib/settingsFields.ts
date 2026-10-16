@@ -1,4 +1,13 @@
 import type { SettingField } from '../components/settings/SettingsFields.vue';
+import { sendShortcutOptions } from './composerShortcut';
+export const miscFields: SettingField[] = [
+  {
+    path: 'send_shortcut',
+    label: '输入时发送和换行',
+    options: sendShortcutOptions,
+    help: '用于剧情、参谋 agent 和角色卡编辑 agent 的聊天输入框，保存后立即生效。Ctrl+Enter 方案也支持 macOS 的 Command+Enter。放大编辑和历史编辑保留各自的应用、保存快捷键。',
+  },
+];
 const number = (
   path: string,
   label: string,

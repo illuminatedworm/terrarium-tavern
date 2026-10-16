@@ -17,6 +17,7 @@ import {
   historyFields,
   memoryFields,
   networkFields,
+  miscFields,
 } from '../../lib/settingsFields';
 import SettingsFields from './SettingsFields.vue';
 import PolicySelect from './PolicySelect.vue';
@@ -223,7 +224,9 @@ const searchable = computed(() => {
           ? [...loreFields, ...retrievalFields, ...retrievalAdvanced]
           : p.key === 'network'
             ? networkFields
-            : [];
+            : p.key === 'misc'
+              ? miscFields
+              : [];
     for (const f of fields) entries.push({ page: p, label: f.label, path: f.path });
     if (p.key === 'model' || p.key === 'editor')
       for (const [path, label] of [
@@ -637,6 +640,7 @@ onMounted(async () => {
           />
           <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
+          <SettingsFields v-else-if="page.key === 'misc'" :value="draft.shared" :fields="miscFields" />
           <DataTransferSettings
             v-else-if="page.key === 'data_transfer'"
             :flush="editor.flush"

@@ -1,4 +1,5 @@
 import type { CacheSettings } from './cachePolicy';
+import type { SendShortcut } from './composerShortcut';
 import type { MessageAdapterConfig } from './messageAdapter';
 export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
 export type SettingsObject = Record<string, any>;
@@ -95,6 +96,7 @@ export interface SettingsDocument {
     card_editor_config: CardEditorConfig;
     web: WebSettings;
     preference_presets: PreferencePreset[];
+    send_shortcut: SendShortcut;
     advisor: {
       model: ModelProfile;
       official_model: ModelProfile | null;

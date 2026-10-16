@@ -150,6 +150,7 @@ class LocalResources(StrictSettings):
 
 
 class SharedSettings(StrictSettings):
+    send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))

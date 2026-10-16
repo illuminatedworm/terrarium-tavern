@@ -57,6 +57,16 @@ async def main():
                     async def saved():
                         await expect(page.locator('.settings-save-status')).to_contain_text('已保存')
                     before = await read()
+                    await select('通用 杂项')
+                    shortcut = page.get_by_role('combobox', name='输入时发送和换行', exact=True)
+                    await expect(shortcut).to_have_value('enter')
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await shortcut.select_option('ctrl_enter')
+                    await saved()
+                    assert (await read())['shared']['send_shortcut'] == 'ctrl_enter'
+                    await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                    await expect(shortcut).to_have_value('enter')
+                    await select('full agent 模型与生成')
                     # Acknowledged edits may not overwrite a newer input made in flight.
                     async def delayed(route):
                         await asyncio.sleep(.25)
@@ -251,6 +261,23 @@ async def main():
                     await select('full agent 模型与生成')
                     for width,height,name in [(1920,1080,'desktop'),(2560,1440,'large-desktop'),(1513,1039,'concept-size'),(360,792,'mobile'),(960,540,'zoom-equivalent')]:
                         await page.set_viewport_size({'width':width,'height':height})
+                        mobile_navigation = await dialog.locator('.settings-mobile-nav').is_visible()
+                        if mobile_navigation:
+                            await dialog.locator('.settings-mode-buttons').get_by_role('button', name='通用', exact=True).click()
+                            await page.get_by_role('combobox', name='设置页面', exact=True).select_option('shared.misc')
+                        else:
+                            await select('通用 杂项')
+                        misc_height = await dialog.evaluate('e=>e.getBoundingClientRect().height')
+                        await expect(shortcut).to_be_visible()
+                        assert await dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')
+                        assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight')
+                        await page.screenshot(path=str(output/(name+'-misc.png')))
+                        if mobile_navigation:
+                            await dialog.locator('.settings-mode-buttons').get_by_role('button', name='full agent', exact=True).click()
+                            await page.get_by_role('combobox', name='设置页面', exact=True).select_option('full_agent.model')
+                        else:
+                            await select('full agent 模型与生成')
+                        assert await dialog.evaluate('e=>e.getBoundingClientRect().height') == misc_height
                         await page.screenshot(path=str(output/(name+'.png')))
                         assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight')
                         assert await dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')

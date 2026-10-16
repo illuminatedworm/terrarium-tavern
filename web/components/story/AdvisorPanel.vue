@@ -11,6 +11,7 @@ import AdvisorIcon from './AdvisorIcon.vue';
 import AdvisorPreview from './AdvisorPreview.vue';
 import WebSources from '../common/WebSources.vue';
 import { webActivityLabel, webSources } from '../../lib/webSearch';
+import { handleComposerKeydown, sendShortcutHint } from '../../lib/composerShortcut';
 
 const props = defineProps<{ sessionId: string; storyRevision: number; settings: SettingsDocument }>();
 const emit = defineEmits<{ close: []; settings: []; preferenceSaved: [] }>();
@@ -141,8 +142,7 @@ async function clearConversation() {
   }
 }
 function keydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
+  if (handleComposerKeydown(event, props.settings.shared.send_shortcut)) {
     void submit();
   }
 }
@@ -402,7 +402,7 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         </button>
       </div>
       <div class="advisor-compose-hint">
-        <span>Enter 发送 · Shift+Enter 换行</span
+        <span>{{ sendShortcutHint(settings.shared.send_shortcut) }}</span
         ><span title="只有明确要求保存的本轮偏好会影响正文">讨论不会推进故事</span>
       </div>
       <span v-if="lastStats" class="advisor-token-note"

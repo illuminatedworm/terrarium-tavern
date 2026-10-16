@@ -32,12 +32,14 @@ import ConversationModelControls from '../settings/ConversationModelControls.vue
 import { type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
+import { handleComposerKeydown, sendShortcutHint, type SendShortcut } from '../../lib/composerShortcut';
 
 const props = defineProps<{
   conversationId: string;
   library: any[];
   modelProfile: ModelProfile;
   providers: Provider[];
+  sendShortcut?: SendShortcut;
 }>();
 const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
@@ -474,8 +476,7 @@ async function removeReference(kind: 'card' | 'persona', ref: string) {
 }
 function composerKeydown(event: KeyboardEvent) {
   if (referencePicker.keydown(event)) return;
-  if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-    event.preventDefault();
+  if (handleComposerKeydown(event, props.sendShortcut)) {
     void send(!!workspace.value?.pending);
   }
 }
@@ -736,6 +737,7 @@ onBeforeUnmount(() => {
               @keyup="referencePicker.keyup"
               @compositionend="referencePicker.update()"
               @keydown="composerKeydown"
+              :title="sendShortcutHint(sendShortcut)"
               @blur="!busy && referencePicker.close()"
             />
             <div class="cw-composer-actions">

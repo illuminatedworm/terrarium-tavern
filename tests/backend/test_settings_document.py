@@ -13,6 +13,38 @@ from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.storage.store import Store
 
 
+async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
+    app = create_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        opened = (await client.post("/api/settings/edit-sessions", json={})).json()
+        original = opened["settings"]
+        assert original["shared"]["send_shortcut"] == "enter"
+        pages = [page["key"] for page in original["pages"] if page["scope"] == "shared"]
+        assert pages[-1] == "misc"
+        assert pages.index("preference_presets") == pages.index("editor") + 1
+        revision = original["revisions"]["shared"]
+        for shortcut in ("ctrl_enter", "shift_enter", "button_only"):
+            response = await client.patch("/api/settings/shared", json={
+                "expected_revision": revision, "edit_session": opened["id"],
+                "changes": {"send_shortcut": shortcut},
+            })
+            assert response.status_code == 200, response.text
+            revision = response.json()["revisions"]["shared"]
+            assert Store(tmp_path).settings_document().shared.send_shortcut == shortcut
+        invalid = await client.patch("/api/settings/shared", json={
+            "expected_revision": revision, "changes": {"send_shortcut": "unknown"},
+        })
+        assert invalid.status_code == 400
+        assert app.state.store.settings_document().shared.send_shortcut == "button_only"
+        undo = await client.post(f"/api/settings/edit-sessions/{opened['id']}/undo", json={
+            "page": "shared.misc", "expected_revision": revision,
+        })
+        assert undo.status_code == 200, undo.text
+        assert undo.json()["shared"]["send_shortcut"] == "enter"
+        assert undo.json()["half_agent"] == original["half_agent"]
+        assert undo.json()["full_agent"] == original["full_agent"]
+
+
 @pytest.mark.parametrize("scope,path", [("full_agent", "model"), ("half_agent", "foreground")])
 async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_path, scope, path):
     app = create_app(tmp_path)

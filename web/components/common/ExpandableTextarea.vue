@@ -3,6 +3,7 @@ import Icon from './Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { nextTick, ref } from 'vue';
 import PromptField from './PromptField.vue';
+import { handleComposerKeydown, sendShortcutHint, type SendShortcut } from '../../lib/composerShortcut';
 const props = defineProps<{
   modelValue?: string | null;
   label: string;
@@ -13,6 +14,7 @@ const props = defineProps<{
   disabled?: boolean;
   rows?: number;
   submitOnEnter?: boolean;
+  sendShortcut?: SendShortcut;
   expandOnFocus?: boolean;
   validate?: (value: string) => string;
 }>();
@@ -61,6 +63,9 @@ function trapFocus(event: KeyboardEvent) {
   }
 }
 useTimedError(error);
+function composerKeydown(event: KeyboardEvent) {
+  if (props.submitOnEnter && handleComposerKeydown(event, props.sendShortcut)) emit('submit');
+}
 </script>
 
 <template>
@@ -77,9 +82,10 @@ useTimedError(error);
         :disabled="disabled"
         :rows="rows"
         :spellcheck="code ? false : undefined"
+        :title="submitOnEnter ? sendShortcutHint(sendShortcut) : undefined"
         @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         @change="emit('change', ($event.target as HTMLTextAreaElement).value)"
-        @keydown.enter.exact="submitOnEnter && ($event.preventDefault(), emit('submit'))"
+        @keydown="composerKeydown"
       />
     </PromptField>
     <button

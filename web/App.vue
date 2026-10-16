@@ -2293,6 +2293,7 @@ useTimedError(error);
         :library="cards"
         :model-profile="settings.shared.card_editor"
         :providers="settings.shared.providers"
+        :send-shortcut="settings.shared.send_shortcut"
         @changed="refreshCardConversations"
         @saved="load"
         @deleted="cardConversationDeleted"
@@ -2810,6 +2811,7 @@ useTimedError(error);
                   expand-on-focus
                   :rows="2"
                   submit-on-enter
+                  :send-shortcut="settings.shared.send_shortcut"
                   @submit="send()"
                   :disabled="busy"
                 />

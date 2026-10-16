@@ -85,12 +85,13 @@ def page_catalog():
             result.append({"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths})
     for key, label, paths in [("providers", "提供商", ["providers"]),
                               ("advisor", "参谋 agent", ["advisor"]),
-                              ("preference_presets", "常用偏好", ["preference_presets"]),
                               ("editor", "角色卡编辑 agent", ["card_editor", "card_editor_config"]),
+                              ("preference_presets", "常用偏好", ["preference_presets"]),
                               ("web", "联网服务", ["web"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
-                              ("data_transfer", "数据导入导出", [])]:
+                              ("data_transfer", "数据导入导出", []),
+                              ("misc", "杂项", ["send_shortcut"])]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
     return result
 
