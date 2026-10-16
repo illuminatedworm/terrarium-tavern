@@ -1,0 +1,161 @@
+/* Design tokens. Every colour, type size, radius, shadow and material in the app
+   derives from this file; components never introduce their own palette.
+
+   Palette: graphite neutrals (no hue cast) with warm, paper-like text, an ivory
+   primary action and a single cool periwinkle accent for focus, selection and
+   live state. Cache-breakpoint gold and context-category colours are semantic and
+   do not follow the scheme. To restyle the app, edit the channel group only. */
+:root {
+  /* ---- Palette channels ("R G B") ---- */
+  --canvas-rgb: 12 13 15;
+  --glass-rgb: 21 22 25;
+  --glass-hi-rgb: 30 31 35;
+  --well-rgb: 7 8 9;
+  --ivory-rgb: 237 234 227;
+  --accent-rgb: 152 172 218;
+  --accent-hover-rgb: 190 204 236;
+  --focus-rgb: 168 188 236;
+  --moss-rgb: 134 196 168;
+  --glow-1-rgb: 92 104 140;
+  --glow-2-rgb: 70 110 112;
+  --glow-3-rgb: 84 88 118;
+  --glow-4-rgb: 150 118 86;
+  --danger-rgb: 238 148 148;
+  --warning-rgb: 230 194 136;
+
+  /* ---- Derived colours ---- */
+  --canvas: rgb(var(--canvas-rgb));
+  --surface-base: #141517;
+  --surface-sidebar: #17181b;
+  --surface-panel: #1c1d21;
+  --surface-input: #101113;
+  --surface-hover: #24262a;
+  --surface-active: #2c2e33;
+  /* Hairlines are translucent so they read the same on glass and on solid panes. */
+  --border-subtle: rgb(255 255 255 / 0.06);
+  --border-control: rgb(255 255 255 / 0.1);
+  --border-strong: #4c4f57;
+  --text-primary: #ebe9e4;
+  --text-secondary: #b6b4af;
+  --text-muted: #8c8b89;
+  --text-faint: #696a6d;
+  --text-story: #d9d6cf;
+  --text-dialogue: #cdd8ec;
+  --ivory: rgb(var(--ivory-rgb));
+  --on-ivory: #141517;
+  --accent: rgb(var(--accent-rgb));
+  --accent-hover: rgb(var(--accent-hover-rgb));
+  --accent-soft: rgb(var(--accent-rgb) / 0.14);
+  --accent-glow: rgb(var(--accent-rgb) / 0.32);
+  --on-accent: #10131a;
+  --moss: rgb(var(--moss-rgb));
+  --focus-ring: rgb(var(--focus-rgb));
+  --scrollbar: #45484f;
+  --danger: rgb(var(--danger-rgb));
+  --danger-surface: rgb(var(--danger-rgb) / 0.12);
+  --danger-edge: rgb(var(--danger-rgb) / 0.32);
+  --success: #8fd0aa;
+  --warning: rgb(var(--warning-rgb));
+  --cache-gold: #f2b928;
+  --cache-gold-light: #ffe184;
+  --hover-wash: rgb(255 255 255 / 0.05);
+  --press-wash: rgb(255 255 255 / 0.08);
+
+  /* ---- Type ---- */
+  --font-ui:
+    Inter, 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Noto Sans CJK SC', sans-serif;
+  --font-display:
+    'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, 'Noto Serif SC', 'Source Han Serif SC',
+    'Songti SC', 'Microsoft YaHei UI', serif;
+  --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'SFMono-Regular', monospace;
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-md: 13.5px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 19px;
+  --fs-2xl: 26px;
+  --fs-display: 44px;
+
+  /* ---- Shape & motion ---- */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-pill: 999px;
+  --control-h: 34px;
+  --control-h-sm: 28px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 0.18s;
+
+  /* ---- Elevation ---- */
+  --shadow-soft: 0 10px 30px -14px rgb(0 0 0 / 0.6);
+  --shadow-float: 0 28px 70px -20px rgb(0 0 0 / 0.7), 0 2px 10px rgb(0 0 0 / 0.22);
+  --shadow-pop: 0 16px 44px -12px rgb(0 0 0 / 0.65), 0 1px 3px rgb(0 0 0 / 0.3);
+
+  /* ---- Materials (back to front) ----
+     canvas — ink background with soft, static ambient light and grain;
+     pane   — docked chrome (navigation, inspector) as frosted panes;
+     sheet  — the reading area: nearly clear so prose stays calm and high-contrast;
+     bar    — the floating composer and sticky rows that content scrolls beneath;
+     float  — modals, popovers, menus, tooltips, notifications.
+     Glass is for chrome only — prose and card iframes never sit on heavy blur, and
+     nothing animates beneath it. A pane with backdrop-filter becomes the containing
+     block of fixed descendants, so floating layers Teleport to body or use popover. */
+  --glass-pane: rgb(var(--glass-rgb) / 0.62);
+  --glass-bar: rgb(var(--glass-rgb) / 0.8);
+  --glass-float: rgb(var(--glass-hi-rgb) / 0.93);
+  --glass-chip: rgb(var(--glass-hi-rgb) / 0.7);
+  --glass-edge: rgb(255 255 255 / 0.075);
+  --glass-edge-strong: rgb(255 255 255 / 0.13);
+  --glass-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0) 140px);
+  --glass-highlight: inset 0 1px 0 rgb(255 255 255 / 0.055);
+  --glass-blur: blur(24px) saturate(150%);
+  --glass-blur-strong: blur(36px) saturate(160%);
+  /* Components that predate the material layer read this as their floating surface. */
+  --bg-elevated: var(--glass-float);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass-pane: rgb(var(--glass-rgb) / 0.97);
+    --glass-bar: rgb(var(--glass-rgb) / 0.97);
+    --glass-float: rgb(var(--glass-hi-rgb) / 0.98);
+    --glass-chip: rgb(var(--glass-hi-rgb) / 0.97);
+  }
+}
+/* Solid mode: the system asks for less transparency, or the user turned off
+   “毛玻璃效果” in 阅读排版 (App.vue sets .no-glass on <html>). */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-pane: var(--surface-sidebar);
+    --glass-bar: var(--surface-panel);
+    --glass-float: var(--surface-panel);
+    --glass-chip: var(--surface-panel);
+    --glass-blur: none;
+    --glass-blur-strong: none;
+  }
+  *,
+  *::before,
+  *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+:root.no-glass {
+  --glass-pane: var(--surface-sidebar);
+  --glass-bar: var(--surface-panel);
+  --glass-float: var(--surface-panel);
+  --glass-chip: var(--surface-panel);
+  --glass-blur: none;
+  --glass-blur-strong: none;
+}
+:root.no-glass *,
+:root.no-glass *::before,
+:root.no-glass *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}

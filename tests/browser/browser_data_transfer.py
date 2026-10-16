@@ -44,7 +44,7 @@ async def main():
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(address)
-                    await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                    await page.get_by_role("button", name="设置", exact=True).click()
                     await page.get_by_role("button", name="通用 数据导入导出", exact=True).click()
                     await expect(page.get_by_role("button", name="导出所选数据")).to_be_enabled()
                     # Empty selections must never download a misleading empty package.
@@ -86,7 +86,7 @@ async def main():
                     await page.get_by_role("button", name="发送", exact=True).click()
                     await expect(page.get_by_text("导入后的故事继续了。", exact=True)).to_be_visible(timeout=15000)
                     assert store.session(imported_id)["messages"][-1]["raw"] == "导入后的故事继续了。"
-                    await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                    await page.get_by_role("button", name="设置", exact=True).click()
                     # New settings must become the editor's baseline, not an unsaved rollback.
                     await page.get_by_role("button", name="half agent 模型与生成", exact=True).click()
                     await expect(page.get_by_role("region", name="正文生成", exact=True).get_by_role("button", name="模型名称", exact=True)).to_have_attribute("data-value", "exported-model")

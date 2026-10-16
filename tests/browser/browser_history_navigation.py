@@ -159,7 +159,7 @@ async def main():
                     await page.get_by_role('button', name='展开左侧栏', exact=True).click()
                     if size == 8:
                         for control_mode in ('cloud', 'runtime'):
-                            await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                            await page.get_by_role('button', name='设置', exact=True).click()
                             dialog = page.get_by_role('dialog', name='设置', exact=True)
                             await dialog.get_by_role('button', name=mode.replace('_', ' ') + ' 模型与生成', exact=True).click()
                             profile = dialog.get_by_role('region', name='模型连接' if mode == 'full_agent' else '正文生成', exact=True)

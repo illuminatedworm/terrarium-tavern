@@ -1,0 +1,682 @@
+/* Floating layers: modal dialogs, popovers, tooltips and notifications, plus the
+   content of the story's own dialogs (context preview, branches). All use the
+   float material; dialogs keep a fixed height per size so content never resizes them. */
+
+/* ---------- Modal frame ---------- */
+.modal-backdrop,
+.settings-confirm-backdrop {
+  background: rgb(var(--canvas-rgb) / 0.6);
+  -webkit-backdrop-filter: blur(5px) saturate(120%);
+  backdrop-filter: blur(5px) saturate(120%);
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  animation: fade-in 0.16s var(--ease-out);
+}
+.modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 600px;
+  height: min(560px, calc(100dvh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  box-shadow:
+    var(--glass-highlight),
+    inset 0 0 0 1px var(--glass-edge-strong),
+    var(--shadow-float);
+  animation: rise-in 0.22s var(--ease-out);
+}
+.modal.wide {
+  width: 1000px;
+}
+.modal-small {
+  height: min(340px, calc(100dvh - 32px));
+}
+.modal-large {
+  height: min(820px, calc(100dvh - 32px));
+}
+.modal-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.modal .close {
+  position: absolute;
+  z-index: 4;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.05);
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+}
+.modal .close:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.12);
+  color: var(--text-primary);
+}
+.modal h2 {
+  margin-bottom: 10px;
+  padding-right: 40px;
+  font-size: 22px;
+}
+.modal h3 {
+  margin-top: 25px;
+  color: var(--text-primary);
+}
+.modal p {
+  font-size: 13px;
+  line-height: 1.85;
+}
+.modal .eyebrow {
+  margin-top: 6px;
+}
+.modal-footer {
+  position: sticky;
+  bottom: -32px;
+  z-index: 2;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 27px;
+  padding: 12px 0;
+  background: linear-gradient(180deg, rgb(var(--glass-hi-rgb) / 0), rgb(var(--glass-hi-rgb) / 0.9) 30%);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+:root.no-glass .modal-footer {
+  background: var(--surface-panel);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    /* Translate only: dialog heights are measured and must not scale. */
+    transform: translateY(8px);
+  }
+}
+.modal.context-management-modal {
+  width: min(1040px, 94vw);
+  height: min(870px, 90dvh);
+}
+.context-management-modal .full-agent-notes {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.context-management-modal .full-agent-notes h3 {
+  font-size: 20px;
+}
+.context-management-modal .full-agent-notes .inspector-note {
+  font-size: 14px;
+  margin: 12px 0;
+}
+.context-management-modal .full-agent-notes label {
+  font-size: 15px;
+}
+@media (max-width: 760px) {
+  .modal-scroll {
+    padding: 32px 16px 16px;
+  }
+  .modal-footer {
+    bottom: -16px;
+  }
+}
+@media (max-width: 620px) {
+  .modal-backdrop {
+    padding: 12px;
+  }
+}
+
+/* ---------- Reading layout dialog ---------- */
+.layout-preview {
+  margin: 4px 0 6px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.4);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-story);
+  font-size: var(--story-font-size, 18px);
+  line-height: var(--story-line-height, 1.9);
+  font-family: 'Tavern Quote Marks', var(--story-font-family, sans-serif);
+}
+.layout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+@media (max-width: 620px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- About ---------- */
+.about-mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 18px;
+  border-radius: 17px;
+  color: var(--ivory);
+  background:
+    radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.42), transparent 62%),
+    linear-gradient(150deg, rgb(var(--glow-1-rgb) / 0.62), rgb(var(--glow-2-rgb) / 0.4));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.24),
+    0 12px 30px -12px rgb(var(--glow-1-rgb) / 0.9);
+}
+.about-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+
+/* ---------- Context preview ---------- */
+.budget-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.context-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 20px 0;
+}
+.context-overview > div {
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
+}
+.context-overview small {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+.context-overview strong {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.context-sequence {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
+  margin-bottom: 18px;
+}
+.context-chip {
+  --context-color: var(--text-muted);
+  border: 1px solid color-mix(in srgb, var(--context-color) 55%, var(--surface-hover));
+  background: color-mix(in srgb, var(--context-color) 13%, var(--surface-base));
+  color: color-mix(in srgb, var(--context-color) 75%, var(--text-primary));
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.context-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.context-group {
+  --context-color: var(--text-muted);
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--context-color) 32%, var(--border-subtle));
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
+  overflow: hidden;
+}
+.context-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 14px;
+  color: var(--text-primary);
+}
+.context-group > summary strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.context-group > summary small {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.context-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--context-color);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--context-color) 70%, transparent);
+}
+.context-items {
+  padding: 0 12px 10px;
+}
+.context-entry {
+  padding: 8px 0;
+  border-color: var(--border-subtle);
+}
+/* Long worldbook comments belong to expanded content, never the disclosure row. */
+.context-entry > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.context-entry > summary::before {
+  content: '▸';
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.context-entry[open] > summary::before {
+  content: '▾';
+}
+.context-entry > summary::-webkit-details-marker {
+  display: none;
+}
+.context-entry > summary .context-entry-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  font-size: 12px;
+}
+.context-entry > summary .badge,
+.context-entry-position,
+.context-entry > summary small {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.context-entry > summary small {
+  margin-left: auto;
+}
+.context-entry pre {
+  max-height: 360px;
+  margin: 9px 0 0;
+}
+.context-diagnostics {
+  margin-top: 16px;
+}
+.context-diagnostics summary {
+  font-size: 13px;
+}
+.context-diagnostics summary small {
+  float: right;
+}
+.context-rules {
+  --context-color: #78a8d4;
+}
+.context-lore {
+  --context-color: #b58bd4;
+}
+.context-character {
+  --context-color: #83b985;
+}
+.context-persona {
+  --context-color: #d29a76;
+}
+.context-examples {
+  --context-color: #9e8fcb;
+}
+.context-memory {
+  --context-color: #d17f9e;
+}
+.context-history {
+  --context-color: #d1b36f;
+}
+.context-author {
+  --context-color: #b1bd71;
+}
+.context-state {
+  --context-color: #71b7ad;
+}
+.context-input {
+  --context-color: #cadb82;
+}
+.context-post,
+.context-turn {
+  --context-color: #dd8b70;
+}
+.context-inject {
+  --context-color: #d47777;
+}
+.context-provider-fallback {
+  --context-color: #d2a15f;
+}
+.context-session {
+  --context-color: var(--accent);
+}
+.context-block {
+  border: 1px solid var(--border-control);
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.context-block small {
+  float: right;
+}
+.context-block pre {
+  max-height: 250px;
+  margin-bottom: 0;
+}
+@media (max-width: 760px) {
+  .context-overview {
+    grid-template-columns: 1fr 1fr;
+  }
+  .context-group > summary small {
+    display: none;
+  }
+}
+@media (max-width: 620px) {
+  .context-entry-position {
+    display: none;
+  }
+  .context-entry > summary {
+    gap: 5px;
+  }
+}
+
+/* ---------- Branches & forks ---------- */
+.branch-list {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.branch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+.branch:last-child {
+  border-bottom: 0;
+}
+.branch:hover:not(:disabled) {
+  border-color: var(--border-subtle);
+  background: var(--hover-wash);
+}
+.branch.current {
+  background: var(--accent-soft);
+}
+.branch .branch-index {
+  flex-shrink: 0;
+  width: 24px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.branch .branch-role {
+  flex-shrink: 0;
+  width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.branch .branch-excerpt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-story);
+  font-size: 12px;
+}
+.branch .branch-current {
+  flex-shrink: 0;
+  color: var(--accent-hover);
+  font-size: 10.5px;
+}
+.fork-preview {
+  padding: 14px 16px;
+  background: rgb(var(--well-rgb) / 0.35);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.fork-preview strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.fork-preview p {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+@media (max-width: 620px) {
+  .branch {
+    gap: 6px;
+    padding: 0 8px;
+  }
+  .branch .branch-role {
+    width: 48px;
+  }
+}
+
+/* ---------- Popovers ---------- */
+.regeneration-panel,
+.message-edit-popover,
+.delete-confirm-popover,
+.editor-restore-confirm,
+.field-tooltip,
+.app-notification {
+  border: 1px solid var(--glass-edge-strong);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  box-shadow: var(--glass-highlight), var(--shadow-pop);
+  color: var(--text-primary);
+}
+.delete-confirm-popover {
+  position: fixed;
+  z-index: 1300;
+  display: flex;
+  flex-direction: column;
+  width: 280px;
+  height: 196px;
+  overflow: auto;
+  padding: 16px;
+  border-color: var(--danger-edge);
+  border-radius: 14px;
+}
+.delete-confirm-popover h3 {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.delete-confirm-popover p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.delete-confirm-popover > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.delete-confirm-popover button {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+.delete-confirm-popover .popover-arrow {
+  position: absolute;
+  top: -5px;
+  left: calc(var(--arrow-left, 250px) - 4px);
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  background: color-mix(in srgb, rgb(var(--danger-rgb)) 8%, var(--surface-panel));
+  border-left: 1px solid var(--danger-edge);
+  border-top: 1px solid var(--danger-edge);
+}
+.delete-confirm-popover.above .popover-arrow {
+  top: auto;
+  bottom: -5px;
+  transform: rotate(225deg);
+}
+.message-edit-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 6px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  border-radius: 14px;
+  font: 13px/1.7 var(--font-ui);
+}
+.edit-choice-menu {
+  width: 188px;
+}
+.edit-choice-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  font: inherit;
+}
+.edit-choice-menu button:hover:not(:disabled),
+.edit-choice-menu button.selected,
+.edit-choice-menu button:focus-visible {
+  background: var(--hover-wash);
+  color: var(--accent-hover);
+}
+.edit-save-question {
+  width: 260px;
+  padding: 14px;
+}
+.edit-save-question p {
+  margin: 0 0 12px;
+}
+.edit-save-question > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.edit-save-question button {
+  padding: 6px 11px;
+  font: 12px/1.5 var(--font-ui);
+}
+.editor-restore-confirm {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(288px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 14px;
+  border-radius: 14px;
+  font: 13px/1.6 var(--font-ui);
+}
+.editor-restore-confirm p {
+  margin: 8px 0 12px;
+  color: var(--text-secondary);
+}
+.editor-restore-confirm .toolbar {
+  justify-content: flex-end;
+}
+.editor-restore-confirm button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+/* Tooltips live in body so scroll containers cannot clip their text. */
+.field-tooltip {
+  position: fixed;
+  z-index: 10000;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(302px, calc(100vw - 16px));
+  max-height: calc(100vh - 16px);
+  overflow-wrap: anywhere;
+  padding: 8px 11px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.55;
+  white-space: normal;
+  pointer-events: none;
+}
+/* Shared transient notification surface, including modal dialogs. */
+.app-notification {
+  position: fixed;
+  z-index: 100000;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(640px, calc(100vw - 32px));
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px 20px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  animation: drop-in 0.24s var(--ease-out);
+}
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}

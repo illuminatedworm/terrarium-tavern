@@ -2,7 +2,9 @@ import { createApp, h, nextTick, ref } from 'vue';
 import Rail from '../../../web/components/story/ConversationRail.vue';
 import History from '../../../web/components/story/StoryHistory.vue';
 import DialogueTools from '../../../web/components/story/DialogueTools.vue';
-import '../../../web/styles/style.css';
+import '../../../web/styles/tokens.css';
+import '../../../web/styles/base.css';
+import '../../../web/styles/story.css';
 
 const messages = ref([]);
 const reading = ref('');

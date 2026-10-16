@@ -37,7 +37,7 @@ async def main():
                 errors=[]
                 page.on('pageerror',lambda error:errors.append(str(error)))
                 await page.goto(f'http://127.0.0.1:{port}')
-                await page.get_by_role('button',name='⚙ 设置',exact=True).click()
+                await page.get_by_role('button',name='设置',exact=True).click()
                 dialog=page.get_by_role('dialog',name='设置',exact=True)
                 await dialog.get_by_role('button',name='通用 提供商',exact=True).click()
                 await dialog.get_by_role('button',name='添加提供商',exact=True).click()

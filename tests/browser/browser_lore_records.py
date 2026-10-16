@@ -132,7 +132,7 @@ async def main(*, pending_only=False):
                     assert await first_record.locator('script').count() == 0
                     await expect(page.locator('.messages')).not_to_contain_text('常驻内容')
                     await page.screenshot(path=str(screenshots / 'dialogue-desktop.png'))
-                    await page.get_by_role('button', name='◫ 上下文', exact=True).click()
+                    await page.get_by_role('button', name='上下文', exact=True).click()
                     dialog = page.get_by_role('dialog')
                     await expect(dialog.get_by_role('heading', name='上下文预览', exact=True)).to_be_visible()
                     await expect(dialog.locator('.context-group').first).to_be_visible()

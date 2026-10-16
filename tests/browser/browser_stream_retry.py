@@ -128,7 +128,7 @@ async def main():
                     await composer_input.fill('第二轮')
                     await page.get_by_role('checkbox', name='本轮更新变量', exact=True).check()
                     await send.click()
-                    retry = page.locator('.story').get_by_role('button', name='↻ 重新生成', exact=True)
+                    retry = page.locator('.story').get_by_role('button', name='重新生成', exact=True)
                     await expect(retry).to_be_enabled(timeout=15000)
                     await expect(page.get_by_role('alert')).to_contain_text('未提交')
                     await expect(page.get_by_role('alert')).not_to_contain_text('Page.evaluate')

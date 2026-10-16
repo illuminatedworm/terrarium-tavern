@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { positionPopover } from '../../lib/anchoredPopover';
 
@@ -157,15 +158,7 @@ onBeforeUnmount(() => {
     @keydown.shift.f10.prevent="open(true)"
     @keydown.esc.prevent="escape"
   >
-    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="m12.5 3.5 4 4M3 17l1-4L14 3a2.1 2.1 0 0 1 3 3L7 16l-4 1Z"
-        stroke="currentColor"
-        stroke-width="1.4"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </svg>
+    <Icon name="pencil" :size="16" />
   </button>
   <div
     ref="popup"

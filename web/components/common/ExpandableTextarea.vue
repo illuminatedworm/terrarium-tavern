@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from './Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { nextTick, ref } from 'vue';
 import PromptField from './PromptField.vue';
@@ -94,7 +95,7 @@ useTimedError(error);
         <path
           d="M12 3h5v5M17 3l-6 6M8 17H3v-5M3 17l6-6"
           stroke="currentColor"
-          stroke-width="1.4"
+          stroke-width="1.5"
           stroke-linecap="round"
           stroke-linejoin="round"
         />
@@ -114,7 +115,9 @@ useTimedError(error);
       >
         <header class="expanded-editor-heading">
           <h2>{{ label }}</h2>
-          <button type="button" aria-label="关闭放大编辑" @click="closeEditor">×</button>
+          <button type="button" aria-label="关闭放大编辑" title="关闭" @click="closeEditor">
+            <Icon name="close" :size="16" />
+          </button>
         </header>
         <PromptField :prefix="prefix" :label="label">
           <textarea
@@ -164,9 +167,7 @@ useTimedError(error);
   max-height: none;
 }
 .expandable-textarea.is-code > .prompt-field > textarea {
-  font:
-    12px/1.7 Consolas,
-    monospace;
+  font: 12px/1.7 var(--font-mono);
 }
 .expandable-textarea.is-compact {
   margin-top: 0;
@@ -187,13 +188,14 @@ useTimedError(error);
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: 5px;
-  background: var(--surface-panel);
+  border: 1px solid var(--glass-edge);
+  border-radius: 7px;
+  background: var(--glass-chip);
   color: var(--text-muted);
 }
-.expand-editor:hover {
-  background: var(--surface-hover);
+.expand-editor:hover:not(:disabled) {
+  border-color: var(--glass-edge-strong);
+  background: var(--glass-float);
   color: var(--accent-hover);
 }
 .expand-on-focus > .expand-editor {
@@ -211,8 +213,9 @@ useTimedError(error);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0009;
-  backdrop-filter: blur(5px);
+  background: rgb(var(--canvas-rgb) / 0.6);
+  -webkit-backdrop-filter: blur(5px) saturate(120%);
+  backdrop-filter: blur(5px) saturate(120%);
   padding: 16px;
 }
 .expanded-editor {
@@ -222,10 +225,15 @@ useTimedError(error);
   max-width: 100%;
   height: 80dvh;
   overflow: hidden;
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  background: var(--surface-panel);
-  box-shadow: 0 24px 80px #0008;
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  box-shadow:
+    var(--glass-highlight),
+    inset 0 0 0 1px var(--glass-edge-strong),
+    var(--shadow-float);
 }
 .expanded-editor-heading {
   display: flex;
@@ -243,13 +251,19 @@ useTimedError(error);
   letter-spacing: normal;
 }
 .expanded-editor-heading button {
-  width: 26px;
-  height: 26px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
   padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 23px;
+  border: 1px solid var(--glass-edge);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.05);
+  color: var(--text-secondary);
+}
+.expanded-editor-heading button:hover {
+  background: rgb(255 255 255 / 0.12);
+  color: var(--text-primary);
 }
 .expanded-editor > .prompt-field {
   flex: 1;
@@ -267,9 +281,7 @@ useTimedError(error);
   line-height: 1.8;
 }
 .expanded-editor > .prompt-field > textarea.is-code {
-  font:
-    13px/1.75 Consolas,
-    monospace;
+  font: 13px/1.75 var(--font-mono);
 }
 .expanded-editor-error {
   flex-shrink: 0;

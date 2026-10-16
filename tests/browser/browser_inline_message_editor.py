@@ -204,7 +204,7 @@ async def main():
                     await button.click()
                     await editor.fill(original)
                     previous_height = await editor.evaluate('e => e.clientHeight')
-                    await page.get_by_role('button', name='Aa 阅读排版', exact=True).click()
+                    await page.get_by_role('button', name='阅读排版', exact=True).click()
                     await page.get_by_role('spinbutton', name='正文字号', exact=True).fill('24')
                     await page.get_by_role('spinbutton', name='行距', exact=True).fill('2.4')
                     await page.get_by_role('spinbutton', name='行距', exact=True).press('Tab')

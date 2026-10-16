@@ -117,14 +117,41 @@ function chooseModel(value: string) {
 </template>
 
 <style scoped>
+/* Provider, model and effort read as one segmented chip in the composer. */
 .model-controls {
-  display: inline-grid;
-  grid-template-columns: minmax(0, 104fr) minmax(0, 142fr) minmax(0, 142fr);
-  width: 392px;
-  flex-shrink: 1;
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
+  flex-shrink: 1;
+  gap: 1px;
   min-width: 0;
   max-width: 100%;
+  padding: 2px;
+  border-radius: 11px;
+  background: rgb(255 255 255 / 0.035);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.provider-picker {
+  flex: none;
+  width: 128px;
+}
+.model-picker {
+  flex: none;
+  width: 180px;
+}
+.effort-picker {
+  flex: none;
+  width: 140px;
+}
+@container composer (max-width: 760px) {
+  .model-controls {
+    display: flex;
+  }
+  .provider-picker,
+  .model-picker,
+  .effort-picker {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
 }
 </style>

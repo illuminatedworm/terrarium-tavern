@@ -48,7 +48,7 @@ async def main():
                 await page.goto(address)
                 await page.evaluate("id=>localStorage.setItem('tavern-session',id)", session['id'])
                 await page.reload()
-                retry = page.get_by_role('button', name='↻ 重新生成', exact=True)
+                retry = page.get_by_role('button', name='重新生成', exact=True)
                 await expect(retry).to_be_visible()
                 await page.get_by_role('button', name='会话设置', exact=True).click()
                 await page.get_by_role('textbox', name='本轮偏好', exact=True).fill('新的创作要求')

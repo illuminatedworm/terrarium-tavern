@@ -123,7 +123,7 @@ async def main():
                     await dialog.get_by_role('button', name='关闭', exact=True).click()
                 await page.set_viewport_size({'width': 1280, 'height': 720})
                 await page.get_by_role('button', name='展开左侧栏', exact=True).click()
-                await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                await page.get_by_role('button', name='设置', exact=True).click()
                 dialog = page.get_by_role('dialog', name='设置', exact=True)
                 await dialog.get_by_role('button', name='half agent 历史与记忆', exact=True).click()
                 output = dialog.get_by_role('spinbutton', name='整理输出上限', exact=False)

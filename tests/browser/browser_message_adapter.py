@@ -46,7 +46,7 @@ async def main():
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(address)
-                    await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                    await page.get_by_role("button", name="设置", exact=True).click()
                     settings_dialog = page.get_by_role("dialog", name="设置", exact=True)
                     await settings_dialog.get_by_role("button", name="half agent 模型与生成", exact=True).click()
                     writer = settings_dialog.get_by_role("region", name="正文生成", exact=True)

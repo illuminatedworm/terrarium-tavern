@@ -73,7 +73,7 @@ async def main():
             await assert_viewport(page, label + ":home")
             if width // zoom < 760:
                 await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
-            await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+            await page.get_by_role("button", name="设置", exact=True).click()
             dialog = page.get_by_role("dialog", name="设置")
             # SettingsPanel loads lazily; measure the frame only once its layout exists.
             await dialog.locator(".settings-layout").wait_for()
@@ -137,7 +137,7 @@ async def main():
             await page.get_by_label("重新生成补充要求", exact=True).fill("更简洁")
             await page.locator(".regenerate-bar").get_by_role("button", name="重新生成", exact=False).click()
             await page.get_by_role("button", name="发送", exact=True).wait_for(timeout=30000)
-            await page.get_by_role("button", name="后台记录", exact=False).click()
+            await page.get_by_role("button", name="后台工作记录", exact=False).click()
             await page.locator('.work-turn').first.wait_for()
             await assert_viewport(page, label + ":work-records")
             await page.get_by_role("button", name="返回对话", exact=True).click()
@@ -167,7 +167,7 @@ async def main():
             await page.get_by_role("button", name="关于 Terrarium Tavern", exact=False).click()
             await assert_viewport(page, label + ":about")
             await page.get_by_role("dialog").get_by_role("button", name="关闭", exact=True).click()
-            await page.get_by_role("button", name="＋ 开始新故事", exact=True).click()
+            await page.get_by_role("button", name="开始新故事", exact=True).click()
             await assert_viewport(page, label + ":story-picker")
             await page.locator('.story-card-option').first.click()
             await assert_viewport(page, label + ":story-setup")

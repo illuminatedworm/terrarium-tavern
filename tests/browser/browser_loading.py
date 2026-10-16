@@ -42,7 +42,7 @@ async def main():
                     errors = []
                     page.on('pageerror', lambda e: errors.append(str(e)))
                     await page.goto(address)
-                    await page.get_by_role('button',name='⚙ 设置',exact=True).click()
+                    await page.get_by_role('button',name='设置',exact=True).click()
                     status = page.locator('.settings-save-status')
                     await expect(status).to_have_attribute('data-state','已保存')
                     await expect(status).to_have_css('opacity','0',timeout=4500)
@@ -92,7 +92,7 @@ async def main():
                     count = len(store.sessions())
                     creation_requests = []
                     page.on('request', lambda request: creation_requests.append((request.method, request.url)))
-                    await page.get_by_role('button',name='＋ 开始新故事',exact=True).click()
+                    await page.get_by_role('button',name='开始新故事',exact=True).click()
                     await page.get_by_role('button',name='选择角色卡 载入测试角色',exact=True).click()
                     await page.route('**/api/sessions', delayed)
                     await page.get_by_role('button',name='进入故事 →',exact=True).click()

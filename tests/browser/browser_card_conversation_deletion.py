@@ -200,7 +200,7 @@ async def main():
                     assert await page.evaluate("localStorage.getItem('tavern-active-card-conversation')") is None
                     assert editor.edits.conversations() == []
                     assert len(store.cards()) == 1 and len(store.personas()) == 1 and len(store.sessions()) == 2
-                    await page.get_by_role("button", name="＋ 新制卡对话", exact=True).click()
+                    await page.get_by_role("button", name="新制卡对话", exact=True).click()
                     await expect(composer).to_be_visible()
                     assert not errors, errors
                     print("Card conversation deletion passed: sidebar/header, cancel/confirm, failure, active/other/last, protected progress, preserved library, desktop/mobile/zoom.")

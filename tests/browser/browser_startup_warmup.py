@@ -59,7 +59,7 @@ async def main():
                 await expect(prompt).to_be_visible()
                 await page.get_by_role("button", name="暂不预热", exact=True).click()
                 await page.reload()
-                await expect(page.get_by_role("button", name="⚙ 设置", exact=True)).to_be_visible()
+                await expect(page.get_by_role("button", name="设置", exact=True)).to_be_visible()
                 await expect(prompt).to_have_count(0)
                 assert calls == []
 

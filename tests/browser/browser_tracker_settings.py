@@ -43,7 +43,7 @@ async def main():
                         await page.goto(address)
                         if width < 760:
                             await page.get_by_role("button", name="切换左侧栏" if width < 620 else "展开左侧栏", exact=True).click()
-                        await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                        await page.get_by_role("button", name="设置", exact=True).click()
                         dialog = page.get_by_role("dialog", name="设置", exact=True)
                         initial_height = (await dialog.bounding_box())["height"]
 

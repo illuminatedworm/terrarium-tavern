@@ -48,7 +48,7 @@ async def main():
                 await page.add_init_script(f"localStorage.setItem('tavern-session', '{session['id']}')")
                 await page.goto(address)
                 await page.locator('.story').wait_for()
-                await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                await page.get_by_role('button', name='设置', exact=True).click()
                 dialog = page.get_by_role('dialog', name='设置', exact=True)
                 saving = page.get_by_label('默认修改保存方式', exact=True)
                 await expect(saving).to_have_value('automatic')

@@ -206,7 +206,7 @@ async def check(base):
         await page.get_by_role('button', name='展开左侧栏', exact=True).click()
         await page.screenshot(path='.cache/greeting-deletion.png', full_page=True)
         await page.get_by_role('tab', name='会话', exact=True).click()
-        await page.get_by_role('button', name='＋ 开始新故事', exact=True).click()
+        await page.get_by_role('button', name='开始新故事', exact=True).click()
         await page.get_by_role('button', name=f"选择角色卡 {data['name']}", exact=True).click()
         await page.get_by_role('tab', name='开场 6', exact=True).click()
         assert '独立内容 7' in await page.get_by_role('tabpanel').inner_text()

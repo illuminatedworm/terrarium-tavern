@@ -3,6 +3,7 @@ import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import InlineMessageEditor from './InlineMessageEditor.vue';
 import EditMessageButton from './EditMessageButton.vue';
+import Icon from '../common/Icon.vue';
 import { computed } from 'vue';
 const props = defineProps<{
   message: any;
@@ -81,17 +82,15 @@ function forwardAction(
       aria-label="将缓存断点固定在此回复末尾"
       @click="emit('setCacheBreakpoint', message.id)"
     />
-    <div v-if="message.role === 'user'" class="avatar">你</div>
-    <CharacterPortrait v-else class="avatar" :src="portraitSrc" :name="name" size="message" />
+    <header class="message-meta">
+      <span v-if="message.role === 'user'" class="avatar">你</span>
+      <CharacterPortrait v-else class="avatar" :src="portraitSrc" :name="name" size="message" />
+      <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
+      <small v-if="writerResponseCache && cacheBreakpointId === message.id" class="cache-breakpoint-status">{{
+        session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定'
+      }}</small>
+    </header>
     <div class="message-body">
-      <div class="message-meta">
-        <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
-        <small
-          v-if="writerResponseCache && cacheBreakpointId === message.id"
-          class="cache-breakpoint-status"
-          >{{ session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定' }}</small
-        >
-      </div>
       <InlineMessageEditor
         v-if="editingMessageId === message.id"
         v-model="editingMessageText"
@@ -117,136 +116,93 @@ function forwardAction(
       <div v-if="sourceHighlight?.id === message.id && sourceHighlight?.fallback" class="source-excerpt">
         <small>引用原文</small><mark>{{ sourceHighlight?.excerpt }}</mark>
       </div>
-      <div v-if="editingMessageId !== message.id" class="message-actions">
-        <template v-if="message.role === 'assistant' && message.id === session.head">
+      <footer v-if="editingMessageId !== message.id || sentAt" class="message-foot">
+        <div v-if="editingMessageId !== message.id" class="message-actions">
+          <template v-if="message.role === 'assistant' && message.id === session.head">
+            <button
+              class="icon-action"
+              :disabled="
+                busy || switchingVersion || !!editingMessageId || reviewing || !message.version_index
+              "
+              aria-label="上一个版本"
+              title="上一个版本（更旧）"
+              @click="emit('switchVersion', message, -1)"
+            >
+              <Icon name="chevron-left" :size="16" />
+            </button>
+            <span class="version-count" aria-live="polite"
+              >{{ (message.version_index ?? 0) + 1 }} / {{ message.versions?.length || 1 }}</span
+            >
+            <button
+              class="icon-action"
+              :disabled="
+                busy ||
+                switchingVersion ||
+                !!editingMessageId ||
+                reviewing ||
+                (message.version_index ?? 0) >= (message.versions?.length || 1) - 1
+              "
+              aria-label="下一个版本"
+              title="下一个版本（更新）"
+              @click="emit('switchVersion', message, 1)"
+            >
+              <Icon name="chevron-right" :size="16" />
+            </button>
+            <span class="action-divider" aria-hidden="true"></span>
+          </template>
+          <EditMessageButton
+            v-if="editable"
+            :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
+            @edit="emit('edit', message, $event)"
+          />
           <button
+            v-if="message.role === 'assistant'"
             class="icon-action"
-            :disabled="busy || switchingVersion || !!editingMessageId || reviewing || !message.version_index"
-            aria-label="上一个版本"
-            title="上一个版本（更旧）"
-            @click="emit('switchVersion', message, -1)"
+            :disabled="busy || !!editingMessageId || reviewing"
+            aria-label="分支"
+            title="继承此处进度，新建对话"
+            @click="emit('fork', message)"
           >
-            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="m12 4-6 6 6 6"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
+            <Icon name="branch" :size="16" />
           </button>
-          <span class="muted" aria-live="polite"
-            >{{ (message.version_index ?? 0) + 1 }} / {{ message.versions?.length || 1 }}</span
-          >
           <button
-            class="icon-action"
-            :disabled="
-              busy ||
-              switchingVersion ||
-              !!editingMessageId ||
-              reviewing ||
-              (message.version_index ?? 0) >= (message.versions?.length || 1) - 1
+            v-if="cacheEligible && writerResponseCache"
+            class="icon-action cache-set-action"
+            :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
+            :disabled="busy || cacheBreakpointBusy || !!editingMessageId || reviewing || switchingVersion"
+            :aria-label="
+              cacheBreakpointId === message.id && !session.cache_breakpoint_auto
+                ? '缓存断点已固定在此回复末尾'
+                : '将缓存断点固定在此回复末尾'
             "
-            aria-label="下一个版本"
-            title="下一个版本（更新）"
-            @click="emit('switchVersion', message, 1)"
+            :title="
+              cacheBreakpointId === message.id && !session.cache_breakpoint_auto
+                ? '缓存断点已固定在此回复末尾'
+                : '将缓存断点固定在此回复末尾'
+            "
+            @click="emit('setCacheBreakpoint', message.id)"
           >
-            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path
-                d="m8 4 6 6-6 6"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
+            <Icon name="flag" :size="16" />
           </button>
-        </template>
-        <EditMessageButton
-          v-if="editable"
-          :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
-          @edit="emit('edit', message, $event)"
-        />
-        <button
-          v-if="message.role === 'assistant'"
-          class="icon-action"
-          :disabled="busy || !!editingMessageId || reviewing"
-          aria-label="分支"
-          title="继承此处进度，新建对话"
-          @click="emit('fork', message)"
-        >
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="5" cy="4" r="2" stroke="currentColor" stroke-width="1.4" />
-            <circle cx="5" cy="16" r="2" stroke="currentColor" stroke-width="1.4" />
-            <circle cx="15" cy="4" r="2" stroke="currentColor" stroke-width="1.4" />
-            <path
-              d="M5 6v8m0-4h5a5 5 0 0 0 5-4"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-            />
-          </svg>
-        </button>
-        <button
-          v-if="cacheEligible && writerResponseCache"
-          class="icon-action cache-set-action"
-          :class="{ active: !session.cache_breakpoint_auto && cacheBreakpointId === message.id }"
-          :disabled="busy || cacheBreakpointBusy || !!editingMessageId || reviewing || switchingVersion"
-          :aria-label="
-            cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-              ? '缓存断点已固定在此回复末尾'
-              : '将缓存断点固定在此回复末尾'
-          "
-          :title="
-            cacheBreakpointId === message.id && !session.cache_breakpoint_auto
-              ? '缓存断点已固定在此回复末尾'
-              : '将缓存断点固定在此回复末尾'
-          "
-          @click="emit('setCacheBreakpoint', message.id)"
-        >
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M4 4v12m0-2h11l-2.5-3L15 8H4"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <circle cx="4" cy="4" r="2" fill="currentColor" />
-          </svg>
-        </button>
-      </div>
-      <div v-if="sentAt" class="message-time">
-        <span
-          v-if="interval"
-          class="message-interval"
-          title="距上一条消息"
-          :aria-label="`距上一条消息 ${interval}`"
-          >{{ interval }}</span
-        >
-        <time :datetime="sentAt.toISOString()" :title="sentAt.toLocaleString()">{{
-          sentAt.toLocaleTimeString('zh-CN', {
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-          })
-        }}</time>
-      </div>
+        </div>
+        <div v-if="sentAt" class="message-time">
+          <span
+            v-if="interval"
+            class="message-interval"
+            title="距上一条消息"
+            :aria-label="`距上一条消息 ${interval}`"
+            >{{ interval }}</span
+          >
+          <time :datetime="sentAt.toISOString()" :title="sentAt.toLocaleString()">{{
+            sentAt.toLocaleTimeString('zh-CN', {
+              hour12: false,
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
+          }}</time>
+        </div>
+      </footer>
     </div>
   </article>
 </template>
-
-<style scoped>
-.message-time {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 8px;
-  text-align: right;
-  color: var(--text-muted);
-  font: 11px/1.5 var(--font-ui);
-  font-variant-numeric: tabular-nums;
-}
-</style>

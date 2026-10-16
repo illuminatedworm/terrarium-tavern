@@ -320,24 +320,29 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 7px 10px;
   border: 1px solid var(--border-control);
-  border-radius: 7px;
-  background: var(--surface-input);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--well-rgb) / 0.42);
   color: var(--text-secondary);
   font: 13px/1.5 var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
 .select-menu.compact .select-menu-trigger {
-  min-height: 34px;
-  padding: 6px 8px;
+  min-height: 30px;
+  padding: 5px 9px;
   border-color: transparent;
+  border-radius: 9px;
   background: transparent;
-  font: 11px/1.5 var(--font-ui);
+  font: 12px/1.5 var(--font-ui);
 }
 .select-menu .select-menu-trigger:hover:not(:disabled),
 .select-menu .select-menu-trigger.open {
-  background: var(--surface-hover);
-  border-color: var(--border-control);
+  background: rgb(255 255 255 / 0.07);
+  border-color: var(--glass-edge-strong);
+}
+.select-menu.compact .select-menu-trigger:hover:not(:disabled),
+.select-menu.compact .select-menu-trigger.open {
+  border-color: transparent;
 }
 .select-menu-trigger:disabled {
   cursor: not-allowed;
@@ -377,13 +382,13 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 6px;
   overflow: hidden;
-  border: 1px solid var(--glass-edge-strong, var(--border-control));
-  border-radius: 14px;
-  background: var(--bg-elevated, var(--surface-panel));
-  -webkit-backdrop-filter: var(--glass-blur-strong, none);
-  backdrop-filter: var(--glass-blur-strong, none);
+  border: 1px solid var(--glass-edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
   color: var(--text-secondary);
-  box-shadow: var(--shadow-float, 0 12px 36px #0005, 0 2px 8px #0003);
+  box-shadow: var(--glass-highlight), var(--shadow-pop);
   font: 13px/1.5 var(--font-ui);
 }
 .select-menu-popup:popover-open {
@@ -396,9 +401,10 @@ onBeforeUnmount(() => {
 .select-menu-heading {
   flex: none;
   padding: 6px 10px 8px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 500;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
 }
 .select-menu-search {
   display: flex;
@@ -408,12 +414,12 @@ onBeforeUnmount(() => {
   margin: 0 4px 6px;
   padding: 0 10px;
   border: 1px solid var(--border-control);
-  border-radius: 7px;
-  background: var(--surface-input);
+  border-radius: var(--radius-sm);
+  background: rgb(var(--well-rgb) / 0.42);
   color: var(--text-muted);
 }
 .select-menu-search:focus-within {
-  border-color: var(--accent);
+  border-color: rgb(var(--focus-rgb) / 0.6);
 }
 .select-menu-search > svg {
   flex: none;
@@ -428,6 +434,7 @@ onBeforeUnmount(() => {
   border-radius: 0;
   outline: none;
   background: transparent;
+  box-shadow: none;
   color: var(--text-primary);
   font: 13px/1.5 var(--font-ui);
 }
@@ -448,12 +455,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   min-height: 38px;
-  padding: 9px 10px;
-  border-radius: 7px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .select-menu-option.active {
-  background: var(--surface-hover);
+  background: var(--hover-wash);
 }
 .select-menu-option[aria-selected='true'] {
   color: var(--accent-hover);

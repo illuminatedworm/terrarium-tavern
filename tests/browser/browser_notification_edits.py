@@ -67,7 +67,7 @@ async def main():
                     await expect(page.locator(".message.user")).to_contain_text("修改后的发言")
                     await expect(page.get_by_role("alert")).to_have_count(0, timeout=9500)
                     assert store.turn(tid)["request"]["text"] == "修改后的发言“正反引号”"
-                    regenerate = page.locator(".story").get_by_role("button", name="↻ 重新生成", exact=True)
+                    regenerate = page.locator(".story").get_by_role("button", name="重新生成", exact=True)
                     await expect(regenerate).to_have_count(1)
                     collapsed_width = (await regenerate.bounding_box())["width"]
                     await regenerate.click()

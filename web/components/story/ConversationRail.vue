@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from '../common/Icon.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { historyRounds, historySummary, type HistoryMessage } from '../../lib/storyHistory';
 const props = defineProps<{ messages: HistoryMessage[]; readingId: string; breakpointId?: string | null }>();
@@ -291,7 +292,9 @@ onBeforeUnmount(() => {
       <div class="rail-preview-heading">
         <small>{{ (hovered ?? 0) + 1 }} / {{ rounds.length }}</small>
         <span>滚轮逐轮预览 · 点击跳转</span>
-        <button type="button" aria-label="关闭轮次预览" @click="dismiss">×</button>
+        <button type="button" aria-label="关闭轮次预览" title="关闭" @click="dismiss">
+          <Icon name="close" :size="14" />
+        </button>
       </div>
       <div class="rail-nearby">
         <button
@@ -317,7 +320,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="rail-preview-controls">
         <button type="button" :disabled="hovered === 0" aria-label="预览上一轮" @click="step(-1)">
-          ↑ 上一轮
+          <Icon name="chevron-up" :size="14" />上一轮
         </button>
         <button
           type="button"
@@ -325,7 +328,7 @@ onBeforeUnmount(() => {
           aria-label="预览下一轮"
           @click="step(1)"
         >
-          ↓ 下一轮
+          <Icon name="chevron-down" :size="14" />下一轮
         </button>
       </div>
     </div>
@@ -355,37 +358,45 @@ onBeforeUnmount(() => {
 }
 .rail-tick {
   position: absolute;
-  right: 7px;
-  width: 7px;
+  right: 8px;
+  width: 6px;
   height: 2px;
-  background: var(--border-strong);
+  border-radius: 1px;
+  background: rgb(255 255 255 / 0.18);
   transform: translateY(-50%);
   pointer-events: none;
+  transition: background var(--dur);
+}
+.conversation-rail:hover .rail-tick:not(.current):not(.cached):not(.hovered) {
+  background: rgb(255 255 255 / 0.3);
 }
 .rail-tick:nth-child(5n) {
-  width: 13px;
+  width: 11px;
 }
+/* Current, cached and hovered markers keep separate horizontal lanes. */
 .rail-tick.current {
-  right: 17px;
+  right: 19px;
   width: 7px;
-  height: 8px;
-  background: var(--text-primary);
+  height: 9px;
+  border-radius: 0;
+  background: var(--accent);
   clip-path: polygon(0 0, 100% 50%, 0 100%);
+  filter: drop-shadow(0 0 4px var(--accent-glow));
 }
 .rail-tick.cached {
   right: 0;
-  width: 5px;
+  width: 4px;
   height: 8px;
   border-radius: 2px;
-  background: #f2b928;
+  background: var(--cache-gold);
 }
 .rail-tick.hovered {
-  right: 7px;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--text-secondary);
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--text-primary);
   border-radius: 50%;
-  background: var(--bg-elevated, #292929);
+  background: var(--glass-float);
 }
 .rail-preview {
   position: absolute;
@@ -394,12 +405,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--glass-edge-strong, var(--border-subtle));
-  border-radius: 14px;
-  background: var(--bg-elevated, #292929);
-  -webkit-backdrop-filter: var(--glass-blur-strong, none);
-  backdrop-filter: var(--glass-blur-strong, none);
-  box-shadow: var(--shadow-float, 0 8px 28px #0003);
+  border: 1px solid var(--glass-edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  box-shadow: var(--glass-highlight), var(--shadow-pop);
   font-size: 12px;
   line-height: 1.5;
   pointer-events: auto;
@@ -423,16 +434,24 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .rail-preview button:focus-visible {
-  outline: 2px solid var(--text-primary);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .rail-preview-heading button,
 .rail-preview-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   min-height: 28px;
-  padding: 2px 6px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: transparent;
+  color: var(--text-secondary);
+}
+.rail-preview-heading button > .icon,
+.rail-preview-controls button > .icon {
+  margin: 0;
 }
 .rail-preview button:disabled {
   opacity: 0.4;
@@ -457,7 +476,10 @@ onBeforeUnmount(() => {
 }
 .rail-nearby > button.selected,
 .rail-preview button:hover:not(:disabled) {
-  background: var(--border-subtle, #ffffff12);
+  background: var(--hover-wash);
+}
+.rail-nearby > button[aria-current='location'] small {
+  color: var(--accent-hover);
 }
 .rail-nearby small {
   flex: 0 0 4ch;

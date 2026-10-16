@@ -1,4 +1,6 @@
-/* Both conversation surfaces share the same writing area and action geometry. */
+/* Conversation composer frame shared by the story, Card Editor and Advisor: the same
+   writing area, frosted material and action geometry. The story composer floats in
+   its own glass card (story.css) and turns this frame transparent inside it. */
 .conversation-compose-frame {
   container: composer / inline-size;
   --compose-input-height: 76px;
@@ -6,13 +8,22 @@
   --compose-input-padding: 10px;
   --compose-input-font-size: 15px;
   padding: 8px 10px 10px;
-  background: var(--surface-panel);
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  transition: border-color 0.15s;
+  border: 1px solid var(--glass-edge);
+  border-radius: 18px;
+  background: var(--glass-sheen), var(--glass-bar);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-highlight), var(--shadow-soft);
+  transition:
+    border-color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out);
 }
 .conversation-compose-frame:focus-within {
-  border-color: var(--accent);
+  border-color: rgb(var(--focus-rgb) / 0.42);
+  box-shadow:
+    var(--glass-highlight),
+    0 0 0 4px rgb(var(--accent-rgb) / 0.09),
+    var(--shadow-soft);
 }
 .conversation-compose-frame > textarea,
 .conversation-compose-frame .expandable-textarea.is-compact > .prompt-field > textarea {
@@ -22,37 +33,38 @@
   min-height: var(--compose-input-min-height);
   max-height: min(180px, 25vh);
   resize: vertical;
-  margin: 4px 0 8px;
+  margin: 4px 0 6px;
   padding: var(--compose-input-padding);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: none;
   font-size: var(--compose-input-font-size);
   line-height: 1.65;
 }
 .conversation-compose-frame .expandable-textarea.is-compact > .prompt-field > textarea {
   padding-right: 42px;
 }
+.conversation-compose-frame textarea:focus,
 .conversation-compose-frame textarea:focus-visible {
-  outline: 1px solid var(--border-control);
-  outline-offset: -1px;
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
 }
 .conversation-compose-frame .conversation-compose-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 34px;
-  padding: 7px 12px;
-  font: 12px/1.5 var(--font-ui);
+  padding: 6px 15px 6px 12px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
 }
 .conversation-compose-send svg {
   width: 16px;
   height: 16px;
   flex: none;
-}
-.composer-stats-error {
-  color: var(--warning);
 }
 @media (max-width: 620px) {
   .conversation-compose-frame {

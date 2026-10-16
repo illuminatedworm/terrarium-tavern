@@ -384,12 +384,13 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
   background: transparent;
 }
-.dialogue-tools button:hover {
-  background: var(--surface-hover);
+.dialogue-tools button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover-wash);
   color: var(--text-primary);
 }
 .dialogue-tools button:focus-visible {
-  outline: 2px solid var(--accent-hover);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .dialogue-tools button:disabled {
@@ -399,12 +400,12 @@ onBeforeUnmount(() => {
 .find-trigger {
   position: absolute;
   right: 39px;
-  border: 1px solid var(--glass-edge-strong, var(--border-subtle)) !important;
-  background: var(--bg-elevated, #292929) !important;
-  -webkit-backdrop-filter: var(--glass-blur, none);
-  backdrop-filter: var(--glass-blur, none);
-  box-shadow: var(--shadow-soft, 0 4px 16px #0002);
-  opacity: 0.6;
+  border: 1px solid var(--glass-edge-strong) !important;
+  background: var(--glass-chip) !important;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-soft);
+  opacity: 0.55;
   transition: opacity 150ms;
 }
 .message-jumps {
@@ -423,19 +424,20 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 .find-trigger {
-  top: 12px;
+  top: 14px;
+  border-radius: 10px !important;
 }
 .dialogue-find {
   position: absolute;
   top: 10px;
   right: 42px;
   width: min(450px, calc(100% - 60px));
-  border: 1px solid var(--glass-edge-strong, var(--border-strong));
-  border-radius: 14px;
-  background: var(--bg-elevated, #292929);
-  -webkit-backdrop-filter: var(--glass-blur-strong, none);
-  backdrop-filter: var(--glass-blur-strong, none);
-  box-shadow: var(--shadow-float, 0 8px 32px #0004);
+  border: 1px solid var(--glass-edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--glass-sheen), var(--glass-float);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  box-shadow: var(--glass-highlight), var(--shadow-pop);
   color: var(--text-secondary);
   overflow: hidden;
 }
@@ -460,7 +462,7 @@ onBeforeUnmount(() => {
   outline: none;
 }
 .dialogue-find:focus-within {
-  border-color: var(--accent-hover);
+  border-color: rgb(var(--focus-rgb) / 0.5);
 }
 .find-count {
   font: 11px/1.5 var(--font-ui);

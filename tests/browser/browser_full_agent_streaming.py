@@ -134,7 +134,7 @@ async def main():
                     await send.click()
                     await expect(page.locator(".draft")).to_contain_text("失败后保留的未提交片段")
                     gates[3].set()
-                    retry = page.locator(".story").get_by_role("button", name="↻ 重新生成", exact=True)
+                    retry = page.locator(".story").get_by_role("button", name="重新生成", exact=True)
                     await expect(retry).to_be_enabled()
                     await expect(page.locator(".message .badge").last).to_have_text("未提交草稿")
                     assert len(store.session(session["id"])["messages"]) == 3

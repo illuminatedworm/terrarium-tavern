@@ -50,7 +50,7 @@ async def main():
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 await page.goto(address)
                 await page.get_by_role("tab", name="会话", exact=True).click()
-                await page.get_by_role("button", name="＋ 开始新故事", exact=True).click()
+                await page.get_by_role("button", name="开始新故事", exact=True).click()
                 await page.get_by_role("button", name=f"选择角色卡 {card['name']}").click()
                 await page.get_by_label("运行模式", exact=True).select_option("full_agent")
                 await page.get_by_role("button", name="进入故事 →", exact=True).click()
@@ -228,7 +228,7 @@ async def main():
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 await modal.get_by_role("button", name="关闭", exact=True).click()
                 await page.set_viewport_size({"width": 1440, "height": 900})
-                await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                await page.get_by_role("button", name="设置", exact=True).click()
                 modal = page.get_by_role("dialog", name="设置")
                 await modal.get_by_role("button", name="full agent 工具与记忆", exact=True).click()
                 await expect(modal.get_by_label("每回合模型调用上限", exact=True)).to_have_value("24")
@@ -239,7 +239,7 @@ async def main():
                 await page.get_by_placeholder('说些什么，或描述你的行动…').fill('我们再确认一次明天的约定。')
                 await page.get_by_role('button', name='发送', exact=True).click()
                 await expect(page.locator('.message.assistant')).to_have_count(3)
-                await page.get_by_role('button', name='◫ 上下文', exact=True).click()
+                await page.get_by_role('button', name='上下文', exact=True).click()
                 await expect(page.get_by_role('heading', name='上下文预览')).to_be_visible()
                 history = page.locator('.context-group.context-history')
                 # Runtime updates can separate history groups; preserve their
@@ -277,7 +277,7 @@ async def main():
                 if await page.locator('.regenerate-toggle').get_attribute('aria-expanded') != 'true':
                     await page.locator('.regenerate-toggle').click()
                 async with page.expect_request(lambda request: request.method == 'POST' and request.url.endswith('/turns')) as submitted:
-                    await page.locator('.regenerate-bar').get_by_role('button', name='↻ 重新生成', exact=True).click()
+                    await page.locator('.regenerate-bar').get_by_role('button', name='重新生成', exact=True).click()
                 retry = (await submitted.value).post_data_json
                 assert retry['resume_turn_id'] is None and retry['allow_content_edit'] is True
                 await expect(page.locator('.message.assistant').last).to_contain_text('按新的授权重新开始。')

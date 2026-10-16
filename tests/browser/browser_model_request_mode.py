@@ -34,7 +34,7 @@ async def main():
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(address)
-                    await page.get_by_role("button", name="⚙ 设置", exact=True).click()
+                    await page.get_by_role("button", name="设置", exact=True).click()
                     await page.get_by_role("button", name="通用 网络与代理", exact=True).click()
                     field = page.get_by_role("combobox", name="模型请求方式", exact=True)
                     dialog = page.get_by_role("dialog", name="设置", exact=True)

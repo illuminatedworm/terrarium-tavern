@@ -49,6 +49,7 @@ import TurnReview from './components/story/TurnReview.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
+import Icon from './components/common/Icon.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
 import StoryLoading from './components/story/StoryLoading.vue';
@@ -100,6 +101,10 @@ const sessionPortraits = computed(() =>
   Object.fromEntries(sessions.value.map((s) => [s.id, sessionPortraitUrl(s)])),
 );
 const storyPortrait = computed(() => sessionPortraitUrl(session.value));
+// Home shows the newest stories first; the sidebar keeps the full list.
+const recentSessions = computed(() =>
+  [...sessions.value].sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 6),
+);
 const editingSessionTitleId = ref('');
 const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
@@ -455,6 +460,20 @@ const sidebarSection = ref(
 const deleteBubble = ref<any>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
+const inspectorPages = computed(() =>
+  [
+    { id: 'advisor', label: '参谋', icon: 'compass' },
+    { id: 'cache', label: '缓存', icon: 'bolt' },
+    isFullAgent.value ? { id: 'tools', label: '工具', icon: 'wrench' } : null,
+    { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
+    { id: 'scene', label: '场景', icon: 'map' },
+    { id: 'options', label: '会话设置', icon: 'sliders' },
+  ].filter((page) => !!page),
+);
+function openInspector(id: string) {
+  inspectorTab.value = id;
+  layout.value.rightCollapsed = false;
+}
 let optionsNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 function clearOptionsNotice() {
   clearTimeout(optionsNoticeTimer);
@@ -492,6 +511,10 @@ const mobileSidebarQuery = window.matchMedia('(max-width: 620px)');
 const mobileSidebar = ref(mobileSidebarQuery.matches);
 const rightOverlayQuery = window.matchMedia('(max-width: 760px)');
 const rightOverlay = ref(rightOverlayQuery.matches);
+// Drawers are transient on narrow screens: a stored "expanded" state (often saved
+// while a desktop window was being narrowed) must not reopen one over the story.
+if (rightOverlay.value) layout.value.rightCollapsed = true;
+if (mobileSidebar.value) layout.value.leftCollapsed = true;
 const rightDrawerOpen = computed(
   () => rightOverlay.value && !!session.value && !pageMode.value && !layout.value.rightCollapsed,
 );
@@ -1289,6 +1312,13 @@ function startNewStory() {
   panel.value = '';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
 }
+// Rail tabs also reopen a collapsed list panel so the chosen section is visible.
+function openSidebarSection(section: 'sessions' | 'cards' | 'editor') {
+  if (layout.value.leftCollapsed) void toggleLeftSidebar();
+  if (section === 'sessions') sidebarSection.value = 'sessions';
+  else if (section === 'cards') manageCards();
+  else void manageCardAgent();
+}
 function manageCards() {
   abandonStoryLoad();
   viewScope.enter();
@@ -1996,196 +2026,239 @@ useTimedError(error);
       :inert="rightDrawerOpen"
       @keydown.esc="mobileSidebar && !layout.leftCollapsed && toggleLeftSidebar()"
     >
-      <button
-        ref="leftSidebarClose"
-        class="sidebar-collapse"
-        @click="toggleLeftSidebar"
-        :aria-label="layout.leftCollapsed ? '展开左侧栏' : '折叠左侧栏'"
-        :aria-expanded="!layout.leftCollapsed"
-        aria-controls="primary-sidebar"
-      >
-        {{ layout.leftCollapsed ? '›' : '‹' }}
-      </button>
-      <a class="brand" href="#" @click.prevent="startNewStory"
-        ><span class="brand-mark">♧</span><span>Terrarium<small>T A V E R N</small></span></a
-      >
-      <div class="sidebar-sections" role="tablist" aria-label="酒馆管理">
-        <button
-          role="tab"
-          :aria-selected="sidebarSection === 'sessions'"
-          :class="{ active: sidebarSection === 'sessions' }"
-          @click="sidebarSection = 'sessions'"
-        >
-          会话</button
-        ><button
-          role="tab"
-          :aria-selected="sidebarSection === 'cards'"
-          :class="{ active: sidebarSection === 'cards' }"
-          @click="manageCards"
-        >
-          角色卡
-        </button>
-        <button
-          role="tab"
-          :aria-selected="sidebarSection === 'editor'"
-          :class="{ active: sidebarSection === 'editor' }"
-          @click="manageCardAgent"
-        >
-          制卡
-        </button>
-      </div>
-      <template v-if="sidebarSection === 'sessions'"
-        ><button class="new-story" :disabled="busy" @click="startNewStory">＋ 开始新故事</button>
-        <div class="side-label">
-          会话管理 <span>{{ sessions.length }}</span>
-        </div>
-        <nav class="session-list">
-          <div
-            v-for="s in sessions"
-            :key="s.id"
-            class="session-row"
-            :class="{ active: session?.id === s.id }"
+      <nav class="rail" aria-label="主导航">
+        <a
+          class="brand"
+          href="#"
+          title="Terrarium Tavern"
+          aria-label="Terrarium Tavern"
+          @click.prevent="startNewStory"
+          ><Icon name="brand" :size="24" :stroke="1.5"
+        /></a>
+        <div class="rail-sections" role="tablist" aria-label="酒馆管理">
+          <button
+            role="tab"
+            class="rail-tab"
+            :aria-selected="sidebarSection === 'sessions'"
+            :class="{ active: sidebarSection === 'sessions' }"
+            @click="openSidebarSection('sessions')"
           >
-            <div v-if="editingSessionTitleId === s.id" class="session-title-editor">
-              <input
-                ref="sessionTitleInput"
-                v-model="sessionTitleDraft"
-                maxlength="100"
-                aria-label="对话标题"
-                @keydown.enter="saveSessionTitle(s)"
-                @keydown.esc="cancelSessionTitle"
-              />
-              <button :disabled="savingSessionTitle" @click="saveSessionTitle(s)">保存</button>
-              <button :disabled="savingSessionTitle" @click="cancelSessionTitle">取消</button>
-            </div>
-            <template v-else
-              ><button class="session-open" @click="guarded(() => openSession(s.id))">
-                <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" />
-                <span
-                  >{{ s.title || s.name
-                  }}<small
-                    >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
-                    {{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small
-                  ></span
-                ></button
-              ><button
-                class="session-rename"
-                :aria-label="`重命名对话 ${s.title || s.name}`"
-                @click.stop="editSessionTitle(s)"
-              >
-                改名</button
-              ><button
-                class="session-delete"
-                :aria-label="`删除会话 ${s.title || s.name}`"
-                @click.stop="askDeleteConversation(s, $event, 'session')"
-              >
-                删除
-              </button></template
-            >
-          </div>
-          <p v-if="!sessions.length" class="empty-small">故事开始后，会留在这里。</p>
-        </nav></template
-      >
-      <template v-else-if="sidebarSection === 'cards'"
-        ><button class="new-story import-only" @click="importInput?.click()">↓ 导入角色卡</button
-        ><input ref="importInput" type="file" accept=".json,.png,.charx" hidden @change="importCard" />
-        <div class="side-label">
-          角色卡管理 <span>{{ cards.length }}</span>
-        </div>
-        <nav class="session-list card-side-list">
-          <div v-for="card in cards" :key="card.id" class="card-side-row" :data-card-id="card.id">
-            <button
-              class="card-side-item"
-              :class="{ active: selected?.id === card.id && pageMode === 'card' }"
-              @click="showCard(card)"
-            >
-              <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" />
-              <span
-                >{{ card.name
-                }}<small>{{ card.report.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
-              >
-            </button>
-            <div class="card-row-actions" role="group" :aria-label="`${card.name} 操作`">
-              <button
-                class="card-copy-action"
-                :aria-label="`复制角色卡 ${card.name}`"
-                @click="copyLibraryCard(card)"
-              >
-                复制</button
-              ><button
-                class="card-delete-action"
-                :aria-label="`删除角色卡 ${card.name}`"
-                @click="
-                  deletingCard = card;
-                  panel = 'delete-card';
-                "
-              >
-                删除
-              </button>
-            </div>
-          </div>
-          <p v-if="!cards.length" class="empty-small">从上方导入 JSON、PNG 或 CHARX 角色卡。</p>
-          <p v-if="orphanDrafts.length" class="side-label">原卡已删除的编辑草稿</p>
-          <button v-for="draft in orphanDrafts" :key="draft.id" @click="openOrphanDraft(draft.id)">
-            继续编辑 {{ draft.name }}
+            <Icon name="chat" :size="20" /><span>会话</span>
           </button>
-        </nav></template
-      >
-      <template v-if="sidebarSection === 'editor'">
-        <button class="new-story" @click="newCardConversation">＋ 新制卡对话</button>
-        <div class="side-label">
-          制卡对话 <span>{{ cardConversations.length }}</span>
-        </div>
-        <nav class="session-list" aria-label="制卡对话列表">
-          <div
-            v-for="conversation in cardConversations"
-            :key="conversation.id"
-            class="session-row"
-            :data-conversation-id="conversation.id"
-            :class="{ active: conversation.id === editorConversationId }"
+          <button
+            role="tab"
+            class="rail-tab"
+            :aria-selected="sidebarSection === 'cards'"
+            :class="{ active: sidebarSection === 'cards' }"
+            @click="openSidebarSection('cards')"
           >
-            <button class="session-open" @click="openCardAgent(conversation.id)">
-              <span
-                >{{ conversation.title
-                }}<small
-                  >{{ conversation.reference_count ?? conversation.card_count }} 份资料 ·
-                  {{
-                    ['queued', 'running'].includes(conversation.status)
-                      ? '运行中'
-                      : conversation.resumable
-                        ? '可继续'
-                        : '已保存对话'
-                  }}
-                  · {{ channelLabels[conversation.channel_origin as Channel] || '渠道待确认' }}</small
-                ></span
-              >
-            </button>
-            <button
-              class="session-delete"
-              :aria-label="`删除制卡对话 ${conversation.title}`"
-              :disabled="
-                !!deletingCardConversationId ||
-                ['queued', 'running'].includes(conversation.status) ||
-                conversation.resumable
-              "
-              :title="
-                ['queued', 'running'].includes(conversation.status) || conversation.resumable
-                  ? '请先停止任务并处理未完成进度'
-                  : '删除制卡对话'
-              "
-              @click.stop="askDeleteConversation(conversation, $event, 'editor')"
+            <Icon name="cards" :size="20" /><span>角色卡</span>
+          </button>
+          <button
+            role="tab"
+            class="rail-tab"
+            :aria-selected="sidebarSection === 'editor'"
+            :class="{ active: sidebarSection === 'editor' }"
+            @click="openSidebarSection('editor')"
+          >
+            <Icon name="quill" :size="20" /><span>制卡</span>
+          </button>
+        </div>
+        <div class="rail-bottom sidebar-bottom">
+          <button class="rail-button" title="用户角色" aria-label="用户角色" @click="pageMode = 'personas'">
+            <Icon name="user" :size="19" /></button
+          ><button class="rail-button" title="阅读排版" aria-label="阅读排版" @click="panel = 'layout'">
+            <Icon name="type" :size="19" /></button
+          ><button class="rail-button" title="设置" aria-label="设置" @click="panel = 'settings'">
+            <Icon name="cog" :size="19" /></button
+          ><button
+            class="rail-button"
+            title="关于 Terrarium Tavern"
+            aria-label="关于 Terrarium Tavern"
+            @click="panel = 'about'"
+          >
+            <Icon name="info" :size="19" /></button
+          ><button
+            ref="leftSidebarClose"
+            class="rail-button sidebar-collapse"
+            :title="layout.leftCollapsed ? '展开左侧栏' : '折叠左侧栏'"
+            @click="toggleLeftSidebar"
+            :aria-label="layout.leftCollapsed ? '展开左侧栏' : '折叠左侧栏'"
+            :aria-expanded="!layout.leftCollapsed"
+            aria-controls="primary-sidebar"
+          >
+            <Icon name="sidebar" :size="19" />
+          </button>
+        </div>
+      </nav>
+      <div class="sidebar-panel">
+        <div class="panel-brand">Terrarium Tavern</div>
+        <template v-if="sidebarSection === 'sessions'"
+          ><header class="panel-head">
+            <h2>会话</h2>
+            <span class="panel-count">{{ sessions.length }}</span>
+          </header>
+          <button class="new-story" :disabled="busy" @click="startNewStory">
+            <Icon name="plus" :size="17" />开始新故事
+          </button>
+          <nav class="session-list" aria-label="会话列表">
+            <div
+              v-for="s in sessions"
+              :key="s.id"
+              class="session-row"
+              :class="{ active: session?.id === s.id }"
             >
-              删除
+              <div v-if="editingSessionTitleId === s.id" class="session-title-editor">
+                <input
+                  ref="sessionTitleInput"
+                  v-model="sessionTitleDraft"
+                  maxlength="100"
+                  aria-label="对话标题"
+                  @keydown.enter="saveSessionTitle(s)"
+                  @keydown.esc="cancelSessionTitle"
+                />
+                <button :disabled="savingSessionTitle" @click="saveSessionTitle(s)">保存</button>
+                <button :disabled="savingSessionTitle" @click="cancelSessionTitle">取消</button>
+              </div>
+              <template v-else
+                ><button class="session-open" @click="guarded(() => openSession(s.id))">
+                  <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" />
+                  <span
+                    >{{ s.title || s.name
+                    }}<small
+                      >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
+                      {{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small
+                    ></span
+                  ></button
+                ><span class="row-actions"
+                  ><button
+                    class="session-rename"
+                    title="重命名"
+                    :aria-label="`重命名对话 ${s.title || s.name}`"
+                    @click.stop="editSessionTitle(s)"
+                  >
+                    <Icon name="pencil" :size="15" /></button
+                  ><button
+                    class="session-delete"
+                    title="删除"
+                    :aria-label="`删除会话 ${s.title || s.name}`"
+                    @click.stop="askDeleteConversation(s, $event, 'session')"
+                  >
+                    <Icon name="trash" :size="15" /></button></span
+              ></template>
+            </div>
+            <p v-if="!sessions.length" class="empty-small">故事开始后，会留在这里。</p>
+          </nav></template
+        >
+        <template v-else-if="sidebarSection === 'cards'"
+          ><header class="panel-head">
+            <h2>角色卡</h2>
+            <span class="panel-count">{{ cards.length }}</span>
+          </header>
+          <button class="new-story import-only" @click="importInput?.click()">
+            <Icon name="import" :size="17" />导入角色卡</button
+          ><input ref="importInput" type="file" accept=".json,.png,.charx" hidden @change="importCard" />
+          <nav class="session-list card-side-list" aria-label="角色卡列表">
+            <div v-for="card in cards" :key="card.id" class="card-side-row" :data-card-id="card.id">
+              <button
+                class="card-side-item"
+                :class="{ active: selected?.id === card.id && pageMode === 'card' }"
+                @click="showCard(card)"
+              >
+                <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" />
+                <span
+                  >{{ card.name
+                  }}<small>{{ card.report.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
+                >
+              </button>
+              <div class="card-row-actions" role="group" :aria-label="`${card.name} 操作`">
+                <button
+                  class="card-copy-action"
+                  title="复制"
+                  :aria-label="`复制角色卡 ${card.name}`"
+                  @click="copyLibraryCard(card)"
+                >
+                  <Icon name="copy" :size="15" /></button
+                ><button
+                  class="card-delete-action"
+                  title="删除"
+                  :aria-label="`删除角色卡 ${card.name}`"
+                  @click="
+                    deletingCard = card;
+                    panel = 'delete-card';
+                  "
+                >
+                  <Icon name="trash" :size="15" />
+                </button>
+              </div>
+            </div>
+            <p v-if="!cards.length" class="empty-small">从上方导入 JSON、PNG 或 CHARX 角色卡。</p>
+            <p v-if="orphanDrafts.length" class="panel-subhead">原卡已删除的编辑草稿</p>
+            <button
+              v-for="draft in orphanDrafts"
+              :key="draft.id"
+              class="orphan-draft"
+              @click="openOrphanDraft(draft.id)"
+            >
+              <span class="session-glyph"><Icon name="pencil" :size="16" /></span>继续编辑 {{ draft.name }}
             </button>
-          </div>
-          <p v-if="!cardConversations.length" class="empty-small">从上方新建制卡对话。</p>
-        </nav>
-      </template>
-      <div class="sidebar-bottom">
-        <button @click="pageMode = 'personas'">♙ 用户角色</button
-        ><button @click="panel = 'layout'">Aa 阅读排版</button
-        ><button @click="panel = 'settings'">⚙ 设置</button
-        ><button @click="panel = 'about'">关于 Terrarium Tavern ↗</button>
+          </nav></template
+        >
+        <template v-if="sidebarSection === 'editor'">
+          <header class="panel-head">
+            <h2>制卡</h2>
+            <span class="panel-count">{{ cardConversations.length }}</span>
+          </header>
+          <button class="new-story" @click="newCardConversation">
+            <Icon name="plus" :size="17" />新制卡对话
+          </button>
+          <nav class="session-list" aria-label="制卡对话列表">
+            <div
+              v-for="conversation in cardConversations"
+              :key="conversation.id"
+              class="session-row"
+              :data-conversation-id="conversation.id"
+              :class="{ active: conversation.id === editorConversationId }"
+            >
+              <button class="session-open" @click="openCardAgent(conversation.id)">
+                <span class="session-glyph"><Icon name="feather" :size="17" /></span>
+                <span
+                  >{{ conversation.title
+                  }}<small
+                    >{{ conversation.reference_count ?? conversation.card_count }} 份资料 ·
+                    {{
+                      ['queued', 'running'].includes(conversation.status)
+                        ? '运行中'
+                        : conversation.resumable
+                          ? '可继续'
+                          : '已保存对话'
+                    }}
+                    · {{ channelLabels[conversation.channel_origin as Channel] || '渠道待确认' }}</small
+                  ></span
+                >
+              </button>
+              <span class="row-actions"
+                ><button
+                  class="session-delete"
+                  :aria-label="`删除制卡对话 ${conversation.title}`"
+                  :disabled="
+                    !!deletingCardConversationId ||
+                    ['queued', 'running'].includes(conversation.status) ||
+                    conversation.resumable
+                  "
+                  :title="
+                    ['queued', 'running'].includes(conversation.status) || conversation.resumable
+                      ? '请先停止任务并处理未完成进度'
+                      : '删除制卡对话'
+                  "
+                  @click.stop="askDeleteConversation(conversation, $event, 'editor')"
+                >
+                  <Icon name="trash" :size="15" /></button
+              ></span>
+            </div>
+            <p v-if="!cardConversations.length" class="empty-small">从上方新建制卡对话。</p>
+          </nav>
+        </template>
       </div>
     </aside>
 
@@ -2207,7 +2280,7 @@ useTimedError(error);
         :aria-expanded="!layout.leftCollapsed"
         aria-controls="primary-sidebar"
       >
-        ☰
+        <Icon name="menu" :size="19" />
       </button>
       <AppNotification :message="error" />
       <AppNotification :message="editNotice" />
@@ -2224,10 +2297,21 @@ useTimedError(error);
         @saved="load"
         @deleted="cardConversationDeleted"
       />
-      <section v-else-if="pageMode === 'editor'" class="library" aria-label="制卡对话入口">
-        <h1>开始制卡</h1>
-        <p class="intro">从左侧选择已有对话，或新建一个制卡对话。</p>
-        <button class="primary" :disabled="busy" @click="newCardConversation">新建制卡对话</button>
+      <section v-else-if="pageMode === 'editor'" class="library home" aria-label="制卡对话入口">
+        <div class="home-hero">
+          <div class="home-emblem" aria-hidden="true"><Icon name="quill" :size="30" :stroke="1.4" /></div>
+          <div class="eyebrow">Card Editor</div>
+          <h1>开始制卡</h1>
+          <p class="intro">
+            与角色卡编辑 agent
+            一起整理设定、世界书与开场。它只修改独立草稿，保存前由你审阅。从左侧选择已有对话，或新建一个制卡对话。
+          </p>
+          <div class="home-actions">
+            <button class="primary" :disabled="busy" @click="newCardConversation">
+              <Icon name="plus" :size="17" />新建制卡对话
+            </button>
+          </div>
+        </div>
       </section>
       <CharacterEditor
         v-else-if="pageMode === 'card' && selected"
@@ -2275,78 +2359,143 @@ useTimedError(error);
         @retry="retryStoryLoad"
         @back="abandonStoryLoad"
       />
-      <section v-else-if="!session" class="library">
-        <div class="eyebrow">A PLACE FOR YOUR STORIES</div>
-        <h1>推开门，<br />进入另一个世界。</h1>
-        <p class="intro">让角色拥有记忆，让每一个选择留下回响。<br />从一张角色卡，开始属于你的故事。</p>
-        <div class="library-heading">
-          <h2>开始新的故事</h2>
-          <span>{{ cards.length }} 张角色卡</span>
+      <section v-else-if="!session" class="library home">
+        <div class="home-hero">
+          <div class="home-emblem" aria-hidden="true"><Icon name="brand" :size="34" :stroke="1.4" /></div>
+          <div class="eyebrow">A place for your stories</div>
+          <h1>推开门，<br />进入另一个世界。</h1>
+          <p class="intro">让角色拥有记忆，让每一个选择留下回响。从一张角色卡，开始属于你的故事。</p>
+          <div class="home-actions">
+            <button v-if="cards.length" class="primary" :disabled="busy" @click="startNewStory">
+              <Icon name="sparkle" :size="17" />开始一段新故事
+            </button>
+            <button @click="openSidebarSection('cards')">
+              <Icon :name="cards.length ? 'cards' : 'import'" :size="17" />{{
+                cards.length ? `浏览角色卡 · ${cards.length}` : '前往导入角色卡'
+              }}
+            </button>
+          </div>
         </div>
-        <div class="library-guide">
-          <span>◇</span>
+        <section v-if="recentSessions.length" aria-label="最近的故事">
+          <div class="library-heading">
+            <h2>最近的故事</h2>
+            <span>共 {{ sessions.length }} 个会话</span>
+          </div>
+          <div class="recent-grid">
+            <button
+              v-for="s in recentSessions"
+              :key="s.id"
+              class="recent-card"
+              @click="guarded(() => openSession(s.id))"
+            >
+              <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" size="card" />
+              <span
+                ><strong>{{ s.title || s.name }}</strong
+                ><small>{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }}</small
+                ><small>{{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small></span
+              >
+            </button>
+          </div>
+        </section>
+        <div v-else class="library-guide">
+          <span class="guide-mark"><Icon :name="cards.length ? 'cards' : 'import'" :size="20" /></span>
           <div>
-            <strong>{{ cards.length ? '从左侧选择一张角色卡' : '先从左侧导入角色卡' }}</strong>
+            <strong>{{ cards.length ? '从一张角色卡开始' : '先导入一张角色卡' }}</strong>
             <p>
               {{
                 cards.length
-                  ? '角色卡可在左侧浏览和编辑。创建故事请到“会话”页点击“开始新故事”，再选择角色卡。'
-                  : '角色卡仅能从左侧“角色卡”分类导入。支持 JSON、PNG 与 CHARX。'
+                  ? '点击“开始一段新故事”选择角色卡，设置你的身份与开场，即可进入故事。'
+                  : '角色卡在左侧“角色卡”分类导入，支持 JSON、PNG 与 CHARX。'
               }}
             </p>
           </div>
         </div>
-        <div class="library-note">
-          <span>✦</span>
-          <p>每条剧情都可以分支。尝试不同选择，原来的故事依然在。</p>
-        </div>
+        <ul class="home-tips">
+          <li>
+            <Icon name="branch" :size="18" /><span
+              ><strong>剧情可以分支</strong>从任意回复继承进度另开对话，原来的故事依然保留。</span
+            >
+          </li>
+          <li>
+            <Icon name="memory" :size="18" /><span
+              ><strong>记忆在后台整理</strong>Tracker 随剧情维护记忆与变量，长对话也能记得来龙去脉。</span
+            >
+          </li>
+          <li>
+            <Icon name="compass" :size="18" /><span
+              ><strong>参谋随时商量</strong>在右侧栏与参谋 agent 讨论走向，它只读故事，不改正文。</span
+            >
+          </li>
+        </ul>
       </section>
 
       <section v-else class="story">
-        <div class="story-heading">
-          <h1>{{ name }}</h1>
-          <div class="story-meta muted" aria-label="运行模式与渠道">
-            <span>{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
-            <span class="story-meta-separator" aria-hidden="true">·</span>
-            <span class="story-channel-label">{{
-              channelLabels[session.channel_origin as Channel] || '渠道待确认'
-            }}</span>
+        <header class="story-heading">
+          <div class="story-title">
+            <CharacterPortrait :src="storyPortrait" :name="name" />
+            <div>
+              <h1>{{ name }}</h1>
+              <div class="story-meta" aria-label="运行模式与渠道">
+                <span>{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
+                <span class="story-meta-separator" aria-hidden="true">·</span>
+                <span class="story-channel-label">{{
+                  channelLabels[session.channel_origin as Channel] || '渠道待确认'
+                }}</span>
+              </div>
+            </div>
           </div>
-          <div class="story-tools">
-            <button v-if="isFullAgent" @click="panel = 'context-management'">窗口与笔记</button>
-            <button @click="panel = 'state'">变量与记忆</button
+          <nav class="story-view-tabs" aria-label="游玩界面">
+            <button
+              :class="{ active: storyView === 'dialogue' }"
+              :aria-current="storyView === 'dialogue' ? 'page' : undefined"
+              @click="storyView = 'dialogue'"
+            >
+              对话</button
             ><button
+              :class="{ active: storyView === 'work' }"
+              :aria-current="storyView === 'work' ? 'page' : undefined"
+              :title="workCount ? `${workCount} 条工作记录` : undefined"
+              @click="storyView = 'work'"
+            >
+              {{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}
+              <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span
+              ><span v-else-if="workCount" class="tab-count" aria-hidden="true">{{ workCount }}</span>
+            </button>
+          </nav>
+          <div class="story-tools">
+            <button
+              v-if="isFullAgent"
+              aria-label="窗口与笔记"
+              title="窗口与笔记"
+              @click="panel = 'context-management'"
+            >
+              <Icon name="notebook" /><span class="tool-label">窗口与笔记</span>
+            </button>
+            <button aria-label="变量与记忆" title="变量与记忆" @click="panel = 'state'">
+              <Icon name="braces" /><span class="tool-label">变量与记忆</span></button
+            ><button
+              aria-label="剧情分支"
+              title="剧情分支：继承某条回复的进度另开对话"
               :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
               @click="showForkPoints"
             >
-              剧情分支</button
+              <Icon name="branch" /><span class="tool-label">剧情分支</span></button
+            ><button aria-label="上下文" title="上下文预览" @click="inspectContext">
+              <Icon name="layers" /><span class="tool-label">上下文</span></button
             ><button
+              :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次 messages'"
               :disabled="
                 busy || previewMessagesBusy || !!editingMessageId || activeTurn?.status === 'awaiting_review'
               "
               title="导出当前分支和输入编译的完整 messages；只读预览不运行神经召回"
               @click="exportNextMessages"
             >
-              {{ previewMessagesBusy ? '正在预览…' : '预览下次 messages' }}
+              <Icon name="eye" /><span class="tool-label">{{
+                previewMessagesBusy ? '正在预览…' : '预览下次 messages'
+              }}</span>
             </button>
           </div>
-        </div>
-        <nav class="story-view-tabs" aria-label="游玩界面">
-          <button
-            :class="{ active: storyView === 'dialogue' }"
-            :aria-current="storyView === 'dialogue' ? 'page' : undefined"
-            @click="storyView = 'dialogue'"
-          >
-            对话</button
-          ><button
-            :class="{ active: storyView === 'work' }"
-            :aria-current="storyView === 'work' ? 'page' : undefined"
-            @click="storyView = 'work'"
-          >
-            {{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}
-            <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span>
-          </button>
-        </nav>
+        </header>
         <div v-if="!session.channel_origin" class="channel-notice" role="status">
           <span>此旧对话需要确认渠道归属，确认后不可跨渠道更改。</span>
           <button @click="classifyChannel('standard')">归入普通 API</button>
@@ -2495,11 +2644,10 @@ useTimedError(error);
                     class="message user"
                     data-message-id="__pending__"
                   >
-                    <div class="avatar">你</div>
+                    <header class="message-meta">
+                      <span class="avatar">你</span><strong>{{ session.persona }}</strong>
+                    </header>
                     <div class="message-body">
-                      <div class="message-meta">
-                        <strong>{{ session.persona }}</strong>
-                      </div>
                       <InlineMessageEditor
                         v-if="editingMessageId === '__pending__'"
                         v-model="editingMessageText"
@@ -2515,25 +2663,19 @@ useTimedError(error);
                           :text="visiblePendingInput.display || visiblePendingInput.raw"
                           :breaks="true"
                         />
-                        <div v-if="retryableTurn" class="message-actions">
-                          <button
-                            class="icon-action"
-                            :disabled="busy || !!editingMessageId"
-                            aria-label="编辑"
-                            title="编辑最新消息"
-                            @click="beginPendingEdit"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                              <path
-                                d="m12.5 3.5 4 4M3 17l1-4L14 3a2.1 2.1 0 0 1 3 3L7 16l-4 1Z"
-                                stroke="currentColor"
-                                stroke-width="1.4"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              />
-                            </svg>
-                          </button>
-                        </div>
+                        <footer v-if="retryableTurn" class="message-foot">
+                          <div class="message-actions">
+                            <button
+                              class="icon-action"
+                              :disabled="busy || !!editingMessageId"
+                              aria-label="编辑"
+                              title="编辑最新消息"
+                              @click="beginPendingEdit"
+                            >
+                              <Icon name="pencil" :size="16" />
+                            </button>
+                          </div>
+                        </footer>
                       </template>
                     </div>
                   </article>
@@ -2541,22 +2683,22 @@ useTimedError(error);
               </template>
               <template #draft>
                 <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
-                  <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
+                  <header class="message-meta">
+                    <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
+                    <strong>{{ name }}</strong
+                    ><span class="badge">{{
+                      updatingTracker
+                        ? '后台维护中'
+                        : updatingVariables
+                          ? '正在更新变量'
+                          : busy
+                            ? isFullAgent
+                              ? '正文预览 · 未保存'
+                              : '正在书写'
+                            : '未提交草稿'
+                    }}</span>
+                  </header>
                   <div class="message-body">
-                    <div class="message-meta">
-                      <strong>{{ name }}</strong
-                      ><span class="badge">{{
-                        updatingTracker
-                          ? '后台维护中'
-                          : updatingVariables
-                            ? '正在更新变量'
-                            : busy
-                              ? isFullAgent
-                                ? '正文预览 · 未保存'
-                                : '正在书写'
-                              : '未提交草稿'
-                      }}</span>
-                    </div>
                     <div class="draft">
                       <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
                     </div>
@@ -2564,8 +2706,7 @@ useTimedError(error);
                 </article>
               </template>
               <template #waiting>
-                <div v-if="busy && !draft" class="thinking">
-                  ✦
+                <div v-if="busy && !draft" class="thinking" role="status">
                   {{
                     isFullAgent
                       ? 'Agent 正在处理当前回合…'
@@ -2623,7 +2764,7 @@ useTimedError(error);
                 :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
                 @click="regenerateReply"
               >
-                ↻ 重新生成
+                <Icon name="refresh" :size="16" />重新生成
               </button>
             </div>
             <label
@@ -2648,7 +2789,7 @@ useTimedError(error);
                 title="跳到最新"
                 @click="scroll(true)"
               >
-                ↓
+                <Icon name="arrow-down" :size="18" />
               </button>
               <AppNotification
                 v-if="retryableTurn"
@@ -2679,14 +2820,15 @@ useTimedError(error);
                       v-if="latestReply || retryableTurn"
                       class="quiet regenerate-toggle"
                       :aria-expanded="rewriteExpanded"
-                      :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
+                      :aria-label="rewriteExpanded ? '收起重新生成选项' : '重新生成'"
+                      title="重新生成"
                       :disabled="
                         !rewriteExpanded &&
                         (busy || !!editingMessageId || activeTurn?.status === 'awaiting_review')
                       "
                       @click="rewriteExpanded = !rewriteExpanded"
                     >
-                      ↻ 重新生成</button
+                      <Icon name="refresh" :size="16" /><span class="regenerate-label">重新生成</span></button
                     ><ConversationModelControls
                       v-if="session?.channel_origin"
                       :profile="activeModel"
@@ -2698,37 +2840,38 @@ useTimedError(error);
                       "
                       @select="selectStoryModel"
                       @update:effort="setEffort"
-                    /><button class="quiet" @click="inspectContext">◫ 上下文</button
-                    ><button class="quiet" @click="storyView = 'work'">
-                      ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
-                    </button>
+                    />
                   </div>
                   <span class="turn-options"
-                    ><label title="让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
+                    ><label
+                      title="本轮更新变量：让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
                       ><input
                         v-model="updateVariables"
                         type="checkbox"
+                        aria-label="本轮更新变量"
                         :disabled="
                           busy ||
                           activeTurn?.status === 'awaiting_review' ||
                           (isFullAgent && session?.disabled_tools?.includes('patch_state'))
                         "
                       />
-                      本轮更新变量</label
+                      更新变量</label
                     ><label
                       :title="
                         session?.agent_mode === 'full_agent'
-                          ? '仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
-                          : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
+                          ? '本轮允许修改设定：仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
+                          : '本轮允许修改设定：先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
                       "
                       ><input
                         v-model="allowEdit"
                         type="checkbox"
+                        aria-label="本轮允许修改设定"
                         :disabled="busy || activeTurn?.status === 'awaiting_review'"
                       />
-                      本轮允许修改设定</label
+                      允许改设定</label
                     ></span
-                  ><button v-if="busy" class="send" @click="stop">■ 停止</button
+                  ><button v-if="busy" class="send stop" @click="stop">
+                    <Icon name="stop" :size="15" />停止</button
                   ><button
                     v-else
                     class="send conversation-compose-send"
@@ -2742,15 +2885,7 @@ useTimedError(error);
                     "
                     @click="send()"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M12 19V5m-6 6 6-6 6 6"
-                        stroke="currentColor"
-                        stroke-width="1.6"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      /></svg
-                    >发送
+                    <Icon name="arrow-up" :size="16" :stroke="1.9" />发送
                   </button>
                 </div>
               </div>
@@ -2825,9 +2960,24 @@ useTimedError(error);
         @click="toggleRightSidebar"
         :aria-label="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
         :aria-expanded="!layout.rightCollapsed"
+        :title="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
       >
-        {{ layout.rightCollapsed ? '‹' : rightOverlay ? '×' : '›' }}
+        <Icon
+          :name="layout.rightCollapsed ? 'sidebar-right' : rightOverlay ? 'close' : 'chevron-right'"
+          :size="layout.rightCollapsed ? 19 : 15"
+        />
       </button>
+      <nav v-if="layout.rightCollapsed && !rightOverlay" class="inspector-strip" aria-label="右侧栏页面">
+        <button
+          v-for="page in inspectorPages"
+          :key="page.id"
+          :title="page.label"
+          :aria-label="page.label"
+          @click="openInspector(page.id)"
+        >
+          <Icon :name="page.icon" :size="19" />
+        </button>
+      </nav>
       <AdvisorPanel
         v-if="advisorSeen === session.id || inspectorTab === 'advisor'"
         v-show="!layout.rightCollapsed && inspectorTab === 'advisor'"
@@ -2849,42 +2999,14 @@ useTimedError(error);
       />
       <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
         <nav class="inspector-tabs" aria-label="右侧栏页面">
-          <button @click="inspectorTab = 'advisor'">参谋</button>
           <button
-            :class="{ active: inspectorTab === 'cache' }"
-            :aria-current="inspectorTab === 'cache' ? 'page' : undefined"
-            @click="inspectorTab = 'cache'"
+            v-for="page in inspectorPages"
+            :key="page.id"
+            :class="{ active: inspectorTab === page.id }"
+            :aria-current="inspectorTab === page.id ? 'page' : undefined"
+            @click="inspectorTab = page.id"
           >
-            缓存
-          </button>
-          <button
-            v-if="isFullAgent"
-            :class="{ active: inspectorTab === 'tools' }"
-            :aria-current="inspectorTab === 'tools' ? 'page' : undefined"
-            @click="inspectorTab = 'tools'"
-          >
-            工具
-          </button>
-          <button
-            :class="{ active: inspectorTab === 'mvu' }"
-            :aria-current="inspectorTab === 'mvu' ? 'page' : undefined"
-            @click="inspectorTab = 'mvu'"
-          >
-            MVU 变量
-          </button>
-          <button
-            :class="{ active: inspectorTab === 'scene' }"
-            :aria-current="inspectorTab === 'scene' ? 'page' : undefined"
-            @click="inspectorTab = 'scene'"
-          >
-            场景
-          </button>
-          <button
-            :class="{ active: inspectorTab === 'options' }"
-            :aria-current="inspectorTab === 'options' ? 'page' : undefined"
-            @click="inspectorTab = 'options'"
-          >
-            会话设置
+            <Icon :name="page.icon" :size="17" />{{ page.label }}
           </button>
         </nav>
         <CacheBreakpointPanel
@@ -3185,52 +3307,58 @@ useTimedError(error);
           />
           <template v-else-if="panel === 'layout'"
             ><h2>阅读排版</h2>
-            <label
-              >正文字号<input
-                aria-label="正文字号"
-                type="number"
-                min="14"
-                max="28"
-                v-model.number="layout.fontSize"
-                @change="normalizeLayoutNumber('fontSize', 14, 28)" /></label
-            ><label
-              >行距<input
-                aria-label="行距"
-                type="number"
-                min="1.4"
-                max="2.6"
-                step="0.1"
-                v-model.number="layout.lineHeight"
-                @change="normalizeLayoutNumber('lineHeight', 1.4, 2.6)" /></label
-            ><label
-              >阅读区宽度<input
-                aria-label="阅读区宽度"
-                type="number"
-                min="700"
-                max="1600"
-                step="10"
-                v-model.number="layout.readingWidth"
-                @change="normalizeLayoutNumber('readingWidth', 700, 1600)" /></label
-            ><label
-              >右侧栏宽度<input
-                aria-label="右侧栏宽度"
-                type="number"
-                min="240"
-                max="640"
-                step="10"
-                v-model.number="layout.rightWidth"
-                @change="normalizeLayoutNumber('rightWidth', 240, 640)" /></label
-            ><label
-              >字体<select v-model="layout.fontFamily">
-                <option value="sans">清晰无衬线</option>
-                <option value="serif">书籍衬线</option>
-              </select></label
-            ><label class="check"><input type="checkbox" v-model="layout.leftCollapsed" />折叠左侧栏</label
+            <p class="muted">设置即时生效，保存在当前浏览器。</p>
+            <p class="layout-preview" aria-hidden="true">
+              雾气从港口的石阶上缓缓爬起。“你来晚了。”守卫靠在铁栏边，提灯晃出一圈昏黄的光晕。
+            </p>
+            <div class="layout-grid">
+              <label
+                >正文字号<input
+                  aria-label="正文字号"
+                  type="number"
+                  min="14"
+                  max="28"
+                  v-model.number="layout.fontSize"
+                  @change="normalizeLayoutNumber('fontSize', 14, 28)" /></label
+              ><label
+                >行距<input
+                  aria-label="行距"
+                  type="number"
+                  min="1.4"
+                  max="2.6"
+                  step="0.1"
+                  v-model.number="layout.lineHeight"
+                  @change="normalizeLayoutNumber('lineHeight', 1.4, 2.6)" /></label
+              ><label
+                >阅读区宽度<input
+                  aria-label="阅读区宽度"
+                  type="number"
+                  min="700"
+                  max="1600"
+                  step="10"
+                  v-model.number="layout.readingWidth"
+                  @change="normalizeLayoutNumber('readingWidth', 700, 1600)" /></label
+              ><label
+                >右侧栏宽度<input
+                  aria-label="右侧栏宽度"
+                  type="number"
+                  min="240"
+                  max="640"
+                  step="10"
+                  v-model.number="layout.rightWidth"
+                  @change="normalizeLayoutNumber('rightWidth', 240, 640)" /></label
+              ><label
+                >字体<select v-model="layout.fontFamily">
+                  <option value="sans">清晰无衬线</option>
+                  <option value="serif">书籍衬线</option>
+                </select></label
+              >
+            </div>
+            <label class="check"><input type="checkbox" v-model="layout.leftCollapsed" />折叠左侧栏</label
             ><label class="check"><input type="checkbox" v-model="layout.rightCollapsed" />折叠右侧栏</label
             ><label class="check" title="关闭后界面改用不透明面板，适合低性能显卡或偏好清晰边界"
               ><input type="checkbox" v-model="layout.glass" />毛玻璃效果</label
-            >
-            <p class="muted">设置即时生效，保存在当前浏览器。</p></template
+            ></template
           ><template v-else-if="panel === 'memory-rebuild'">
             <h2>重新生成记忆</h2>
             <p>
@@ -3436,8 +3564,9 @@ useTimedError(error);
             <pre>{{ JSON.stringify(preview, null, 2) }}</pre>
           </template>
           <template v-else-if="panel === 'about'"
-            ><div class="eyebrow">TERRARIUM TAVERN / 0.1</div>
-            <h2>给故事一处生长的地方。</h2>
+            ><div class="about-mark" aria-hidden="true"><Icon name="brand" :size="30" :stroke="1.4" /></div>
+            <div class="eyebrow">Terrarium Tavern · 0.1</div>
+            <h2 class="about-title">给故事一处生长的地方。</h2>
             <p>本地优先的 Roleplay Agent 应用。角色数据、剧情分支和记忆保存在你的电脑。</p>
             <p>
               Powered by

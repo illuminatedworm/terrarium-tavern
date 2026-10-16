@@ -31,7 +31,7 @@ async def settings_page(page, page_id):
     labels = {"providers": "提供商", "model": "模型与生成", "editor": "角色卡编辑"}
     dialog = page.get_by_role("dialog", name="设置", exact=True)
     if not await dialog.is_visible():
-        settings = page.get_by_role("button", name="⚙ 设置", exact=True)
+        settings = page.get_by_role("button", name="设置", exact=True)
         if not await settings.is_visible():
             for name in ("切换左侧栏", "展开左侧栏"):
                 toggle = page.get_by_role("button", name=name, exact=True)

@@ -43,7 +43,7 @@ async def main():
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     await page.goto(address)
-                    await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                    await page.get_by_role('button', name='设置', exact=True).click()
                     dialog = page.get_by_role('dialog', name='设置', exact=True)
                     await page.get_by_role('button', name='full agent 模型与生成', exact=True).wait_for()
                     await expect(page.get_by_role('status')).to_have_text('✓ 已保存')
@@ -133,7 +133,7 @@ async def main():
                     await expect(confirm).to_be_visible()
                     await confirm.get_by_role('button', name='放弃修改').click()
                     await expect(dialog).to_have_count(0)
-                    await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                    await page.get_by_role('button', name='设置', exact=True).click()
                     await select('half agent 模型与生成')
                     await choose_model(page.get_by_role('region',name='后台整理',exact=True).get_by_role('button', name='模型名称', exact=True), 'isolated-background')
                     await saved()

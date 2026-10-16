@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from './Icon.vue';
 defineProps<{ label: string; size?: 'small' | 'medium' | 'large' }>();
 defineEmits<{ close: [] }>();
 
@@ -29,7 +30,9 @@ function trapFocus(event: KeyboardEvent) {
     :aria-label="label"
     @keydown.tab="trapFocus"
   >
-    <button class="close" aria-label="关闭" @click="$emit('close')">×</button>
+    <button class="close" aria-label="关闭" title="关闭" @click="$emit('close')">
+      <Icon name="close" :size="16" />
+    </button>
     <div class="modal-scroll"><slot /></div>
   </section>
 </template>

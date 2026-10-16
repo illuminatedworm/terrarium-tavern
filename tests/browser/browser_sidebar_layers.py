@@ -33,7 +33,7 @@ async def main():
                     page = await browser.new_page(viewport={"width": 1440, "height": 900})
                     await page.goto(address)
                     await page.get_by_role("tab", name="会话", exact=True).click()
-                    await page.get_by_role("button", name="＋ 开始新故事", exact=True).click()
+                    await page.get_by_role("button", name="开始新故事", exact=True).click()
                     await page.get_by_role("button", name=f"选择角色卡 {card['name']}").click()
                     await page.get_by_label("运行模式", exact=True).select_option(mode)
                     await page.get_by_role("button", name="进入故事 →", exact=True).click()

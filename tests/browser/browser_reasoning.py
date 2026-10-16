@@ -77,7 +77,7 @@ async def main():
                     openai = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
                     await tiers(quick, ['inherit', *openai])
                     await choose_menu(quick, 'xhigh')
-                    await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                    await page.get_by_role('button', name='设置', exact=True).click()
                     dialog = page.get_by_role('dialog', name='设置', exact=True)
                     await select('full agent 模型与生成')
                     effort = dialog.get_by_role('button', name='思考强度', exact=True)
@@ -112,7 +112,7 @@ async def main():
                     await expect(quick).to_have_attribute('data-value', 'medium')
                     await tiers(quick, ['inherit', 'default', 'low', 'medium', 'high'])
 
-                    await page.get_by_role('button', name='⚙ 设置', exact=True).click()
+                    await page.get_by_role('button', name='设置', exact=True).click()
                     await select('half agent 模型与生成')
                     writer = dialog.get_by_role('region', name='正文生成', exact=True)
                     tracker = dialog.get_by_role('region', name='后台整理', exact=True)
