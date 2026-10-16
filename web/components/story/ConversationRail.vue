@@ -337,7 +337,7 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 6px;
   top: 32px;
-  bottom: 32px;
+  bottom: calc(var(--composer-height, 0px) + 32px);
   width: 30px;
   z-index: 9;
   pointer-events: none;
@@ -394,10 +394,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
+  border: 1px solid var(--glass-edge-strong, var(--border-subtle));
+  border-radius: 14px;
   background: var(--bg-elevated, #292929);
-  box-shadow: 0 8px 28px #0003;
+  -webkit-backdrop-filter: var(--glass-blur-strong, none);
+  backdrop-filter: var(--glass-blur-strong, none);
+  box-shadow: var(--shadow-float, 0 8px 28px #0003);
   font-size: 12px;
   line-height: 1.5;
   pointer-events: auto;

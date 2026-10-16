@@ -187,7 +187,7 @@
     padding-left: 0;
   }
 }
-.modal:has(.settings-shell) {
+.modal.settings-modal {
   width: 1280px;
   height: min(880px, calc(100dvh - 48px));
   max-height: calc(100dvh - 48px);
@@ -669,7 +669,7 @@
   }
 }
 @media (max-width: 760px) {
-  .modal:has(.settings-shell) {
+  .modal.settings-modal {
     width: calc(100vw - 16px);
     height: calc(100dvh - 16px);
     max-height: calc(100dvh - 16px);

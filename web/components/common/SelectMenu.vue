@@ -377,13 +377,13 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 6px;
   overflow: hidden;
-  border: 1px solid var(--border-control);
-  border-radius: 12px;
-  background: var(--surface-panel);
+  border: 1px solid var(--glass-edge-strong, var(--border-control));
+  border-radius: 14px;
+  background: var(--bg-elevated, var(--surface-panel));
+  -webkit-backdrop-filter: var(--glass-blur-strong, none);
+  backdrop-filter: var(--glass-blur-strong, none);
   color: var(--text-secondary);
-  box-shadow:
-    0 12px 36px #0005,
-    0 2px 8px #0003;
+  box-shadow: var(--shadow-float, 0 12px 36px #0005, 0 2px 8px #0003);
   font: 13px/1.5 var(--font-ui);
 }
 .select-menu-popup:popover-open {

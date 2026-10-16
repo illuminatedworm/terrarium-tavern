@@ -354,7 +354,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .dialogue-tools {
   position: absolute;
-  inset: 0;
+  /* Stay clear of the floating composer measured by App.vue. */
+  inset: 0 0 var(--composer-height, 0px);
   pointer-events: none;
   z-index: 8;
 }
@@ -398,10 +399,12 @@ onBeforeUnmount(() => {
 .find-trigger {
   position: absolute;
   right: 39px;
-  border: 1px solid var(--border-subtle) !important;
+  border: 1px solid var(--glass-edge-strong, var(--border-subtle)) !important;
   background: var(--bg-elevated, #292929) !important;
-  box-shadow: 0 4px 16px #0002;
-  opacity: 0.5;
+  -webkit-backdrop-filter: var(--glass-blur, none);
+  backdrop-filter: var(--glass-blur, none);
+  box-shadow: var(--shadow-soft, 0 4px 16px #0002);
+  opacity: 0.6;
   transition: opacity 150ms;
 }
 .message-jumps {
@@ -427,10 +430,12 @@ onBeforeUnmount(() => {
   top: 10px;
   right: 42px;
   width: min(450px, calc(100% - 60px));
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border: 1px solid var(--glass-edge-strong, var(--border-strong));
+  border-radius: 14px;
   background: var(--bg-elevated, #292929);
-  box-shadow: 0 8px 32px #0004;
+  -webkit-backdrop-filter: var(--glass-blur-strong, none);
+  backdrop-filter: var(--glass-blur-strong, none);
+  box-shadow: var(--shadow-float, 0 8px 32px #0004);
   color: var(--text-secondary);
   overflow: hidden;
 }

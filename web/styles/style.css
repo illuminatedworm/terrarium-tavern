@@ -1,29 +1,39 @@
-/* Raycast-inspired desktop surfaces. Reading preferences remain user-owned. */
+/* Night-terrarium palette: ink canvas, frosted chrome, calm reading surface.
+   Solid surfaces stay opaque so sticky rows and popovers never show text through;
+   translucent glass materials live in glass.css. Reading preferences remain user-owned. */
 :root {
-  --surface-base: #222326;
-  --surface-sidebar: #25262a;
-  --surface-panel: #2a2b30;
-  --surface-input: #202125;
-  --surface-hover: #323339;
-  --surface-active: #3b3c44;
-  --border-subtle: #36373e;
-  --border-control: #484952;
-  --border-strong: #62636f;
-  --text-primary: #c9c8ce;
-  --text-secondary: #adadb8;
-  --text-muted: #90919e;
-  --text-faint: #777986;
-  --accent: #a398d2;
-  --accent-hover: #b5abdf;
-  --accent-soft: #393348;
-  --text-story: #b9b7be;
-  --text-dialogue: #bdb1d6;
-  --focus-ring: #b3a5ff;
-  --scrollbar: #50515c;
-  --danger: #ef9696;
-  --danger-surface: #382426;
-  --success: #8dc9a0;
-  --warning: #e1bb81;
+  --canvas: #0e1015;
+  --surface-base: #15171d;
+  --surface-sidebar: #171920;
+  --surface-panel: #1d2028;
+  --surface-input: #111319;
+  --surface-hover: #262a34;
+  --surface-active: #2f3341;
+  /* Hairlines are translucent so they read the same on glass and on solid panes. */
+  --border-subtle: rgb(255 255 255 / 0.065);
+  --border-control: rgb(255 255 255 / 0.11);
+  --border-strong: #545a6c;
+  --text-primary: #dcdbe4;
+  --text-secondary: #b1b0bf;
+  --text-muted: #8e8fa1;
+  --text-faint: #6f7184;
+  --accent: #a99de8;
+  --accent-hover: #c3b9f5;
+  --accent-soft: rgb(169 157 232 / 0.16);
+  --accent-glow: rgb(169 157 232 / 0.35);
+  --moss: #86c9b5;
+  --text-story: #cbc9d3;
+  --text-dialogue: #c9bdeb;
+  --focus-ring: #b8acff;
+  --scrollbar: #4a4f60;
+  --danger: #f09b9b;
+  --danger-surface: rgb(240 155 155 / 0.12);
+  --success: #8fd0aa;
+  --warning: #e6c088;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --font-ui: Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif;
 }
 
@@ -3777,7 +3787,7 @@ main,
   background: var(--surface-panel);
   padding: 12px 0;
 }
-.modal:has(.settings-layout) {
+.modal.settings-modal {
   width: 1280px;
 }
 .modal:has(.settings-layout) .modal-scroll {
@@ -3933,10 +3943,10 @@ main,
   background: var(--surface-panel);
 }
 @media (max-width: 760px) {
-  .modal-backdrop:has(.settings-layout) {
+  .settings-backdrop {
     padding: 8px;
   }
-  .modal:has(.settings-layout) {
+  .modal.settings-modal {
     width: 100%;
     max-width: calc(100vw - 16px);
     height: calc(100dvh - 16px);

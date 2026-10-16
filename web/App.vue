@@ -347,6 +347,20 @@ watch(
   },
 );
 const chat = ref<HTMLElement>();
+// The glass composer floats over the message list so prose scrolls beneath it;
+// its measured height reserves matching space at the end of the list and lifts
+// the overlays (rail, jump buttons, regeneration panel) above it.
+const composer = ref<HTMLElement>();
+const composerHeight = ref(0);
+let composerObserver: ResizeObserver | undefined;
+watch(composer, (element, previous) => {
+  if (previous) composerObserver?.unobserve(previous);
+  if (!element) return;
+  composerObserver ??= new ResizeObserver(() => {
+    if (composer.value) composerHeight.value = composer.value.offsetHeight;
+  });
+  composerObserver.observe(element);
+});
 const followLatest = ref(true);
 const readingPinned = ref(false);
 const pendingReplyStart = ref('');
@@ -1959,6 +1973,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', closeDeleteOnViewportChange);
   events?.close();
   stopRightResize?.();
+  composerObserver?.disconnect();
 });
 useTimedError(error);
 </script>
@@ -2357,7 +2372,18 @@ useTimedError(error);
           :turn-id="activeTurn?.id"
           :events="trace"
         />
-        <div v-show="storyView === 'dialogue'" class="dialogue-viewport">
+        <AppNotification
+          :message="
+            memoryWarning
+              ? `记忆整理失败：${memoryWarning}。旧记忆保留；${session.context_strategy === 'openai_compact' ? '云端上下文仍独立保留，切回本地时会检查记忆覆盖。' : '需要裁剪时将暂停发送。'}`
+              : ''
+          "
+        />
+        <div
+          v-show="storyView === 'dialogue'"
+          class="dialogue-viewport"
+          :style="{ '--composer-height': composerHeight + 'px' }"
+        >
           <div
             ref="chat"
             class="messages"
@@ -2607,140 +2633,137 @@ useTimedError(error);
               带上原 AI 回复作为重写参考
             </label>
           </section>
-        </div>
-        <AppNotification
-          :message="
-            memoryWarning
-              ? `记忆整理失败：${memoryWarning}。旧记忆保留；${session.context_strategy === 'openai_compact' ? '云端上下文仍独立保留，切回本地时会检查记忆覆盖。' : '需要裁剪时将暂停发送。'}`
-              : ''
-          "
-        />
-        <div v-show="storyView === 'dialogue'" class="composer">
-          <div class="composer-inner">
-            <button
-              v-if="!followLatest && !rewriteExpanded"
-              class="jump-latest"
-              aria-label="跳到最新"
-              title="跳到最新"
-              @click="scroll(true)"
-            >
-              ↓
-            </button>
-            <AppNotification
-              v-if="retryableTurn"
-              :message="
-                activeTurn.request.expected_revision !== session.revision
-                  ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
-                  : activeTurn.status === 'cancelled'
-                    ? '本次生成已停止，草稿未提交。'
-                    : '本次生成失败，正文与状态未提交。'
-              "
-            />
-            <div class="compose-box conversation-compose-frame">
-              <ExpandableTextarea
-                v-model="input"
-                label="用户输入"
-                placeholder="说些什么，或描述你的行动…"
-                compact
-                expand-on-focus
-                :rows="2"
-                submit-on-enter
-                @submit="send()"
-                :disabled="busy"
+          <div ref="composer" v-show="storyView === 'dialogue'" class="composer">
+            <div class="composer-inner">
+              <button
+                v-if="!followLatest && !rewriteExpanded"
+                class="jump-latest"
+                aria-label="跳到最新"
+                title="跳到最新"
+                @click="scroll(true)"
+              >
+                ↓
+              </button>
+              <AppNotification
+                v-if="retryableTurn"
+                :message="
+                  activeTurn.request.expected_revision !== session.revision
+                    ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
+                    : activeTurn.status === 'cancelled'
+                      ? '本次生成已停止，草稿未提交。'
+                      : '本次生成失败，正文与状态未提交。'
+                "
               />
-              <div class="compose-bottom">
-                <div class="compose-actions">
-                  <button
-                    ref="rewriteToggle"
-                    v-if="latestReply || retryableTurn"
-                    class="quiet regenerate-toggle"
-                    :aria-expanded="rewriteExpanded"
-                    :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
+              <div class="compose-box conversation-compose-frame">
+                <ExpandableTextarea
+                  v-model="input"
+                  label="用户输入"
+                  placeholder="说些什么，或描述你的行动…"
+                  compact
+                  expand-on-focus
+                  :rows="2"
+                  submit-on-enter
+                  @submit="send()"
+                  :disabled="busy"
+                />
+                <div class="compose-bottom">
+                  <div class="compose-actions">
+                    <button
+                      ref="rewriteToggle"
+                      v-if="latestReply || retryableTurn"
+                      class="quiet regenerate-toggle"
+                      :aria-expanded="rewriteExpanded"
+                      :aria-label="rewriteExpanded ? '收起重新生成选项' : undefined"
+                      :disabled="
+                        !rewriteExpanded &&
+                        (busy || !!editingMessageId || activeTurn?.status === 'awaiting_review')
+                      "
+                      @click="rewriteExpanded = !rewriteExpanded"
+                    >
+                      ↻ 重新生成</button
+                    ><ConversationModelControls
+                      v-if="session?.channel_origin"
+                      :profile="activeModel"
+                      :providers="settings.shared.providers"
+                      :channel="session.channel_origin"
+                      :effort="quickEffort"
+                      :disabled="
+                        busy || modelSaving || contextBusy || activeTurn?.status === 'awaiting_review'
+                      "
+                      @select="selectStoryModel"
+                      @update:effort="setEffort"
+                    /><button class="quiet" @click="inspectContext">◫ 上下文</button
+                    ><button class="quiet" @click="storyView = 'work'">
+                      ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
+                    </button>
+                  </div>
+                  <span class="turn-options"
+                    ><label title="让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
+                      ><input
+                        v-model="updateVariables"
+                        type="checkbox"
+                        :disabled="
+                          busy ||
+                          activeTurn?.status === 'awaiting_review' ||
+                          (isFullAgent && session?.disabled_tools?.includes('patch_state'))
+                        "
+                      />
+                      本轮更新变量</label
+                    ><label
+                      :title="
+                        session?.agent_mode === 'full_agent'
+                          ? '仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
+                          : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
+                      "
+                      ><input
+                        v-model="allowEdit"
+                        type="checkbox"
+                        :disabled="busy || activeTurn?.status === 'awaiting_review'"
+                      />
+                      本轮允许修改设定</label
+                    ></span
+                  ><button v-if="busy" class="send" @click="stop">■ 停止</button
+                  ><button
+                    v-else
+                    class="send conversation-compose-send"
                     :disabled="
-                      !rewriteExpanded &&
-                      (busy || !!editingMessageId || activeTurn?.status === 'awaiting_review')
+                      modelSaving ||
+                      contextBusy ||
+                      !channelModelsReady ||
+                      !session?.channel_origin ||
+                      !input.trim() ||
+                      activeTurn?.status === 'awaiting_review'
                     "
-                    @click="rewriteExpanded = !rewriteExpanded"
+                    @click="send()"
                   >
-                    ↻ 重新生成</button
-                  ><ConversationModelControls
-                    v-if="session?.channel_origin"
-                    :profile="activeModel"
-                    :providers="settings.shared.providers"
-                    :channel="session.channel_origin"
-                    :effort="quickEffort"
-                    :disabled="busy || modelSaving || contextBusy || activeTurn?.status === 'awaiting_review'"
-                    @select="selectStoryModel"
-                    @update:effort="setEffort"
-                  /><button class="quiet" @click="inspectContext">◫ 上下文</button
-                  ><button class="quiet" @click="storyView = 'work'">
-                    ◇ 后台记录 <span v-if="workCount">{{ workCount }}</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M12 19V5m-6 6 6-6 6 6"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      /></svg
+                    >发送
                   </button>
                 </div>
-                <span class="turn-options"
-                  ><label title="让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
-                    ><input
-                      v-model="updateVariables"
-                      type="checkbox"
-                      :disabled="
-                        busy ||
-                        activeTurn?.status === 'awaiting_review' ||
-                        (isFullAgent && session?.disabled_tools?.includes('patch_state'))
-                      "
-                    />
-                    本轮更新变量</label
-                  ><label
-                    :title="
-                      session?.agent_mode === 'full_agent'
-                        ? '仅授权本轮修改对话内的角色设定与世界书；不会修改书架原卡'
-                        : '先处理输入中的明确设定修改，再生成正文；正文后允许 Tracker 更新对话内角色设定与世界书'
-                    "
-                    ><input
-                      v-model="allowEdit"
-                      type="checkbox"
-                      :disabled="busy || activeTurn?.status === 'awaiting_review'"
-                    />
-                    本轮允许修改设定</label
-                  ></span
-                ><button v-if="busy" class="send" @click="stop">■ 停止</button
-                ><button
-                  v-else
-                  class="send conversation-compose-send"
-                  :disabled="
-                    modelSaving ||
-                    contextBusy ||
-                    !channelModelsReady ||
-                    !session?.channel_origin ||
-                    !input.trim() ||
-                    activeTurn?.status === 'awaiting_review'
-                  "
-                  @click="send()"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path
-                      d="M12 19V5m-6 6 6-6 6 6"
-                      stroke="currentColor"
-                      stroke-width="1.6"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    /></svg
-                  >发送
-                </button>
               </div>
+              <p class="composer-meta" aria-label="游玩上下文用量">
+                <ChatGPTUsage
+                  :active="activeSubscription || trackerSubscription"
+                  :label="storySubscriptionLabel"
+                  :error="error || activeTurn?.error"
+                />
+                <span
+                  :title="composerContextTitle"
+                  :class="{ 'composer-stats-error': contextEstimateError }"
+                  >{{ composerContextLabel }}</span
+                >
+                <span title="最近一次模型响应的缓存用量；未提供时不推测命中率"
+                  >缓存命中率 {{ cacheRateLabel }}</span
+                >
+              </p>
             </div>
-            <p class="composer-meta" aria-label="游玩上下文用量">
-              <ChatGPTUsage
-                :active="activeSubscription || trackerSubscription"
-                :label="storySubscriptionLabel"
-                :error="error || activeTurn?.error"
-              />
-              <span :title="composerContextTitle" :class="{ 'composer-stats-error': contextEstimateError }">{{
-                composerContextLabel
-              }}</span>
-              <span title="最近一次模型响应的缓存用量；未提供时不推测命中率"
-                >缓存命中率 {{ cacheRateLabel }}</span
-              >
-            </p>
           </div>
         </div>
         <div v-if="storyView === 'work'" class="work-view-footer">
@@ -3090,10 +3113,15 @@ useTimedError(error);
       </section></Teleport
     >
     <Teleport to="body">
-      <div v-if="panel" class="modal-backdrop">
+      <div v-if="panel" class="modal-backdrop" :class="{ 'settings-backdrop': panel === 'settings' }">
         <AppModal
           :label="panel === 'settings' ? '设置' : '酒馆面板'"
-          :class="{ 'context-management-modal': panel === 'context-management' }"
+          :class="{
+            'context-management-modal': panel === 'context-management',
+            // Sized by panel, not by loaded content, so the frame keeps its height
+            // while the settings chunk is still loading.
+            'settings-modal': panel === 'settings',
+          }"
           :size="
             ['settings', 'context', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
               ? 'large'
