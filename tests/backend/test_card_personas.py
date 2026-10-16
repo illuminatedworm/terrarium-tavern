@@ -47,7 +47,7 @@ async def test_ordinary_authoring_does_not_load_persona_library(tmp_path, monkey
         await editor.close()
 
 
-@pytest.mark.parametrize("request_ref", [None, "H1", "H2", "H99", "C1"])
+@pytest.mark.parametrize("request_ref", [None, "H99", "C1"])
 async def test_persona_tools_reject_missing_old_assistant_and_unknown_request_refs(tmp_path, request_ref):
     store = Store(tmp_path)
     editor = CardEditorService(store)

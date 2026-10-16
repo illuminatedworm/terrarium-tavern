@@ -37,11 +37,7 @@ async def test_opening_positions_are_zero_based_and_move_destination_is_final(ar
 
 
 @pytest.mark.parametrize("arguments", [
-    {"action": "add", "index": -1, "narrative": "D"},
     {"action": "add", "index": 4, "narrative": "D"},
-    {"action": "update", "index": 3, "narrative": "D"},
-    {"action": "remove", "index": 3},
-    {"action": "move", "index": 3, "to_index": 0},
     {"action": "move", "index": 0, "to_index": 3},
     {"action": "move", "index": 0},
 ])

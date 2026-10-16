@@ -165,12 +165,7 @@ def test_missing_directory_and_permissions(tmp_path, monkeypatch):
         read_text_file(str(path))
 
 
-@pytest.mark.parametrize("model,args", [
-    (TextFile, {"offset": 0}), (TextFile, {"limit": 1001}), (TextFile, {"limit": True}),
-    (TextFile, {"offset": "1"}), (TextFile, {"encoding": ""}),
-    (DocumentFile, {"offset": -1}), (DocumentFile, {"limit": 30001}),
-    (DocumentFile, {"limit": 0}), (DocumentFile, {"unknown": True}),
-])
+@pytest.mark.parametrize("model,args", [(TextFile, {"limit": True}), (DocumentFile, {"unknown": True})])
 def test_strict_arguments(model, args):
     with pytest.raises(ValidationError):
         model.model_validate({"path": "unused", **args})

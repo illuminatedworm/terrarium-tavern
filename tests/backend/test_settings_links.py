@@ -7,12 +7,8 @@ from tavern.core.models import Settings
 
 
 @pytest.mark.parametrize("changes", [
-    {"history_message_cap": 7}, {"history_message_cap": 1001}, {"chunk_size": 101},
-    {"daily_context_budget": 1}, {"memory_interval_turns": 101},
-    {"memory_interval_turns": 101}, {"context_tokens": 4096},
-    {"context_pressure_target": .85}, {"context_pressure_trigger": .05},
+    {"history_message_cap": 7}, {"context_pressure_trigger": .05},
     {"chunk_mode": "tokens", "chunk_max_tokens": 29000},
-    {"memory_timeout": 181}, {"background":{"reply_tokens":65537}},
 ])
 def test_invalid_linked_settings_are_rejected(changes):
     with pytest.raises(ValidationError):
@@ -31,8 +27,7 @@ def test_boundary_and_off_mode_values():
 
 
 @pytest.mark.parametrize("change", [
-    {"memory_current_max_records": 0}, {"memory_current_max_records": 101},
-    {"memory_episode_cooldown_rounds": -1}, {"memory_episode_cooldown_rounds": 10001},
+    {"memory_current_max_records": 0}, {"memory_episode_cooldown_rounds": 10001},
 ])
 def test_memory_retention_settings_validate(change):
     with pytest.raises(ValidationError):

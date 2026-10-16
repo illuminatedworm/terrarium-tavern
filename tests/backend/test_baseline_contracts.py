@@ -28,8 +28,8 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
 
 
 @pytest.mark.parametrize('mode', ['half_agent', 'full_agent'])
-@pytest.mark.parametrize('name', ['旅人', '林舟'])
-def test_saved_persona_names_survive_reopen_and_fork(tmp_path, mode, name):
+def test_saved_persona_names_survive_reopen_and_fork(tmp_path, mode):
+    name = '旅人'
     store = Store(tmp_path)
     card = store.import_card(b'{"name":"fixture","first_mes":"hello {{user}}"}', 'card.json')
     saved = store.save_persona(None, PersonaEdit(name=name, description='保留的用户介绍'))

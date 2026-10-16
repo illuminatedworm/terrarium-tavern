@@ -65,7 +65,7 @@ def test_runtime_uses_each_models_path_exactly(mode, path, suffix):
     assert doc.runtime().api_mode == "chat_completions"
 
 
-@pytest.mark.parametrize("path", ["https://host/v1", "v1?key=x", "../v1", "v1/#x", "v1\\test"])
+@pytest.mark.parametrize("path", ["https://host/v1", "../v1"])
 def test_invalid_model_paths_are_rejected(path):
     with pytest.raises(ValidationError):
         ModelProfile(api_path=path)

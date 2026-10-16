@@ -47,19 +47,19 @@ Linux 使用 `.venv/bin/python` 和 `npm`，下文命令同理。
 
 ## 完整验证
 
-跨模块改动或发行前运行：
+仅在发行前或用户明确要求时运行：
 
 ```powershell
 npm.cmd test
 npm.cmd run format:check
 npm.cmd run build
 .venv/Scripts/python.exe -m ruff check src tests tools
-.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal
+.venv/Scripts/python.exe -m pytest -q tests/backend
 .venv/Scripts/python.exe -m tests.browser.browser_release
 .venv/Scripts/python.exe -m tests.browser.browser_full_agent
 ```
 
-全套后端测试通过 pytest-xdist 使用 4 个进程，每个用例保留独立数据。资源有限时可改为 `-n 2`，少量检查可串行运行；`--durations=20` 可定位耗时。后端测试包含真实 Terrarium／Chromium，耗时通常高于普通单元测试。
+日常改动只运行上表中直接相关的文件。全套后端可用 `-n 4 --dist worksteal` 并行。`tests/conftest.py` 在测试进程内关闭 SQLite 同步写盘，以减少磁盘压力，不影响应用本身。`--durations=20` 可定位耗时。
 
 `browser_release` 使用 8015/8016 端口，覆盖设置、角色编辑、故事、工作记录、上下文、分支和 MVU；视口为 1440×900、1280×720、390×844 和 720×450，最后一项使用 DPR 2 模拟 200% 缩放。
 

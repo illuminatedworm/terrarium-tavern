@@ -119,6 +119,7 @@ class Settings(BaseModel):
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
     web: WebConfig = Field(default_factory=WebConfig)
+    send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
     def for_role(self, role="foreground"):

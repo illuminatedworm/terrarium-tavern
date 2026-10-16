@@ -64,6 +64,9 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Keep only failed runs' temporary stores so passing suites do not pile up on disk.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1
 
 [tool.ruff]
 line-length = 110

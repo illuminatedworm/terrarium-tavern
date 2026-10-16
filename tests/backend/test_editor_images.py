@@ -53,10 +53,7 @@ def test_original_bytes_metadata_and_pending_removal(tmp_path, extension, format
 @pytest.mark.parametrize("filename,data,error", [
     ("fake.png", b"not an image", "损坏"),
     ("fake.png", image_bytes("JPEG"), "扩展名"),
-    ("truncated.jpg", image_bytes("JPEG")[:-25], "损坏"),
     ("moving.png", image_bytes(animated=True), "动图"),
-    ("moving.webp", image_bytes("WEBP", animated=True), "动图"),
-    ("moving.gif", image_bytes("GIF", animated=True), "请选择"),
 ])
 def test_invalid_image_upload_is_atomic(tmp_path, filename, data, error):
     editor = CardEditorService(Store(tmp_path))

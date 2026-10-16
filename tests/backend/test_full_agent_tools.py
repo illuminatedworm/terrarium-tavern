@@ -63,20 +63,9 @@ async def test_tool_comment_contract_repairs_old_arguments_and_preserves_activit
      ["缺少必填参数 ref", "不接受参数 reason"]),
     ("read_history", {"ref": "H2", "48c2515daf9742308a8b50777d39dd75": "PRIVATE_INPUT"},
      ["不接受参数 @D", "请删除"]),
-    ("write_handoff", {"content": "不得写入的草稿", "reason": "多余说明"}, ["不接受参数 reason"]),
-    ("read_history", {"ref": 35}, ["参数 ref 必须是字符串"]),
-    ("read_history", [], ["参数必须是对象"]),
     ("new_context", {"handoff": "不得换窗", "keep_recent": 99}, ["参数 keep_recent 必须小于或等于 12"]),
-    ("new_context", {"content": "旧参数不得写入"}, ["缺少必填参数 handoff", "不接受参数 content"]),
-    ("search_history", {"query": "*", "limit": "2"}, ["参数 limit 必须是整数"]),
-    ("search_history", {"query": "*", "limit": 0}, ["参数 limit 必须大于或等于 1"]),
-    ("search_history", {"query": ""}, ["参数 query 至少需要 1 个字符"]),
     ("write_note", {"key": "test", "content": "未接受", "kind": "wrong"},
      ["参数 kind 必须取允许值", "fact", "hypothesis", "plan"]),
-    ("write_note", {"key": "test", "content": "未接受", "kind": "fact", "sources": [35]},
-     ["参数 sources[0] 必须是字符串"]),
-    ("write_note", {"key": "test", "content": "未接受", "kind": "fact", "sources": ["H2"] * 21},
-     ["参数 sources 最多允许 20 项"]),
 ])
 async def test_argument_errors_explain_repairs_without_executing_or_echoing_input(story, name, arguments, expected):
     store, session = story

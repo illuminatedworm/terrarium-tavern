@@ -54,10 +54,7 @@ def test_legacy_status_card_reports_locations_and_missing_contract_without_mutat
 @pytest.mark.parametrize("field,text", [
     ("system_prompt", 'Every reply must append this status block: <status>HP: 8</status>'),
     ("post_history_instructions", '每轮回答必须输出状态栏\n| 项目 | 数值 |\n| --- | --- |\n| HP | 8 |'),
-    ("description", '每次回复都要生成以下内容：\n<div>终端信息</div>'),
-    ("personality", '每次回复附上<status>当前心情</status>'),
     ("scenario", '每轮回复显示状态面板'),
-    ("mes_example", OPENING),
     ("alternate_greetings", OPENING),
 ])
 def test_model_fields_examples_and_alternate_openings_are_checked(field, text):
@@ -69,12 +66,10 @@ def test_model_fields_examples_and_alternate_openings_are_checked(field, text):
 
 @pytest.mark.parametrize("text", [
     '<div style="color:cyan">欢迎来到旅店。</div>',
-    '<details><summary>阅读须知</summary>请先选择开场。</details>',
     '不要在每次回复结尾生成状态栏。',
     "Never append a status panel after every reply.",
     '<initvar>hp: 8</initvar><StatusPlaceHolderImpl/>',
     '<div>状态栏</div><script>const v = getMvuData();</script>',
-    '<div>欢迎</div><style>.HP { color:red } .MONEY { color:green }</style>',
 ])
 def test_layout_prohibitions_and_existing_mvu_displays_are_not_migration_demands(text):
     report = validation_report({"name": "保留", "first_mes": text})

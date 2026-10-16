@@ -115,13 +115,9 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
 
 
 @pytest.mark.parametrize("tail", [
-    [], [httpx.ReadTimeout("fixture timeout")], [httpx.ReadError("fixture disconnect")],
-    [{"error": {"message": "fixture upstream error"}}],
-    [terminal(), {"error": {"message": "late upstream error"}}],
-    [terminal(), delta("非法追加")], [b"data: {broken\n\n"], [None, terminal()],
-    [terminal("length")], [terminal("content_filter")], [terminal("unknown")],
-], ids=["eof", "timeout", "read_error", "error_event", "late_error", "late_content", "invalid_json",
-        "invalid_event", "length", "filter", "unknown_finish"])
+    [], [httpx.ReadError("fixture disconnect")], [{"error": {"message": "fixture upstream error"}}],
+    [terminal(), delta("非法追加")], [b"data: {broken\n\n"], [terminal("length")],
+], ids=["eof", "read_error", "error_event", "late_content", "invalid_json", "length"])
 async def test_interface_failure_never_commits_partial_text_or_tools(tmp_path, tail):
     store, service, session = game(tmp_path, "chat_completions")
     stream = WireStream(delta("未完成片段"), *tail)

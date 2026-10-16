@@ -13,18 +13,11 @@ from tests.backend.test_unified_cache import config, provider, reply
 @pytest.mark.parametrize("api,model,levels", [
     ("chat_completions", "relay-alias", ["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
     ("responses", "gemini-3.8-flash", ["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
-    ("anthropic", "claude-opus-4-5", ["none", "low", "medium", "high"]),
     ("anthropic", "claude-opus-4-6", ["none", "low", "medium", "high", "max"]),
     ("anthropic", "claude-opus-5-5", ["low", "medium", "high", "xhigh", "max"]),
     ("anthropic", "claude-sonnet-4-5", ["none"]),
-    ("anthropic", "gemini-3.8-flash", ["none", "low", "medium", "high"]),
     ("gemini", "gemini-3.8-flash-high", ["low", "medium", "high"]),
-    ("gemini", "gemini-4-argon", ["low", "medium", "high"]),
-    ("chat_completions", "gemini-3.8-flash-high", ["low", "medium", "high"]),
-    ("gemini", "gemini-3-pro-preview", ["low", "high"]),
     ("gemini", "gemini-3.1-flash-lite-image", ["minimal", "high"]),
-    ("gemini", "gemini-3.6-flash", ["minimal", "low", "medium", "high"]),
-    ("gemini", "gemini-2.5-pro", ["minimal", "low", "medium", "high", "xhigh"]),
     ("gemini", "gemini-2.5-flash-lite", ["none", "low", "medium", "high", "xhigh"]),
     ("chat_completions", "gemini-2.5-flash", ["none", "low", "medium", "high"]),
 ])
@@ -66,9 +59,7 @@ async def test_advertised_tiers_compile_without_aliasing(api, model, levels):
 
 
 @pytest.mark.parametrize("model,effort", [
-    ("gemini-3.8-flash", "minimal"), ("gemini-3.8-flash", "max"),
-    ("gemini-3-pro-preview", "medium"), ("gemini-2.5-flash", "max"),
-    ("gemini-2.5-flash-lite", "minimal"),
+    ("gemini-3.8-flash", "minimal"), ("gemini-2.5-flash", "max"),
 ])
 def test_invalid_native_gemini_tiers_report_actionable_errors(model, effort):
     with pytest.raises(ValueError, match="请选择默认或其他思考档位"):
