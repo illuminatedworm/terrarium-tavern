@@ -6,6 +6,7 @@ import time
 
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
+from tavern.character.editor_images import materialize_images
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.core.message_adapter import provider_messages
@@ -25,6 +26,7 @@ class EditorRun:
         with self.store.connection() as db:
             workspace = self.edits.load(db, self.wid)
         self.environment = workspace.get("environment")
+        self.files = copy.deepcopy([f for f in workspace.get("files", []) if f.get("message_ref")])
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
         self.working = copy.deepcopy(progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]})
         self.base = copy.deepcopy(progress["base"] if progress else self.working)
@@ -133,6 +135,8 @@ class EditorRun:
             result_message = {"role": "tool", "tool_call_id": call["id"], "content": encoded}
             if status == "error":
                 result_message["_tool_error"] = True
+            elif name == "read_history":
+                batch.setdefault("image_history", []).append(result["ref"])
             batch.setdefault("results", []).append(result_message)
             self.context.messages.append(result_message)
             self.trace.append(result_message)
@@ -141,6 +145,8 @@ class EditorRun:
             self.event("tool_finished", {"action_id": action, "tool": name, "status": status,
                 "result": encoded[:4000], "detail": result.get("error", ""), "result_truncated": len(encoded) > 4000,
                 "duration_ms": round((time.monotonic() - started) * 1000)})
+        for ref in batch.get("image_history", []):
+            self.context.recall_images(ref)
         self.pending_calls = None
         if self.rolled:
             self.context.rollover()
@@ -210,12 +216,14 @@ class EditorRun:
             self.save()
             tokens = self.context.tokens()
             self.event("model_call", {"call": self.calls, "model": self.cfg.model})
-            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens, "model": self.cfg.model})
+            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
+                                         "model": self.cfg.model, **self.context.image_stats()})
             text = ""
             options = {"parallel_tool_calls": False}
             if self.context.must_rollover:
                 options["tool_choice"] = {"type": "function", "function": {"name": "new_context"}}
-            async for chunk in self.web_session.chat(provider, provider_messages(provider, messages, self.cfg), tool_definitions(),
+            outbound = await asyncio.to_thread(materialize_images, messages, self.store, self.wid, self.files)
+            async for chunk in self.web_session.chat(provider, provider_messages(provider, outbound, self.cfg), tool_definitions(),
                                                     extra_body=options, on_fallback=self.web_fallback):
                 if chunk is None:
                     text = ""
@@ -223,7 +231,7 @@ class EditorRun:
                     text += chunk
                     self.event("text", {"text": chunk})
             self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
-                                         "model": self.cfg.model, "usage": self.usage(provider)})
+                                         "model": self.cfg.model, "usage": self.usage(provider), **self.context.image_stats()})
             calls = getattr(provider, "last_tool_calls", []) or []
             if len(calls) > 16 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
                 raise ValueError("无效的工具调用序列，本轮进度保留")

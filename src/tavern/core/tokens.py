@@ -67,6 +67,11 @@ def message_tokens(message, settings=None):
         return (count_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":")), settings)
                 + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING)
     content = message.get("content") or ""
+    if isinstance(content, list):
+        # Base64 is transport encoding, not rendered model text. Vision usage
+        # is unknown locally and is reported separately from this text estimate.
+        content = [part for part in content if not isinstance(part, dict) or part.get("type") not in ("image_url", "input_image", "image")
+                   and "inlineData" not in part]
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
     cost = count_text(content, settings) + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING

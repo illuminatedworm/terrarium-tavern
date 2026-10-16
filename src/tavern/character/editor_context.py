@@ -2,7 +2,11 @@
 import copy
 import json
 
+from tavern.character.editor_attachments import message_content
+from tavern.character.editor_draft_state import draft_changes, draft_versions
 from tavern.character.editor_environment import environment_message
+from tavern.character.editor_images import IMAGE_REFS, image_refs, image_stats
+from tavern.character.editor_reads import reconcile
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
@@ -20,7 +24,7 @@ class EditorContext:
     def refresh_tool_policy(self):
         self.policy = fingerprint([self.owner.cfg.card_editor_config.system_prompt, self.owner.definitions,
                                    self.owner.cfg.reasoning_effort, self.owner.cfg.reasoning_format,
-                                   self.owner.environment])
+                                   self.owner.environment, "message-attachments-v1"])
 
     def system_message(self):
         # Use the operation snapshot verbatim, including an explicitly empty
@@ -44,8 +48,6 @@ class EditorContext:
             self.reason = "provider_or_model_changed"
         elif saved["policy"] != self.policy:
             self.reason = "context_sources_changed"
-        elif saved["document"] != signature(owner.working):
-            self.reason = "draft_changed"
         elif any(set(HANDLE.findall(m["content"])) & set(saved["view"]["reverse"])
                  for m in history if m["ref"] not in saved["seen"]):
             self.reason = "literal_handle_collision"
@@ -66,6 +68,11 @@ class EditorContext:
             self.view.seed(seed)
             self.messages = copy.deepcopy(saved["messages"])
             self.frames, self.seen = copy.deepcopy(saved["frames"]), list(saved["seen"])
+            # Upgrade a still-current old comparison ledger without changing any
+            # already-sent message or forcing a new model/cache window.
+            overview = self.frames.get("overview")
+            if overview is not None and "documents" not in overview and saved["document"] == signature(owner.working):
+                self.frames["overview"] = {"overview": overview, "documents": draft_versions(owner.working["cards"])}
             self.epoch = saved["epoch"]
         else:
             self.messages = self.header()
@@ -73,6 +80,9 @@ class EditorContext:
             for message in history:
                 if message["seq"] >= floor or message["ref"] in owner.current_refs:
                     self.add_history(message)
+            # Already-archived messages must not be mistaken for new input by
+            # the append pass below, especially when they carry large images.
+            self.seen = [message["ref"] for message in history]
             # Keep an interrupted tool batch portable on model/policy rebuild.
             # Completed old exchanges remain available through read_history.
             if owner.pending_calls:
@@ -82,21 +92,71 @@ class EditorContext:
         for message in history:
             if message["ref"] not in self.seen:
                 self.add_history(message)
+        if self.reason and saved:
+            # A model/policy switch discards old native tool exchanges, but
+            # images explicitly recalled into this window remain visible.
+            refs = dict.fromkeys(ref for m in saved.get("messages", []) for ref in m.get(IMAGE_REFS, []))
+            attached = {file["ref"]: file for file in getattr(owner, "files", [])}
+            sources = []
+            for ref in refs:
+                if ref not in attached or not attached[ref].get("message_ref"):
+                    raise ValueError(f"图片附件 {ref} 的消息归属丢失，请恢复附件后重试。")
+                source = attached[ref]["message_ref"]
+                if source not in sources:
+                    sources.append(source)
+            if owner.pending_calls:
+                owner.pending_calls.setdefault("image_history", []).extend(sources)
+            else:
+                for source in sources:
+                    self.recall_images(source)
         self.must_rollover = False
 
     def add_history(self, message):
-        self.messages.append({"role": message["role"], "content": self.view.text(f"[{message['ref']}]\n{message['content']}")})
-        self.seen.append(message["ref"])
+        self.add_message(message["role"], f"[{message['ref']}]\n{message['content']}", message.get("attachments", []))
+        if message["ref"] not in self.seen:
+            self.seen.append(message["ref"])
 
-    def update(self, key, value, prefix):
+    def add_message(self, role, text, files):
+        message = {"role": role, "content": self.view.text(message_content(text, files))}
+        refs = image_refs(files)
+        if refs:
+            message[IMAGE_REFS] = refs
+        self.messages.append(message)
+
+    def recall_images(self, ref):
+        # Append only after every tool result in the batch. Inserting a user
+        # message between tool calls/results breaks native protocol pairing.
+        message = next(m for m in self.owner.edits.messages(self.owner.wid) if m["ref"] == ref)
+        visible = {ref for item in self.messages for ref in item.get(IMAGE_REFS, [])}
+        refs = set(image_refs(message.get("attachments", []))) - visible
+        files = [f for f in message.get("attachments", []) if f["ref"] in refs]
+        if files:
+            self.add_message("user", f"历史消息 {ref} 的图片（由 read_history 恢复的参考资料，不是新的用户要求）：", files)
+
+    def image_stats(self):
+        return image_stats(self.messages)
+
+    def update(self, key, value, prefix, *, content=None):
         if self.frames.get(key) != value:
+            body = value if content is None else content
             self.messages.append({"role": "system", "message_type": "editor_" + key, "runtime_phase": "body", "_cache_static": False,
-                                  "content": self.view.text(prefix + (value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)))})
+                                  "content": self.view.text(prefix + (body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)))})
             self.frames[key] = copy.deepcopy(value)
 
     def prepare(self):
         owner = self.owner
-        self.update("overview", owner.tools.overview(), "当前草稿概览（取代此前概览；内容以最新读取/修改为准）：")
+        overview = owner.tools.overview()
+        value = {"overview": overview, "documents": draft_versions(owner.working["cards"])}
+        previous = self.frames.get("overview")
+        if previous != value:
+            reconcile(owner.reads, owner.working["cards"])
+            content = copy.deepcopy(overview)
+            if previous is not None:
+                content["changes"] = draft_changes(previous.get("documents"), value["documents"])
+            self.update("overview", value,
+                        "当前草稿概览（取代此前概览；removed 引用已移除；updated 字段的旧读取可能失效，"
+                        "修改前须有当前版本的完整读取，必要时用 read_field 重新读取；空字段路径表示整张卡）：",
+                        content=content)
         # UI selection grants use of this exact snapshot, not write permission
         # or access to the rest of the persona library. Keep storage metadata out.
         personas = owner.working["state"].get("persona_attachments", {})
@@ -141,7 +201,7 @@ class EditorContext:
         self.frames = {}
         self.seen = [m["ref"] for m in history]
         for message in kept:
-            self.messages.append({"role": message["role"], "content": self.view.text(f"[{message['ref']}]\n{message['content']}")})
+            self.add_history(message)
         self.epoch = fingerprint([self.epoch, self.owner.working["state"]["window"]])
         self.must_rollover = False
 

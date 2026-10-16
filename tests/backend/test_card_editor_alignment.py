@@ -51,7 +51,7 @@ class Editor:
 
     async def run(self, plan, text="编辑草稿"):
         self.plans.append(plan)
-        ws = self.service.edits.get(self.workspace["id"])
+        ws = self.service.edits.conversation(self.workspace["id"])
         run = self.service.submit(ws["id"], CardEditorRequest(
             text=text, expected_revision=ws["revision"], operation_id=str(len(ws["runs"]))))
         await self.service.tasks[run["id"]]
@@ -218,7 +218,7 @@ async def test_editor_native_prefix_identity_and_committed_replay(tmp_path, monk
         await editor.service.close()
 
 
-@pytest.mark.parametrize("change", ["model", "credential", "draft", "history", "handles", "call_notifications"])
+@pytest.mark.parametrize("change", ["model", "credential", "reasoning", "draft", "history", "handles", "call_notifications"])
 async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
     editor = Editor(tmp_path, monkeypatch, "responses")
     try:
@@ -238,11 +238,16 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
                 with editor.store.connection() as db:
                     db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
                                (json.dumps({"provider_id": "default", "model": "new-model"}), editor.workspace["id"]))
+        elif change == "reasoning":
+            settings = editor.store.settings_document()
+            settings.shared.card_editor.reasoning_effort = "high"
+            editor.store.save_settings(settings)
+            expected = "context_sources_changed"
         elif change == "draft":
             doc = copy.deepcopy(editor.workspace["document"])
             doc["description"] = "手工改写设定"
             editor.service.edits.update(editor.workspace["id"], doc, 0)
-            expected = "draft_changed"
+            expected = None
         elif change == "history":
             with editor.store.connection() as db:
                 for i in range(7):
@@ -266,6 +271,15 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             text, expected = "保留字面量 @D1", "literal_handle_collision"
         run = await editor.run([blocks("responses", "已处理")], text)
         events = editor.service.edits.events(run["id"])
+        if change == "draft":
+            assert not any(e["kind"] == "context_baseline" for e in events)
+            saved = editor.service.edits.context(editor.workspace["id"])
+            assert saved["epoch"] == before["epoch"]
+            assert saved["messages"][:len(before["messages"])] == before["messages"]
+            assert any(
+                '"/description"' in m.get("content", "") and '"changes"' in m.get("content", "")
+                for m in saved["messages"][len(before["messages"]):])
+            return
         if change == "history":
             # Failed attempts no longer evict complete history after seven rows.
             assert not any(e["kind"] == "context_baseline" for e in events)

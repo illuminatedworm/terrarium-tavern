@@ -68,6 +68,8 @@ class Conversations:
 
     def write(self, db, workspace, *, increment=True):
         payload = {"cards": workspace["cards"], "state": workspace["state"]}
+        if "files" in workspace:
+            payload["files"] = workspace["files"]
         if workspace.get("environment"):
             payload["environment"] = workspace["environment"]
         db.execute("UPDATE card_editor_conversations SET payload=?,revision=revision+?,updated=? WHERE id=?",
@@ -131,14 +133,17 @@ class Conversations:
             if cid is None or any(c["card"] == cid for c in items):
                 result.append({key: row[key] for key in ("id", "revision", "created", "updated", "status", "turn_count", "resumable", "channel_origin")} | {
                     "title": row["title"] or row["first_input"] or "新制卡对话", "card_count": len(items),
-                    "reference_count": len(items) + len(payload["state"].get("persona_attachments", {})), "card": cid})
+                    "reference_count": len(items) + len(payload["state"].get("persona_attachments", {})) + len(payload.get("files", [])), "card": cid})
         return result
 
     def messages(self, wid, db=None):
         if db is None:
             with self.store.connection() as connection:
                 return self.messages(wid, connection)
-        return [{**dict(r), "ref": f"H{r['seq']}"} for r in db.execute("SELECT * FROM card_editor_messages WHERE workspace=? ORDER BY seq", (wid,))]
+        files = self.load(db, wid).get("files", [])
+        return [{**dict(r), "ref": f"H{r['seq']}",
+                 "attachments": [f for f in files if f.get("message_ref") == f"H{r['seq']}"]}
+                for r in db.execute("SELECT * FROM card_editor_messages WHERE workspace=? ORDER BY seq", (wid,))]
 
     def message(self, db, wid, role, text, rid):
         seq = db.execute("SELECT coalesce(max(seq),0)+1 FROM card_editor_messages WHERE workspace=?", (wid,)).fetchone()[0]
@@ -362,6 +367,8 @@ class Conversations:
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (wid,))
         for source in sources:
             self.store.prune_card_assets({**source, "id": wid}, source.get("dependencies", {}))
+        from tavern.character.editor_attachments import remove_files
+        remove_files(self.store, wid, workspace.get("files", []), conversation_deleted=True)
 
     def discard(self, wid, revision):
         with self.store.connection() as db:

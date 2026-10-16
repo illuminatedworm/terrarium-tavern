@@ -37,6 +37,21 @@ def known(reads, ref, document, path):
         return False
 
 
+def reconcile(reads, cards):
+    """External edits invalidate only evidence whose actual current value differs."""
+    documents = {card["ref"]: card["document"] for card in cards}
+    for ref in list(reads):
+        if ref not in documents:
+            del reads[ref]
+            continue
+        records = reads[ref]
+        for path in list(records):
+            if not known(reads, ref, documents[ref], path):
+                del records[path]
+        if not records:
+            del reads[ref]
+
+
 def after_patch(reads, ref, before, after, operations):
     """Carry known deterministic writes without blessing unseen array neighbours."""
     paths = [op[key] for op in operations for key in ("path", "from") if key in op]

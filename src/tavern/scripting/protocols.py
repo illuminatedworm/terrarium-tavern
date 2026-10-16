@@ -2,6 +2,7 @@
 import copy
 import json
 
+from tavern.scripting.image_content import anthropic_content, gemini_content, response_content
 from tavern.scripting.native_response import native_items
 
 RUNTIME_RULE = ("Application reference material and runtime updates retain their chronological position; "
@@ -70,7 +71,7 @@ def response_input(messages, marker=None, *, session_breakpoint=False):
                            "output": message.get("content") or ""})
             continue
         if message.get("content"):
-            content = copy.deepcopy(message["content"])
+            content = response_content(message["content"], message["role"])
             if marker and message.get("_cache_breakpoint"):
                 content = mark_content(content, marker, "input_text")
             result.append({"role": message["role"], "content": content})
@@ -95,7 +96,7 @@ def native_messages(messages, api, marker=None):
     prefix_count, leading = None, True
     previous_role = None
     for message in messages:
-        role, content = message["role"], text_content(message.get("content", ""))
+        role, content = message["role"], message.get("content", "")
         consecutive_tools = role == "tool" and previous_role == "tool"
         previous_role = role
         typed = message.get("_adapter_typed", False)
@@ -104,6 +105,7 @@ def native_messages(messages, api, marker=None):
         if role not in ("system", "developer") or not fixed:
             leading = False
         if fixed:
+            content = text_content(content)
             block = {"type": "text", "text": content} if api == "anthropic" else {"text": content}
             if marker and message.get("_cache_breakpoint"):
                 block[marker["field"]] = copy.deepcopy(marker["value"])
@@ -114,7 +116,7 @@ def native_messages(messages, api, marker=None):
             continue
         if role in ("system", "developer") and not typed:
             role = "user"
-            content = "<tavern_runtime_context>\n" + content + "\n</tavern_runtime_context>"
+            content = "<tavern_runtime_context>\n" + text_content(content) + "\n</tavern_runtime_context>"
         details = message.get("reasoning_details") or []
         native = next((d for d in details if isinstance(d, dict) and d.get("provider") == api), None)
         for call in message.get("tool_calls", []):
@@ -125,7 +127,7 @@ def native_messages(messages, api, marker=None):
         if api == "anthropic":
             parts = []
             if role == "tool":
-                parts = [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": content}]
+                parts = [{"type": "tool_result", "tool_use_id": message["tool_call_id"], "content": text_content(content)}]
                 # Keep failure semantics through persistence/replay, without
                 # leaking internal metadata into APIs that have no such flag.
                 if message.get("_tool_error") is True:
@@ -137,7 +139,7 @@ def native_messages(messages, api, marker=None):
                 if native:
                     parts.extend(copy.deepcopy(native.get("thinking", [])))
                 if content:
-                    parts.append({"type": "text", "text": content})
+                    parts.extend(anthropic_content(content))
                 for call in message.get("tool_calls", []):
                     f = call["function"]
                     parts.append({"type": "tool_use", "id": call["id"], "name": f["name"],
@@ -158,6 +160,7 @@ def native_messages(messages, api, marker=None):
             if native and role == "assistant":
                 parts = copy.deepcopy(native["parts"])
             elif role == "tool":
+                content = text_content(content)
                 try:
                     value = json.loads(content)
                 except (ValueError, TypeError):
@@ -170,7 +173,7 @@ def native_messages(messages, api, marker=None):
                     parts[0]["functionResponse"]["id"] = message["tool_call_id"]
                 role = "user"
             else:
-                parts = [{"text": content}] if content else []
+                parts = gemini_content(content)
                 parts.extend({"functionCall": {"name": c["function"]["name"],
                                                 "args": json.loads(c["function"]["arguments"])}}
                              for c in message.get("tool_calls", []))

@@ -4,6 +4,9 @@ export interface EditorContextStats {
   model: string;
   usage?: Record<string, any> | null;
   token_counting?: { tokenizer: string; source: string };
+  image_count?: number;
+  image_tokens_included?: boolean;
+  estimated_tokens_complete?: boolean;
 }
 
 /** Provider usage conventions differ; unknown counters are not zero hits. */

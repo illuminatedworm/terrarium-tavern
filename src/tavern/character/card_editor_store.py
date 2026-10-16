@@ -38,6 +38,8 @@ def initialize_editor_tables(store):
 
     from tavern.character.editor_storage import initialize
     initialize(store)
+    from tavern.character.editor_attachments import migrate_message_attachments
+    migrate_message_attachments(store)
 
 
 def recover_editor_runs(store):

@@ -40,7 +40,11 @@ async def test_persona_reference_enters_actual_messages_without_storage_metadata
         model = ToolLLM([])
         result = await run(editor, wid, model, '继续讨论')
         assert result['status'] == 'completed', result['error']
-        assert description not in dump(model.call_log)
+        # Detaching replaces the effective reference frame, without rewriting
+        # the already-sent prefix or pretending historical input never existed.
+        frames = [m for m in model.call_log[0] if '用户主动引用的用户角色完整快照' in m.get('content', '')]
+        assert description in frames[0]['content']
+        assert frames[-1]['content'].endswith('[]')
     finally:
         await editor.close()
 

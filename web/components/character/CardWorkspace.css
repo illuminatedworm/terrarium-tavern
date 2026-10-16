@@ -416,9 +416,6 @@ pre {
   width: 680px;
   height: min(680px, calc(100dvh - 32px));
 }
-.cw-overlay :deep(.cw-file-modal) {
-  height: min(500px, calc(100dvh - 32px));
-}
 .sr-only {
   position: absolute;
   width: 1px;

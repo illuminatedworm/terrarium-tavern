@@ -12,6 +12,7 @@ from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
 from tavern.character.editor_config import FIELD_PURPOSES, blank_card
 from tavern.character.editor_files import read_document, read_text_file
+from tavern.character.editor_images import IMAGE_FORMATS
 from tavern.character.editor_personas import PERSONA_SPECS, PersonaTools
 from tavern.character.editor_reads import after_patch, known, remember
 from tavern.core.model_view import hidden_field
@@ -33,14 +34,14 @@ class Overview(Arguments):
 
 
 class TextFile(Arguments):
-    path: str = Field(min_length=1, description="Absolute path of an ordinary local file on the backend computer, supplied by the user. No URLs, network shares, directories or devices. Maximum source size: 32 MiB.")
+    path: str = Field(min_length=1, description="An attached file ref (e.g. F1) from the current file list, or an absolute local path supplied by the user. No URLs, network shares, directories or devices. Maximum source size: 32 MiB.")
     offset: int = Field(default=1, ge=1, description="Starting physical line, 1-based; default 1, minimum 1, no fixed upper bound. Continue using next_offset. Beyond the final line (or for an empty file), returns empty text, has_more=false and next_offset=null.")
     limit: int = Field(default=200, ge=1, le=1000, description="Maximum lines to return, 1–1000 inclusive; default 200. The page also stops before exceeding 20,000 characters, without splitting a line. A single longer line is rejected.")
     encoding: str | None = Field(default=None, min_length=1, description="Optional text encoding such as gb18030. By default detect Unicode BOM, otherwise decode UTF-8 strictly. No replacement characters.")
 
 
 class DocumentFile(Arguments):
-    path: str = Field(min_length=1, description="Absolute local .docx or .xlsx path on the backend computer, supplied by the user. Maximum source: 32 MiB; ZIP: 4096 entries and 128 MiB expanded; conversion: 30 seconds and 8 million Markdown characters.")
+    path: str = Field(min_length=1, description="An attached DOCX/XLSX file ref (e.g. F1), or an absolute local .docx or .xlsx path supplied by the user. Maximum source: 32 MiB; ZIP: 4096 entries and 128 MiB expanded; conversion: 30 seconds and 8 million Markdown characters.")
     offset: int = Field(default=0, ge=0, description="Zero-based Unicode character offset in converted Markdown, NOT a line or byte offset; default 0, minimum 0, no fixed upper bound. At or past the end returns empty markdown, has_more=false and next_offset=null. Continue using next_offset; keep the source file unchanged between pages.")
     limit: int = Field(default=12000, ge=1, le=30000, description="Maximum Unicode characters returned from converted Markdown, 1–30000 inclusive; default 12000. A page may cross paragraph or table boundaries.")
 
@@ -153,7 +154,7 @@ SPECS = {
     "write_handoff": (Handoff, "Replace the handoff note, preserving useful earlier decisions and unresolved work. Approved proposal originals are retained independently. A failed update does not replace the old note."),
     "new_context": (Handoff, "Save the complete handoff note and switch context windows. Call alone. Retains approved proposals, card directory, current user inputs and two recent user/final-answer exchanges; old tools leave together and remain readable from history. Continue the task after switching; the call allowance does not reset."),
     "search_history": (HistorySearch, "Search this authoring conversation only; returns H handles and labeled previews. Includes user requests and final replies, not gameplay."),
-    "read_history": (HistoryRead, "Read a full authoring message and its durable tool exchanges. Use it to verify approved constraints or recover results that left the active context."),
+    "read_history": (HistoryRead, "Read a full authoring message and its durable tool exchanges. Images attached to that message are restored after the tool batch if they left the active context. Use it to verify approved constraints or recover results that left the active context."),
     **PERSONA_SPECS,
     **WEB_SPECS,
 }
@@ -256,11 +257,26 @@ class EditorTools(PersonaTools):
         return await self.owner.web.read(args.url, args.offset, args.limit, service=args.service)
 
     async def read_text_file(self, args):
-        return await asyncio.to_thread(read_text_file, self.view.restore(args.path),
-                                       args.offset, args.limit, args.encoding)
+        result = await asyncio.to_thread(read_text_file, self.file_path(args.path),
+                                         args.offset, args.limit, args.encoding)
+        result["path"] = args.path
+        return result
 
     async def read_document(self, args):
-        return await read_document(self.view.restore(args.path), args.offset, args.limit)
+        result = await read_document(self.file_path(args.path), args.offset, args.limit)
+        result["path"] = args.path
+        return result
+
+    def file_path(self, path):
+        if path.startswith("F") and path[1:].isdigit():
+            from tavern.character.editor_attachments import attachment_path
+            item = next((f for f in self.owner.files if f["ref"] == path), None)
+            if item is None:
+                raise ValueError("文件引用不存在或已移除，请查看当前文件列表。")
+            if item["extension"] in IMAGE_FORMATS:
+                raise ValueError("图片随所属用户消息直接提供，不使用文本或文档读取工具；换窗后可用 read_history 回读所属消息恢复图片。")
+            return str(attachment_path(self.owner.store, self.owner.wid, item))
+        return self.view.restore(path)
 
     async def read_field(self, args):
         pointer = self.view.pointer(args.path, restore=True)
@@ -418,8 +434,11 @@ class EditorTools(PersonaTools):
 
     async def search_history(self, args):
         terms = args.query.casefold().split()
-        messages = [m for m in self.owner.edits.messages(self.owner.wid) if args.query == "*" or all(t in m["content"].casefold() for t in terms)]
-        return {"matches": [{"ref": m["ref"], "role": m["role"], "preview": self.view.text(m["content"])[:240]} for m in messages[-args.limit:]], "preview_only": True}
+        from tavern.character.editor_attachments import file_metadata
+        messages = [m for m in self.owner.edits.messages(self.owner.wid) if args.query == "*" or all(
+            t in (m["content"] + " " + " ".join(f["name"] for f in m.get("attachments", []))).casefold() for t in terms)]
+        return {"matches": [{"ref": m["ref"], "role": m["role"], "preview": self.view.text(m["content"])[:240],
+                             "attachments": file_metadata(m.get("attachments", []))} for m in messages[-args.limit:]], "preview_only": True}
 
     async def read_history(self, args):
         message = self.source_message(args.ref)
@@ -436,4 +455,6 @@ class EditorTools(PersonaTools):
                 if row.get("role") == "tool" and row.get("tool_call_id") in calls:
                     call = calls[row["tool_call_id"]]
                     exchanges.append({"tool": call["name"], "arguments": call["arguments"], "result": row["content"]})
-        return {"ref": args.ref, "role": message["role"], "text": message["content"], "tool_exchanges": exchanges}
+        from tavern.character.editor_attachments import file_metadata
+        return {"ref": args.ref, "role": message["role"], "text": message["content"], "tool_exchanges": exchanges,
+                "attachments": file_metadata(message.get("attachments", []))}

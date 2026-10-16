@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import StoryProse from '../story/StoryProse.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
-defineProps<{ text: string; role?: string; status?: 'intermediate' | 'streaming' | 'interrupted' }>();
+import type { EditorFile } from '../../lib/cardEditor';
+defineProps<{
+  text: string;
+  role?: string;
+  status?: 'intermediate' | 'streaming' | 'interrupted';
+  attachments?: EditorFile[];
+}>();
 </script>
 <template>
   <article
@@ -20,10 +26,43 @@ defineProps<{ text: string; role?: string; status?: 'intermediate' | 'streaming'
         }}</small>
       </div>
       <div class="cw-message-content"><StoryProse :text="text" :breaks="role === 'user'" /></div>
+      <ul v-if="attachments?.length" class="message-files" aria-label="本条消息的附件">
+        <li v-for="file in attachments" :key="file.ref" :title="file.name">
+          <CardWorkspaceIcon name="file" /><span>{{ file.name }}</span>
+        </li>
+      </ul>
     </div>
   </article>
 </template>
 <style scoped>
+.message-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.message-files li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font: 12px/1.5 var(--font-ui);
+}
+.message-files span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.message-files svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent-hover);
+}
 .cw-avatar {
   display: inline-flex;
   flex-shrink: 0;

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
-defineProps<{ name: string; kind: 'card' | 'persona'; disabled: boolean }>();
+defineProps<{ name: string; kind: 'card' | 'persona' | 'file'; disabled: boolean }>();
+const labels = { card: '角色卡', persona: '用户角色', file: '文件' };
 defineEmits<{ inspect: []; remove: [] }>();
 </script>
 
 <template>
-  <span class="reference-tag" :title="`${kind === 'card' ? '角色卡' : '用户角色'}：${name}`">
+  <span class="reference-tag" :title="`${labels[kind]}：${name}`">
     <button
       v-if="kind === 'card'"
       class="reference-content"
@@ -16,13 +17,13 @@ defineEmits<{ inspect: []; remove: [] }>();
       <CardWorkspaceIcon name="file" /><span>{{ name }}</span>
     </button>
     <span v-else class="reference-content"
-      ><CardWorkspaceIcon name="person" /><span>{{ name }}</span></span
+      ><CardWorkspaceIcon :name="kind === 'file' ? 'file' : 'person'" /><span>{{ name }}</span></span
     >
     <button
       class="reference-remove"
       type="button"
       :disabled="disabled"
-      :aria-label="`取消引用 ${kind === 'card' ? '角色卡' : '用户角色'} ${name}`"
+      :aria-label="`取消引用 ${labels[kind]} ${name}`"
       title="取消引用"
       @click.stop="$emit('remove')"
     >

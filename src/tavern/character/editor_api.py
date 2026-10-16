@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, Literal
 
+from fastapi import File, Form, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.character.editor_context import EditorContext
@@ -88,6 +89,27 @@ def register_conversation_routes(app, editor):
     async def attach(wid: str, payload: Reference):
         return editor.edits.attach(wid, payload.card_id, payload.expected_revision, payload.document, payload.expected_card_revision)
 
+    @app.post(base + "/{wid}/files")
+    async def upload_file(wid: str, expected_revision: int = Form(...), file: UploadFile = File(...)):
+        from tavern.character.editor_attachments import attach_file
+        from tavern.character.editor_files import MAX_FILE_BYTES
+        try:
+            with editor.store.connection() as db:
+                editor.edits.check(db, wid, expected_revision)
+            data = bytearray()
+            while chunk := await file.read(1024 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_FILE_BYTES:
+                    raise ValueError("文件超过 32 MiB，请先拆分。")
+            return attach_file(editor.edits, wid, expected_revision, file.filename, data)
+        finally:
+            await file.close()
+
+    @app.delete(base + "/{wid}/files/{ref}")
+    async def remove_file(wid: str, ref: str, payload: Revision):
+        from tavern.character.editor_attachments import detach_file
+        return detach_file(editor.edits, wid, payload.expected_revision, ref)
+
     @app.delete(base + "/{wid}/references/{ref}")
     async def detach(wid: str, ref: str, payload: Revision):
         return editor.edits.remove_card(wid, ref, payload.expected_revision)
@@ -156,6 +178,7 @@ def register_conversation_routes(app, editor):
         working = progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
         owner = SimpleNamespace(store=editor.store, edits=editor.edits, wid=wid, rid="preview", legacy=False,
             environment=environment,
+            files=copy.deepcopy(workspace.get("files", [])),
             working=copy.deepcopy(working), cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
             definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
@@ -166,7 +189,7 @@ def register_conversation_routes(app, editor):
         owner.context = EditorContext(copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner)
         owner.tools = EditorTools(owner)
         if payload.text:
-            owner.context.messages.append({"role": "user", "content": owner.context.view.text(payload.text)})
+            owner.context.add_message("user", payload.text, [f for f in workspace.get("files", []) if not f.get("message_ref")])
         return owner
 
     @app.post(base + "/{wid}/stats")
@@ -181,16 +204,23 @@ def register_conversation_routes(app, editor):
                 AND json_type(e.payload,'$.usage')='object' ORDER BY e.seq DESC LIMIT 1""", (wid,)).fetchone()
         return {"estimated_tokens": owner.context.tokens(), "context_limit": owner.cfg.context_tokens,
                 "model": owner.cfg.model, "token_counting": counting_info(owner.cfg),
+                **owner.context.image_stats(),
                 "usage": json.loads(row[0]).get("usage") if row else None}
 
     @app.post(base + "/{wid}/preview")
     async def preview(wid: str, payload: Preview):
         owner = preview_owner(wid, payload)
         messages = owner.context.prepare()
+        from tavern.character.editor_attachments import file_metadata
+        from tavern.character.editor_images import IMAGE_REFS
         from tavern.core.message_adapter import WIRE_FIELDS, adapt_messages, adapter_snapshot
-        messages = [{k: v for k, v in message.items() if k in WIRE_FIELDS} for message in adapt_messages(messages, owner.cfg)[0]]
+        messages = [{**{k: v for k, v in message.items() if k in WIRE_FIELDS},
+                     **({"attachments": file_metadata([f for f in owner.files if f["ref"] in message[IMAGE_REFS]])}
+                        if message.get(IMAGE_REFS) else {})}
+                    for message in adapt_messages(messages, owner.cfg)[0]]
         tools = ([d for d in owner.definitions if d.get("function", {}).get("name") == "new_context"]
                  if owner.context.must_rollover else owner.definitions)
         return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": tools, "estimated_tokens": owner.context.tokens(),
                 "context_limit": owner.cfg.context_tokens, "preview_only": True,
-                "note": "只读预览；尚未执行模型和工具，不包含后续工具读取结果。未保存的环境快照仅供预览，首次发送时才固定。"}
+                **owner.context.image_stats(),
+                "note": "只读预览；图片仅展示附件引用、格式与尺寸，实际请求发送原图。尚未执行模型和工具，不包含后续工具读取结果。未保存的环境快照仅供预览，首次发送时才固定。"}

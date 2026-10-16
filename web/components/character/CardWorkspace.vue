@@ -43,6 +43,7 @@ const emit = defineEmits<{ changed: []; saved: []; deleted: [id: string] }>();
 const workspace = ref<EditorConversation | null>(null);
 const personaLibrary = ref<EditorPersona[]>([]);
 const personaAttachments = computed(() => workspace.value?.state.persona_attachments || {});
+const pendingFiles = computed(() => (workspace.value?.files || []).filter((file) => !file.message_ref));
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
 const selectedProfile = computed(() => ({
@@ -77,16 +78,17 @@ const statsError = ref('');
 const cacheRate = computed(() => editorCacheRate(contextStats.value?.usage));
 const contextLabel = computed(
   () =>
-    `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens`,
+    `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens${contextStats.value?.image_count ? ` · ${contextStats.value.image_count} 张图片未计入` : ''}`,
 );
 const contextTitle = computed(
   () =>
     statsError.value ||
-    `${contextStats.value?.token_counting?.source === 'reference_fallback' ? '参考分词器' : '计数分词器'} ${contextStats.value?.token_counting?.tokenizer || ''}；当前上下文含输入与工具的本地估算，实际用量以服务商为准。`,
+    `${contextStats.value?.token_counting?.source === 'reference_fallback' ? '参考分词器' : '计数分词器'} ${contextStats.value?.token_counting?.tokenizer || ''}；当前上下文含文本输入与工具的本地估算${contextStats.value?.image_count ? '，图片 tokens 未计入' : ''}，实际用量以服务商为准。`,
 );
 const error = ref(''),
   notice = ref(''),
   busy = ref(false);
+const uploadingFiles = ref(false);
 const selected = ref(''),
   tab = ref('preview'),
   inspectorOpen = ref(false),
@@ -306,6 +308,9 @@ async function send(resume = false) {
     });
     if (!alive) return;
     input.value = '';
+    for (const file of workspace.value!.files || []) {
+      if (run.request._file_refs?.includes(file.ref)) file.message_ref = run.request._input_ref;
+    }
     await refresh();
     observe(run.id);
     scroll(true);
@@ -334,9 +339,7 @@ async function openModal(name: string) {
   if (name === 'rename') title.value = workspace.value?.title || '';
   await nextTick();
   const target =
-    dialogInput.value ||
-    modalOverlay.value?.querySelector<HTMLElement>('[data-initial-focus]') ||
-    modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
+    dialogInput.value || modalOverlay.value?.querySelector<HTMLElement>('button:not([disabled])');
   target?.focus({ preventScroll: true });
 }
 function closeModal() {
@@ -345,13 +348,45 @@ function closeModal() {
   modalTrigger = null;
   void nextTick(() => (trigger?.isConnected ? trigger : composer.value)?.focus({ preventScroll: true }));
 }
-async function addFileReference(path: string) {
-  if (busy.value || active.value) return;
-  input.value += `${input.value && !input.value.endsWith('\n') ? '\n' : ''}参考本地文件：${path}\n`;
-  closeModal();
-  await nextTick();
-  composer.value?.focus();
-  composer.value?.setSelectionRange(input.value.length, input.value.length);
+async function addFileReferences(files: File[]) {
+  if (locked.value || !workspace.value) return;
+  uploadingFiles.value = true;
+  try {
+    await guard(async () => {
+      for (const file of files) {
+        if (file.size > 32 * 1024 * 1024) throw new Error(`${file.name} 超过 32 MiB，请先拆分。`);
+        const data = new FormData();
+        data.append('file', file);
+        data.append('expected_revision', String(workspace.value!.revision));
+        try {
+          const value = await api(base + '/files', data);
+          if (!alive) return;
+          workspace.value = value;
+          emit('changed');
+          scheduleStats();
+        } catch (error: any) {
+          throw new Error(`添加 ${file.name} 失败：${error.message}`);
+        }
+      }
+      composer.value?.focus();
+    });
+  } finally {
+    uploadingFiles.value = false;
+  }
+}
+async function removeFileReference(ref: string) {
+  if (locked.value) return;
+  await guard(async () => {
+    const value = await api(
+      base + `/files/${ref}`,
+      { expected_revision: workspace.value!.revision },
+      'DELETE',
+    );
+    if (!alive) return;
+    workspace.value = value;
+    emit('changed');
+    scheduleStats();
+  });
 }
 function confirmCardAction() {
   const kind = modal.value;
@@ -571,7 +606,7 @@ onBeforeUnmount(() => {
                 <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span>
                 <h2>从一个想法开始</h2>
                 <p>讨论人物、世界或互动情境，引用角色卡、用户角色或本地文件作为资料。</p>
-                <p>开启联网后可搜索、读取网页；本地支持文本、DOCX 和 XLSX 文件。</p>
+                <p>开启联网后可搜索、读取网页；本地支持文本、DOCX、XLSX 文件及 PNG、JPEG、静态 WebP 图片。</p>
                 <p>先讨论方案，再审阅草稿；适配导入卡、迁移状态栏可用“内置技能”。</p>
               </div>
               <template v-for="entry in timeline" :key="entry.key">
@@ -585,6 +620,7 @@ onBeforeUnmount(() => {
                   v-else
                   :role="entry.message.role"
                   :text="entry.message.content"
+                  :attachments="entry.message.attachments"
                   :data-message-ref="entry.message.ref"
                   :data-message-run="entry.message.run"
                 />
@@ -641,14 +677,15 @@ onBeforeUnmount(() => {
               >
                 <CardWorkspaceIcon name="plus" />引用角色
               </button>
-              <button
-                class="cw-reference-add cw-quiet"
-                type="button"
-                :disabled="busy || !!active"
-                @click="openModal('file')"
-              >
-                <CardWorkspaceIcon name="file" />引用本地文件
-              </button>
+              <CardFileReference :disabled="locked" :uploading="uploadingFiles" @choose="addFileReferences" />
+              <ReferenceTag
+                v-for="file in pendingFiles"
+                :key="file.ref"
+                :name="file.name"
+                kind="file"
+                :disabled="locked"
+                @remove="removeFileReference(file.ref)"
+              />
               <ReferenceTag
                 v-for="item in workspace?.cards"
                 :key="item.ref"
@@ -877,22 +914,13 @@ onBeforeUnmount(() => {
   <Teleport to="body"
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
-        :class="{ 'cw-skills-modal': modal === 'skills', 'cw-file-modal': modal === 'file' }"
-        :label="
-          modal === 'form'
-            ? '编辑角色卡草稿'
-            : modal === 'skills'
-              ? '内置技能'
-              : modal === 'file'
-                ? '引用本地文件'
-                : '制卡对话操作'
-        "
+        :class="{ 'cw-skills-modal': modal === 'skills' }"
+        :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'skills' ? '内置技能' : '制卡对话操作'"
         :size="['form', 'adapter'].includes(modal) ? 'large' : modal === 'skills' ? 'medium' : 'small'"
         @close="closeModal"
       >
-        <CardFileReference v-if="modal === 'file'" @add="addFileReference" @cancel="closeModal" />
         <CardSkills
-          v-else-if="modal === 'skills'"
+          v-if="modal === 'skills'"
           :cards="items"
           :selected="current?.ref || ''"
           :disabled="busy || !!active"

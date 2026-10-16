@@ -21,12 +21,24 @@ export interface EditorRun {
   error: string | null;
 }
 export interface EditorMessage {
+  attachments?: EditorFile[];
   ref: string;
   role: string;
   content: string;
   run: string;
 }
+export interface EditorFile {
+  ref: string;
+  name: string;
+  size_bytes: number;
+  extension: string;
+  message_ref?: string | null;
+  mime_type?: string;
+  width?: number;
+  height?: number;
+}
 export interface EditorConversation {
+  files?: EditorFile[];
   channel_origin?: 'standard' | 'chatgpt' | null;
   model_selection?: { provider_id: string; model: string };
   id: string;

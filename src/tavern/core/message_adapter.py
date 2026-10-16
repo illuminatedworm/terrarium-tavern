@@ -11,11 +11,11 @@ ROLES = ("system", "developer", "user", "assistant")
 
 class RuntimeMessage(TypedDict, total=False):
     message_type: str
-    runtime_content: str
+    runtime_content: str | list[dict]
     runtime_phase: Literal["header", "body"]
     runtime_order: int
     role: str  # Legacy framework bridge; SDK role is owned by the adapter.
-    content: str
+    content: str | list[dict]
     source: str
 
 
@@ -71,6 +71,7 @@ TYPES = {item.id: item for item in (
                   scopes=("card_editor",)) for name, label in (
         ("overview", "草稿概览"), ("briefs", "确认资料"), ("handoff", "交接笔记"),
         ("persona_attachments", "引用用户角色"),
+        ("files", "引用本地文件"),
         ("persona_changes", "待保存用户角色"), ("adapt", "适配要求"), ("pressure", "窗口压力"),
         ("final_ref", "已保存回复引用"))],
     *[MessageType("advisor_" + name, label, "tavern_advisor_" + name, True, True,
@@ -215,6 +216,17 @@ def canonical_content(message, definition):
             if base.startswith("card_") or base in compiled else message.get("content", ""))
 
 
+def wrap_content(content, tag):
+    if not tag:
+        return content
+    if isinstance(content, list):
+        # Tags belong to text, never to a stringified image payload. Keep every
+        # original part in order and leave the canonical source untouched.
+        return [{"type": "text", "text": f"<{tag}>\n"}, *copy.deepcopy(content),
+                {"type": "text", "text": f"\n</{tag}>"}]
+    return f"<{tag}>\n{content}\n</{tag}>"
+
+
 def runtime_messages(messages, lane="foreground"):
     result, header = [], True
     for index, message in enumerate(messages):
@@ -272,7 +284,7 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
                     "".join(p.get("text", "") for entry in native["items"] if entry.get("type") == "message"
                             for p in entry.get("content", [])))
         item["role"] = rule["role"]
-        item["content"] = f"<{definition.tag}>\n{body}\n</{definition.tag}>" if rule["wrap"] and definition.tag else body
+        item["content"] = wrap_content(body, definition.tag) if rule["wrap"] else body
         if item.get("runtime_parts"):
             item["content"] = "\n".join(f"<{definition.tag}>\n{part}\n</{definition.tag}>" if rule["wrap"] else part
                                         for part in item["runtime_parts"])
