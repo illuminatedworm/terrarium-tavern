@@ -6,7 +6,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--surface-base);
+  /* The main sheet and canvas light show through; panes below add glass. */
+  background: transparent;
 }
 .card-workspace button {
   font: 12px/1.5 var(--font-ui);
@@ -117,8 +118,11 @@
   width: 36px;
   height: 36px;
   padding: 0;
-  background: var(--surface-panel);
-  box-shadow: 0 4px 16px #0003;
+  border: 1px solid var(--glass-edge-strong, var(--border-control));
+  background: var(--glass-chip, var(--surface-panel));
+  -webkit-backdrop-filter: var(--glass-blur, none);
+  backdrop-filter: var(--glass-blur, none);
+  box-shadow: var(--shadow-soft, 0 4px 16px #0003);
 }
 .cw-empty {
   color: var(--text-secondary);
@@ -220,7 +224,8 @@
   padding: 9px 20px;
   margin: 0;
   color: var(--warning);
-  background: var(--surface-panel);
+  background: rgb(230 192 136 / 0.08);
+  border-bottom: 1px solid rgb(230 192 136 / 0.16);
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -252,8 +257,10 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--surface-sidebar);
+  border-left: 1px solid var(--glass-edge, var(--border-subtle));
+  background: var(--glass-sheen, none), var(--glass-pane, var(--surface-sidebar));
+  -webkit-backdrop-filter: var(--glass-blur, none);
+  backdrop-filter: var(--glass-blur, none);
 }
 .cw-inspector-top {
   flex: 0 0 auto;
@@ -307,18 +314,23 @@
 }
 .cw-tabs button:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: rgb(255 255 255 / 0.04);
 }
 .cw-tabs button[aria-pressed='true'] {
-  border-bottom-color: var(--accent);
-  color: var(--accent-hover);
+  border-bottom-color: transparent;
+  background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 70% 2px;
+  background-position: 50% 100%;
+  background-repeat: no-repeat;
+  color: var(--text-primary);
   font-weight: 600;
+  text-shadow: 0 0 18px var(--accent-glow, transparent);
 }
 .cw-tab-count {
   min-width: 18px;
   padding: 0 4px;
   border-radius: 9px;
-  background: var(--surface-hover);
+  background: rgb(255 255 255 / 0.08);
   font: 10px/1.8 var(--font-ui);
   text-align: center;
   font-variant-numeric: tabular-nums;

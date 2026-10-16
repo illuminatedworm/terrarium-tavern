@@ -46,7 +46,8 @@ watch(
   height: 36px;
   overflow: hidden;
   border-radius: 9px;
-  background: var(--accent-soft);
+  background: linear-gradient(145deg, rgb(169 157 232 / 0.3), rgb(169 157 232 / 0.1));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
   color: var(--accent-hover);
   font: 500 16px var(--font-ui);
 }
@@ -71,7 +72,10 @@ watch(
 .portrait-detail {
   width: 104px;
   height: 136px;
-  border-radius: 12px;
+  border-radius: 16px;
+  box-shadow:
+    inset 0 0 0 1px rgb(255 255 255 / 0.1),
+    0 18px 40px -18px var(--accent-glow, transparent);
   font-size: 32px;
 }
 @media (max-width: 620px) {

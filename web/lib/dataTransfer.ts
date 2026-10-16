@@ -24,6 +24,7 @@ export function defaultReadingLayout(width: number) {
     leftCollapsed: width < 760,
     rightCollapsed: width < 760,
     rightWidth: 380,
+    glass: true,
   };
 }
 
@@ -39,6 +40,7 @@ export function readBrowserPreferences() {
       'leftCollapsed',
       'rightCollapsed',
       'rightWidth',
+      'glass',
     ];
     return {
       layout: Object.fromEntries(keys.filter((key) => key in layout).map((key) => [key, layout[key]])),

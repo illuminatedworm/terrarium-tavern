@@ -62,7 +62,7 @@ def browser_preferences(raw):
         elif key == "fontFamily":
             if value not in ("sans", "serif"):
                 raise ValueError("阅读字体无效")
-        elif key in ("leftCollapsed", "rightCollapsed"):
+        elif key in ("leftCollapsed", "rightCollapsed", "glass"):
             if type(value) is not bool:
                 raise ValueError("布局偏好格式无效")
         else:

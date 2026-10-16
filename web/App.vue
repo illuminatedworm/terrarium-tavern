@@ -482,6 +482,12 @@ const layout = ref({
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
 });
 watch(layout, (value) => localStorage.setItem('tavern-layout', JSON.stringify(value)), { deep: true });
+// On <html> so teleported dialogs and popovers follow the same material choice.
+watch(
+  () => layout.value.glass !== false,
+  (glass) => document.documentElement.classList.toggle('no-glass', !glass),
+  { immediate: true },
+);
 const mobileSidebarQuery = window.matchMedia('(max-width: 620px)');
 const mobileSidebar = ref(mobileSidebarQuery.matches);
 const rightOverlayQuery = window.matchMedia('(max-width: 760px)');
@@ -3220,7 +3226,10 @@ useTimedError(error);
                 <option value="serif">书籍衬线</option>
               </select></label
             ><label class="check"><input type="checkbox" v-model="layout.leftCollapsed" />折叠左侧栏</label
-            ><label class="check"><input type="checkbox" v-model="layout.rightCollapsed" />折叠右侧栏</label>
+            ><label class="check"><input type="checkbox" v-model="layout.rightCollapsed" />折叠右侧栏</label
+            ><label class="check" title="关闭后界面改用不透明面板，适合低性能显卡或偏好清晰边界"
+              ><input type="checkbox" v-model="layout.glass" />毛玻璃效果</label
+            >
             <p class="muted">设置即时生效，保存在当前浏览器。</p></template
           ><template v-else-if="panel === 'memory-rebuild'">
             <h2>重新生成记忆</h2>

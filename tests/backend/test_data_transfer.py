@@ -148,9 +148,14 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     settings.shared.providers[0].api_key = "source-secret"
     settings.half_agent.system_prompt = "个人提示词"
     store.save_settings(settings)
-    payload, blobs = package(store, browser_preferences={"layout": {"fontSize": 20, "fontFamily": "serif"}})
+    payload, blobs = package(
+        store, browser_preferences={"layout": {"fontSize": 20, "fontFamily": "serif", "glass": False}}
+    )
     assert "source-secret" not in dump(payload)
     assert payload["settings"]["browser"]["layout"]["fontSize"] == 20
+    assert payload["settings"]["browser"]["layout"]["glass"] is False
+    with pytest.raises(ValueError, match="布局偏好"):
+        package(store, browser_preferences={"layout": {"glass": "off"}})
     target = Store(tmp_path / "target")
     local = target.settings_document()
     local.shared.providers[0].api_key = "local-secret"
