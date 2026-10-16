@@ -19,10 +19,10 @@
 - `web/`：界面；`compat/`：兼容桥；`vendor/mvu/`：固定上游源码，修改须注明来源与差异。
 - `tests/`、`tools/`、`docs/`：回归、评估与发行工具、当前行为文档。
 - `data/`、`.cache/`、`dist/`、`releases/` 和生成静态资源是运行或构建产物。
-- 项目内的 `AGENTS.md` 只允许位于 `.agents/` 下，禁止在项目根目录或其他目录新建。
+- 项目内的 `AGENTS.md` 只允许位于项目根目录，禁止在 `.agents/` 或其他目录新建；其余 agent 资料仍放在 `.agents/` 下。
 - 先确认现有行为、调用顺序和数据归属，再修改；不得覆盖无关的用户改动。
 - 新修改如果与本文件或项目文档中的明确要求相反，必须主动提醒用户，指出冲突的要求及来源，不得默默覆盖或恢复已取消的行为。
-- 模型输入遵循 [文本完整性原则](TEXT_INTEGRITY.md)：角色卡及项目内部数据的已选原文块完整送出，超长只提示，不能静默截断、拆页回读或按预算省略。外部网络搜索、网页和文件资料采用独立的有界读取协议，可摘要、分页或超限拒绝，并明确片段及限制；不适用一次返回全文的要求。
+- 模型输入遵循 [文本完整性原则](.agents/TEXT_INTEGRITY.md)：角色卡及项目内部数据的已选原文块完整送出，超长只提示，不能静默截断、拆页回读或按预算省略。外部网络搜索、网页和文件资料采用独立的有界读取协议，可摘要、分页或超限拒绝，并明确片段及限制；不适用一次返回全文的要求。
 
 ## 数据来源与用户可见性
 
@@ -78,7 +78,7 @@
 
 ## 界面与可维护性
 
-- 叙事是主要内容，辅助操作保持紧凑，遵循 [前端风格](FRONTEND_STYLE.md)。
+- 叙事是主要内容，辅助操作保持紧凑，遵循 [前端风格](.agents/FRONTEND_STYLE.md)。
 - 根页面不能横向或纵向滚动；内容区内部滚动，所有功能和内容仍可访问。
 - 弹窗按用途保持固定高度并适配视口；切换内容、标签或加载状态不改变外框高度。
 - 保持焦点约束、背景交互隔离、键盘操作和清晰的加载、失败、重试反馈。
@@ -115,5 +115,5 @@
 常用命令：`npm.cmd run build`、`npm.cmd test`、`npm.cmd run format:check`、
 `.venv/Scripts/python.exe -m pytest -q tests/backend -n 4 --dist worksteal`、`.venv/Scripts/python.exe -m ruff check src tests tools`、
 `.venv/Scripts/python.exe -m tests.browser.browser_release`、`.venv/Scripts/python.exe tools/package_release.py`。
-详细职责见 [工作流](../docs/design/agent-workflow.md)、[上下文](../docs/design/context-lifecycle.md)、
-[计数口径](../docs/guides/token-counting.md)、[维护](../docs/guides/maintenance.md)和[验证说明](../docs/development/validation.md)。
+详细职责见 [工作流](docs/design/agent-workflow.md)、[上下文](docs/design/context-lifecycle.md)、
+[计数口径](docs/guides/token-counting.md)、[维护](docs/guides/maintenance.md)和[验证说明](docs/development/validation.md)。
