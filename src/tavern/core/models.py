@@ -349,6 +349,7 @@ class SessionOptions(BaseModel):
     persona: str = "用户"
     persona_data: dict[str, Any] = Field(default_factory=dict)
     turn_preference: str = ""
+    update_variables: bool = False
 
 
 class SessionScriptPermission(BaseModel):

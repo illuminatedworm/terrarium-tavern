@@ -105,7 +105,7 @@ const recentSessions = computed(() =>
 const editingSessionTitleId = ref('');
 const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
-const sessionTitleInput = ref<HTMLInputElement>();
+const sessionTitleInput = ref<HTMLInputElement | null>(null);
 const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
 const advisorSeen = ref('');
 function applyFullSession(updated: any) {
@@ -272,15 +272,11 @@ const retryNote = ref(''),
   retryIncludeReply = ref(false);
 const storyLoad = ref<{ id: string; creating: boolean; name: string; error: string } | null>(null);
 watch(
-  // Review reloads temporarily clear session while reopening the same conversation.
   () => [session.value?.id ?? storyLoad.value?.id, activeTurn.value?.id, activeTurn.value?.status],
-  ([sessionId], [previousSessionId]) => {
+  () => {
     retryNote.value = activeTurn.value?.request?.regenerate_note || '';
     retryIncludeReply.value = !!activeTurn.value?.request?.regenerate_include_reply;
     const request = activeTurn.value?.status !== 'committed' ? activeTurn.value?.request : null;
-    if (request || sessionId !== previousSessionId) {
-      updateVariables.value = !!request?.update_variables;
-    }
     allowEdit.value = !!request?.allow_content_edit;
   },
 );
@@ -336,19 +332,53 @@ watch(
   },
 );
 const updateVariables = ref(false);
+const variablePreferenceSaving = ref(false);
 const allowEdit = ref(false),
   importInput = ref<HTMLInputElement>();
 watch([updateVariables, () => allowEdit.value], () => {
   if (!busy.value) void refreshContextStats();
 });
 watch(
-  () => [session.value?.agent_mode, session.value?.disabled_tools],
+  () => [
+    session.value?.id,
+    session.value?.update_variables,
+    session.value?.disabled_tools,
+    activeTurn.value?.id,
+    activeTurn.value?.status,
+  ],
   () => {
-    if (session.value?.agent_mode === 'full_agent' && session.value.disabled_tools?.includes('patch_state')) {
-      updateVariables.value = false;
-    }
+    // Running/reviewed turns show their captured permission; future turns use
+    // the conversation preference, including after navigation or a reload.
+    const request = ['queued', 'running', 'awaiting_review'].includes(activeTurn.value?.status)
+      ? activeTurn.value.request
+      : null;
+    updateVariables.value =
+      !!(request?.update_variables ?? session.value?.update_variables) &&
+      !(session.value?.agent_mode === 'full_agent' && session.value.disabled_tools?.includes('patch_state'));
   },
 );
+async function saveUpdateVariables() {
+  const sid = session.value.id,
+    token = viewScope.current();
+  variablePreferenceSaving.value = true;
+  try {
+    const updated = await viewApi(
+      `/sessions/${sid}/options`,
+      { expected_revision: session.value.revision, update_variables: updateVariables.value },
+      'PUT',
+    );
+    // Preserve any unsaved fields in the conversation settings form.
+    session.value.update_variables = updated.update_variables;
+    session.value.revision = updated.revision;
+  } catch (e: any) {
+    if (viewScope.owns(token)) {
+      updateVariables.value = !!session.value.update_variables;
+      error.value = e.message;
+    }
+  } finally {
+    variablePreferenceSaving.value = false;
+  }
+}
 const chat = ref<HTMLElement>();
 // The glass composer floats over the message list so prose scrolls beneath it;
 // its measured height reserves matching space at the end of the list and lifts
@@ -1158,12 +1188,18 @@ async function closeRewriteOptions() {
   rewriteToggle.value?.focus({ preventScroll: true });
 }
 async function regenerateReply() {
-  if (busy.value || editingMessageId.value || activeTurn.value?.status === 'awaiting_review') return;
+  if (
+    busy.value ||
+    variablePreferenceSaving.value ||
+    editingMessageId.value ||
+    activeTurn.value?.status === 'awaiting_review'
+  )
+    return;
   if (retryableTurn.value) await retryTurn();
   else if (latestReply.value) await send('regenerate', latestReply.value, '', regenerateNote.value);
 }
 async function retryTurn() {
-  if (!retryableTurn.value || busy.value || editingMessageId.value) return;
+  if (!retryableTurn.value || busy.value || variablePreferenceSaving.value || editingMessageId.value) return;
   const resumeFullAgent =
     session.value?.agent_mode === 'full_agent' &&
     retryableTurn.value.resumable === true &&
@@ -1331,8 +1367,12 @@ function startNewStory() {
   panel.value = '';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
 }
-// Rail tabs also reopen a collapsed list panel so the chosen section is visible.
-function openSidebarSection(section: 'sessions' | 'cards' | 'editor') {
+// Repeated selection toggles the list without reopening the current workspace.
+function openSidebarSection(section: 'sessions' | 'cards' | 'editor', toggle = false) {
+  if (toggle && sidebarSection.value === section) {
+    void toggleLeftSidebar();
+    return;
+  }
   if (layout.value.leftCollapsed) void toggleLeftSidebar();
   if (section === 'sessions') sidebarSection.value = 'sessions';
   else if (section === 'cards') manageCards();
@@ -1364,6 +1404,7 @@ function setEffort(value: string) {
   if (session.value) localStorage.setItem(`tavern-effort-${session.value.id}`, value);
 }
 async function send(mode = 'send', message?: any, text?: string, note = '') {
+  if (variablePreferenceSaving.value) return;
   if (modelSaving.value || contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
     notify(
       contextBusy.value
@@ -2059,8 +2100,10 @@ useTimedError(error);
             role="tab"
             class="rail-tab"
             :aria-selected="sidebarSection === 'sessions'"
+            :aria-expanded="sidebarSection === 'sessions' && !layout.leftCollapsed"
+            aria-controls="primary-sidebar-panel"
             :class="{ active: sidebarSection === 'sessions' }"
-            @click="openSidebarSection('sessions')"
+            @click="openSidebarSection('sessions', true)"
           >
             <Icon name="chat" :size="20" /><span>会话</span>
           </button>
@@ -2068,8 +2111,10 @@ useTimedError(error);
             role="tab"
             class="rail-tab"
             :aria-selected="sidebarSection === 'cards'"
+            :aria-expanded="sidebarSection === 'cards' && !layout.leftCollapsed"
+            aria-controls="primary-sidebar-panel"
             :class="{ active: sidebarSection === 'cards' }"
-            @click="openSidebarSection('cards')"
+            @click="openSidebarSection('cards', true)"
           >
             <Icon name="cards" :size="20" /><span>角色卡</span>
           </button>
@@ -2077,8 +2122,10 @@ useTimedError(error);
             role="tab"
             class="rail-tab"
             :aria-selected="sidebarSection === 'editor'"
+            :aria-expanded="sidebarSection === 'editor' && !layout.leftCollapsed"
+            aria-controls="primary-sidebar-panel"
             :class="{ active: sidebarSection === 'editor' }"
-            @click="openSidebarSection('editor')"
+            @click="openSidebarSection('editor', true)"
           >
             <Icon name="quill" :size="20" /><span>制卡</span>
           </button>
@@ -2110,7 +2157,7 @@ useTimedError(error);
           </button>
         </div>
       </nav>
-      <div class="sidebar-panel">
+      <div id="primary-sidebar-panel" class="sidebar-panel">
         <div class="panel-brand">Terrarium Tavern</div>
         <template v-if="sidebarSection === 'sessions'"
           ><header class="panel-head">
@@ -2129,7 +2176,7 @@ useTimedError(error);
             >
               <div v-if="editingSessionTitleId === s.id" class="session-title-editor">
                 <input
-                  ref="sessionTitleInput"
+                  :ref="(element) => (sessionTitleInput = element as HTMLInputElement | null)"
                   v-model="sessionTitleDraft"
                   maxlength="100"
                   aria-label="对话标题"
@@ -2140,7 +2187,12 @@ useTimedError(error);
                 <button :disabled="savingSessionTitle" @click="cancelSessionTitle">取消</button>
               </div>
               <template v-else
-                ><button class="session-open" @click="guarded(() => openSession(s.id))">
+                ><button
+                  class="session-open"
+                  title="单击打开对话，双击重命名"
+                  @click="$event.detail < 2 && guarded(() => openSession(s.id))"
+                  @dblclick.stop.prevent="editSessionTitle(s)"
+                >
                   <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" />
                   <span
                     >{{ s.title || s.name
@@ -2845,7 +2897,10 @@ useTimedError(error);
                       title="重新生成"
                       :disabled="
                         !rewriteExpanded &&
-                        (busy || !!editingMessageId || activeTurn?.status === 'awaiting_review')
+                        (busy ||
+                          variablePreferenceSaving ||
+                          !!editingMessageId ||
+                          activeTurn?.status === 'awaiting_review')
                       "
                       @click="rewriteExpanded = !rewriteExpanded"
                     >
@@ -2857,7 +2912,11 @@ useTimedError(error);
                       :channel="session.channel_origin"
                       :effort="quickEffort"
                       :disabled="
-                        busy || modelSaving || contextBusy || activeTurn?.status === 'awaiting_review'
+                        busy ||
+                        modelSaving ||
+                        variablePreferenceSaving ||
+                        contextBusy ||
+                        activeTurn?.status === 'awaiting_review'
                       "
                       @select="selectStoryModel"
                       @update:effort="setEffort"
@@ -2865,18 +2924,28 @@ useTimedError(error);
                   </div>
                   <span class="turn-options"
                     ><label
-                      title="本轮更新变量：让模型按本轮剧情更新变量；无变化时不修改。保存方式在对话设置中选择。"
+                      :title="
+                        isFullAgent && session?.disabled_tools?.includes('patch_state')
+                          ? '变量更新工具已停用，当前不会更新变量；重新启用工具后恢复此对话保存的选择。'
+                          : '让模型按本轮剧情更新变量；无变化时不修改。勾选状态自动保存到当前对话，后续回合沿用；保存方式在对话设置中选择。'
+                      "
                       ><input
                         v-model="updateVariables"
+                        @change="saveUpdateVariables"
                         type="checkbox"
                         aria-label="本轮更新变量"
                         :disabled="
                           busy ||
+                          modelSaving ||
+                          variablePreferenceSaving ||
+                          contextBusy ||
                           activeTurn?.status === 'awaiting_review' ||
                           (isFullAgent && session?.disabled_tools?.includes('patch_state'))
                         "
                       />
-                      更新变量</label
+                      更新变量<span v-if="variablePreferenceSaving" class="muted" role="status">
+                        · 保存中…</span
+                      ></label
                     ><label
                       :title="
                         session?.agent_mode === 'full_agent'
@@ -2898,6 +2967,7 @@ useTimedError(error);
                     class="send conversation-compose-send"
                     :disabled="
                       modelSaving ||
+                      variablePreferenceSaving ||
                       contextBusy ||
                       !channelModelsReady ||
                       !session?.channel_origin ||

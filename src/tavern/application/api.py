@@ -480,13 +480,13 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/options")
     async def session_options(sid: str, options: SessionOptions):
+        fields = options.model_dump(exclude_unset=True, exclude={"expected_revision", "persona_data"})
+        if "persona_data" in options.model_fields_set:
+            fields["persona_data"] = dump(options.persona_data)
         return store.update_session(
             sid,
             options.expected_revision,
-            persona=options.persona,
-            policy=options.policy,
-            persona_data=dump(options.persona_data),
-            **({"turn_preference": options.turn_preference} if "turn_preference" in options.model_fields_set else {}),
+            **fields,
         )
 
     @app.put("/api/sessions/{sid}/recipe")

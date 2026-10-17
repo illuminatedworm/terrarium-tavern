@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -41,11 +42,31 @@ def test_preference_is_optional_required_system_supplement_even_with_custom_orde
 
 def test_preference_persists_and_is_inherited(story):
     store, session = story
-    changed = store.update_session(session['id'], 0, turn_preference='保留悬念，给玩家留出行动空间。')
+    changed = store.update_session(session['id'], 0, turn_preference='保留悬念，给玩家留出行动空间。',
+                                   update_variables=True)
     reopened = Store(store.root).session(session['id'])
     assert reopened['turn_preference'] == changed['turn_preference']
+    assert reopened['update_variables'] is True
     fork = store.fork_session(session['id'], session['head'], changed['revision'])
     assert fork['turn_preference'] == changed['turn_preference']
+    assert fork['update_variables'] is True
+    store.update_session(fork['id'], fork['revision'], update_variables=False)
+    assert store.session(session['id'])['update_variables'] is True
+
+
+def test_variable_preference_migration_backs_up_existing_stories(story):
+    store, session = story
+    with store.connection() as db:
+        db.execute('ALTER TABLE sessions DROP COLUMN update_variables')
+    reopened = Store(store.root).session(session['id'])
+    assert reopened['update_variables'] is False
+    assert reopened['snapshot'] == session['snapshot']
+    backups = list(store.root.glob('before-variable-preference-*.sqlite3'))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert 'update_variables' not in {row[1] for row in db.execute('PRAGMA table_info(sessions)')}
+    Store(store.root)
+    assert list(store.root.glob('before-variable-preference-*.sqlite3')) == backups
 
 
 async def test_options_save_clear_and_partial_updates_preserve_preference(story):
@@ -53,12 +74,25 @@ async def test_options_save_clear_and_partial_updates_preserve_preference(story)
     app = create_app(store.root)
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
         url = f"/api/sessions/{session['id']}/options"
-        saved = await client.put(url, json={'expected_revision': 0, 'turn_preference': '保持慢节奏。'})
+        saved = await client.put(url, json={'expected_revision': 0, 'turn_preference': '保持慢节奏。',
+                                           'persona': '旅人', 'persona_data': {'description': '远道而来'},
+                                           'policy': 'review'})
         assert saved.status_code == 200 and saved.json()['turn_preference'] == '保持慢节奏。'
-        partial = await client.put(url, json={'expected_revision': 1, 'persona': '旅人'})
+        partial = await client.put(url, json={'expected_revision': 1, 'update_variables': True})
         assert partial.status_code == 200 and partial.json()['turn_preference'] == '保持慢节奏。'
+        assert partial.json()['persona'] == '旅人'
+        assert partial.json()['persona_data'] == {'description': '远道而来'}
+        assert partial.json()['policy'] == 'review'
+        assert partial.json()['update_variables'] is True
+        opened = await client.get(f"/api/sessions/{session['id']}")
+        assert opened.json()['update_variables'] is True
+        other = store.new_session(SessionCreate(card_id=session['card']))
+        assert other['update_variables'] is False
         cleared = await client.put(url, json={'expected_revision': 2, 'turn_preference': ''})
         assert cleared.status_code == 200 and cleared.json()['turn_preference'] == ''
+        assert cleared.json()['update_variables'] is True
+        disabled = await client.put(url, json={'expected_revision': 3, 'update_variables': False})
+        assert disabled.status_code == 200 and disabled.json()['update_variables'] is False
 
 
 async def test_messages_preview_exports_full_writer_array_without_committing(story):

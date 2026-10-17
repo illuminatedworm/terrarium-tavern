@@ -58,6 +58,9 @@ class Store(MessageAdapters):
                     backup_path = root / f"before-plot-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
+                if "update_variables" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
+                    with closing(sqlite3.connect(root / f"before-variable-preference-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
                 if version[0] in {"1", "2"}:
                     backup_path = root / f"before-card-editor-v3-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
@@ -128,6 +131,8 @@ class Store(MessageAdapters):
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
             db.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version','2')")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "update_variables" not in columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN update_variables INTEGER NOT NULL DEFAULT 0")
             if "plot_enabled" not in columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN plot_enabled INTEGER NOT NULL DEFAULT 0")
             if "model_selection" not in columns:
@@ -617,7 +622,8 @@ class Store(MessageAdapters):
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
-            db.execute("UPDATE sessions SET plot_enabled=? WHERE id=?", (source["plot_enabled"], new_sid))
+            db.execute("UPDATE sessions SET plot_enabled=?,update_variables=? WHERE id=?",
+                       (source["plot_enabled"], source["update_variables"], new_sid))
             db.execute("UPDATE sessions SET channel_origin=?,context_strategy=?,compact_auto=? WHERE id=?",
                        (source["channel_origin"], source["context_strategy"], source["compact_auto"], new_sid))
             db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (source["model_selection"], new_sid))
@@ -684,6 +690,7 @@ class Store(MessageAdapters):
         settings = self.session_settings(result, require_origin=False)
         result["compact_auto"] = bool(result["compact_auto"])
         result["plot_enabled"] = bool(result["plot_enabled"])
+        result["update_variables"] = bool(result["update_variables"])
         from tavern.core.update_policy import normalize_policy
         result["policy"] = normalize_policy(result["policy"])
         result["policy_effective"] = result["policy"] or normalize_policy(settings.policy)
@@ -970,7 +977,7 @@ class Store(MessageAdapters):
 
             from tavern.core.update_policy import Policy
             fields["policy"] = TypeAdapter(Policy | None).validate_python(fields["policy"])
-        if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "title",
+        if not fields or not set(fields).issubset({"head", "persona", "policy", "recipe", "persona_data", "turn_preference", "update_variables", "title",
                                                   "cache_breakpoint_auto", "cache_breakpoint_message", "cache_breakpoint_follow", "compact_auto"}):
             raise ValueError("无效会话字段")
         if "title" in fields:
