@@ -19,6 +19,16 @@ def _files(root: Path):
             and p.resolve().is_relative_to(resolved)]
 
 
+def _debug_plan(store, db, turns):
+    from tavern.storage.request_debug import RequestDebugLog
+
+    protected = {turn["id"] for turn in turns if turn["protected"]}
+    protected.update(r[0] for r in db.execute("SELECT run FROM card_editor_progress"))
+    protected.update(r[0] for r in db.execute(
+        "SELECT id FROM advisor_runs WHERE progress IS NOT NULL OR status IN ('queued','running')"))
+    return RequestDebugLog(store.root, store.settings()).plan(protected)
+
+
 def _plan(store, db, now):
     settings = store.settings()
     rows = db.execute("""SELECT t.id,t.status,t.created,s.revision,
@@ -85,7 +95,8 @@ def _plan(store, db, now):
 
 def storage_report(store):
     with store.connection() as db:
-        report = _plan(store, db, time.time())[3]
+        turns, _, _, report = _plan(store, db, time.time())
+        report.update(_debug_plan(store, db, turns)[1])
         from tavern.advisor.storage import cleanup_plan
         report.update(cleanup_plan(db, store.settings(), time.time())[1])
     report["directories"] = {name: sum(p.stat().st_size for p in _files(store.root / name))
@@ -113,7 +124,10 @@ def cleanup(store, *, vacuum=False):
         db.execute("DELETE FROM context_operations WHERE status='completed' AND created<?", (time.time() - store.settings().log_retention_days * 86400,))
         from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
         prune_orphan_retrieval(db)
-        _, selected, cached, report = _plan(store, db, time.time())
+        turns, selected, cached, report = _plan(store, db, time.time())
+        debug_files, debug_report = _debug_plan(store, db, turns)
+        files.extend(debug_files)
+        report.update(debug_report)
         from tavern.advisor.storage import cleanup_plan
         advisor_remove, advisor_report = cleanup_plan(db, store.settings(), time.time())
         report.update(advisor_report)

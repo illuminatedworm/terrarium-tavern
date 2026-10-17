@@ -39,6 +39,10 @@ class _ObservedEvents(httpx.AsyncByteStream):
 
     async def __aiter__(self):
         async for event in stream_events(self.response):
+            if isinstance(event, dict) and ("error" in event or event.get("type") == "error"):
+                # Relay errors may omit Google's numeric code, which the SDK
+                # requires. Reject all error events before typed SDK parsing.
+                raise ValueError("Gemini 流返回错误，本回合未提交")
             self.operation.raw_event = event
             yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
 
@@ -47,8 +51,9 @@ class _ObservedEvents(httpx.AsyncByteStream):
 
 
 class _RuntimeHTTP(httpx.AsyncBaseTransport):
-    def __init__(self, http: httpx.AsyncClient):
+    def __init__(self, http: httpx.AsyncClient, debug=None):
         self.http = http
+        self.debug = debug
         self.operation: ContextVar[_Operation | None] = ContextVar("genai_operation", default=None)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -60,7 +65,8 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
             raise ValueError("模型列表超过 100 页，未更新本地列表")
         if operation and operation.capture:
             operation.capture(request)
-        response = await self.http.send(request, stream=True)
+        response = (await self.debug.send(self.http, request, stream=True) if self.debug is not None
+                    else await self.http.send(request, stream=True))
         if operation is not None:
             operation.responses.append(response)
             if response.status_code == 200 and request.url.path.endswith(":streamGenerateContent"):
@@ -72,9 +78,9 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
 
 
 class GenAITransport:
-    def __init__(self, base_url: str, api_path: str, key: str, http: httpx.AsyncClient):
+    def __init__(self, base_url: str, api_path: str, key: str, http: httpx.AsyncClient, *, debug=None):
         url = urlsplit(endpoint(base_url, "gemini", resource="models", api_path=api_path))
-        self.transport = _RuntimeHTTP(http)
+        self.transport = _RuntimeHTTP(http, debug)
         self.http = httpx.AsyncClient(transport=self.transport, trust_env=False)
         self.client = genai.Client(api_key=key, vertexai=False, http_options=types.HttpOptions(
             base_url=f"{url.scheme}://{url.netloc}", api_version=url.path.removesuffix("/models").strip("/"),

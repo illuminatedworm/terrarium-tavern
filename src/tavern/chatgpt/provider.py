@@ -119,7 +119,7 @@ class ChatGPTProvider(ModelTransport):
         request = self.http.build_request("POST", API_ROOT + "/responses", json=body,
                                           headers={"Authorization": "Bearer " + self.key})
         self._capture(messages, tools, body, diagnostic, str(request.url), request)
-        response = await self.http.send(request, stream=True, follow_redirects=False)
+        response = await self._failure_debug.send(self.http, request, stream=True, follow_redirects=False)
         self._response_headers = {key: response.headers[key] for key in ("x-request-id", "request-id") if key in response.headers}
         if response.status_code != 200:
             try:

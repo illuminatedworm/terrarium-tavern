@@ -51,6 +51,8 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 `shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.network` 设置页面，支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点使用各自请求。
 
+`shared.debug_failed_requests` 为严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次操作生效。开启后保留失败模型生成请求的原始 HTTP 证据，成功请求不落盘。`GET /api/debug/failed-requests?offset=0` 按时间倒序返回每页最多 100 条的 HTTP 信息及记录总数；`offset` 是从 0 开始的记录偏移条数，默认 0、下界包含 0，无固定上界，越过末尾返回空列表。`GET /api/debug/failed-requests/{UUID}` 下载对应 ZIP，不提供任意路径访问。记录格式、正文限额、脱敏及清理规则见[杂项设置](../guides/settings.md#杂项)。
+
 Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。

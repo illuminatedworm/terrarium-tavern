@@ -1,5 +1,6 @@
 """Shared transport selection reaches the wire without changing response contracts."""
 import json
+import zipfile
 
 import httpx
 import pytest
@@ -8,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
+from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
 from tests.backend.test_chatgpt_provider import configuration
@@ -185,3 +187,74 @@ async def test_non_stream_mode_returns_complete_response_without_incremental_cal
         result = await p.chat_complete_with_preview(MESSAGES, chunks.append)
         assert result.content == "OK"
         assert chunks == []
+
+
+async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_path, monkeypatch):
+    app = create_app(tmp_path)
+    store = app.state.store
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        editor = (await client.post("/api/settings/edit-sessions", json={})).json()
+        before = editor["settings"]
+        assert before["shared"]["debug_failed_requests"] is False
+        changed = await client.patch("/api/settings/shared", json={
+            "expected_revision": before["revisions"]["shared"], "edit_session": editor["id"],
+            "changes": {"debug_failed_requests": True}})
+        assert changed.status_code == 200, changed.text
+        for mode in ("full_agent", "half_agent"):
+            runtime = store.settings(mode)
+            for role in ("foreground", "background", "card_editor", "full_agent"):
+                assert runtime.for_role(role).debug_failed_requests
+                assert runtime.for_role(role)._data_root == tmp_path
+        cfg = config(debug_failed_requests=True, log_max_mib=1)
+        cfg._data_root = tmp_path
+        cfg.api_key = "private-key-for-failure-debug"
+        body = (b"gateway failure " + cfg.api_key.encode() + b"\n") * 10000
+        requests = []
+
+        def route(request):
+            requests.append(request)
+            if len(requests) == 2:
+                return httpx.Response(200, json=reply("chat_completions"))
+            return httpx.Response(502, content=body, headers={"set-cookie": "private-cookie", "x-echo": cfg.api_key})
+
+        log = RequestDebugLog(tmp_path, cfg)
+        async with provider(cfg, route) as transport:
+            with pytest.raises(httpx.HTTPStatusError):
+                await transport.chat_complete(MESSAGES)
+            records = log.records()
+            assert len(records) == 1
+            record = records[0]
+            assert record["response"]["status_code"] == 502
+            assert record["request"]["headers"]["authorization"] == "[REDACTED]"
+            assert record["response"]["headers"]["set-cookie"] == "[REDACTED]"
+            assert record["response"]["body"]["truncated"]
+            assert record["response"]["body"]["received_bytes"] == len(body)
+            assert record["response"]["body"]["limit_bytes"] == 256 * 1024
+            assert (await transport.chat_complete(MESSAGES)).content == "OK"
+            cfg.debug_failed_requests = False
+            with pytest.raises(httpx.HTTPStatusError):
+                await transport.chat_complete(MESSAGES)
+            assert len(log.records()) == 1  # Successful and disabled requests never persist.
+        listing = (await client.get("/api/debug/failed-requests")).json()
+        assert listing["total"] == 1 and listing["items"][0]["id"] == record["id"]
+        download = await client.get(f"/api/debug/failed-requests/{record['id']}")
+        assert download.status_code == 200 and download.content == log.path(record["id"]).read_bytes()
+        assert cfg.api_key.encode() not in download.content and b"private-cookie" not in download.content
+        with zipfile.ZipFile(log.path(record["id"])) as archive:
+            assert archive.read("request.bin") == requests[0].content
+            assert archive.read("response.bin") == body[:256 * 1024].replace(cfg.api_key.encode(), b"[REDACTED]")
+        assert (await client.get("/api/debug/failed-requests/invalid")).status_code == 422
+        undone = await client.post(f"/api/settings/edit-sessions/{editor['id']}/undo", json={
+            "page": "shared.misc", "expected_revision": changed.json()["revisions"]["shared"]})
+        assert undone.status_code == 200 and not undone.json()["shared"]["debug_failed_requests"]
+        assert runtime.debug_failed_requests  # Running operations keep their captured setting.
+        log.save({**record, "turn_id": "recoverable:tracker:0"}, b"request", b"response")
+        monkeypatch.setattr("tavern.storage.request_debug.time", lambda: record["created"] + 400 * 86400)
+        paths, report = log.plan({"recoverable"})
+        assert len(paths) == 1 and report["request_debug_protected_bytes"] > 0
+        log.cleanup({"recoverable"})
+        assert len(log.records()) == 1
+        storage = (await client.get("/api/storage")).json()
+        assert storage["request_debug_bytes"] > 0 and storage["request_debug_reclaimable_bytes"] > 0
+        await client.post("/api/storage/cleanup", json={})
+        assert not log.records()

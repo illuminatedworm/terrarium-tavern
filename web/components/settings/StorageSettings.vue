@@ -60,11 +60,17 @@ useTimedError(error);
     <div>
       <small>参谋 agent 详细记录</small><strong>{{ size(report.advisor_detail_bytes || 0) }}</strong>
     </div>
+    <div>
+      <small>失败请求原始数据</small><strong>{{ size(report.request_debug_bytes || 0) }}</strong>
+    </div>
     <p>
       按已保存设置可回收
       {{
         size(
-          report.reclaimable_bytes + report.reclaimable_cache_bytes + (report.advisor_reclaimable_bytes || 0),
+          report.reclaimable_bytes +
+            report.reclaimable_cache_bytes +
+            (report.advisor_reclaimable_bytes || 0) +
+            (report.request_debug_reclaimable_bytes || 0),
         )
       }}，涉及 {{ report.turns_to_compact }} 个回合。受保护记录 {{ size(report.protected_bytes) }} · 模型权重
       {{ size(report.directories.models) }}（单独管理）

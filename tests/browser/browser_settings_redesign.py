@@ -2,6 +2,7 @@
 import asyncio
 import json
 import socket
+import subprocess
 import tempfile
 from pathlib import Path
 from threading import Thread
@@ -11,10 +12,11 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import ContextBlock
+from tavern.storage.request_debug import RequestDebugLog
 from tests.browser.select_menu import choose_model
 
 
-async def main():
+async def main(*, misc_only=False):
     output = Path('.cache/settings-redesign')
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='tavern-settings-browser-') as root:
@@ -27,24 +29,51 @@ async def main():
         # The picker cannot choose an empty model, so give the round trip a real original.
         settings.full_agent.model.model = 'original-full-model'
         app.state.store.save_settings(settings)
+        if misc_only:
+            RequestDebugLog(Path(root), app.state.store.settings()).save({
+                "model": "debug-fixture", "purpose": "full_agent", "error_type": "JSONDecodeError",
+                "request": {"body": {"truncated": False}},
+                "response": {"status_code": 200, "body": {"truncated": False, "complete": False}},
+            }, b'{"input":"isolated fixture"}', b'data: {"partial":true}\nevent: error\n')
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
         address = f'http://127.0.0.1:{sock.getsockname()[1]}'
         server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
         thread = Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
         thread.start()
+        vite = None
         try:
             for _ in range(100):
                 if server.started:
                     break
                 await asyncio.sleep(.05)
+            frontend = address
+            if misc_only:
+                # Serve current Vue sources, avoiding a production build and
+                # the user's running backend. This process belongs to this test.
+                source = """
+import { createServer } from 'vite';
+const target = process.argv[1];
+const proxy = { target, changeOrigin: true,
+  configure: p => p.on('proxyReq', r => r.removeHeader('origin')) };
+const server = await createServer({ logLevel: 'silent', server: {
+  host: '127.0.0.1', port: 0, proxy: { '/api': proxy, '/static': proxy } } });
+await server.listen();
+console.log('http://127.0.0.1:' + server.httpServer.address().port);
+"""
+                vite = await asyncio.create_subprocess_exec(
+                    'node', '--input-type=module', '-e', source, address,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                frontend = (await asyncio.wait_for(vite.stdout.readline(), 15)).decode().strip()
+                assert frontend.startswith('http://127.0.0.1:'), frontend
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch()
                 try:
                     page = await browser.new_page(viewport={'width':1920,'height':1080})
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
-                    await page.goto(address)
+                    await page.goto(frontend)
                     await page.get_by_role('button', name='设置', exact=True).click()
                     dialog = page.get_by_role('dialog', name='设置', exact=True)
                     await page.get_by_role('button', name='full agent 模型与生成', exact=True).wait_for()
@@ -66,6 +95,28 @@ async def main():
                     assert (await read())['shared']['send_shortcut'] == 'ctrl_enter'
                     await page.get_by_role('button', name='撤回本页修改', exact=True).click()
                     await expect(shortcut).to_have_value('enter')
+                    debug = page.get_by_role('checkbox', name='保留失败请求原始数据（Debug）', exact=False)
+                    await expect(debug).not_to_be_checked()
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await debug.check()
+                    await saved()
+                    assert (await read())['shared']['debug_failed_requests'] is True
+                    await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                    await expect(debug).not_to_be_checked()
+                    if misc_only:
+                        record = page.locator('.failed-request-record')
+                        await expect(record).to_have_count(1)
+                        await record.locator('summary').first.click()
+                        await expect(record).to_contain_text('响应未读取至结束')
+                        async with page.expect_download() as download:
+                            await record.get_by_role('link', name='下载原始数据', exact=False).click()
+                        await (await download.value).save_as(output / 'failed-request.zip')
+                        assert await dialog.evaluate('e=>e.getBoundingClientRect().height') == initial_height
+                        assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight')
+                        await page.screenshot(path=str(output / 'misc-debug.png'))
+                        assert not errors, errors
+                        print('Misc debug default, autosave, undo, raw download and internal scrolling passed.')
+                        return
                     await select('full agent 模型与生成')
                     # Acknowledged edits may not overwrite a newer input made in flight.
                     async def delayed(route):
@@ -299,6 +350,9 @@ async def main():
                 finally:
                     await browser.close()
         finally:
+            if vite is not None and vite.returncode is None:
+                vite.terminate()
+                await vite.wait()
             server.should_exit = True
             await asyncio.to_thread(thread.join, 10)
 

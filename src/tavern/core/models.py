@@ -96,6 +96,7 @@ class Settings(BaseModel):
     _settings_mode: str = PrivateAttr(default="half_agent")
     _settings_channel: str = PrivateAttr(default="standard")
     _adapter_loader: Any = PrivateAttr(default=None)
+    _data_root: Any = PrivateAttr(default=None)
     _adapter_lane: str = PrivateAttr(default="foreground")
     _chatgpt: Any = PrivateAttr(default=None)
     _auth_generation: str = PrivateAttr(default="")
@@ -120,6 +121,7 @@ class Settings(BaseModel):
     network: Network = Field(default_factory=Network)
     web: WebConfig = Field(default_factory=WebConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
+    debug_failed_requests: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
     def for_role(self, role="foreground"):

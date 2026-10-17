@@ -25,6 +25,7 @@ import ModelProfileEditor from './ModelProfileEditor.vue';
 import ProviderSettings from './ProviderSettings.vue';
 import LocalResourceSettings from './LocalResourceSettings.vue';
 import StorageSettings from './StorageSettings.vue';
+import FailedRequestLogs from './FailedRequestLogs.vue';
 import DataTransferSettings from './DataTransferSettings.vue';
 import type { TransferResult } from '../../lib/dataTransfer';
 import SavedText from './SavedText.vue';
@@ -640,7 +641,10 @@ onMounted(async () => {
           />
           <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
-          <SettingsFields v-else-if="page.key === 'misc'" :value="draft.shared" :fields="miscFields" />
+          <template v-else-if="page.key === 'misc'">
+            <SettingsFields :value="draft.shared" :fields="miscFields" />
+            <FailedRequestLogs />
+          </template>
           <DataTransferSettings
             v-else-if="page.key === 'data_transfer'"
             :flush="editor.flush"

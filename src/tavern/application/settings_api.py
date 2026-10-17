@@ -3,7 +3,10 @@ import time
 import uuid
 from copy import deepcopy
 from typing import Literal
+from uuid import UUID
 
+from fastapi import Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from tavern.core.channels import profile_key
@@ -91,7 +94,7 @@ def page_catalog():
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
                               ("data_transfer", "数据导入导出", []),
-                              ("misc", "杂项", ["send_shortcut"])]:
+                              ("misc", "杂项", ["send_shortcut", "debug_failed_requests"])]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
     return result
 
@@ -160,6 +163,22 @@ def register_settings_routes(app, store):
             raise Conflict("设置编辑已过期，请关闭并重新打开设置")
         snapshots[token]["expires"] = time.monotonic() + 7200
         return snapshots[token]
+
+    @app.get("/api/debug/failed-requests")
+    async def failed_requests(offset: int = Query(default=0, ge=0)):
+        from tavern.storage.request_debug import BODY_LIMIT, MAX_RECORDS, RequestDebugLog
+        log = RequestDebugLog(store.root, store.settings())
+        return {"items": log.records(offset), "total": len(log.entries()),
+                "body_limit_bytes": BODY_LIMIT, "display_limit": MAX_RECORDS}
+
+    @app.get("/api/debug/failed-requests/{identity}")
+    async def download_failed_request(identity: UUID):
+        from tavern.storage.request_debug import RequestDebugLog
+        path = RequestDebugLog(store.root, store.settings()).path(identity.hex)
+        if not path.is_file():
+            raise KeyError("失败请求记录不存在或已清理")
+        return FileResponse(path, media_type="application/zip", filename=f"failed-request-{identity.hex}.zip",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/settings")
     async def read_settings():

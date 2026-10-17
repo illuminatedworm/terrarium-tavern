@@ -2,6 +2,12 @@ import type { SettingField } from '../components/settings/SettingsFields.vue';
 import { sendShortcutOptions } from './composerShortcut';
 export const miscFields: SettingField[] = [
   {
+    path: 'debug_failed_requests',
+    label: '保留失败请求原始数据（Debug）',
+    type: 'checkbox',
+    help: '默认关闭，从下一次操作生效。开启后仅保存失败的模型生成请求和已收到的原始响应，认证凭据脱敏。请求和响应单侧最多保留 8 MiB，并受详细日志容量限制；超限或未接收完整会明确标记。记录可能包含角色卡和剧情，可在下方下载。关闭后已有记录继续按日志保留设置清理。',
+  },
+  {
     path: 'send_shortcut',
     label: '输入时发送和换行',
     options: sendShortcutOptions,

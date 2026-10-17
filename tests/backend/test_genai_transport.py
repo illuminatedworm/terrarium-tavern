@@ -1,8 +1,10 @@
 """Exercise the real Google SDK against isolated HTTP transports, not SDK stubs."""
 import asyncio
 import copy
+import gzip
 import hashlib
 import json
+import zipfile
 from contextlib import aclosing
 
 import httpx
@@ -11,6 +13,7 @@ import pytest
 from tavern.core.cache_policy import CacheSettings, effective_retention, preset
 from tavern.core.gemini_capabilities import gemini_controls
 from tavern.scripting.genai_transport import GenAITransport
+from tavern.storage.request_debug import RequestDebugLog
 from tests.backend.test_unified_cache import compiled, config, model_messages, provider, reply
 
 
@@ -172,6 +175,50 @@ async def test_sdk_stream_close_and_continuation_do_not_start_extra_requests():
                 async for _ in chunks:
                     pass
     assert len(requests) == 1
+
+
+async def test_sdk_reports_stream_error_without_sse_separator_and_keeps_partial_reply_uncommitted(tmp_path):
+    partial = {"candidates": [{"content": {"role": "model", "parts": [{"text": "未完成正文"}]}}]}
+    error = {"error": {"type": "insufficient_quota", "message": "本次可用额度已耗尽，生成已停止"}}
+    wire = ("data: " + json.dumps(partial) + "\n"
+            "event: error\ndata: " + json.dumps(error) + "\n\n")
+    compressed = gzip.compress(wire.encode(), mtime=0)
+    requests, previews = [], []
+
+    class RawStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield compressed[:17]
+            yield compressed[17:]
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = RawStream()
+
+    def route(request):
+        requests.append(request)
+        return httpx.Response(200, stream=stream, headers={
+            "content-type": "text/event-stream", "content-encoding": "gzip"})
+
+    cfg = config("gemini", model_request_mode="stream", debug_failed_requests=True)
+    cfg._data_root = tmp_path
+    async with provider(cfg, route) as transport:
+        with pytest.raises(ValueError, match="Gemini 流返回错误，本回合未提交"):
+            await transport.chat_complete_with_preview([{"role": "user", "content": "继续"}], previews.append)
+        assert previews == ["未完成正文"]
+        assert not transport.usage_history and not transport.last_response_record
+        assert transport._completed_response is None
+    assert len(requests) == 1
+    assert stream.closed
+    records = RequestDebugLog(tmp_path, cfg).records()
+    assert len(records) == 1 and not records[0]["response"]["body"]["complete"]
+    assert records[0]["response"]["body"]["representation"] == "transport"
+    assert records[0]["request"]["headers"]["x-goog-api-key"] == "[REDACTED]"
+    with zipfile.ZipFile(RequestDebugLog(tmp_path, cfg).path(records[0]["id"])) as archive:
+        assert archive.read("response.bin") == compressed
+        assert archive.read("request.bin") == requests[0].content
 
 
 async def test_sdk_model_catalog_pagination_uses_configured_http_and_ignores_cloud_env(monkeypatch):

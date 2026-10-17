@@ -28,6 +28,7 @@ from tavern.scripting.cloud_cache import (
     gemini_object,
     invalidate_object,
 )
+from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import attachment, prepare_messages
@@ -55,6 +56,7 @@ class ModelTransport(BaseLLMProvider):
         self._client = (None if settings.api_mode == "gemini" else
                         AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=self._http))
         self._genai = None
+        self._failure_debug = FailureDebug()
         self.capability_key = capability_key(settings, key)
         self._last_usage, self._last_assistant_extra_fields = {}, {}
         self.usage_history = []
@@ -75,8 +77,22 @@ class ModelTransport(BaseLLMProvider):
     @property
     def genai(self):
         if self._genai is None:
-            self._genai = GenAITransport(self.settings.base_url, self.settings.api_path, self.key, self.http)
+            self._genai = GenAITransport(self.settings.base_url, self.settings.api_path, self.key, self.http,
+                                        debug=self._failure_debug)
         return self._genai
+
+    async def chat_complete(self, messages, **kwargs):
+        with self._failure_debug.operation(self) as capture:
+            result = await super().chat_complete(messages, **kwargs)
+            if capture is not None and result.finish_reason in ("length", "content_filter"):
+                capture.error_type = "IncompleteResponse"
+            return result
+
+    async def chat(self, messages, **kwargs):
+        with self._failure_debug.operation(self):
+            async with aclosing(super().chat(messages, **kwargs)) as chunks:
+                async for chunk in chunks:
+                    yield chunk
 
     async def _recover_from_overflow(self, current, state):
         return None
@@ -398,7 +414,7 @@ class ModelTransport(BaseLLMProvider):
 
             request.extensions["trace"] = trace
             self._capture(messages, tools, body, diagnostic, url, request)
-            response = await self.http.send(request, stream=stream)
+            response = await self._failure_debug.send(self.http, request, stream=stream)
             # Custom transports may not expose HTTPcore tracing. Receiving a
             # response still proves dispatch, regardless of status or parsing.
             remember_sent()

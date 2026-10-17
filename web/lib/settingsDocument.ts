@@ -97,6 +97,7 @@ export interface SettingsDocument {
     web: WebSettings;
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;
+    debug_failed_requests: boolean;
     advisor: {
       model: ModelProfile;
       official_model: ModelProfile | null;

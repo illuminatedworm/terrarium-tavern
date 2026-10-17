@@ -17,6 +17,8 @@
 
 `gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 Roleplay Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
 
+流式解析兼容中转在完整 JSON 数据与下一个命名事件之间遗漏分隔空行的响应，保留正常多行 JSON。Gemini 流中的错误事件统一作为请求失败处理，原始响应可通过可选的失败请求 Debug 记录查看；即使 HTTP 为 200 或已收到部分正文，后续错误仍使整轮失败，不提交未完成内容。
+
 请求使用提供商的密钥；缺少密钥时可从 `TAVERN_API_KEY` 读取。本地免密端点也需要非空占位值，例如 `local`。HTTP 客户端使用应用内 API 代理配置，不继承 shell 的代理环境变量。
 
 ## ChatGPT 订阅模式

@@ -435,6 +435,7 @@ class Store(MessageAdapters):
                        and provider.chatgpt_account_id}
         for config in (settings, settings._full_runtime):
             if config is not None:
+                config._data_root = self.root
                 config._chatgpt = self.chatgpt
                 config._auth_generations = generations.copy()
                 if config.auth_mode == "chatgpt_subscription":
