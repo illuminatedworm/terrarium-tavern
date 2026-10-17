@@ -133,13 +133,12 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     ledger = ContextLedger(settings, items, tools, document, snapshot, records, input_id,
                            {mid: fingerprint(text) for mid, text in history_text.items()})
 
-    def replay(message, *, current_turn=False):
+    def replay(message):
         source = message.get("source")
         if complete_source and source in ("handoff", "context_budget", "context_policy", "context_status", "context_warning"):
             return
-        # Turn requirements must not leak into later turns.
-        if source in turn_instructions and (not current_turn or not turn_instructions[source]):
-            return
+        # Sent turn requirements stay in place. Their effective value is updated
+        # or revoked below; filtering history would break the shared prefix.
         item = ledger.replay(message)
         if item is not None:
             items.append(item)
@@ -180,7 +179,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     anchored(input_id)
     add("user", user_input, "input", message_id=input_id)
     for message in continuation:
-        replay(message, current_turn=True)
+        replay(message)
     update("turn_variable_instruction",
            "本轮须调用 patch_state 更新 MVU 变量一次，无变化提交 []，再回复正文；已调用成功则不要重复。" if require_state_patch else "",
            value={"required": True, "input_id": input_id} if require_state_patch else False)

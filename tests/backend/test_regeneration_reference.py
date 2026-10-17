@@ -92,8 +92,15 @@ async def test_reference_is_opt_in_complete_and_only_for_this_turn(story, includ
         next_model = model_for(current, "following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]
-        assert "REFERENCE_END_MUST_SURVIVE" not in json.dumps(requests(next_model))
-        assert "rewrite_reference" not in json.dumps(requests(next_model))
+        if session["agent_mode"] == "full_agent":
+            following = json.dumps(requests(next_model), ensure_ascii=False)
+            assert ("REFERENCE_END_MUST_SURVIVE" in following) is (include is True)
+            assert ("<rewrite_reference>" in following) is (include is True)
+            assert ("此前的待重写回复参考已失效" in following) is (include is True)
+            assert "此前的重生成要求已撤销。" in following
+        else:
+            assert "REFERENCE_END_MUST_SURVIVE" not in json.dumps(requests(next_model))
+            assert "rewrite_reference" not in json.dumps(requests(next_model))
     finally:
         await service.close()
 
@@ -131,7 +138,7 @@ async def test_repeated_rewrite_references_current_candidate_and_restores_same_b
 
 
 @pytest.mark.parametrize("story", ["full_agent"], indirect=True)
-async def test_full_rollover_retains_one_reference_without_carrying_it_to_next_turn(story):
+async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(story):
     store, session, text = story
     service = service_for(store, session)
     model = Model(("new_context", {"handoff": "本轮新交接", "keep_recent": 0}),
@@ -146,7 +153,9 @@ async def test_full_rollover_retains_one_reference_without_carrying_it_to_next_t
         next_model = Model("following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]
-        assert "rewrite_reference" not in json.dumps(requests(next_model))
+        following = requests(next_model)[0]
+        assert sum(text in m.get("content", "") for m in following) == 1
+        assert "此前的待重写回复参考已失效" in json.dumps(following, ensure_ascii=False)
     finally:
         await service.close()
 
@@ -173,6 +182,8 @@ async def test_full_retry_keeps_reference_and_changing_choice_requires_restart(s
         next_model = Model("following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]
-        assert "REFERENCE_END_MUST_SURVIVE" not in json.dumps(requests(next_model))
+        following = requests(next_model)[0]
+        assert sum(text in m.get("content", "") for m in following) == 1
+        assert "此前的待重写回复参考已失效" in json.dumps(following, ensure_ascii=False)
     finally:
         await service.close()

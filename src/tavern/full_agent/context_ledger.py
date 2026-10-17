@@ -13,6 +13,7 @@ CLEAR_TEXT = {
     "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
     "regenerate_instruction": "此前的重生成要求已撤销。",
+    "regenerate_reference": "此前的待重写回复参考已失效；不再作为本轮重写依据，也不作为已发生剧情或当前状态。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",
     "context_warning": "此前的 handoff 过时提醒已解除。",
     "message_edit_notice": "本轮原文编辑提醒已处理。",

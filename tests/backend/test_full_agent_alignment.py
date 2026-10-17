@@ -239,6 +239,54 @@ async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(
         await service.close()
 
 
+async def test_turn_requirements_replay_in_place_and_append_revocations():
+    from tavern.full_agent.state import new_state
+
+    settings = config("gemini", "cloud")
+    settings.model = "gemini-3.8-flash-tiered"
+    session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
+    snapshot = {"state": {}, "full_agent": new_state()}
+    document = {"name": "fixture"}
+    first = compile_window(document, session, [], snapshot, "First input", settings, [],
+        input_id="u1", require_state_patch=True, instruction="只重写这一轮。", regenerate_reply="完整待重写参考。")
+    records = first["context_additions"] + [
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_read", "type": "function",
+            "function": {"name": "read_state", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_read", "content": '{"hp":8}'},
+    ]
+    sent = compile_window(document, session, [], snapshot, "First input", settings, [],
+        input_id="u1", continuation=records, require_state_patch=True,
+        instruction="只重写这一轮。", regenerate_reply="完整待重写参考。")
+    records += sent["context_additions"]
+    history = [{"id": "u1", "role": "user", "raw": "First input"},
+               {"id": "a1", "role": "assistant", "raw": "First narrative"}]
+    trace = [{"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
+             for m in records]
+    second = compile_window(document, session, history, snapshot, "Second input", settings, [],
+        input_id="u2", trace=trace, require_state_patch=True)
+    assert second["context_ledger"]["rebuild_reason"] is None
+    assert second["messages"][:len(sent["messages"])] == sent["messages"]
+    assert [m["content"] for m in second["runtime_trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：False。"]
+    assert {m["source"]: m["content"] for m in second["context_additions"]
+            if m["source"].startswith("regenerate_")} == {
+        "regenerate_instruction": "此前的重生成要求已撤销。",
+        "regenerate_reference": "此前的待重写回复参考已失效；不再作为本轮重写依据，也不作为已发生剧情或当前状态。",
+    }
+    again = compile_window(document, session, history, snapshot, "Second input", settings, [],
+        input_id="u2", trace=trace, continuation=second["context_additions"], require_state_patch=True)
+    assert again["messages"] == second["messages"]
+    assert again["context_additions"] == []
+    provider = transport(settings, lambda _: pytest.fail("Context compilation must not call the model"))
+    try:
+        before, after = provider._request(sent["messages"]), provider._request(second["messages"])
+        assert after["systemInstruction"] == before["systemInstruction"]
+        assert after["contents"][:len(before["contents"])] == before["contents"]
+        assert "完整待重写参考。" in json.dumps(after, ensure_ascii=False)
+        assert "此前的待重写回复参考已失效" in json.dumps(after, ensure_ascii=False)
+    finally:
+        await provider.close()
+
+
 async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
     store, service, session = game(tmp_path)
     model = Model(("read_state", {}),
