@@ -2,6 +2,7 @@
 import copy
 import json
 
+from tavern.core.message_adapter import type_definition
 from tavern.scripting.image_content import anthropic_content, gemini_content, response_content
 from tavern.scripting.native_response import native_items
 
@@ -180,6 +181,14 @@ def native_messages(messages, api, marker=None):
             if marker and message.get("_cache_breakpoint") and parts:
                 parts[-1][marker["field"]] = copy.deepcopy(marker["value"])
             if parts:
+                if role not in ("user", "assistant", "model"):
+                    name = message.get("message_type")
+                    label = type_definition(name).label if name else "消息"
+                    title = label + " · " + message["title"] if message.get("title") else label
+                    raise ValueError(f"Google GenAI 新一轮消息中的「{title}」"
+                                     f"使用了不受支持的 role={role}；"
+                                     "正文仅支持 user / model（assistant）。"
+                                     "请在消息适配中调整该类型的角色；system 规则须位于开头的连续系统区。")
                 if consecutive_tools:
                     body[-1]["parts"].extend(parts)
                 else:

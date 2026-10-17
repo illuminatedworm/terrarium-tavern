@@ -30,6 +30,7 @@ const busy = ref(false);
 const fetching = ref(false);
 const feedback = ref('');
 const cacheValid = ref(true);
+const adapterEditor = ref<InstanceType<typeof MessageAdapterEditor>>();
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
 const gemini = computed(() => geminiControls(props.profile.api_mode, props.profile.model));
@@ -196,7 +197,12 @@ async function action(check: boolean) {
           />
         </div>
         <label v-if="!subscription"
-          >接口方式<select v-model="profile.api_mode" aria-label="接口方式" :disabled="busy">
+          >接口方式<select
+            v-model="profile.api_mode"
+            aria-label="接口方式"
+            :disabled="busy"
+            @change="adapterEditor?.resetRoles(($event.target as HTMLSelectElement).value)"
+          >
             <option value="chat_completions">Chat Completions</option>
             <option value="responses">Responses</option>
             <option value="anthropic">Anthropic Messages</option>
@@ -273,6 +279,7 @@ async function action(check: boolean) {
       <summary>消息适配：发送角色与标签包裹</summary>
       <p class="muted">这里只影响新建的游玩或制卡对话。已有对话在自己的消息适配设置中修改。</p>
       <MessageAdapterEditor
+        ref="adapterEditor"
         :model-value="profile.message_adapter"
         :api-mode="subscription ? 'responses' : profile.api_mode"
         :lane="role"

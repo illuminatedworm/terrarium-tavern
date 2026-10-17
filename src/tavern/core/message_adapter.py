@@ -38,15 +38,15 @@ TYPES = {item.id: item for item in (
     MessageType("user", "用户输入", role="user"),
     MessageType("assistant", "模型回复", role="assistant"),
     MessageType("tool", "工具结果", role="tool"),
-    MessageType("character", "合并角色资料"),
-    *[MessageType("card_" + field, label, "card_" + field) for field, label in (
+    MessageType("character", "合并角色资料", configurable=True),
+    *[MessageType("card_" + field, label, "card_" + field, True) for field, label in (
         ("system_prompt", "角色系统要求"), ("description", "角色描述"),
         ("personality", "角色性格"), ("scenario", "角色场景"), ("mes_example", "对话示例"))],
-    MessageType("persona", "用户角色资料", "user_character"),
-    MessageType("lore_constant", "常驻世界书", "lorebook"),
+    MessageType("persona", "用户角色资料", "user_character", True),
+    MessageType("lore_constant", "常驻世界书", "lorebook", True),
     MessageType("lore_injected", "中途／可变世界书", "lorebook", True, True),
-    MessageType("session_preference", "对话创作偏好", "tavern_preference"),
-    MessageType("retrieval_protocol", "检索输出协议", "tavern_output_protocol"),
+    MessageType("session_preference", "对话创作偏好", "tavern_preference", True),
+    MessageType("retrieval_protocol", "检索输出协议", "tavern_output_protocol", True),
     MessageType("author_note", "作者注", "author_note", True, True),
     MessageType("post", "角色后置要求", "card_post_history_instructions", True, True),
     MessageType("memory", "分类记忆", "tavern_memory", True, True),
@@ -152,13 +152,14 @@ def default_rule(name, api, lane="foreground"):
     role = definition.role
     if name == "card_mes_example" and lane == "foreground":
         role = "assistant"
-    if lane != "full_agent" and definition.configurable and role in ("system", "developer") and api in ("anthropic", "gemini"):
-        role = "user"
+    if definition.configurable:
+        role = "user" if api == "gemini" else "system"
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"
     base = name.split(":")[1] if name.startswith("compat:") else name
-    wrapped = {"author_note", "post", "memory", "handoff", "note_list", "plot", "state", "mvu_rules", "lore_injected"}
-    wrap = bool(definition.tag) and (not definition.configurable or base in wrapped
+    wrapped = {"author_note", "post", "memory", "handoff", "note_list", "plot", "state", "mvu_rules", "lore_injected",
+               "persona", "lore_constant", "session_preference", "retrieval_protocol"}
+    wrap = bool(definition.tag) and (not definition.configurable or base in wrapped or base.startswith("card_")
                                     or api in ("anthropic", "gemini") and definition.role in ("system", "developer"))
     return {"role": role, "wrap": wrap}
 
@@ -171,7 +172,12 @@ def rule_for(name, config, api, lane="foreground"):
 
 def catalog(lane="foreground", extra=()):
     names = [name for name, item in TYPES.items() if lane in item.scopes]
-    names.extend(name for name in extra if name not in names)
+    # Runtime sources (worldbook entries and script injections included) can
+    # retain any supported source role. Publish the same finite compatibility
+    # vocabulary accepted by type_definition, rather than only recipe sightings.
+    compatible = [f"compat:{name}:{role}" for name in names for role in ROLES
+                  if type_definition(f"compat:{name}:{role}").configurable]
+    names = list(dict.fromkeys([*names, *compatible, *extra]))
     return [{"id": name, "label": type_definition(name).label, "tag": type_definition(name).tag,
              "configurable": type_definition(name).configurable, "appendable": type_definition(name).appendable,
              "defaults": {api: default_rule(name, api, lane) for api in APIS}} for name in names]
@@ -302,17 +308,15 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
     if managed:
         pairs[:boundary] = sorted(pairs[:boundary], key=lambda pair: (rank(pair), pair[0].get("runtime_order", 0)))
     else:
-        append_seen, system_ended = False, False
-        for _, item in pairs[:boundary]:
-            definition = type_definition(item["message_type"])
-            if definition.appendable:
-                append_seen = True
-            elif append_seen and item["role"] in ("system", "developer"):
-                diagnostics.append("可追加消息类型位于头部中间，后续 system 可能成为中途消息。")
-            if item["role"] not in ("system", "developer"):
-                system_ended = True
-            elif system_ended:
-                diagnostics.append("当前类型映射打断了头部 system 的连续性。")
+        # Stable partition is the minimum crossing removal needed for a single
+        # system prefix. Do not re-sort by original runtime_order: the canonical
+        # result is replayed, so projecting it again must leave the prefix intact.
+        header = pairs[:boundary]
+        ordered = sorted(header, key=lambda pair: pair[1]["role"] not in ("system", "developer"))
+        if ordered != header:
+            pairs[:boundary] = ordered
+            diagnostics.append("已按最小位移保持头部 system 连续：非系统资料后移，各组相对顺序与正文位置保持不变。"
+                               "包括 Google GenAI 在内的部分 API 明确不支持中途 system 消息。")
     return [item for _, item in pairs], [copy.deepcopy(raw) for raw, _ in pairs], list(dict.fromkeys(diagnostics))
 
 
@@ -328,7 +332,7 @@ def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=
     adapted, ordered, warnings = adapt_messages(canonical, settings, snapshot, managed=managed)
     context["runtime_trace"] = ordered
     context["runtime_messages"] = [{k: v for k, v in row.items() if k in WIRE_FIELDS or k in
-        {"message_type", "runtime_content", "runtime_phase", "runtime_order", "runtime_parts"}} for row in ordered]
+        {"message_type", "runtime_content", "runtime_phase", "runtime_order", "runtime_parts", "title"}} for row in ordered]
     context["messages"] = [{k: v for k, v in row.items() if k in WIRE_FIELDS} for row in adapted]
     context["trace"] = [{**row, "position": i, "estimated_tokens": message_tokens(row, settings),
                          "content_tokens": count_text(row.get("content", ""), settings)} for i, row in enumerate(adapted)]

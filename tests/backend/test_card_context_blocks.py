@@ -92,6 +92,7 @@ def test_depth_positions_use_custom_input_ids_and_preserve_lore_anchor():
     assert [m["source"] for m in out["trace"]] == [
         "desc", "history", "status", "lore:l", "request"]
     assert next(m for m in out["trace"] if m["source"] == "status")["context_source"] == "state"
+    assert all(m["runtime_phase"] == "body" for m in out["trace"])
 
 
 def test_reordering_trailing_frames_rebuilds_in_the_new_order():

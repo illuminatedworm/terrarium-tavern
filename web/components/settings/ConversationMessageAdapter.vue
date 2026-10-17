@@ -11,6 +11,7 @@ const error = ref(''),
   notice = ref(''),
   saving = ref(false);
 const lane = computed(() => state.value?.lanes.find((item) => item.id === laneId.value));
+const adapterEditor = ref<InstanceType<typeof MessageAdapterEditor>>();
 let generation = 0;
 async function load() {
   const token = ++generation;
@@ -60,7 +61,10 @@ async function save() {
             <option v-for="item in state.lanes" :key="item.id" :value="item.id">{{ item.label }}</option>
           </select></label
         ><label
-          >接口协议<select v-model="protocol">
+          >接口协议<select
+            v-model="protocol"
+            @change="adapterEditor?.resetRoles(($event.target as HTMLSelectElement).value)"
+          >
             <option v-for="item in adapterApis" :key="item.value" :value="item.value">
               {{ item.label }}
             </option>
@@ -68,6 +72,7 @@ async function save() {
         >
       </div>
       <MessageAdapterEditor
+        ref="adapterEditor"
         v-model="state.config[lane.id]"
         :lane="lane.id"
         :api-mode="protocol"

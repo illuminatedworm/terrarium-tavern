@@ -560,6 +560,7 @@ def compile_context(
                 "context_source": context_source,
                 "lore_ids": lore_ids,
                 "insertion_depth": depth,
+                "runtime_phase": "body",
                 "priority": priority,
                 "required": required,
             },
@@ -630,6 +631,7 @@ def compile_context(
                 "role": role,
                 "content": expand(injection.get("content", "")),
                 "source": "inject",
+                "runtime_phase": "body",
                 "priority": 80,
                 "required": False,
             },
@@ -657,6 +659,7 @@ def compile_context(
                 "role": "system", "content": wrap_lorebook(record["content"]), "title": record["title"],
                 "source": "lore:" + record["id"], "lore_ids": [record["id"]],
                 "anchor_id": record["anchor_id"], "priority": 60, "required": record["id"] in retained_ids,
+                "runtime_phase": "body",
                 "archived_lore": (record["anchor_id"], record["id"]) in retired,
                 "current_lore": (record["anchor_id"], record["id"]) not in existing_lore_keys,
             })

@@ -43,3 +43,15 @@ export function updateAdapterRule(
   next.mappings[api][type.id] = { ...adapterRule(config, api, type), ...patch };
   return next;
 }
+export function resetAdapterRoles(
+  config: MessageAdapterConfig | undefined,
+  api: string,
+  types: MessageTypeDefinition[],
+): MessageAdapterConfig {
+  const next: MessageAdapterConfig = JSON.parse(JSON.stringify(config || { version: 1, mappings: {} }));
+  const rules = next.mappings[api];
+  for (const type of types) {
+    if (type.configurable && rules?.[type.id]) rules[type.id].role = type.defaults[api].role;
+  }
+  return next;
+}

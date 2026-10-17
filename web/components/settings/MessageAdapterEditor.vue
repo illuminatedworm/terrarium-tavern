@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import {
   adapterRule,
+  resetAdapterRoles,
   updateAdapterRule,
   type MessageAdapterConfig,
   type MessageTypeDefinition,
@@ -17,15 +18,18 @@ const emit = defineEmits<{ 'update:modelValue': [value: MessageAdapterConfig] }>
 const loaded = ref<MessageTypeDefinition[]>([]),
   error = ref('');
 const search = ref(''),
-  showFixed = ref(false);
+  showFixed = ref(false),
+  showCompatible = ref(false);
 let generation = 0;
+let typesRequest: Promise<MessageTypeDefinition[]> = Promise.resolve([]);
 watch(
   () => [props.lane, props.types],
   async () => {
     const token = ++generation;
     if (props.types) return;
     try {
-      const result = await api(`/message-adapter/types?lane=${encodeURIComponent(props.lane)}`);
+      typesRequest = api(`/message-adapter/types?lane=${encodeURIComponent(props.lane)}`);
+      const result = await typesRequest;
       if (token === generation) {
         loaded.value = result;
         error.value = '';
@@ -37,10 +41,19 @@ watch(
   { immediate: true },
 );
 const types = computed(() =>
-  (props.types || loaded.value).filter(
-    (type) =>
-      (showFixed.value || type.configurable) && type.label.toLowerCase().includes(search.value.toLowerCase()),
-  ),
+  (props.types || loaded.value)
+    .filter(
+      (type) =>
+        (showFixed.value || type.configurable) &&
+        type.label.toLowerCase().includes(search.value.toLowerCase()),
+    )
+    .filter(
+      (type) =>
+        !type.id.startsWith('compat:') ||
+        showCompatible.value ||
+        !!search.value ||
+        Object.values(props.modelValue?.mappings || {}).some((rules) => !!rules[type.id]),
+    ),
 );
 const rule = (type: MessageTypeDefinition) => adapterRule(props.modelValue, props.apiMode, type);
 function update(type: MessageTypeDefinition, patch: { role?: string; wrap?: boolean }) {
@@ -54,12 +67,25 @@ function reset(type: MessageTypeDefinition) {
   if (next.mappings[props.apiMode]) delete next.mappings[props.apiMode][type.id];
   emit('update:modelValue', next);
 }
+async function resetRoles(apiMode: string) {
+  const token = generation;
+  try {
+    const definitions = await (props.types || typesRequest);
+    if (token !== generation || props.apiMode !== apiMode) return;
+    emit('update:modelValue', resetAdapterRoles(props.modelValue, apiMode, definitions));
+    error.value = '';
+  } catch (e) {
+    if (token === generation) error.value = String(e);
+  }
+}
+defineExpose({ resetRoles });
 </script>
 <template>
   <section class="message-adapter-editor" aria-label="消息适配映射">
     <div class="adapter-filter">
       <label>筛选消息类型<input v-model="search" type="search" /></label
       ><label class="adapter-check"><input v-model="showFixed" type="checkbox" />显示固定类型</label>
+      <label class="adapter-check"><input v-model="showCompatible" type="checkbox" />显示兼容类型</label>
     </div>
     <p v-if="error" class="danger" role="alert">{{ error }}</p>
     <div v-for="type in types" :key="type.id" class="adapter-row" :data-message-type="type.id">
@@ -92,8 +118,9 @@ function reset(type: MessageTypeDefinition) {
       <button v-if="type.configurable" type="button" @click="reset(type)">默认</button>
     </div>
     <p class="adapter-note">
-      同一类型的初始版本与追加版本使用相同映射。选择 system 或 developer
-      后，部分接口或模型可能拒绝中途消息；设置会保留，不会自动更改。
+      同一类型的初始版本与追加版本使用相同映射。兼容类型独立保存，不继承基础类型的自定义映射；可展开或搜索查看，已保存的兼容设置始终显示。
+      GenAI 正文仅支持 user / model（assistant）；不受支持的角色会在发送前报错，保存值不会自动更改。
+      手动切换接口时，该协议已有的可调 role 会恢复默认，标签选项保持不变。
     </p>
   </section>
 </template>

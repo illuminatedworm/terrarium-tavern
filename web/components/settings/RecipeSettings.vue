@@ -76,6 +76,11 @@ function splitCharacter() {
 <template>
   <p class="muted">新对话复制此编排；已有对话保持原编排。顺序和参数自动保存，文本修改需点击绿色勾。</p>
   <p class="muted">每块可单独上移、下移或设置深度；深度留空时按列表顺序注入，0 放在末尾。</p>
+  <p class="muted">
+    包括 Google GenAI 在内的部分 API 明确不支持中途 system 消息。Half Agent
+    会以最小位移将头部非系统资料后排，保持 system
+    连续及各组原顺序；规范顺序稳定复用，不随轮次反复移动。正文深度位置不变，可在“上下文”查看实际编排。
+  </p>
   <div class="settings-recipe-layout">
     <div class="settings-block-list">
       <button

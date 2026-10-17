@@ -67,7 +67,7 @@ OpenAI Chat Completions／Responses 显式发送 `parallel_tool_calls`，Anthrop
 3. 本次输入锚定的世界书、当前输入、授权、按需 MVU 规则及后置要求。
 4. 尚未表达的 handoff、窗口状态和预算提醒。
 
-角色字段使用 `<card_…>` 标签，用户角色使用 `<user_character>`，世界书使用 `<lorebook>`，handoff 使用 `<tavern_memory>`，笔记目录默认使用 system 消息与 `<tavern_note_list>` 标签。开场白作为普通剧情，不加资料标签。标签只标识来源，不修改存档原文，也不限制设定描述的对象。
+角色字段使用 `<card_…>` 标签，用户角色使用 `<user_character>`，世界书使用 `<lorebook>`，handoff 使用 `<tavern_memory>`，笔记目录默认使用 `<tavern_note_list>` 标签，角色随接口默认值选择：Google GenAI 为 user，其余接口为 system。开场白作为普通剧情，不加资料标签。标签只标识来源，不修改存档原文，也不限制设定描述的对象。
 
 笔记目录只包含名称，每行一个 key，不包含正文、类型、来源或过时标记；归档项不列入，空目录保留空标签块。新增、归档或重新启用笔记后，下一次请求更新头部目录；仅正文或元数据变化不改动该块。目录位于固定资料之后，保持此前的请求前缀稳定；名称集合变化沿用上下文基线重建规则。角色和标签可通过 Full Agent 消息适配映射调整，正文仍须按需搜索或读取。
 

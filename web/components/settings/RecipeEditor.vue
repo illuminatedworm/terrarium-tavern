@@ -152,6 +152,11 @@ useTimedError(error);
     移到剧情消息附近；滚动方案的非常驻世界书自动紧贴对应消息，忽略前后置世界书块；ST
     方案的非常驻条目使用原位置规则。对话偏好和本次重写要求仍会参与最终编排。
   </p>
+  <p class="recipe-intro">
+    包括 Google GenAI 在内的部分 API 明确不支持中途 system 消息。Half Agent
+    会以最小位移将头部非系统资料后排，保持 system
+    连续及各组原顺序；规范顺序稳定复用，不随轮次反复移动。正文深度位置不变，可在“上下文”查看实际编排。
+  </p>
   <AppNotification :message="error" />
   <div class="recipe-layout" @input="error = ''" @change="error = ''">
     <div class="recipe-sequence">
