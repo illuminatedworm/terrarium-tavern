@@ -2,6 +2,8 @@
 
 按安装、使用、角色卡制作和开发任务查阅。Half Agent 与 Full Agent 的模型编排和记忆机制分别说明。
 
+当前版本：**v0.5.0（实验阶段）**。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
+
 ## 开始使用
 
 1. 按[安装、备份与维护](guides/maintenance.md)准备环境，再按[设置指南](guides/settings.md)配置提供商和模型。

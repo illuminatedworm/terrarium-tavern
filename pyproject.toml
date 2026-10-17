@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "terrarium-tavern"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local-first roleplay agents powered by KohakuTerrarium"
 license = "LicenseRef-Terrarium-Tavern-NonCommercial-1.1"
 license-files = ["LICENSE/*", "vendor/mvu/LICENSE"]

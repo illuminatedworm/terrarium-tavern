@@ -65,7 +65,7 @@ def create_app(data_dir=None):
             await service.close()
             await store.chatgpt.close()
 
-    app = FastAPI(title="Terrarium Tavern", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="Terrarium Tavern", version="0.5.0", lifespan=lifespan)
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
@@ -122,7 +122,7 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.4.0"}
+        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.5.0"}
 
     @app.get("/api/storage")
     async def storage():
