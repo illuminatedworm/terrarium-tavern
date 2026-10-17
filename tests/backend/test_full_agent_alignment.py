@@ -348,11 +348,16 @@ async def test_call_notifications_are_absent_even_on_last_request_and_resume(tmp
 
 async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tmp_path):
     store, service, session = game(tmp_path)
-    session = set_handoff(store, session, "MEMORY_A")
     try:
-        _, session = await turn(service, session, Model("first"))
-        expected = ["MEMORY_A"]
-        for value in ("MEMORY_A", "MEMORY_B", "MEMORY_A", ""):
+        initial = Model("first")
+        first, session = await turn(service, session, initial)
+        assert first["status"] == "committed", first["error"]
+        assert not handoff_frames(initial.requests[0]["messages"])
+        assert not any(m.get("content", "").startswith("<tavern_plot>\n")
+                       for m in initial.requests[0]["messages"])
+        assert not any(m.get("source") in ("handoff", "plot") for m in first["preview"]["trace"])
+        expected = []
+        for value in ("", "MEMORY_A", "MEMORY_A", "MEMORY_B", "MEMORY_A", "", ""):
             previous = session["snapshot"]["full_agent"]["handoff"]["text"]
             session = set_handoff(store, session, value)
             model = Model("continue")

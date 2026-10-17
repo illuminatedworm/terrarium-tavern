@@ -194,14 +194,18 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     for source, content in turn_instructions.items():
         update(source, content)
     planning = plan_value(state, session.get("plot_enabled", False), compact=compact)
-    update("plot", plan_message(planning), value=planning)
+    # Initial empty defaults need no frame; retained content and observed
+    # versions still need explicit updates when cleared or disabled.
+    if planning["enabled"] or state["plot"]["text"] or "plot" in ledger.seen:
+        update("plot", plan_message(planning), value=planning)
     # Staleness remains truthful in the user's notes and source checks. Proactive
     # edit instructions now come only from the user's explicit notification queue.
     if not complete_source:
         update("context_warning", "")
-        update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
-            + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
-            value=handoff["text"])
+        if handoff["text"] or "handoff" in ledger.seen:
+            update("handoff", "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
+                + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。") + "\n</tavern_memory>",
+                value=handoff["text"])
     available = settings.context_tokens
     allowed_fields = {"role", "content", "tool_calls", "tool_call_id", "name",
                       "reasoning_content", "reasoning_details", "reasoning",
