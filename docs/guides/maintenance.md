@@ -15,6 +15,8 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 
 此命令使用直连下载。使用代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
 
+省略 `-Proxy` 时，Windows 安装脚本沿用调用环境中的代理，与 Linux 脚本一致；显式传入空字符串禁用安装代理。安装代理和应用内的代理设置分别生效。
+
 **Linux（Bash）**
 
 ```bash

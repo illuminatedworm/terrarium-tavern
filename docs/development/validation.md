@@ -125,6 +125,8 @@ ChatGPT 订阅专项：
 
 ZIP、清单和校验值输出到 `releases/`。[verify_release.py](../../tools/verify_release.py)在 Windows 新目录校验归档、安装依赖、启动服务并检查备份恢复。该脚本带有本机工具与网络配置假设，运行前需核对其环境配置。
 
+`verify_release.py` 和 `prepare_tokenizers.py` 沿用调用环境中的代理，不内置代理地址；`probe_prefix_cache.py` 默认直连，可用 `--proxy` 显式指定。应用及制卡评测使用应用内保存的网络配置。
+
 测试截图、日志、评估结果和私人回放放在受忽略的本地目录。公开文档图片放在 `docs/images/`。许可文件和发行未决事项见[许可维护](licensing.md)。
 
 ## 角色卡编辑 agent 真实模型评测

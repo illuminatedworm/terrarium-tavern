@@ -14,10 +14,50 @@ from tavern.search.local_models import LocalModelManager, _download
 from tavern.storage.store import Conflict, Store
 
 
+async def test_proxy_defaults_are_direct_and_explicit_settings_survive(monkeypatch):
+    from tavern.chatgpt.service import ChatGPTAccounts
+    from tavern.core.provider import make_provider
+    from tavern.core.settings import SettingsDocument, migrate_settings
+    from tavern.scripting.model_transport import ModelTransport
+    from tavern.web.client import WebTools
+
+    doc = SettingsDocument()
+    assert doc.shared.network.proxy == Settings().proxy == ''
+    saved_proxy = 'http://proxy.example:8080'
+    doc.shared.network.proxy = saved_proxy
+    assert migrate_settings(doc.model_dump()).shared.network.proxy == saved_proxy
+    calls = []
+    real_client = httpx.AsyncClient
+
+    class Client(real_client):
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(httpx, 'AsyncClient', Client)
+    # Environment variables must not silently override the visible app settings.
+    monkeypatch.setenv('HTTPS_PROXY', 'http://environment.example:8080')
+    for address, enabled, expected in (('', True, None), (saved_proxy, True, saved_proxy),
+                                       (saved_proxy, False, None)):
+        cfg = Settings(model='fixture', api_key='fixture-key', proxy=address, use_proxy=enabled)
+        cfg.network.proxy, cfg.network.api_proxy = address, enabled
+        for provider in (await make_provider(cfg), ModelTransport(cfg, 'fixture-key')):
+            await provider.close()
+        async with WebTools(cfg.web, cfg.network).client():
+            pass
+        accounts = SimpleNamespace(network=lambda: cfg.network, http_transport=None)
+        async with ChatGPTAccounts.client(accounts):
+            pass
+        assert len(calls) == 4
+        assert all(call['proxy'] == expected and call['trust_env'] is False for call in calls)
+        calls.clear()
+
+
 async def test_model_listing_uses_saved_key_and_proxy(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     settings = app.state.store.settings()
     settings.providers[0].api_key = 'secret'
+    settings.network.proxy = 'http://proxy.example:8080'
     app.state.store.save_settings(settings)
     real_client = httpx.AsyncClient
     calls = []
@@ -38,7 +78,7 @@ async def test_model_listing_uses_saved_key_and_proxy(tmp_path, monkeypatch):
         assert response.status_code == 200
         assert response.json()['models'] == ['a', 'b']
         assert response.json()['updated_at'] is not None
-    assert calls[0]['proxy'] is None
+    assert calls[0]['proxy'] == 'http://proxy.example:8080'
     assert calls[0]['trust_env'] is False
 
 

@@ -111,7 +111,12 @@ export const networkFields: SettingField[] = [
     ],
     help: '统一控制普通 API 的正文、后台和制卡请求，保存后从下一次操作生效。保持现有行为时由各任务选择。Full Agent 流式正文先显示为未保存预览，完整校验通过后才正式保存。ChatGPT 订阅通道始终使用流式。',
   },
-  { path: 'network.proxy', label: '代理地址', type: 'text' },
+  {
+    path: 'network.proxy',
+    label: '代理地址',
+    type: 'text',
+    help: '默认为空，留空时直连。填写完整 HTTP(S) 代理地址后，再选择下方需要使用代理的请求类型。应用请求不自动继承系统环境代理。',
+  },
   {
     path: 'network.api_proxy',
     label: '模型接口请求使用代理',

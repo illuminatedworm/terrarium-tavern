@@ -119,6 +119,8 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 以上命令使用直连。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
 
+省略 `-Proxy` 时沿用调用环境中的代理。应用内代理默认为空，需要时在通用设置中单独配置。
+
 </details>
 
 <details>

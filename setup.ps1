@@ -6,14 +6,22 @@ foreach ($tavernCommand in @('python', 'npm.cmd', 'node', 'git')) {
 }
 $tavernNodeMajor = [int]((& node --version).TrimStart('v').Split('.')[0])
 if ($tavernNodeMajor -lt 22) { throw '需要 Node.js 22 或更新版本。' }
-$env:HTTPS_PROXY = $Proxy
-$env:HTTP_PROXY = $Proxy
+# Omitting -Proxy preserves the caller's environment, matching setup.sh.
+if ($PSBoundParameters.ContainsKey('Proxy')) {
+    $env:HTTPS_PROXY = $Proxy
+    $env:HTTP_PROXY = $Proxy
+    Remove-Item Env:ALL_PROXY -ErrorAction SilentlyContinue
+}
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $PSScriptRoot '.cache/python'
 python -m pip install uv
 if ($LASTEXITCODE) { throw 'uv 安装失败' }
 if ($LocalRetrieval) { python -m uv sync --frozen --extra retrieval } else { python -m uv sync --frozen }
 if ($LASTEXITCODE) { throw 'Python 依赖安装失败' }
-npm.cmd ci --registry=https://registry.npmjs.org --proxy=$Proxy --https-proxy=$Proxy
+$tavernNpmArgs = @('ci', '--registry=https://registry.npmjs.org')
+if ($PSBoundParameters.ContainsKey('Proxy')) {
+    $tavernNpmArgs += @("--proxy=$Proxy", "--https-proxy=$Proxy")
+}
+npm.cmd @tavernNpmArgs
 if ($LASTEXITCODE) { throw '前端依赖安装失败' }
 npm.cmd run build
 if ($LASTEXITCODE) { throw '前端构建失败' }
