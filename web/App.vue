@@ -1478,6 +1478,7 @@ function observe(id: string) {
         void scroll();
       } else {
         trace.value.push(event);
+        if (event.kind === 'full_agent_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
           pendingLore.value = event.payload.lore_injections || [];

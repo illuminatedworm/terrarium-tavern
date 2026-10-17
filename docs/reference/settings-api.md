@@ -53,6 +53,8 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 `shared.debug_failed_requests` 为严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次操作生效。开启后保留失败模型生成请求的原始 HTTP 证据，成功请求不落盘。`GET /api/debug/failed-requests?offset=0` 按时间倒序返回每页最多 100 条的 HTTP 信息及记录总数；`offset` 是从 0 开始的记录偏移条数，默认 0、下界包含 0，无固定上界，越过末尾返回空列表。`GET /api/debug/failed-requests/{UUID}` 下载对应 ZIP，不提供任意路径访问。记录格式、正文限额、脱敏及清理规则见[杂项设置](../guides/settings.md#杂项)。
 
+`shared.debug_full_agent_prefix` 为严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次 Full Agent 操作生效。仅在运行时内存保留最近两次 SDK 序列化后的生成请求正文。`full_agent_prefix_debug` 回合事件的 `payload.message` 用于现有通知：消息参数（`messages`／`input`／`contents`）一致或数组正常追加时显示“公共前缀与首个差异未错位”，不一致时显示“公共前缀或首个差异发生错位”；其他参数只显示“一致”或“不一致”，不展示具体字节信息。`payload.parameters` 保留诊断数据，按实际顶层 JSON 参数分别返回 `parameter`、`previous_bytes`、`current_bytes`、`status`；同时存在的参数还返回 `common_prefix_bytes` 和 `first_difference_byte`（从 0 开始，完全相同时为 `null`）。`status` 为 `identical`、`array_extended`、`changed`、`added` 或 `removed`；不存在一侧的字节数为 `null`。首次请求只通知已建立基线，参数结果为空。结果不包含参数原文。比较边界与暂存清理见[杂项设置](../guides/settings.md#杂项)。
+
 Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。

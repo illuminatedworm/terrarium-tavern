@@ -98,6 +98,7 @@ export interface SettingsDocument {
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;
     debug_failed_requests: boolean;
+    debug_full_agent_prefix: boolean;
     advisor: {
       model: ModelProfile;
       official_model: ModelProfile | null;

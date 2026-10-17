@@ -65,6 +65,7 @@ class ModelTransport(BaseLLMProvider):
         self.last_native_response = None
         self.last_response_record = {}
         self.response_capture = None
+        self.request_observer: Callable[[httpx.Request], None] | None = None
         self._response_headers = {}
         self._sent_breakpoints = SentBreakpoints()
         if request_context:
@@ -359,6 +360,8 @@ class ModelTransport(BaseLLMProvider):
         return body, diagnostic, resource
 
     def _capture(self, messages, tools, body, diagnostic, url, request=None):
+        if request is not None and self.request_observer is not None:
+            self.request_observer(request)
         if not self.capture:
             return
         cfg = self.settings

@@ -169,9 +169,10 @@ class FullAgent:
         self.continuation.append(copy.deepcopy(message))
         self.new_trace.append({"window_id": window_id, "message": copy.deepcopy(message)})
 
-    async def run(self, provider=None):
+    async def run(self, provider=None, *, request_observer=None):
         provider = provider or await make_provider(self.settings,
             lambda payload: self.event("provider_request", payload), request_context=self.request_context)
+        provider.request_observer = request_observer
         if hasattr(provider, "request_context"):
             provider.request_context = self.request_context
             self.request_context.bind(response_origin(provider.settings, provider.key))

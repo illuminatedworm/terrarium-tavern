@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
+from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
@@ -18,6 +19,67 @@ from tests.backend.test_unified_cache import config, provider, reply
 APIS = ["chat_completions", "responses", "anthropic", "gemini"]
 MESSAGES = [{"role": "user", "content": "完整原文，包含末尾"}]
 TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+
+
+def test_prefix_debug_preserves_wire_bytes_and_separate_parameters():
+    previous = '{"messages":[{"content":"中文原文"}],"tools":[{"name":"old"}],"system":"stable","gone":true}'.encode()
+    current = '{"messages":[{"content":"中文原文"},{"content":"追加"}],"tools":[{"name":"new"}],"system":"stable","added":null}'.encode()
+    result = {item["parameter"]: item for item in compare_parameters(previous, current)}
+    messages = wire_parameters(previous)["messages"]
+    assert result["messages"] == {"parameter": "messages", "previous_bytes": len(messages),
+        "current_bytes": len(wire_parameters(current)["messages"]), "status": "array_extended",
+        "common_prefix_bytes": len(messages) - 1, "first_difference_byte": len(messages) - 1}
+    assert result["tools"]["status"] == "changed"
+    assert result["tools"]["common_prefix_bytes"] == len(b'[{"name":"')
+    assert result["system"]["status"] == "identical" and result["system"]["first_difference_byte"] is None
+    assert result["gone"]["status"] == "removed" and result["gone"]["current_bytes"] is None
+    assert result["added"]["status"] == "added" and result["added"]["previous_bytes"] is None
+    # Semantically equal JSON still differs byte-for-byte; never normalize it.
+    spelling = b'{"messages":[{"content":"\\u4e2d\\u6587\\u539f\\u6587"}],"tools":[{ "name": "old"}]}'
+    changed = {item["parameter"]: item for item in compare_parameters(previous, spelling)}
+    assert changed["messages"]["first_difference_byte"] == len(b'[{"content":"')
+    assert changed["tools"]["first_difference_byte"] == 2
+    debug = PrefixDebug()
+    def record(body):
+        return debug.record(httpx.Request("POST", "https://fixture.test", content=body))
+    assert record(previous)["parameters"] == []
+    report = record(current)
+    assert "中文原文" not in json.dumps(report, ensure_ascii=False)
+    assert "messages：公共前缀与首个差异未错位" in report["message"]
+    assert "tools：不一致" in report["message"] and "system：一致" in report["message"]
+    assert "字节" not in report["message"]
+    record(previous)
+    assert list(debug.requests) == [current, previous]
+    identical = record(previous)["message"]
+    assert "messages：公共前缀与首个差异未错位" in identical and "tools：一致" in identical
+    debug.clear()
+    assert not debug.requests and debug.sequence == 0
+
+
+async def test_prefix_debug_setting_defaults_projection_and_page_undo(tmp_path):
+    app = create_app(tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        editor = (await client.post("/api/settings/edit-sessions", json={})).json()
+        before = editor["settings"]
+        assert before["shared"]["debug_full_agent_prefix"] is False
+        assert "debug_full_agent_prefix" in next(p for p in before["pages"] if p["id"] == "shared.misc")["paths"]
+        changed = await client.patch("/api/settings/shared", json={
+            "expected_revision": before["revisions"]["shared"], "edit_session": editor["id"],
+            "changes": {"debug_full_agent_prefix": True}})
+        assert changed.status_code == 200, changed.text
+        runtime = app.state.store.settings("full_agent").for_role("full_agent")
+        assert runtime.debug_full_agent_prefix
+        invalid = await client.patch("/api/settings/shared", json={
+            "expected_revision": changed.json()["revisions"]["shared"],
+            "changes": {"debug_full_agent_prefix": "false"}})
+        assert invalid.status_code == 400
+        undone = await client.post(f"/api/settings/edit-sessions/{editor['id']}/undo", json={
+            "page": "shared.misc", "expected_revision": changed.json()["revisions"]["shared"]})
+        assert undone.status_code == 200 and not undone.json()["shared"]["debug_full_agent_prefix"]
+        assert runtime.debug_full_agent_prefix
+    legacy = SettingsDocument().model_dump()
+    del legacy["shared"]["debug_full_agent_prefix"]
+    assert SettingsDocument.model_validate(legacy).shared.debug_full_agent_prefix is False
 
 
 def events(api):
@@ -103,6 +165,8 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
 
     service.http_transport = httpx.MockTransport(route)
     p = await make_provider(cfg)
+    observed = []
+    p.request_observer = lambda request: observed.append(request.content)
     try:
         if entry == "complete":
             assert (await p.chat_complete(MESSAGES)).content == "完成"
@@ -113,6 +177,7 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
         else:
             assert "".join([chunk async for chunk in p.chat(MESSAGES)]) == "完成"
         assert seen[0]["stream"] is True
+        assert len(observed) == 1 and json.loads(observed[0]) == seen[0]
     finally:
         await p.close()
 

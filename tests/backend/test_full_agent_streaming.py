@@ -84,6 +84,47 @@ def replay(store, tid):
     return text
 
 
+async def test_prefix_debug_observes_tool_continuation_and_survives_provider_recreation(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    settings = store.settings("full_agent")
+    settings.debug_full_agent_prefix = True
+    store.save_settings(settings)
+    first = WireStream(*tool_events())
+    second = WireStream(delta("本轮正文"), terminal())
+    connect(store, service, first, second)
+    try:
+        tid = submit(service, session)
+        await service.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        reports = [event["payload"] for event in store.events(tid) if event["kind"] == "full_agent_prefix_debug"]
+        assert len(reports) == 2 and reports[0]["parameters"] == []
+        parameters = {item["parameter"]: item for item in reports[1]["parameters"]}
+        assert parameters["tools"]["status"] == "identical"
+        assert parameters["messages"]["common_prefix_bytes"] > 100
+        assert len(service.full.prefix_debug.requests) == 2
+        session = store.session(session["id"])
+        connect(store, service, WireStream(delta("下一轮正文"), terminal()))
+        next_tid = submit(service, session, operation_id="next-prefix-request")
+        await service.tasks[next_tid]
+        assert store.turn(next_tid)["status"] == "committed", store.turn(next_tid)["error"]
+        report = next(e["payload"] for e in store.events(next_tid) if e["kind"] == "full_agent_prefix_debug")
+        assert report["parameters"] and "#2 → #3" in report["message"]
+        assert len(service.full.prefix_debug.requests) == 2
+        settings = store.settings("full_agent")
+        settings.debug_full_agent_prefix = False
+        store.save_settings(settings)
+        session = store.session(session["id"])
+        provider, _ = connect(store, service, WireStream(delta("关闭后正文"), terminal()))
+        disabled = submit(service, session, operation_id="disabled-prefix-request")
+        await service.tasks[disabled]
+        assert store.turn(disabled)["status"] == "committed", store.turn(disabled)["error"]
+        assert provider.request_observer is None and not service.full.prefix_debug.requests
+        assert not any(e["kind"] == "full_agent_prefix_debug" for e in store.events(disabled))
+    finally:
+        await service.close()
+    assert not service.full.prefix_debug.requests
+
+
 async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_path):
     store, service, session = game(tmp_path, "chat_completions")
     gate = Gate()

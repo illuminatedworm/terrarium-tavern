@@ -2,6 +2,12 @@ import type { SettingField } from '../components/settings/SettingsFields.vue';
 import { sendShortcutOptions } from './composerShortcut';
 export const miscFields: SettingField[] = [
   {
+    path: 'debug_full_agent_prefix',
+    label: 'Full Agent 前缀消息稳定性测试（Debug）',
+    type: 'checkbox',
+    help: '默认关闭，从下一次 Full Agent 操作生效。仅在运行时内存暂存最近两次 SDK 序列化后的真实请求，包括工具续答和重试；逐项比较 messages、tools 及其他实际参数，不拼接或推测服务商的提示词。通知中，消息参数说明公共前缀与首个差异是否错位，其他参数只显示一致或不一致。切换会话或模型仍比较最近两次请求；关闭后在下一次 Full Agent 操作或退出应用时清除暂存。',
+  },
+  {
     path: 'debug_failed_requests',
     label: '保留失败请求原始数据（Debug）',
     type: 'checkbox',

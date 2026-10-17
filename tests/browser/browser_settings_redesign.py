@@ -87,6 +87,16 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         await expect(page.locator('.settings-save-status')).to_contain_text('已保存')
                     before = await read()
                     await select('通用 杂项')
+                    prefix_debug = page.get_by_role('checkbox', name='Full Agent 前缀消息稳定性测试（Debug）', exact=False)
+                    await expect(prefix_debug).not_to_be_checked()
+                    async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
+                        await prefix_debug.check()
+                    await saved()
+                    assert (await read())['shared']['debug_full_agent_prefix'] is True
+                    await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                    await expect(prefix_debug).not_to_be_checked()
+                    await saved()
+                    assert (await read())['shared']['debug_full_agent_prefix'] is False
                     shortcut = page.get_by_role('combobox', name='输入时发送和换行', exact=True)
                     await expect(shortcut).to_have_value('enter')
                     async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):

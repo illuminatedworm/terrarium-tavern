@@ -12,6 +12,7 @@ import pytest
 
 from tavern.core.cache_policy import CacheSettings, effective_retention, preset
 from tavern.core.gemini_capabilities import gemini_controls
+from tavern.full_agent.prefix_debug import PrefixDebug, wire_parameters
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.storage.request_debug import RequestDebugLog
 from tests.backend.test_unified_cache import compiled, config, model_messages, provider, reply
@@ -61,7 +62,8 @@ async def test_gemini4_long_context_keeps_full_stable_prefix_without_cache_objec
     assert context["cache"]["planned_index"] is None
     assert context["cache"]["status"] == "cloud"
     messages = model_messages(context)
-    sent, audits = [], []
+    sent, audits, observed = [], [], []
+    debug = PrefixDebug()
     def route(request):
         assert request.url.path.endswith(":generateContent")
         body = json.loads(request.content)
@@ -72,11 +74,16 @@ async def test_gemini4_long_context_keeps_full_stable_prefix_without_cache_objec
         assert "dynamic handoff" in str(body)
         return httpx.Response(200, json=reply("gemini"))
     async with provider(cfg, route, audits.append) as transport:
+        transport.request_observer = lambda request: observed.append(debug.record(request))
         await transport.chat_complete(messages)
         await transport.chat_complete(messages + [{"role": "user", "content": "下一轮末尾"}])
     assert sent[0]["systemInstruction"] == sent[1]["systemInstruction"]
     assert sent[0]["contents"] == sent[1]["contents"][:-1]
     assert all(a["cache"]["sent_index"] is None for a in audits)
+    assert len(observed) == 2
+    assert [json.loads(body) for body in debug.requests] == sent
+    assert {item["parameter"] for item in observed[1]["parameters"]} == set(sent[1])
+    assert wire_parameters(debug.requests[0])["systemInstruction"] == wire_parameters(debug.requests[1])["systemInstruction"]
 
 
 @pytest.mark.parametrize("stream", [False, True])

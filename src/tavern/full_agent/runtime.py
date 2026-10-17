@@ -9,6 +9,7 @@ from tavern.core.models import TurnRequest
 from tavern.core.provider import require_model_connection
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
+from tavern.full_agent.prefix_debug import PrefixDebug
 from tavern.scripting.runtime import ScriptRuntime
 from tavern.storage.store import dump, uid
 
@@ -20,6 +21,7 @@ class FullAgentRuntime:
         self.runtime = ScriptRuntime()
         self.tasks, self.agents = {}, {}
         self.provider_factory = None
+        self.prefix_debug = PrefixDebug()
 
     def submit(self, sid, request):
         session = self.store.session(sid)
@@ -47,6 +49,7 @@ class FullAgentRuntime:
                 task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         await self.runtime.close()
+        self.prefix_debug.clear()
 
     async def cancel(self, tid):
         task = self.tasks.get(tid)
@@ -155,7 +158,12 @@ class FullAgentRuntime:
             agent = FullAgent(self.store, tid, document, session, history, snapshot, request, script,
                               settings, user, self.retrieval, progress)
             self.agents[tid] = agent
-            text = await agent.run(self.provider_factory() if self.provider_factory else None)
+            if not settings.debug_full_agent_prefix:
+                self.prefix_debug.clear()
+            def observe_request(request):
+                agent.event("full_agent_prefix_debug", self.prefix_debug.record(request))
+            text = await agent.run(self.provider_factory() if self.provider_factory else None,
+                request_observer=observe_request if settings.debug_full_agent_prefix else None)
             mirror = await script.call("snapshot")
             mirror["messages"][-1]["message"] = text
             await script.call("update", mirror)

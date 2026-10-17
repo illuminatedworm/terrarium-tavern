@@ -152,6 +152,7 @@ class LocalResources(StrictSettings):
 class SharedSettings(StrictSettings):
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
+    debug_full_agent_prefix: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
