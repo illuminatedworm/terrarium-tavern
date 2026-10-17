@@ -1,9 +1,7 @@
 """Portable public-web tools independent of the selected model vendor."""
 import asyncio
-import ipaddress
 import json
 import re
-import socket
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urljoin, urlsplit
 
@@ -13,6 +11,7 @@ from tavern.web.mcp import ExaMCP
 from tavern.web.results import READ_DEFAULT_LIMIT, exa_search_rows, read_result, search_result
 from tavern.web.sources import protect_secrets, source_links
 from tavern.web.tools import WebRead, WebSearch
+from tavern.web.transport import PublicHTTPTransport, public_addresses
 
 MAX_BYTES = 8 * 1024 * 1024
 # This upstream extraction ceiling is distinct from the much smaller returned page.
@@ -83,9 +82,7 @@ async def public_url(url):
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("网页地址必须是无凭据的 HTTP(S) 公共网址")
-    addresses = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
-    if not addresses or any(not ipaddress.ip_address(row[4][0]).is_global for row in addresses):
-        raise ValueError("网页工具仅访问公共互联网地址")
+    await public_addresses(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
     return url
 
 
@@ -99,9 +96,13 @@ class WebTools:
         if self.mode == "off":
             raise ValueError("联网查询已关闭")
 
-    def client(self):
-        return httpx.AsyncClient(proxy=(self.network.proxy or None) if self.network.api_proxy and self.transport is None else None,
-            trust_env=False, timeout=self.config.timeout_seconds, transport=self.transport,
+    def client(self, *, configured=False):
+        proxy = (self.network.proxy or None) if self.network.api_proxy and self.transport is None else None
+        transport = self.transport
+        if transport is None and proxy is None and not configured:
+            transport = PublicHTTPTransport()
+        return httpx.AsyncClient(proxy=proxy,
+            trust_env=False, timeout=self.config.timeout_seconds, transport=transport,
             headers={"User-Agent": "TerrariumTavern/1.0 (reference reader)"})
 
     async def request(self, client, method, url, *, params=None, body=None, headers=None, configured=False):
@@ -124,12 +125,14 @@ class WebTools:
         # Only the user-configured search endpoint may be on a private LAN.
         if not configured:
             await public_url(url)
-        async with self.client() as client:
-            for _ in range(6):
+        for _ in range(6):
+            # The configured LAN exemption applies only to the first hop.
+            async with self.client(configured=configured) as client:
                 async with client.stream("GET", url, params=params) as response:
                     if response.is_redirect:
                         url = await public_url(urljoin(str(response.url), response.headers.get("location", "")))
                         params = None
+                        configured = False
                         continue
                     response.raise_for_status()
                     chunks, size = [], 0
@@ -140,7 +143,7 @@ class WebTools:
                         chunks.append(chunk)
                     headers = {k: v for k, v in response.headers.items() if k not in {"content-encoding", "content-length"}}
                     return httpx.Response(response.status_code, headers=headers, content=b"".join(chunks), request=response.request)
-            raise ValueError("网页重定向次数过多")
+        raise ValueError("网页重定向次数过多")
 
     async def legacy_search(self, name, query, limit):
         if name == "searxng":

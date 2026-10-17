@@ -1,7 +1,10 @@
 """Deterministic wire contracts, bounded external results, fallback and cancellation."""
 import asyncio
 import json
+import socket
+import ssl
 
+import httpcore
 import httpx
 import pytest
 
@@ -174,7 +177,7 @@ async def test_cancellation_never_falls_back(make_web):
     assert seen == ["mcp.exa.ai"]
 
 
-async def test_private_urls_and_redirects_are_rejected():
+async def test_private_urls_and_redirects_are_rejected(monkeypatch):
     for url in ("http://127.0.0.1/secret", "http://[::1]/secret", "http://user:password@example.org", "file:///tmp/secret"):
         with pytest.raises(ValueError):
             await public_url(url)
@@ -186,6 +189,68 @@ async def test_private_urls_and_redirects_are_rejected():
     with pytest.raises(ValueError, match="公共"):
         await web.read("https://1.1.1.1/source")
     assert calls == ["https://1.1.1.1/source"]
+
+    # Exercise the real HTTPX/HTTPcore transport, replacing only socket I/O.
+    # DNS changes after validation but before the socket backend connects.
+    changed, connections, streams, tls_names = set(), [], [], []
+    last_hostname = None
+    blocked_lookups = 0
+
+    def dns(host, port, **kwargs):
+        nonlocal last_hostname, blocked_lookups
+        if host not in {"1.1.1.1", "127.0.0.1"}:
+            last_hostname = host
+        if host == "blocked.example":
+            blocked_lookups += 1
+            if blocked_lookups > 1:
+                changed.add(host)
+        address = "127.0.0.1" if host in changed or host == "127.0.0.1" else "1.1.1.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    replies = [
+        b"HTTP/1.1 302 Found\r\nLocation: https://page.example:8443/final\r\nContent-Length: 0\r\n\r\n",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\r\npublic",
+        b"HTTP/1.1 302 Found\r\nLocation: http://blocked.example/secret\r\nContent-Length: 0\r\n\r\n",
+    ]
+
+    class Stream(httpcore.AsyncMockStream):
+        async def write(self, buffer, timeout=None):
+            self.sent += buffer
+
+        async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+            assert ssl_context.check_hostname and ssl_context.verify_mode == ssl.CERT_REQUIRED
+            tls_names.append(server_hostname)
+            return self
+
+    async def connect(backend, host, port, timeout=None, local_address=None, socket_options=None):
+        changed.add(last_hostname)
+        address = dns(host, port)[0][4][0]
+        connections.append((host, address, port))
+        reply = replies.pop(0) if address == "1.1.1.1" else (
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\n\r\nsecret"
+        )
+        stream = Stream([reply])
+        stream.sent = b""
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr("tavern.web.transport.socket.getaddrinfo", dns)
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", connect)
+    web.transport = None
+    result = await web.read("http://start.example/source")
+    assert result["text"] == "public" and result["url"] == "https://page.example:8443/final"
+    assert connections == [("1.1.1.1", "1.1.1.1", 80), ("1.1.1.1", "1.1.1.1", 8443)]
+    assert b"Host: start.example\r\n" in streams[0].sent
+    assert b"Host: page.example:8443\r\n" in streams[1].sent
+    assert tls_names == ["page.example"]
+
+    # The configured search endpoint keeps its LAN exemption, but its redirect
+    # must reject DNS that becomes private between URL and connection checks.
+    with pytest.raises(ValueError, match="公共"):
+        await web.fetch("http://search.example/search", configured=True)
+    assert len(connections) == 3 and connections[-1][0] == "search.example"
+    assert blocked_lookups == 2
+    assert all(stream._closed for stream in streams)
 
 
 async def test_malformed_mcp_and_tavily_responses_are_not_empty_success(make_web):
