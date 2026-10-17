@@ -1,55 +1,20 @@
 <script setup lang="ts">
-import { useTimedError } from '../../composables/useTimedError';
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
-import { api } from '../../lib/api';
+import { onMounted } from 'vue';
+import {
+  localModelLabels as labels,
+  type LocalModelPurpose,
+  type StartupWarmupState,
+} from '../../composables/useStartupWarmup';
 
-const props = defineProps<{ status: any }>();
+const props = defineProps<{ status: any; warmup: StartupWarmupState }>();
 defineEmits<{ close: []; settings: [] }>();
-const models = props.status.enabled as string[];
-const labels: Record<string, string> = { embedding: 'Embedding', reranker: 'Reranker' };
-const jobs = ref<any[]>([]);
-const pending = ref(false),
-  submitted = ref(false),
-  error = ref('');
+const models = props.status.enabled as LocalModelPurpose[];
+const { jobs, pending, submitted, error, running } = props.warmup;
 const available = models.filter((purpose) => props.status.models[purpose].downloaded);
 const missing = models.filter((purpose) => !props.status.models[purpose].downloaded);
-const running = computed(() => jobs.value.some((job) => ['queued', 'running'].includes(job.status)));
-let timer: ReturnType<typeof setTimeout> | undefined;
-let disposed = false;
-async function refresh() {
-  try {
-    const status = await api('/local-models');
-    if (disposed) return;
-    jobs.value = jobs.value.map((job) => status.jobs.find((item: any) => item.id === job.id) || job);
-    if (running.value) timer = setTimeout(refresh, 1000);
-  } catch (e) {
-    if (!disposed) error.value = String(e);
-  }
-}
-async function warmup() {
-  if (pending.value || submitted.value) return;
-  pending.value = true;
-  error.value = '';
-  const results = await Promise.allSettled(
-    available.map((purpose) => api(`/local-models/${purpose}/warmup`, {})),
-  );
-  if (disposed) return;
-  jobs.value = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
-  error.value = results
-    .flatMap((result) => (result.status === 'rejected' ? [String(result.reason)] : []))
-    .join('\n');
-  submitted.value = true;
-  pending.value = false;
-  if (jobs.value.length) await refresh();
-}
 onMounted(() => {
   localStorage.setItem('tavern-warmup-startup', props.status.startup_id);
 });
-onBeforeUnmount(() => {
-  disposed = true;
-  clearTimeout(timer);
-});
-useTimedError(error);
 </script>
 
 <template>
@@ -87,7 +52,7 @@ useTimedError(error);
   </p>
   <AppNotification :message="error" />
   <div class="actions">
-    <button v-if="!submitted && available.length" :disabled="pending" @click="warmup">
+    <button v-if="!submitted && available.length" :disabled="pending" @click="warmup.start(available)">
       {{ pending ? '正在提交…' : '现在预热' }}
     </button>
     <button :disabled="pending" @click="$emit('close')">

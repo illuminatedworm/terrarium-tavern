@@ -13,6 +13,7 @@ import {
   watch,
 } from 'vue';
 import { useContextOperations } from './composables/useContextOperations';
+import { useStartupWarmup } from './composables/useStartupWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import type { ConversationModelSelection } from './lib/settingsDocument';
@@ -234,6 +235,7 @@ function closePanel() {
   else panel.value = '';
 }
 const startupModels = ref<any>(null);
+const startupWarmup = useStartupWarmup(() => panel.value === 'warmup');
 const contextStats = ref<any>(null);
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
@@ -3283,6 +3285,7 @@ useTimedError(error);
           <StartupWarmup
             v-if="panel === 'warmup'"
             :status="startupModels"
+            :warmup="startupWarmup"
             @close="panel = ''"
             @settings="panel = 'settings'"
           />
