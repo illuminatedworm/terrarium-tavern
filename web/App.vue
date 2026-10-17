@@ -634,6 +634,12 @@ watch(panel, async (value) => {
 const retryableTurn = computed(() =>
   canRetryTurn(activeTurn.value, session.value) ? activeTurn.value : null,
 );
+watch(
+  () => activeTurn.value?.status,
+  (status) => {
+    rewriteExpanded.value = status === 'error' && !!retryableTurn.value;
+  },
+);
 function turnError(value: string) {
   return value?.includes('runtime.variableUpdate') || value?.includes('MVU_UPDATE_INVALID')
     ? '模型的变量更新无效，本次正文与状态未提交。草稿已保留，可以点击“重新生成”。'
@@ -2545,6 +2551,8 @@ useTimedError(error);
             </button>
             <button aria-label="变量与记忆" title="变量与记忆" @click="panel = 'state'">
               <Icon name="braces" /><span class="tool-label">变量与记忆</span></button
+            ><button aria-label="上下文" title="上下文预览" @click="inspectContext">
+              <Icon name="layers" /><span class="tool-label">上下文</span></button
             ><button
               aria-label="剧情分支"
               title="剧情分支：继承某条回复的进度另开对话"
@@ -2552,8 +2560,6 @@ useTimedError(error);
               @click="showForkPoints"
             >
               <Icon name="branch" /><span class="tool-label">剧情分支</span></button
-            ><button aria-label="上下文" title="上下文预览" @click="inspectContext">
-              <Icon name="layers" /><span class="tool-label">上下文</span></button
             ><button
               :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次 messages'"
               :disabled="
@@ -2813,7 +2819,7 @@ useTimedError(error);
             @navigate="navigateMessage"
           />
           <section
-            v-if="(latestReply || retryableTurn) && rewriteExpanded"
+            v-if="!busy && (latestReply || retryableTurn) && rewriteExpanded"
             class="regeneration-panel"
             aria-label="重新生成选项"
             @keydown.esc.prevent.stop="closeRewriteOptions"

@@ -606,6 +606,7 @@ useTimedError(error);
             随对话滚动方案下，非常驻条目统一作为 system
             紧贴用户消息前注入，首次有开场白时放在开场白前；重复命中不移动。位置、插入深度和角色字段只对常驻与
             ST 方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
+            列表尽量按同批注入顺序显示，不改变源数据顺序；实际注入仍受触发条件和上下文方案影响。
           </p>
           <div class="toolbar">
             <button @click="addLore"><Icon name="plus" :size="16" />添加条目</button
