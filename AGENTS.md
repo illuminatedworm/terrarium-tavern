@@ -37,7 +37,6 @@
 - 用户说“提交 git”时，执行 `git add` 和 `git commit`；“推送”才指执行 `git push` 到远程。
 - 用户要求合并提交时，根据提交历史选择 squash 或 interactive rebase。
 - Git 提交消息**始终使用中文**，包括修改已有提交消息。消息应当以“功能/修复/杂项：”开头，并且为精简的一句话。
-- 从现在起，包含 Codex 参与完成的工作的 Git 提交，须在提交消息末尾添加 `Co-authored-by: Codex <noreply@openai.com>` 协作者署名；保留其他协作者已有的署名。
 
 ## 回合与分支一致性
 
