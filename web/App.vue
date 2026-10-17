@@ -26,6 +26,7 @@ import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import SceneNotes from './components/story/SceneNotes.vue';
+import ContextPreview from './components/story/ContextPreview.vue';
 import FullAgentNotes from './components/story/FullAgentNotes.vue';
 import ContextStrategyControls from './components/story/ContextStrategyControls.vue';
 import FullAgentTools from './components/story/FullAgentTools.vue';
@@ -60,12 +61,7 @@ import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
 import { observeTurn, turnDraft } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
-import {
-  contextKind,
-  contextMessageContent,
-  groupContext,
-  summarizeBudgetSources,
-} from './lib/contextPreview';
+import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
 
 const SettingsPanel = defineAsyncComponent({
   loader: () => import('./components/settings/SettingsPanel.vue'),
@@ -702,6 +698,8 @@ const contextLabels: Record<string, string> = {
   turn_variable_instruction: '本轮变量授权',
   tool_definitions: '工具定义',
   history: '历史',
+  tool_protocol: '工具协议',
+  plot: '剧情规划',
   author_note: '作者注释',
   state: '状态',
   input: '本轮输入',
@@ -758,12 +756,31 @@ const budgetSourceSummary = computed(() =>
     contextLabel,
   ),
 );
+// Rounds count user turns; replies belong to the round of the input they answer.
+const stateTabs = [
+  { id: 'variables', label: '变量' },
+  { id: 'memory', label: '记忆' },
+  { id: 'content', label: '设定演化' },
+] as const;
+const stateTab = ref<(typeof stateTabs)[number]['id']>('memory');
+const messageRounds = computed(() => {
+  const rounds = new Map<string, number>();
+  let round = 0;
+  for (const message of session.value?.messages || []) {
+    if (message.role === 'user') round += 1;
+    rounds.set(message.id, round);
+  }
+  return rounds;
+});
+const storyRounds = computed(() =>
+  (session.value?.messages || []).map((message: any) => messageRounds.value.get(message.id)!),
+);
 function contextItemTitle(item: any) {
   if (item.title) return item.title;
   const source = String(item.source || '');
   if (source.startsWith('lore:')) {
     const entry = preview.value?.lore?.find((e: any) => String(e.id) === source.slice(5));
-    return entry?.comment || entry?.name || `lore · ${source.slice(5)}`;
+    return entry?.comment || entry?.name || '';
   }
   if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;
   if (source === 'agent_tools') {
@@ -2987,6 +3004,7 @@ useTimedError(error);
         :session-id="session.id"
         :story-revision="session.revision"
         :settings="settings"
+        :story-rounds="storyRounds"
         @close="
           advisorSeen = session.id;
           inspectorTab = 'mvu';
@@ -3248,12 +3266,13 @@ useTimedError(error);
           :label="panel === 'settings' ? '设置' : '酒馆面板'"
           :class="{
             'context-management-modal': panel === 'context-management',
+            'state-modal': panel === 'state',
             // Sized by panel, not by loaded content, so the frame keeps its height
             // while the settings chunk is still loading.
             'settings-modal': panel === 'settings',
           }"
           :size="
-            ['settings', 'context', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
+            ['settings', 'context', 'state', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
               ? 'large'
               : ['delete-card', 'fork'].includes(panel)
                 ? 'small'
@@ -3389,33 +3408,49 @@ useTimedError(error);
               @saved="applyFullSession"
             /> </template
           ><template v-else-if="panel === 'state'"
-            ><h2>变量与记忆</h2>
-            <p class="muted">仅显示当前剧情分支。切换分支会一同恢复变量与记忆。</p>
-            <h3>剧情变量</h3>
-            <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
-            <h3>记忆</h3>
-            <FullAgentNotes
-              v-if="isFullAgent"
-              :session="session"
-              :disabled="busy || activeTurn?.status === 'awaiting_review'"
-              @saved="applyFullSession" />
-            <SceneNotes
-              v-else
-              kind="memory"
-              :snapshot="session.snapshot"
-              :memory-view="session.memory_view"
-              :progress="memoryProgress"
-              @change="saveMemoryRecord"
-              @cancel="stop"
-              :messages="session.messages"
-              :persona="session.persona"
-              :character="archiveCharacter"
-              :disabled="busy || activeTurn?.status === 'awaiting_review'"
-              :saving="sceneSaving === 'memory'"
-              @locate="locateSource" />
-            <h3>设定演化</h3>
-            <StateTree :value="session.snapshot.content"
-          /></template>
+            ><div class="state-panel-head">
+              <h2 class="panel-title"><Icon name="braces" :size="19" />变量与记忆</h2>
+              <nav class="panel-tabs" aria-label="变量与记忆分页">
+                <button
+                  v-for="tab in stateTabs"
+                  :key="tab.id"
+                  :class="{ active: stateTab === tab.id }"
+                  :aria-pressed="stateTab === tab.id"
+                  @click="stateTab = tab.id"
+                >
+                  {{ tab.label }}
+                </button>
+              </nav>
+            </div>
+            <p class="muted state-panel-note">仅显示当前剧情分支。切换分支会一同恢复变量与记忆。</p>
+            <div v-if="stateTab === 'variables'" class="state-cards">
+              <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
+            </div>
+            <template v-else-if="stateTab === 'memory'"
+              ><FullAgentNotes
+                v-if="isFullAgent"
+                :session="session"
+                :disabled="busy || activeTurn?.status === 'awaiting_review'"
+                @saved="applyFullSession" />
+              <SceneNotes
+                v-else
+                kind="memory"
+                layout="cards"
+                :rounds="messageRounds"
+                :snapshot="session.snapshot"
+                :memory-view="session.memory_view"
+                :progress="memoryProgress"
+                @change="saveMemoryRecord"
+                @cancel="stop"
+                :messages="session.messages"
+                :persona="session.persona"
+                :character="archiveCharacter"
+                :disabled="busy || activeTurn?.status === 'awaiting_review'"
+                :saving="sceneSaving === 'memory'"
+                @locate="locateSource"
+            /></template>
+            <div v-else class="state-cards"><StateTree :value="session.snapshot.content" /></div
+          ></template>
           <template v-else-if="panel === 'fork-select'"
             ><h2>新建对话</h2>
             <p class="muted">
@@ -3459,99 +3494,19 @@ useTimedError(error);
               </button>
             </div></template
           >
-          <template v-else-if="panel === 'context'"
-            ><h2>上下文预览</h2>
-            <p>{{ actualInputLabel }} · {{ contextLengthLabel }}</p>
-            <p class="muted">{{ tokenizerLabel }}</p>
-            <p class="muted">
-              日常输入预算（tokens）
-              {{ preview?.daily_context_budget?.toLocaleString() }}
-              tokens；预览不会加载神经模型，下方诊断会注明不完整的召回。
-            </p>
-            <div class="budget-sources">
-              <span v-for="source in budgetSourceSummary" :key="source.label"
-                >{{ source.label }} {{ source.percent.toFixed(2) }}%</span
-              >
-            </div>
-            <div class="context-overview">
-              <div>
-                <small>预计输入（tokens）</small
-                ><strong>{{ Number(preview?.estimated_tokens || 0).toLocaleString() }} tokens</strong>
-              </div>
-              <div>
-                <small>模型上下文窗口（tokens）</small
-                ><strong>{{ Number(activeModel?.context_tokens || 0).toLocaleString() }} tokens</strong>
-              </div>
-              <div>
-                <small>内容块</small><strong>{{ preview?.trace?.length || 0 }}</strong>
-              </div>
-              <div>
-                <small>缓存命中率</small><strong>{{ cacheRateLabel }}</strong>
-              </div>
-            </div>
-            <div class="context-sequence" aria-label="上下文结构">
-              <span
-                v-for="group in contextGroups"
-                :key="group.id"
-                class="context-chip"
-                :class="`context-${group.kind}`"
-                >{{ group.label }} · {{ group.count }}</span
-              >
-            </div>
-            <div class="context-groups">
-              <details
-                v-for="group in contextGroups"
-                :key="group.id"
-                class="context-group"
-                open
-                :class="`context-${group.kind}`"
-              >
-                <summary>
-                  <span class="context-dot"></span><strong>{{ group.label }}</strong
-                  ><small
-                    >{{ group.source }} · {{ group.count }} 条 · {{ group.items.length }} 块 · 预计
-                    {{ group.tokens.toLocaleString() }} tokens</small
-                  >
-                </summary>
-                <div class="context-items">
-                  <details
-                    v-for="(item, index) in group.items"
-                    :key="item.position ?? index"
-                    class="context-entry"
-                  >
-                    <summary>
-                      <strong class="context-entry-title" :title="contextItemTitle(item)">{{
-                        contextItemTitle(item)
-                      }}</strong
-                      ><span class="badge">{{ item.role }}</span
-                      ><span class="context-entry-position">位置 {{ item.position }}</span
-                      ><small v-if="item.opaque">加密状态 · 占用未知</small
-                      ><small v-else
-                        >预计 {{ Number(item.estimated_tokens || 0).toLocaleString() }} tokens</small
-                      >
-                    </summary>
-                    <pre>{{ contextMessageContent(item) }}</pre>
-                  </details>
-                </div>
-              </details>
-            </div>
-            <details class="context-diagnostics">
-              <summary>
-                触发与裁剪
-                <small
-                  >{{ preview?.diagnostics?.length || 0 }} 条诊断 ·
-                  {{ preview?.lore?.length || 0 }} 条世界书命中</small
-                >
-              </summary>
-              <pre>{{
-                JSON.stringify(
-                  { lore: preview?.lore, diagnostics: preview?.diagnostics, retrieval: preview?.retrieval },
-                  null,
-                  2,
-                )
-              }}</pre>
-            </details></template
-          >
+          <ContextPreview
+            v-else-if="panel === 'context'"
+            :preview="preview"
+            :groups="contextGroups"
+            :budget-sources="budgetSourceSummary"
+            :context-tokens="Number(activeModel?.context_tokens || 0)"
+            :actual-input-label="actualInputLabel"
+            :length-label="contextLengthLabel"
+            :tokenizer-label="tokenizerLabel"
+            :cache-rate="cacheRateLabel"
+            :item-title="contextItemTitle"
+            :rounds="messageRounds"
+          />
           <template v-else-if="panel === 'trace'"
             ><h2>幕后活动</h2>
             <p class="muted">模型请求、工具活动、变量修改与脚本日志。</p>

@@ -10,6 +10,8 @@ defineProps<{
   saving?: boolean;
   memoryView?: any;
   progress?: string;
+  layout?: 'list' | 'cards';
+  rounds?: Map<string, number>;
 }>();
 const emit = defineEmits<{ change: [value: any]; cancel: []; locate: [source: string, excerpt: string] }>();
 </script>
@@ -21,6 +23,8 @@ const emit = defineEmits<{ change: [value: any]; cancel: []; locate: [source: st
       :memory="memoryView"
       :disabled="disabled"
       :saving="saving"
+      :layout="layout"
+      :rounds="rounds"
       @change="emit('change', $event)"
       @locate="(id, excerpt) => emit('locate', id, excerpt)"
     />

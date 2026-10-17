@@ -27,16 +27,39 @@ export function summarizeBudgetSources(
   total: number,
   labelFor: (source: string) => string,
 ) {
-  const totals = new Map<string, number>();
+  const totals = new Map<string, { kind: string; tokens: number }>();
   for (const [source, tokens] of Object.entries(sources || {})) {
     const label = labelFor(source);
-    totals.set(label, (totals.get(label) || 0) + Number(tokens));
+    const entry = totals.get(label) || { kind: contextKind(source), tokens: 0 };
+    entry.tokens += Number(tokens);
+    totals.set(label, entry);
   }
-  return Array.from(totals, ([label, tokens]) => ({
+  return Array.from(totals, ([label, { kind, tokens }]) => ({
     label,
+    kind,
     tokens,
     percent: Math.round((tokens / Math.max(1, total)) * 10000) / 100,
   }));
+}
+
+/**
+ * One-line row preview: the leading wrapper tag (`<lorebook>`,
+ * `<story_history ref='H3' role='user'>`) is shown apart from the text.
+ */
+export function contextExcerpt(item: any): { tag: string; attrs: Record<string, string>; text: string } {
+  let text =
+    typeof item.content === 'string' ? item.content : item.content ? JSON.stringify(item.content) : '';
+  if (!text && item.tool_calls?.length)
+    text = item.tool_calls
+      .map((call: any) => `${call.function?.name || call.name || '工具'}(${call.function?.arguments ?? ''})`)
+      .join(' ');
+  const tag = /^\s*<([A-Za-z][\w-]*)((?:\s+[\w-]+='[^']*')*)\s*>/.exec(text);
+  const attrs: Record<string, string> = {};
+  if (tag) {
+    for (const [, key, value] of tag[2].matchAll(/([\w-]+)='([^']*)'/g)) attrs[key] = value;
+    text = text.slice(tag[0].length).replace(new RegExp(`</${tag[1]}>\\s*$`), '');
+  }
+  return { tag: tag?.[1] || '', attrs, text: text.replace(/\s+/g, ' ').trim().slice(0, 240) };
 }
 
 export function groupContext(items: any[], labelFor: (source: string) => string) {

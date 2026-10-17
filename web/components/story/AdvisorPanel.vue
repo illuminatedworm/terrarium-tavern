@@ -13,7 +13,13 @@ import WebSources from '../common/WebSources.vue';
 import { webActivityLabel, webSources } from '../../lib/webSearch';
 import { handleComposerKeydown, sendShortcutHint } from '../../lib/composerShortcut';
 
-const props = defineProps<{ sessionId: string; storyRevision: number; settings: SettingsDocument }>();
+const props = defineProps<{
+  sessionId: string;
+  storyRevision: number;
+  settings: SettingsDocument;
+  /** Round of each story message, for the context preview. */
+  storyRounds?: number[];
+}>();
 const emit = defineEmits<{ close: []; settings: []; preferenceSaved: [] }>();
 const {
   state,
@@ -415,7 +421,12 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         }}</span
       >
     </div>
-    <AdvisorPreview v-if="showPreview" :session-id="sessionId" @close="closePreview" />
+    <AdvisorPreview
+      v-if="showPreview"
+      :session-id="sessionId"
+      :story-rounds="storyRounds"
+      @close="closePreview"
+    />
   </section>
 </template>
 

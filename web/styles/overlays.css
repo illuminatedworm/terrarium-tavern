@@ -199,144 +199,268 @@
 }
 
 /* ---------- Context preview ---------- */
-.budget-sources {
+/* Dialog titles that carry a leading icon (context preview, variables & memory). */
+.modal h2.panel-title {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.context-overview {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
   gap: 10px;
-  margin: 20px 0;
-}
-.context-overview > div {
-  padding: 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: rgb(var(--well-rgb) / 0.35);
-}
-.context-overview small {
-  display: block;
-  font-size: 10.5px;
-  color: var(--text-muted);
-  margin-bottom: 7px;
-}
-.context-overview strong {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-  font-variant-numeric: tabular-nums;
-}
-.context-sequence {
-  display: flex;
-  gap: 7px;
-  flex-wrap: wrap;
-  padding: 13px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: rgb(var(--well-rgb) / 0.35);
   margin-bottom: 18px;
 }
-.context-chip {
-  --context-color: var(--text-muted);
-  border: 1px solid color-mix(in srgb, var(--context-color) 55%, var(--surface-hover));
-  background: color-mix(in srgb, var(--context-color) 13%, var(--surface-base));
-  color: color-mix(in srgb, var(--context-color) 75%, var(--text-primary));
-  border-radius: 999px;
-  padding: 5px 9px;
-  font-size: 11px;
+.panel-title .icon {
+  color: var(--text-secondary);
 }
+.context-meter {
+  margin-bottom: 22px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--well-rgb) / 0.35);
+}
+.context-meter-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+}
+.context-meter-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 10px 0 14px;
+}
+.context-meter-figure strong {
+  color: var(--accent-hover);
+  font-size: 44px;
+  font-weight: 400;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.context-meter-figure.over strong {
+  color: var(--warning);
+}
+.context-meter-figure span {
+  color: var(--text-secondary);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+.context-meter-bar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.06);
+}
+.context-meter-bar span {
+  flex: none;
+  min-width: 2px;
+  background: var(--context-color);
+  box-shadow: inset -1px 0 0 rgb(0 0 0 / 0.35);
+}
+.context-meter-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+}
+.context-meter-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.context-meter-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--context-color);
+}
+.context-meter-legend b {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.context-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+.context-stats dt {
+  color: var(--text-muted);
+  font-size: var(--fs-2xs);
+}
+.context-stats dd {
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+p.context-footnote {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+}
+/* Request order as a column of category-tinted rows; multi-block groups nest
+   their blocks under a guide line, conversation-anchored lore is indented. */
 .context-groups {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 .context-group {
   --context-color: var(--text-muted);
+  margin: 0;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--context-color) 32%, var(--border-subtle));
-  border-radius: var(--radius-md);
-  background: rgb(var(--well-rgb) / 0.35);
-  overflow: hidden;
+  border: 0;
 }
-.context-group > summary {
+.context-group.anchored {
+  margin-left: 26px;
+}
+.context-group > summary,
+.context-entry > summary {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 12px 14px;
-  color: var(--text-primary);
+  gap: 10px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--context-color) 38%, transparent);
+  border-radius: 10px;
+  background: rgb(var(--well-rgb) / 0.4);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  list-style: none;
+  transition:
+    border-color var(--dur),
+    background var(--dur);
 }
-.context-group > summary strong {
-  font-size: 13px;
+.context-group > summary::-webkit-details-marker,
+.context-entry > summary::-webkit-details-marker {
+  display: none;
+}
+.context-group > summary:hover,
+.context-entry > summary:hover {
+  border-color: color-mix(in srgb, var(--context-color) 65%, transparent);
+  background: color-mix(in srgb, var(--context-color) 6%, rgb(var(--well-rgb) / 0.4));
+}
+/* Disclosure chevron drawn with borders; it turns down when the row opens. */
+.context-group > summary::after,
+.context-entry > summary::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px;
+  border-right: 1.5px solid var(--text-faint);
+  border-bottom: 1.5px solid var(--text-faint);
+  transform: rotate(-45deg);
+  transition: transform var(--dur);
+}
+.context-group[open] > summary::after,
+.context-entry[open] > summary::after {
+  transform: rotate(45deg);
+}
+.context-group > summary strong,
+.context-entry-label {
+  flex: none;
+  color: color-mix(in srgb, var(--context-color) 82%, var(--text-primary));
+  font-size: var(--fs-md);
   font-weight: 500;
 }
 .context-group > summary small {
-  margin-left: auto;
-  font-size: 10.5px;
   color: var(--text-muted);
+  font-size: var(--fs-2xs);
 }
 .context-dot {
-  width: 8px;
-  height: 8px;
+  flex: none;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--context-color);
   box-shadow: 0 0 10px color-mix(in srgb, var(--context-color) 70%, transparent);
 }
-.context-items {
-  padding: 0 12px 10px;
+.context-group:not(.single) > .context-items {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 6px 0 2px 17px;
+  padding-left: 14px;
+  border-left: 1px solid color-mix(in srgb, var(--context-color) 30%, transparent);
 }
 .context-entry {
-  padding: 8px 0;
-  border-color: var(--border-subtle);
-}
-/* Long worldbook comments belong to expanded content, never the disclosure row. */
-.context-entry > summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: 11px;
-}
-.context-entry > summary::before {
-  content: '▸';
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-.context-entry[open] > summary::before {
-  content: '▾';
-}
-.context-entry > summary::-webkit-details-marker {
-  display: none;
-}
-.context-entry > summary .context-entry-title {
-  flex: 1;
-  min-width: 0;
   margin: 0;
+  padding: 0;
+  border: 0;
+}
+.context-group:not(.single) .context-entry > summary {
+  min-height: 36px;
+  padding-block: 6px;
+  border-color: color-mix(in srgb, var(--context-color) 20%, transparent);
+  background: rgb(var(--well-rgb) / 0.25);
+}
+.context-round {
+  flex: none;
+  color: color-mix(in srgb, var(--context-color) 82%, var(--text-primary));
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.context-entry-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34%;
   overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  font-weight: 500;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-weight: 500;
-  font-size: 12px;
 }
-.context-entry > summary .badge,
-.context-entry-position,
-.context-entry > summary small {
-  flex-shrink: 0;
+.context-tag {
+  flex: none;
+  color: color-mix(in srgb, var(--context-color) 70%, var(--text-muted));
+  font: var(--fs-2xs) / 1 var(--font-mono);
+}
+.context-excerpt {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.context-entry > summary small {
+.context-entry > summary .badge {
+  flex: none;
+  padding: 0 7px;
+}
+.context-entry-position,
+.context-tokens {
+  flex: none;
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.context-group > summary .context-tokens {
   margin-left: auto;
+  color: var(--text-muted);
 }
 .context-entry pre {
   max-height: 360px;
-  margin: 9px 0 0;
+  margin: 6px 0 4px;
 }
 .context-diagnostics {
-  margin-top: 16px;
+  margin-top: 18px;
 }
 .context-diagnostics summary {
   font-size: 13px;
@@ -344,48 +468,149 @@
 .context-diagnostics summary small {
   float: right;
 }
-.context-rules {
-  --context-color: #78a8d4;
+.context-rules,
+.context-tool,
+.context-context,
+.context-chat {
+  --context-color: var(--ctx-rules);
 }
 .context-lore {
-  --context-color: #b58bd4;
+  --context-color: var(--ctx-lore);
 }
-.context-character {
-  --context-color: #83b985;
+.context-character,
+.context-card,
+.context-system,
+.context-description,
+.context-personality,
+.context-scenario {
+  --context-color: var(--ctx-character);
 }
 .context-persona {
-  --context-color: #d29a76;
+  --context-color: var(--ctx-persona);
 }
 .context-examples {
-  --context-color: #9e8fcb;
+  --context-color: var(--ctx-examples);
 }
-.context-memory {
-  --context-color: #d17f9e;
+.context-memory,
+.context-handoff,
+.context-note,
+.context-plot,
+.context-cloud {
+  --context-color: var(--ctx-memory);
 }
 .context-history {
-  --context-color: #d1b36f;
+  --context-color: var(--ctx-history);
 }
 .context-author {
-  --context-color: #b1bd71;
+  --context-color: var(--ctx-author);
 }
-.context-state {
-  --context-color: #71b7ad;
+.context-state,
+.context-mvu {
+  --context-color: var(--ctx-state);
 }
 .context-input {
-  --context-color: #cadb82;
+  --context-color: var(--ctx-input);
 }
 .context-post,
-.context-turn {
-  --context-color: #dd8b70;
+.context-turn,
+.context-regenerate {
+  --context-color: var(--ctx-turn);
 }
 .context-inject {
-  --context-color: #d47777;
+  --context-color: var(--ctx-inject);
 }
 .context-provider-fallback {
-  --context-color: #d2a15f;
+  --context-color: var(--ctx-fallback);
 }
 .context-session {
   --context-color: var(--accent);
+}
+/* ---------- Variables & memory dialog ---------- */
+.modal.state-modal {
+  width: min(860px, calc(100vw - 32px));
+}
+.state-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding-right: 40px;
+}
+.modal .state-panel-head h2.panel-title {
+  margin: 0;
+  padding-right: 0;
+}
+/* View switch inside a dialog: the same segmented control as 对话／工作记录. */
+.panel-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: rgb(0 0 0 / 0.24);
+  box-shadow:
+    inset 0 0 0 1px var(--border-subtle),
+    inset 0 1px 2px rgb(0 0 0 / 0.3);
+}
+.panel-tabs button {
+  min-height: 28px;
+  padding: 3px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.panel-tabs button:hover:not(:disabled):not(.active) {
+  background: transparent;
+  color: var(--text-primary);
+}
+.panel-tabs button.active,
+.panel-tabs button.active:hover {
+  background: rgb(255 255 255 / 0.09);
+  color: var(--text-primary);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 1px 4px rgb(0 0 0 / 0.3);
+}
+.modal p.state-panel-note {
+  margin: 10px 0 18px;
+  font-size: var(--fs-xs);
+}
+/* Top-level variable objects become cards; their scalar fields flow in columns. */
+.state-cards > .state-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.state-cards > .state-tree > details,
+.state-cards > .state-tree > .state-leaf {
+  padding: 12px 18px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
+}
+.state-cards > .state-tree > details > summary {
+  color: var(--accent-hover);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+.state-cards details > .state-tree {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0 20px;
+  margin: 6px 0 0;
+  padding: 0;
+  border: 0;
+}
+.state-cards details > .state-tree > details,
+.state-cards details > .state-tree > .state-leaf:has(.prose) {
+  grid-column: 1 / -1;
+}
+.state-cards details details > .state-tree {
+  margin-left: 4px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-control);
 }
 .context-block {
   border: 1px solid var(--border-control);
@@ -402,19 +627,28 @@
   margin-bottom: 0;
 }
 @media (max-width: 760px) {
-  .context-overview {
-    grid-template-columns: 1fr 1fr;
-  }
-  .context-group > summary small {
+  .context-group > summary small:not(.context-tokens),
+  .context-entry-position,
+  .context-tag {
     display: none;
   }
 }
 @media (max-width: 620px) {
-  .context-entry-position {
+  .context-excerpt,
+  .context-entry > summary .badge {
     display: none;
   }
+  .context-entry-title {
+    flex: 1 1 0;
+    max-width: none;
+  }
+  .context-group > summary,
   .context-entry > summary {
-    gap: 5px;
+    gap: 7px;
+    padding-inline: 10px;
+  }
+  .context-group.anchored {
+    margin-left: 12px;
   }
 }
 

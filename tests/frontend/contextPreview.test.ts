@@ -13,9 +13,9 @@ describe('context preview budget summary', () => {
       source.startsWith('lore:') ? '世界书（按设定位置）' : source,
     );
     expect(summary).toEqual([
-      { label: '世界书（按设定位置）', tokens: 5, percent: 19.23 },
-      { label: 'history', tokens: 20, percent: 76.92 },
-      { label: 'chat_framing', tokens: 1, percent: 3.85 },
+      { label: '世界书（按设定位置）', kind: 'lore', tokens: 5, percent: 19.23 },
+      { label: 'history', kind: 'history', tokens: 20, percent: 76.92 },
+      { label: 'chat_framing', kind: 'chat', tokens: 1, percent: 3.85 },
     ]);
   });
   it('keeps small nonzero percentages and rounds to two decimal places', () => {

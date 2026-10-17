@@ -12,8 +12,12 @@
 }
 
 /* ---------- Header ---------- */
+/* The view switch sits left of centre; the tool column never shrinks below its
+   buttons, so a narrow story (both sidebars open) pushes the switch further left
+   and truncates the title instead of letting the tools overlap the switch. */
 .story-heading {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) auto minmax(max-content, 3fr);
   align-items: center;
   gap: 14px;
   flex: none;
@@ -25,7 +29,6 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1 1 0;
   min-width: 0;
 }
 .story-heading .story-title .character-portrait {
@@ -124,9 +127,7 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 1 1 0;
   gap: 2px;
-  min-width: 0;
 }
 .story-tools button {
   display: inline-flex;
@@ -157,14 +158,14 @@
 }
 @container story (max-width: 700px) {
   .story-heading {
-    flex-wrap: wrap;
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 8px 10px;
   }
   .story-title {
-    flex: 1 1 100%;
+    grid-column: 1 / -1;
   }
   .story-tools {
-    flex: 1 1 auto;
+    min-width: 0;
   }
 }
 .channel-notice {

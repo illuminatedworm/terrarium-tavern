@@ -58,6 +58,20 @@
   --warning: rgb(var(--warning-rgb));
   --cache-gold: #f2b928;
   --cache-gold-light: #ffe184;
+  /* Context categories: context-preview rows, budget bar and memory cards. */
+  --ctx-rules: #78a8d4;
+  --ctx-lore: #b58bd4;
+  --ctx-character: #83b985;
+  --ctx-persona: #d29a76;
+  --ctx-examples: #9e8fcb;
+  --ctx-memory: #d17f9e;
+  --ctx-history: #d1b36f;
+  --ctx-author: #b1bd71;
+  --ctx-state: #71b7ad;
+  --ctx-input: #cadb82;
+  --ctx-turn: #dd8b70;
+  --ctx-inject: #d47777;
+  --ctx-fallback: #d2a15f;
   --hover-wash: rgb(255 255 255 / 0.05);
   --press-wash: rgb(255 255 255 / 0.08);
 

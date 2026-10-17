@@ -107,11 +107,19 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
       }}
     </p>
     <label><input v-model="showArchived" type="checkbox" />显示已归档笔记</label>
-    <details v-for="note in notes" :key="note.key" class="agent-note">
+    <details
+      v-for="note in notes"
+      :key="note.key"
+      class="agent-note"
+      :class="[`note-${note.kind}`, { archived: note.status === 'archived' }]"
+    >
       <summary>
-        <span>{{ note.key }}</span
-        ><span class="note-kind">{{ kindLabel[note.kind] }}</span
-        ><span class="note-status">{{ note.status === 'archived' ? '已归档' : '有效' }}</span>
+        <span class="note-key">{{ note.key }}</span
+        ><span class="note-chip">{{ kindLabel[note.kind] }}</span
+        ><span class="note-chip note-status">{{ note.status === 'archived' ? '已归档' : '有效' }}</span
+        ><span v-if="note.stale" class="note-chip warn">需核对</span
+        ><span v-if="note.sources.length" class="note-sources">来源 · {{ note.sources.length }} 处</span>
+        <span class="note-preview">{{ note.content }}</span>
       </summary>
       <p v-if="note.stale" role="status">来源已编辑或不在当前分支，请核对。</p>
       <p class="note-content">{{ note.content }}</p>
@@ -133,22 +141,94 @@ textarea {
   resize: vertical;
 }
 .agent-note {
-  margin-block: 0;
-  padding: 14px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  --note-color: var(--ctx-memory);
+  margin-block: 0 10px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
   overflow-wrap: anywhere;
+  transition: border-color var(--dur);
+}
+.agent-note:hover,
+.agent-note[open] {
+  border-color: color-mix(in srgb, var(--note-color) 35%, var(--border-control));
+}
+.agent-note.note-hypothesis {
+  --note-color: var(--ctx-rules);
+}
+.agent-note.note-plan {
+  --note-color: var(--ctx-turn);
+}
+.agent-note.archived {
+  opacity: 0.62;
 }
 .agent-note summary {
-  cursor: pointer;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px;
+  list-style: none;
 }
-.note-kind {
-  color: var(--text-secondary);
+.agent-note summary::-webkit-details-marker {
+  display: none;
+}
+.note-key {
+  margin-right: 4px;
+  color: var(--note-color);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.note-chip {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.05);
+  color: var(--text-muted);
+  font-size: var(--fs-2xs);
 }
 .note-status {
   color: var(--success);
+}
+.archived .note-status {
+  color: var(--text-muted);
+}
+.note-chip.warn {
+  color: var(--warning);
+}
+.note-sources {
+  margin-left: auto;
+  padding: 1px 10px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+}
+/* Collapsed cards show the first lines; the full text replaces them when open. */
+.note-preview {
+  display: -webkit-box;
+  flex-basis: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.agent-note[open] .note-preview {
+  display: none;
+}
+.agent-note > p,
+.agent-note > small {
+  display: block;
+  margin: 0;
+  padding: 0 16px 12px;
+}
+.agent-note > small {
+  color: var(--text-muted);
 }
 .notes-heading {
   display: flex;
@@ -159,7 +239,10 @@ textarea {
 .notes-heading h3 {
   margin: 0;
 }
-.note-content {
+.agent-note > .note-content {
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  line-height: 1.8;
   white-space: pre-wrap;
 }
 </style>
