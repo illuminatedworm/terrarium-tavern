@@ -874,7 +874,7 @@ def test_history_macro_change_rebuilds_once_and_records_why():
     assert third["messages"] == second["messages"]
 
 
-@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot"])
+@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency"])
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
     from tavern.full_agent.config import FULL_AGENT_PROMPT

@@ -12,7 +12,7 @@ from tavern.core.prompts import (
     LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
     PROMPT_DEFINITIONS,
 )
-from tavern.full_agent.config import FULL_AGENT_PROMPT
+from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig, tool_protocol
 from tavern.memories.memory import render_memory
 from tavern.search.retrieval_text import query_instruction
 from tests.support.memory_fixtures import memory_snapshot
@@ -32,7 +32,8 @@ def test_defaults_and_custom_prompts():
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
     assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
-    assert "用户对行动结果的描述，不自动决定其他人物的反应" in DEFAULT_SYSTEM_PROMPT
+    assert all("用户对行动结果的描述，不自动决定其他人物的反应" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT))
+    assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
     assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
 
