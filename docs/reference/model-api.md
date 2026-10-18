@@ -13,7 +13,7 @@
 | `anthropic` | `v1` | `/messages` |
 | `gemini` | `v1beta` | `/models/{model}:generateContent`；流式使用 `:streamGenerateContent` |
 
-显式填写的 API 路径按原值拼接。模型列表从本地持久缓存读取，只有点击“更新模型列表”才请求提供商；缓存按提供商、接口地址、协议和密钥隔离，更新失败保留原列表。
+显式填写的 API 路径按原值拼接。模型列表从本地持久缓存读取，只有点击“更新模型列表”或模型选单内的“获取模型列表”才请求提供商；缓存按提供商、接口地址、协议和密钥隔离，更新失败保留原列表。
 
 `gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 Roleplay Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
 

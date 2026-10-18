@@ -743,6 +743,7 @@ p.context-footnote {
 .message-edit-popover,
 .delete-confirm-popover,
 .editor-restore-confirm,
+.advisor-clear-confirm,
 .field-tooltip,
 .app-notification {
   border: 1px solid var(--glass-edge-strong);

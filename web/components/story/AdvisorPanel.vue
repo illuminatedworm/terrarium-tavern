@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { useAdvisor } from '../../composables/useAdvisor';
 import { advisorOffers, advisorRunning, toolLabels } from '../../lib/advisor';
 import { channelProviders } from '../../lib/channels';
 import type { SettingsDocument } from '../../lib/settingsDocument';
 import { useModelCatalog } from '../../lib/modelCatalog';
+import { positionPopover } from '../../lib/anchoredPopover';
 import ModelSelect from '../settings/ModelSelect.vue';
 import StoryProse from './AdvisorProse.vue';
 import AdvisorIcon from './AdvisorIcon.vue';
@@ -47,9 +48,13 @@ const {
 } = useAdvisor(props.sessionId, () => emit('preferenceSaved'));
 const draft = ref(''),
   showModel = ref(false),
-  showRange = ref(false),
+  showContextOptions = ref(false),
   showPreview = ref(false),
   confirmClear = ref(false);
+const clearTrigger = ref<HTMLButtonElement>(),
+  clearPopover = ref<HTMLElement>(),
+  clearCancel = ref<HTMLButtonElement>();
+const clearPopoverId = useId();
 const messages = ref<HTMLElement>(),
   input = ref<HTMLTextAreaElement>();
 const previewTrigger = ref<HTMLButtonElement>();
@@ -74,7 +79,11 @@ const profile = computed(() => ({
   model: model.value,
 }));
 const provider = computed(() => providers.value.find((p) => p.id === providerId.value));
-const { catalog } = useModelCatalog(
+const {
+  catalog,
+  error: catalogError,
+  refresh: refreshModels,
+} = useModelCatalog(
   () => profile.value,
   () => provider.value,
   undefined,
@@ -103,7 +112,8 @@ watch(
   () => state.value?.effective,
   (value) => {
     if (value) {
-      range.value = value.recent_exchanges;
+      // A stepped value waiting to save stays on screen until it is applied.
+      if (rangeTimer === undefined && !rangeSaving.value) range.value = value.recent_exchanges;
       providerId.value = value.model_selection?.provider_id || '';
       model.value = value.model_selection?.model || '';
     }
@@ -144,10 +154,37 @@ async function submit() {
   const text = draft.value;
   if (await send(text)) draft.value = '';
 }
+const clearDisabled = computed(() => running.value || loading.value || !state.value);
+async function toggleClear() {
+  if (confirmClear.value) return closeClear(true);
+  if (clearDisabled.value || !clearPopover.value) return;
+  clearPopover.value.showPopover();
+  confirmClear.value = true;
+  await nextTick();
+  positionClear();
+  clearCancel.value?.focus({ preventScroll: true });
+}
+function positionClear() {
+  if (clearPopover.value?.matches(':popover-open') && clearTrigger.value)
+    positionPopover(clearPopover.value, clearTrigger.value);
+}
+function closeClear(restoreFocus = false) {
+  clearPopover.value?.hidePopover();
+  confirmClear.value = false;
+  if (restoreFocus) clearTrigger.value?.focus({ preventScroll: true });
+}
+function syncClear() {
+  confirmClear.value = clearPopover.value?.matches(':popover-open') || false;
+}
+watch(clearDisabled, (disabled) => {
+  if (disabled && !clearing.value) closeClear();
+});
+window.addEventListener('resize', positionClear);
+window.addEventListener('scroll', positionClear, true);
 async function clearConversation() {
   if (await clear()) {
     draft.value = '';
-    confirmClear.value = false;
+    closeClear();
     showPreview.value = false;
     await nextTick();
     input.value?.focus();
@@ -163,10 +200,48 @@ async function selectModel() {
   await options({ model_selection: { provider_id: providerId.value, model: model.value.trim() } });
   if (!error.value) showModel.value = false;
 }
-async function selectRange(value: number | null) {
-  await options({ recent_exchanges: value });
-  if (!error.value) showRange.value = false;
+// Stepping saves after a short pause so several clicks become one revision-checked
+// update; options() would otherwise race overlapping writes on the same revision.
+let rangeTimer: number | undefined;
+const rangeSaving = ref(false);
+const rangeLocked = computed(() => running.value || pending.value || !state.value);
+function stepRange(value: number) {
+  if (!Number.isFinite(value)) return;
+  range.value = Math.min(1000, Math.max(0, Math.round(value)));
+  clearTimeout(rangeTimer);
+  rangeTimer = window.setTimeout(commitRange, 450);
 }
+async function commitRange() {
+  clearTimeout(rangeTimer);
+  rangeTimer = undefined;
+  if (rangeSaving.value || !state.value) return;
+  const target = range.value;
+  if (target === state.value.effective.recent_exchanges) return;
+  rangeSaving.value = true;
+  try {
+    await options({ recent_exchanges: target });
+  } finally {
+    rangeSaving.value = false;
+  }
+  if (error.value) range.value = state.value?.effective.recent_exchanges ?? target;
+  else if (rangeTimer === undefined && range.value !== target) void commitRange();
+}
+async function useGlobalRange() {
+  clearTimeout(rangeTimer);
+  rangeTimer = undefined;
+  rangeSaving.value = true;
+  try {
+    await options({ recent_exchanges: null });
+  } finally {
+    rangeSaving.value = false;
+  }
+  if (state.value) range.value = state.value.effective.recent_exchanges;
+}
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', positionClear);
+  window.removeEventListener('scroll', positionClear, true);
+  if (rangeTimer !== undefined) void commitRange();
+});
 const offers = computed(
   () => new Map((state.value?.exchanges || []).map((e) => [e.seq, advisorOffers(e.trace)])),
 );
@@ -192,17 +267,37 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         <span class="advisor-mark" aria-hidden="true"><AdvisorIcon name="compass" /></span>参谋
       </h2>
       <div class="advisor-heading-actions">
-        <button :disabled="running || loading || !state" @click="confirmClear = !confirmClear">
+        <button
+          ref="clearTrigger"
+          :disabled="clearDisabled"
+          aria-haspopup="dialog"
+          :aria-expanded="confirmClear"
+          :aria-controls="clearPopoverId"
+          @click="toggleClear"
+        >
           清空对话
         </button>
       </div>
     </header>
-    <div v-if="confirmClear" class="advisor-clear-confirm" role="group" aria-label="清空参谋 agent 对话">
+    <div
+      :id="clearPopoverId"
+      ref="clearPopover"
+      popover="auto"
+      class="advisor-clear-confirm"
+      role="dialog"
+      aria-label="清空参谋 agent 对话"
+      @toggle="syncClear"
+      @keydown.esc.prevent.stop="closeClear(true)"
+      @click.stop
+    >
+      <strong>清空参谋 agent 对话？</strong>
       <p>清空聊天、摘要和未完成进度，无法撤销。模型设置与已保存的本轮偏好会保留。</p>
-      <button :disabled="running" @click="clearConversation">
-        {{ clearing ? '正在清空…' : '确认清空' }}
-      </button>
-      <button :disabled="clearing" @click="confirmClear = false">取消</button>
+      <div class="advisor-clear-actions">
+        <button ref="clearCancel" :disabled="clearing" @click="closeClear(true)">取消</button>
+        <button class="danger" :disabled="running || clearing" @click="clearConversation">
+          {{ clearing ? '正在清空…' : '确认清空' }}
+        </button>
+      </div>
     </div>
     <div class="advisor-connection">
       <button
@@ -211,7 +306,7 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         :disabled="running || pending"
         @click="
           showModel = !showModel;
-          showRange = false;
+          showContextOptions = false;
         "
       >
         <span>{{ state?.effective.model_selection?.model || '独立模型' }}</span
@@ -238,6 +333,8 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
           v-model="model"
           :models="catalog?.models || []"
           :details="catalog?.model_details"
+          :error="catalogError.message"
+          :refresh="refreshModels"
           label="参谋 agent 模型"
           :disabled="!providerId"
       /></label>
@@ -247,46 +344,69 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
       </div>
     </div>
     <div class="advisor-context-bar">
-      <button
-        :disabled="running || pending"
-        :aria-expanded="showRange"
-        @click="
-          showRange = !showRange;
-          showModel = false;
-        "
+      <div
+        class="advisor-range"
+        role="group"
+        aria-label="参谋 agent 参考的近期剧情轮数"
+        title="0 表示不自动带入剧情"
       >
-        {{
-          state?.effective.recent_exchanges === 0
-            ? '不自动带入剧情'
-            : `参考最近 ${state?.effective.recent_exchanges ?? 3} 轮剧情`
-        }}
-      </button>
-      <button ref="previewTrigger" @click="showPreview = true">
-        查看上下文<AdvisorIcon name="chevron" />
-      </button>
-    </div>
-    <div v-if="showRange" class="advisor-controls">
-      <label
-        >近期完整交流数<input
-          v-model.number="range"
-          type="number"
-          min="0"
-          max="1000"
-          aria-label="参谋 agent 近期交流数"
-      /></label>
-      <p>
-        0 表示关闭。当前使用{{ state?.effective.range_source === 'global' ? '全局默认' : '本故事设置' }}。
-      </p>
-      <div class="advisor-control-actions">
-        <button @click="selectRange(null)">使用全局默认</button
-        ><button
-          class="primary"
-          :disabled="!Number.isInteger(range) || range < 0 || range > 1000"
-          @click="selectRange(range)"
+        <span>{{ range === 0 ? '不带入剧情' : '参考最近' }}</span>
+        <span class="advisor-range-stepper"
+          ><button
+            class="advisor-range-step"
+            aria-label="减少一轮"
+            :disabled="rangeLocked || range <= 0"
+            @click="stepRange(range - 1)"
+          >
+            −</button
+          ><input
+            class="advisor-range-value"
+            type="number"
+            min="0"
+            max="1000"
+            :value="range"
+            :disabled="rangeLocked"
+            aria-label="参谋 agent 近期交流数"
+            @change="stepRange(($event.target as HTMLInputElement).valueAsNumber)"
+            @keydown.enter="commitRange"
+          /><button
+            class="advisor-range-step"
+            aria-label="增加一轮"
+            :disabled="rangeLocked || range >= 1000"
+            @click="stepRange(range + 1)"
+          >
+            +
+          </button></span
         >
-          应用
+        <span>轮</span>
+        <button
+          v-if="state?.effective.range_source !== 'global'"
+          class="advisor-range-source"
+          :disabled="rangeLocked || rangeSaving"
+          title="当前为本故事设置，点击清除并使用全局默认"
+          @click="useGlobalRange"
+        >
+          本故事 · 用全局默认
+        </button>
+        <small v-else class="advisor-range-source" title="在设置页修改全局默认">全局默认</small>
+      </div>
+      <div class="advisor-context-actions">
+        <button
+          :disabled="running || pending"
+          :aria-expanded="showContextOptions"
+          @click="
+            showContextOptions = !showContextOptions;
+            showModel = false;
+          "
+        >
+          整理<AdvisorIcon name="chevron" :class="{ rotated: showContextOptions }" />
+        </button>
+        <button ref="previewTrigger" @click="showPreview = true">
+          查看上下文<AdvisorIcon name="chevron" />
         </button>
       </div>
+    </div>
+    <div v-if="showContextOptions" class="advisor-controls">
       <label v-if="channel === 'chatgpt'"
         >咨询上下文方式<select
           :value="state?.effective.context_strategy"
@@ -300,7 +420,7 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         :disabled="!state?.exchanges.length || running || pending"
         @click="
           send('', false, true);
-          showRange = false;
+          showContextOptions = false;
         "
       >
         立即整理旧咨询

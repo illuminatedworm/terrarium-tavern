@@ -40,7 +40,11 @@ const providerOptions = computed(() =>
 );
 const provider = computed(() => providers.value.find((item) => item.id === draft.value.provider_id));
 const subscription = computed(() => props.channel === 'chatgpt');
-const { catalog, error: catalogError } = useModelCatalog(
+const {
+  catalog,
+  error: catalogError,
+  refresh,
+} = useModelCatalog(
   () => draft.value,
   () => provider.value,
   undefined,
@@ -102,6 +106,7 @@ function chooseModel(value: string) {
       :models="catalog?.models || []"
       :details="catalog?.model_details"
       :error="catalogError.message"
+      :refresh="refresh"
       :disabled="disabled || !provider"
       label="对话模型"
       compact

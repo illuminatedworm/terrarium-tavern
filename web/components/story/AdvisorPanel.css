@@ -52,18 +52,30 @@
   align-items: center;
   gap: 8px;
 }
+/* Glass surface is shared with the other confirm popovers in overlays.css. */
 .advisor-clear-confirm {
-  margin: 0 24px 16px;
-  padding: 12px;
-  border: 1px solid var(--border-control);
-  border-radius: 8px;
-  flex-shrink: 0;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(288px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 14px;
+  border-radius: 14px;
+  font: 13px/1.6 var(--font-ui);
 }
 .advisor-clear-confirm p {
-  margin: 0 0 8px;
+  margin: 8px 0 12px;
+  color: var(--text-secondary);
 }
-.advisor-clear-confirm button + button {
-  margin-left: 8px;
+.advisor-clear-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.advisor-clear-actions button {
+  padding: 6px 10px;
+  font: 12px/1.4 var(--font-ui);
 }
 .advisor-panel button {
   font: 13px/1.4 var(--font-ui);
@@ -112,8 +124,10 @@
 }
 .advisor-context-bar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px 8px;
   margin: 0 24px;
   padding: 12px 0 14px;
   border-top: 1px solid var(--border-subtle);
@@ -132,6 +146,79 @@
 .advisor-context-bar svg {
   width: 14px;
   height: 14px;
+}
+.advisor-context-bar svg.rotated {
+  transform: rotate(90deg);
+}
+.advisor-range,
+.advisor-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.advisor-context-actions {
+  gap: 12px;
+  margin-left: auto;
+}
+.advisor-range {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.advisor-range-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  background: rgb(var(--well-rgb) / 0.42);
+}
+.advisor-context-bar .advisor-range-step {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.advisor-context-bar .advisor-range-step:hover:not(:disabled) {
+  background: var(--hover-wash);
+  color: var(--text-primary);
+}
+.advisor-context-bar .advisor-range-step:disabled {
+  opacity: 0.4;
+}
+.advisor-panel .advisor-range-value {
+  width: 3.4em;
+  min-width: 0;
+  height: 24px;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-primary);
+  font: 500 12px/1 var(--font-ui);
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.advisor-range-value::-webkit-inner-spin-button,
+.advisor-range-value::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+.advisor-context-bar .advisor-range-source {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.advisor-context-bar button.advisor-range-source {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.advisor-context-bar button.advisor-range-source:hover:not(:disabled) {
+  color: var(--accent-hover);
 }
 .advisor-controls {
   margin: 0 24px 12px;

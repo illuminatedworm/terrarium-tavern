@@ -128,9 +128,17 @@ function keydown(event: KeyboardEvent) {
     event.stopPropagation();
     close(true);
   } else if (event.key === 'Tab') {
-    // Restore the trigger before the native Tab action so the surrounding form
-    // (including its modal focus boundary) remains in the normal tab order.
-    close(true);
+    // Tab moves natively between heading actions and the search field; leaving
+    // the popup restores the trigger before the native Tab action so the
+    // surrounding form (including its modal focus boundary) keeps its order.
+    const stops = Array.from(
+      popup.value?.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]') ?? [],
+    );
+    const next = stops.indexOf(event.target as HTMLElement) + (event.shiftKey ? -1 : 1);
+    if (next < 0 || next >= stops.length) close(true);
+  } else if (event.target instanceof HTMLButtonElement) {
+    // Heading actions keep their native Enter and Space activation.
+    return;
   } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     event.preventDefault();
     move(event.key === 'ArrowDown' ? 1 : -1);
@@ -256,7 +264,10 @@ onBeforeUnmount(() => {
       @toggle="toggled"
       @keydown="keydown"
     >
-      <div class="select-menu-heading">{{ caption || label }}</div>
+      <div class="select-menu-heading" :class="{ 'has-action': $slots['heading-action'] }">
+        <span>{{ caption || label }}</span
+        ><slot name="heading-action" />
+      </div>
       <div v-if="searchable" class="select-menu-search">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.4" />
@@ -423,12 +434,19 @@ onBeforeUnmount(() => {
   width: 336px;
 }
 .select-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   flex: none;
   padding: 6px 10px 8px;
   color: var(--text-faint);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
+}
+.select-menu-heading.has-action {
+  padding: 2px 4px 6px 10px;
 }
 .select-menu-search {
   display: flex;
