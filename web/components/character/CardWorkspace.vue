@@ -12,7 +12,11 @@ import {
 import type { CardReferenceOption } from '../../lib/cardReferences';
 import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
 import { conversationModelProfile } from '../../lib/modelConnections';
-import { editorCacheRate, type EditorContextStats } from '../../lib/editorContextStats';
+import {
+  conversationCacheRate,
+  conversationCacheRateTitle,
+  type EditorContextStats,
+} from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
 import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
@@ -82,7 +86,7 @@ async function classifyChannel(channel_origin: Channel) {
 }
 const contextStats = ref<EditorContextStats | null>(null);
 const statsError = ref('');
-const cacheRate = computed(() => editorCacheRate(contextStats.value?.usage));
+const cacheRate = computed(() => conversationCacheRate(contextStats.value?.cache_usage));
 const contextLabel = computed(
   () =>
     `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens${contextStats.value?.image_count ? ` · ${contextStats.value.image_count} 张图片未计入` : ''}`,
@@ -801,7 +805,7 @@ onBeforeUnmount(() => {
           <p class="composer-meta cw-composer-meta" aria-label="制卡上下文用量">
             <ChatGPTUsage :active="workspace?.channel_origin === 'chatgpt'" :error="error" />
             <span :title="contextTitle" :class="{ 'cw-stats-error': statsError }">{{ contextLabel }}</span>
-            <span title="最近一次模型响应的缓存用量；未提供时不推测命中率">缓存命中率 {{ cacheRate }}</span>
+            <span :title="conversationCacheRateTitle">缓存命中率 {{ cacheRate }}</span>
           </p>
         </form>
       </div>

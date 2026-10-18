@@ -14,6 +14,7 @@ from tavern.character.cards import normalize, parse_card
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings, rename_card_author
+from tavern.core.usage import aggregate_cache_usage
 from tavern.full_agent.recovery import resume_progress
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
 from tavern.storage.turn_retry import can_retry, retry_head
@@ -1351,6 +1352,17 @@ class Store(MessageAdapters):
             if payload.get("purpose") == "narrative":
                 return payload.get("usage") or {}
         return fallback
+
+    def session_cache_usage(self, sid):
+        """All requests owned by this session, including tools and maintenance."""
+        with self.connection() as db:
+            usages = [json.loads(row[0]).get("usage") if row[0] is not None else None
+                      for row in db.execute("""SELECT e.payload FROM turns t
+                          LEFT JOIN events e ON e.turn=t.id AND e.kind='usage'
+                          WHERE t.session=? ORDER BY e.seq""", (sid,))]
+            for row in db.execute("SELECT payload FROM context_operations WHERE session=?", (sid,)):
+                usages.extend(json.loads(row[0]).get("usage", []))
+        return aggregate_cache_usage(usages)
 
     def commit_turn(self, tid, pending):
         with self.connection() as db:

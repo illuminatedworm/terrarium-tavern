@@ -4,6 +4,7 @@ import Icon from '../common/Icon.vue';
 import ContextMeter from './ContextMeter.vue';
 import ContextRows, { type ContextRowGroup } from './ContextRows.vue';
 import { contextExcerpt, contextMessageContent } from '../../lib/contextPreview';
+import { conversationCacheRateTitle } from '../../lib/editorContextStats';
 
 const props = defineProps<{
   preview: any;
@@ -75,9 +76,9 @@ const rows = computed<ContextRowGroup[]>(() =>
       :stats="[
         { label: '模型上下文窗口', value: `${contextTokens.toLocaleString()} tokens` },
         { label: '内容块', value: String(preview?.trace?.length || 0) },
-        { label: '缓存命中率', value: cacheRate },
+        { label: '会话累计缓存命中率', value: cacheRate },
       ]"
-      :footnote="`${tokenizerLabel}预览不会加载神经模型，下方诊断会注明不完整的召回。`"
+      :footnote="`${tokenizerLabel}${conversationCacheRateTitle}预览不会加载神经模型，下方诊断会注明不完整的召回。`"
     />
     <ContextRows :groups="rows" />
     <details class="context-diagnostics">

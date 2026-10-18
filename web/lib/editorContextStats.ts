@@ -1,26 +1,26 @@
+export interface ConversationCacheUsage {
+  prompt_tokens: number | null;
+  cached_tokens: number | null;
+}
+
 export interface EditorContextStats {
   estimated_tokens: number;
   context_limit: number;
   model: string;
   usage?: Record<string, any> | null;
+  cache_usage?: ConversationCacheUsage | null;
   token_counting?: { tokenizer: string; source: string };
   image_count?: number;
   image_tokens_included?: boolean;
   estimated_tokens_complete?: boolean;
 }
 
-/** Provider usage conventions differ; unknown counters are not zero hits. */
-export function editorCacheRate(usage?: Record<string, any> | null): string {
-  if (!usage) return '暂无数据';
-  const cached =
-    usage.prompt_tokens_details?.cached_tokens ??
-    usage.input_tokens_details?.cached_tokens ??
-    usage.cache_read_input_tokens ??
-    usage.cached_tokens ??
-    usage.cachedContentTokenCount;
-  if (typeof cached !== 'number') return '服务商未提供';
-  let input = usage.prompt_tokens ?? usage.input_tokens ?? usage.promptTokenCount;
-  if (typeof input !== 'number') return '服务商未提供';
-  if (usage.cache_read_input_tokens != null) input += cached + (usage.cache_creation_input_tokens || 0);
-  return `${input ? Math.round(Math.min(1, Math.max(0, cached / input)) * 100) : 0}%`;
+export const conversationCacheRateTitle =
+  '当前会话累计缓存读取 tokens ÷ 累计输入 tokens（含缓存命中部分）；仅统计接口真实用量，任一请求缺少所需数据时显示缺失。';
+
+/** The server aggregates provider counters; never substitute the last response. */
+export function conversationCacheRate(usage?: ConversationCacheUsage | null): string {
+  if (!usage || usage.prompt_tokens == null || usage.cached_tokens == null || usage.prompt_tokens <= 0)
+    return '缺失';
+  return `${Math.round((usage.cached_tokens / usage.prompt_tokens) * 100)}%`;
 }

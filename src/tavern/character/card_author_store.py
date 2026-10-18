@@ -5,6 +5,7 @@ import time
 
 from tavern.character.editor_activity import PUBLIC_KINDS
 from tavern.character.editor_storage import Conversations
+from tavern.core.usage import aggregate_cache_usage
 from tavern.storage.store import dump
 
 
@@ -77,6 +78,29 @@ class EditorStore(Conversations):
         with self.store.connection() as db:
             return [{**dict(r), "payload": json.loads(r["payload"])} for r in db.execute(
                 "SELECT * FROM card_edit_events WHERE run=? AND seq>? ORDER BY seq LIMIT 200", (rid, after))]
+
+    def conversation_cache_usage(self, wid):
+        with self.store.connection() as db:
+            rows = db.execute("""SELECT r.id,e.kind,e.payload FROM card_edit_runs r
+                LEFT JOIN card_edit_events e ON e.run=r.id AND
+                    (e.kind='completed' OR (e.kind='context_stats' AND json_type(e.payload,'$.usage')='object'))
+                WHERE r.workspace=? ORDER BY r.created,r.id,e.seq""", (wid,)).fetchall()
+        runs = {}
+        for row in rows:
+            run = runs.setdefault(row["id"], {"usages": [], "calls": 0})
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+            if row["kind"] == "context_stats":
+                run["usages"].append(payload["usage"])
+            elif row["kind"] == "completed":
+                # completed repeats the last response, not a new request. Old
+                # pruned per-call records cannot be reconstructed from it.
+                run["calls"] = payload.get("calls", 1)
+        usages = []
+        for run in runs.values():
+            usages.extend(run["usages"])
+            if not run["usages"] or len(run["usages"]) < run["calls"]:
+                usages.append(None)
+        return aggregate_cache_usage(usages)
 
 
     def activity(self, rid, after=0):

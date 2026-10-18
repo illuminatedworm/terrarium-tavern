@@ -134,9 +134,10 @@ def cleanup(store, *, vacuum=False):
             raise Conflict("请先结束运行或待审核回合，再清理存储")
         if db.execute("SELECT 1 FROM context_operations WHERE status IN ('queued','running')").fetchone():
             raise Conflict("请先完成或取消上下文整理，再清理存储")
-        # Completed operations contain only diagnostics; resumable checkpoints
-        # and story-owned compaction snapshots are never log-cleanup targets.
-        db.execute("DELETE FROM context_operations WHERE status='completed' AND created<?", (time.time() - store.settings().log_retention_days * 86400,))
+        # Keep provider usage for conversation totals while expiring completed
+        # operation diagnostics. Resumable checkpoints are never cleanup targets.
+        db.execute("""UPDATE context_operations SET payload=json_remove(payload,'$.replay','$.head','$.source_settings')
+            WHERE status='completed' AND created<?""", (time.time() - store.settings().log_retention_days * 86400,))
         from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
         prune_orphan_retrieval(db)
         turns, selected, cached, report = _plan(store, db, time.time())
@@ -174,7 +175,9 @@ def cleanup(store, *, vacuum=False):
                 WHERE json_extract(a.value,'$.card') IS NULL OR json_extract(a.value,'$.document') != json_extract(a.value,'$.base_document'))
                 AND NOT EXISTS(SELECT 1 FROM card_author_progress p WHERE p.workspace=w.id) AS saved FROM card_edit_events e
             JOIN card_edit_runs r ON r.id=e.run JOIN card_author_conversations w ON w.id=r.workspace
-            WHERE e.kind NOT IN ({placeholders}) ORDER BY e.seq""", PUBLIC_KINDS).fetchall()
+            WHERE e.kind NOT IN ({placeholders})
+                AND NOT (e.kind='context_stats' AND json_type(e.payload,'$.usage') IS 'object')
+            ORDER BY e.seq""", PUBLIC_KINDS).fetchall()
         total = sum(e["bytes"] for e in editor_events)
         for event in editor_events:
             if event["saved"] and (event["created"] < time.time() - settings.log_retention_days * 86400

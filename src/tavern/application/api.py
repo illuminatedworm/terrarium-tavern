@@ -534,6 +534,7 @@ def create_app(data_dir=None):
         result, s = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True,
                                     payload.get("allow_content_edit") is True)
         result["usage"] = store.latest_usage(sid)
+        result["cache_usage"] = store.session_cache_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
         return result
 

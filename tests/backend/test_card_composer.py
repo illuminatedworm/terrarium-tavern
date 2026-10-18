@@ -1,9 +1,11 @@
 """Composer choices affect the real run and resume; statistics remain read-only."""
 import copy
+import json
 
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
+from tavern.storage.maintenance import cleanup
 from tests.backend.test_card_author import ToolLLM
 
 
@@ -51,6 +53,7 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
             assert stats['estimated_tokens'] == preview['estimated_tokens'] > 0
             assert stats['context_limit'] == 131072 and stats['model'] == 'selected-model'
             assert stats['usage'] is None and stats['token_counting']['estimated']
+            assert stats['cache_usage'] is None
             assert editor.edits.messages(wid) == []
             run = (await client.post(base + '/runs', json={**options, 'text': '查看资料', 'expected_revision': 0, 'operation_id': 'initial'})).json()
             if task := editor.tasks.get(run['id']):
@@ -61,11 +64,34 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
             next_options = {'model': 'replacement-model', 'reasoning_effort': 'medium'}
             stats = (await client.post(base + '/stats', json=next_options)).json()
             assert stats['usage'] == provider.last_usage
+            assert stats['cache_usage'] == {'prompt_tokens': 1200, 'cached_tokens': 900}
             assert stats['model'] == 'replacement-model'
             assert editor.edits.progress(wid) == progress
             call_stats = [event['payload'] for event in editor.edits.events(run['id']) if event['kind'] == 'context_stats']
             assert len(call_stats) == 3 and call_stats[1]['usage'] == provider.last_usage
             assert call_stats[-1]['estimated_tokens'] > call_stats[0]['estimated_tokens']
+            # The SSE snapshot is absolute, so reconnect/replay cannot add usage twice.
+            stream = (await client.get(f"/api/card-edit-runs/{run['id']}/events")).text
+            snapshots = [json.loads(line[6:])['payload'] for line in stream.splitlines()
+                         if line.startswith('data: ') and json.loads(line[6:]).get('kind') == 'context_stats']
+            assert len(snapshots) == 3 and all(s['cache_usage'] == stats['cache_usage'] for s in snapshots)
+            class ReportedUsage(ToolLLM):
+                @property
+                def usage_history(self):
+                    return [{'prompt_tokens': 800, 'cached_tokens': 100}]
+
+            provider = ReportedUsage([])
+            resumed = (await client.post(base + '/runs', json={**next_options, 'resume_run_id': run['id'], 'expected_revision': 0, 'operation_id': 'resume'})).json()
+            if task := editor.tasks.get(resumed['id']):
+                await task
+            assert editor.edits.run(resumed['id'])['status'] == 'completed'
+            stats = (await client.post(base + '/stats', json=next_options)).json()
+            total = {'prompt_tokens': 2000, 'cached_tokens': 1000}
+            assert stats['cache_usage'] == total  # completed must not repeat the last 800/100.
+            with store.connection() as db:
+                db.execute('UPDATE card_edit_runs SET created=0 WHERE workspace=?', (wid,))
+            cleanup(store)
+            assert (await client.post(base + '/stats', json=next_options)).json()['cache_usage'] == total
             class MissingUsage(ToolLLM):
                 @property
                 def usage_history(self):
@@ -76,18 +102,24 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
                     return {'prompt_tokens': 1200, 'cached_tokens': 0}
 
             provider = MissingUsage([])
-            resumed = (await client.post(base + '/runs', json={**next_options, 'resume_run_id': run['id'], 'expected_revision': 0, 'operation_id': 'resume'})).json()
-            if task := editor.tasks.get(resumed['id']):
+            missing = (await client.post(base + '/runs', json={**next_options, 'text': '继续', 'expected_revision': 0, 'operation_id': 'missing'})).json()
+            if task := editor.tasks.get(missing['id']):
                 await task
-            assert editor.edits.run(resumed['id'])['status'] == 'completed'
+            assert editor.edits.run(missing['id'])['status'] == 'completed'
             assert executions[-1] == ('replacement-model', 'medium')
             stats = (await client.post(base + '/stats', json=next_options)).json()
             assert stats['usage']['cached_tokens'] is None  # Neither recycled hits nor accounting zeros.
+            assert stats['cache_usage'] == {'prompt_tokens': 3200, 'cached_tokens': None}
             assert store.settings_document().model_dump() == configured
             inherited = (await client.post(base + '/stats', json={})).json()
             assert inherited['model'] == 'configured-model'
             assert (await client.post(base + '/stats', json={'model': '  '})).status_code == 422
             assert (await client.post(base + '/stats', json={'reasoning_effort': 'invalid'})).status_code == 422
+            # A historical completed event alone cannot reconstruct all its calls.
+            with store.connection() as db:
+                db.execute("DELETE FROM card_edit_events WHERE run=? AND kind='context_stats'", (resumed['id'],))
+            assert (await client.post(base + '/stats', json=next_options)).json()['cache_usage'] == {
+                'prompt_tokens': None, 'cached_tokens': None}
     finally:
         await editor.close()
         await app.state.service.close()

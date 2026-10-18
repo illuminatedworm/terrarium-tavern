@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from tavern.conversation.context import compile_context, search
+from tavern.core.cache_policy import normalize_usage
 from tavern.core.models import SessionCreate, Settings, TurnRequest
+from tavern.core.usage import aggregate_cache_usage
 from tavern.storage.store import Conflict, Store
 
 
@@ -32,13 +34,53 @@ def test_revision_and_idempotency(store, session):
     assert store.turn(tid)["status"] == "interrupted"
 
 
-def test_latest_usage_prefers_narrative_event(store, session):
+def test_conversation_cache_usage_sums_requests_without_filling_missing_counters(store, session):
+    from tavern.storage.maintenance import cleanup
+
+    samples = [
+        normalize_usage({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 75}}, "chat_completions"),
+        normalize_usage({"input_tokens": 900, "input_tokens_details": {"cached_tokens": 225}}, "responses"),
+        normalize_usage({"input_tokens": 100, "cache_read_input_tokens": 800,
+                         "cache_creation_input_tokens": 100}, "anthropic"),
+        normalize_usage({"promptTokenCount": 2000, "cachedContentTokenCount": 1000}, "gemini"),
+    ]
+    # Unequal request sizes must be weighted by tokens, not averaged as rates.
+    assert aggregate_cache_usage(samples[:2]) == {"prompt_tokens": 1000, "cached_tokens": 300}
+    assert aggregate_cache_usage([{"prompt_tokens": 0, "cached_tokens": 0, "raw_usage": {}}]) == {
+        "prompt_tokens": None, "cached_tokens": None}
+    assert aggregate_cache_usage([{"cached_tokens": 40}])["prompt_tokens"] is None
+    assert aggregate_cache_usage([{"input_tokens": 100, "cache_read_input_tokens": 800}])["prompt_tokens"] is None
+    assert store.session_cache_usage(session["id"]) is None
     req = TurnRequest(text="你好", operation_id="usage", expected_revision=0)
     tid, _ = store.create_turn(session["id"], req)
-    narrative = {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 75}}
+    narrative = {"prompt_tokens": 1000, "cached_tokens": 300,
+                 "raw_usage": [usage["raw_usage"] for usage in samples[:2]]}
     store.event(tid, "usage", {"purpose": "narrative", "usage": narrative})
-    store.event(tid, "usage", {"purpose": "maintenance", "usage": {"prompt_tokens": 20}})
+    store.event(tid, "usage", {"purpose": "maintenance", "usage": samples[2]})
     assert store.latest_usage(session["id"]) == narrative
+    store.set_turn(tid, status="committed")
+    next_tid, _ = store.create_turn(session["id"], req.model_copy(update={"operation_id": "next"}))
+    store.event(next_tid, "usage", {"purpose": "narrative", "usage": samples[3]})
+    store.set_turn(next_tid, status="committed")
+    with store.connection() as db:
+        db.execute("""INSERT INTO context_operations(id,session,operation,kind,status,expected_revision,payload,created)
+            VALUES ('compact',?,'compact','compact','completed',0,?,0)""", (session["id"], json.dumps({
+                "usage": [{"prompt_tokens": 500, "cached_tokens": 200}], "replay": {"private": "expired"}})))
+    total = {"prompt_tokens": 4500, "cached_tokens": 2300}
+    assert store.session_cache_usage(session["id"]) == total
+    other = store.new_session(SessionCreate(card_id=session["card"]))
+    other_tid, _ = store.create_turn(other["id"], req)
+    store.event(other_tid, "usage", {"usage": {}})
+    store.set_turn(other_tid, status="committed")
+    cleanup(store)
+    assert store.session_cache_usage(session["id"]) == total
+    with store.connection() as db:
+        compacted = json.loads(db.execute("SELECT payload FROM context_operations WHERE id='compact'").fetchone()[0])
+        assert set(compacted) == {"usage"}
+    store.event(next_tid, "usage", {"usage": {"prompt_tokens": 100, "cached_tokens": 0}})
+    assert store.session_cache_usage(session["id"]) == {"prompt_tokens": 4600, "cached_tokens": 2300}
+    store.event(next_tid, "usage", {"usage": {"prompt_tokens": 100}})
+    assert store.session_cache_usage(session["id"]) == {"prompt_tokens": 4700, "cached_tokens": None}
 
 
 def test_context_sends_mid_system_without_probe(store, session):

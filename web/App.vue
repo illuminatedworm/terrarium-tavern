@@ -22,7 +22,7 @@ import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
-import { editorCacheRate } from './lib/editorContextStats';
+import { conversationCacheRate, conversationCacheRateTitle } from './lib/editorContextStats';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -854,7 +854,9 @@ function usageValue(usage: any, paths: string[]) {
   }
   return null;
 }
-const cacheRateLabel = computed(() => editorCacheRate(contextStats.value?.usage));
+const cacheRateLabel = computed(() =>
+  conversationCacheRate(contextEstimateError.value ? null : contextStats.value?.cache_usage),
+);
 const composerContextLabel = computed(() => {
   const current = contextEstimateError.value
     ? '—'
@@ -1798,6 +1800,7 @@ async function inspectContext() {
       allow_content_edit: allowEdit.value,
     });
     contextStats.value = preview.value;
+    contextEstimateError.value = '';
     panel.value = 'context';
   });
 }
@@ -3034,9 +3037,7 @@ useTimedError(error);
                   :class="{ 'composer-stats-error': contextEstimateError }"
                   >{{ composerContextLabel }}</span
                 >
-                <span title="最近一次模型响应的缓存用量；未提供时不推测命中率"
-                  >缓存命中率 {{ cacheRateLabel }}</span
-                >
+                <span :title="conversationCacheRateTitle">缓存命中率 {{ cacheRateLabel }}</span>
               </p>
             </div>
           </div>

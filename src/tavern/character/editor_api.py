@@ -221,7 +221,8 @@ def register_conversation_routes(app, editor):
         return {"estimated_tokens": owner.context.tokens(), "context_limit": owner.cfg.context_tokens,
                 "model": owner.cfg.model, "token_counting": counting_info(owner.cfg),
                 **owner.context.image_stats(),
-                "usage": json.loads(row[0]).get("usage") if row else None}
+                "usage": json.loads(row[0]).get("usage") if row else None,
+                "cache_usage": editor.edits.conversation_cache_usage(wid)}
 
     @app.post(base + "/{wid}/preview")
     async def preview(wid: str, payload: Preview):
