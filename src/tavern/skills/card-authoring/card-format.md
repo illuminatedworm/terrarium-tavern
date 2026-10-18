@@ -65,7 +65,7 @@
 | `use_regex`，或写成 `/pattern/flags` 的关键词 | — | 正则关键词，使用简单模式 |
 | `excludeRecursion`、`preventRecursion` | false | 不被递归激活；正文不激活其他条目 |
 | `position`、`depth`、`role` | — | 注入位置，生效方式见各模式文档 |
-| `extensions.terrarium.audience` | `writer` | 条目用途：`writer`、`tracker_mvu`、`runtime_init` |
+| `extensions.terrarium.audience` | `writer` | 条目用途：`writer`、`tracker_mvu` |
 
 其他前端导出的这些字段常放在条目的 `extensions` 中，运行时合并读取，原样保留即可。`matchWholeWords`、`excludeRecursion`、`preventRecursion`、`caseSensitive` 也接受 SillyTavern 的 `match_whole_words`、`exclude_recursion`、`prevent_recursion`、`case_sensitive` 写法，顶层和 `extensions` 均可读取。已有 camelCase 优先，同一拼写以 `extensions` 为先，`false` 和 `null` 不回退到别名（`null` 按默认关闭处理）。修改时保留已有字段位置与拼写，不添加相互矛盾的同义字段；有多个同义字段时应同步修改。
 

@@ -8,7 +8,7 @@ from tavern.character.card_regex_diagnostics import regex_warnings
 from tavern.character.card_status_diagnostics import status_display_warnings
 from tavern.character.cards import lore_entries, parse_card
 
-AUDIENCES = {"writer", "tracker_mvu", "runtime_init"}
+AUDIENCES = {"writer", "tracker_mvu"}
 
 
 def audience(entry):

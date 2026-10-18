@@ -103,12 +103,6 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
          'terrarium': {'audience': 'tracker_mvu'}},
         {'id': 'legacy-off', 'comment': '[initvar]', 'disable': True,
          'content': '<initvar>\n```yaml\nmp: 50\nitems: []\n```\n</initvar>'},
-        {'id': 'native', 'comment': '初始数据', 'enabled': True, 'content': 'native: true',
-         'extensions': {'terrarium': {'audience': 'runtime_init'}}},
-        {'id': 'native-off', 'comment': '初始数据', 'enabled': False, 'content': 'unexpected: true',
-         'extensions': {'terrarium': {'audience': 'runtime_init'}}},
-        {'id': 'native-legacy-off', 'comment': '初始数据', 'enabled': True, 'disable': True,
-         'content': 'unexpected: true', 'extensions': {'terrarium': {'audience': 'runtime_init'}}},
         {'id': 'story', 'comment': '普通设定', 'enabled': False, 'content': 'unexpected: true'},
         {'id': tracker_id, 'comment': '[initvar]', 'enabled': False,
          'content': 'tracked: [8, "仅在 {{user}} 实际收到款项后增加"]',
@@ -130,9 +124,9 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
         session = await runtime.open(document, [], {'state': {}, 'scopes': {}}, False, host, persona='测试玩家')
         state = (await session.call('snapshot'))['state']
         assert state['stat_data'] == {'hp': 100, 'name': '测试玩家', 'character': 'fixture',
-                                      'mp': 50, 'items': [], 'native': True,
+                                      'mp': 50, 'items': [],
                                       'tracked': [8, '仅在 测试玩家 实际收到款项后增加']}
-        assert set(state['initialized_lorebooks']) == {'card:off', 'card:legacy-off', 'card:native', f'card:{tracker_id}'}
+        assert set(state['initialized_lorebooks']) == {'card:off', 'card:legacy-off', f'card:{tracker_id}'}
         # Both diagnostics must recognize disabled Tracker-marked initialization
         # and rules, even when a display requires the complete variable contract.
         display = {**document, 'first_mes': '<div>TIME: 08:20 MONEY: 12</div>'}
@@ -157,7 +151,7 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
             [rules] = [m['content'] for m in messages if m['content'].startswith('<mvu_rules>')]
             assert 'tracked: [8, "仅在 测试玩家 实际收到款项后增加"]' in rules
             assert 'hp: 100\nname: "测试玩家"\ncharacter: "fixture"' in rules
-            assert all(text not in rules for text in ('DISABLED_RULE', 'unexpected', 'native: true', 'mp: 50'))
+            assert all(text not in rules for text in ('DISABLED_RULE', 'unexpected', 'mp: 50'))
             assert tracker_id not in dump(messages)
         assert document == original
         assert store.card(card['id'])['document'] == original

@@ -96,7 +96,6 @@ def test_initialization_hints_follow_disabled_init_and_inline_openings():
     entries.append({"content": RULE, "extensions": {"terrarium": {"audience": "tracker_mvu"}}})
     assert not any("未发现" in w for w in validation_report(document)["warnings"])
     entries[-2]["comment"] = "普通初值"
-    entries[-2]["extensions"] = {"terrarium": {"audience": "runtime_init"}}
     assert any("初始化来源" in w for w in validation_report(document)["warnings"])
     document["alternate_greetings"] = [OPENING]
     document["first_mes"] += "\n<initvar>Money: 12</initvar>"

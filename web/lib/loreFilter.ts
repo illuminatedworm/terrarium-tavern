@@ -1,7 +1,6 @@
 export const audiences: Record<string, string> = {
   writer: 'Writer 叙事',
   tracker_mvu: 'Tracker 变量规则',
-  runtime_init: '运行时初始化',
 };
 export const emptyLoreFilter = () => ({ query: '', enabled: 'all', trigger: 'all', audience: 'all' });
 export type LoreFilter = ReturnType<typeof emptyLoreFilter>;

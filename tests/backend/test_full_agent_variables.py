@@ -29,7 +29,7 @@ def document():
          "extensions": {"terrarium": {"audience": "tracker_mvu"}}},
         {"id": "disabled", "content": "DISABLED_RULE", "enabled": False,
          "extensions": {"terrarium": {"audience": "tracker_mvu"}}},
-        {"id": "init", "content": "hp: 8", "extensions": {"terrarium": {"audience": "runtime_init"}}},
+        {"id": "init", "comment": "[InitVar]", "content": "hp: 8"},
     ]}}
 
 
@@ -132,7 +132,7 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
         await service.close()
 
 
-@pytest.mark.parametrize("target", ["tracker_mvu", "runtime_init"])
+@pytest.mark.parametrize("target", ["tracker_mvu"])
 async def test_full_agent_cannot_edit_variable_rules_or_initialization(tmp_path, target):
     store, service, session = game(tmp_path)
     try:

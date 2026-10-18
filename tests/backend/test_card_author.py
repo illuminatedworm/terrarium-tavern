@@ -28,8 +28,7 @@ def fixture():
                 {"id": "story", "comment": "人物", "content": "普通世界设定", "constant": True, "enabled": True},
                 {"id": "rules", "comment": "变量规则", "content": "变量秘密规则 {{user}}", "constant": True, "enabled": True,
                  "extensions": {"terrarium": {"audience": "tracker_mvu"}}},
-                {"id": "init", "comment": "默认值", "content": "hp: 5", "enabled": True,
-                 "extensions": {"terrarium": {"audience": "runtime_init"}}},
+                {"id": "init", "comment": "[InitVar] 默认值", "content": "hp: 5", "enabled": True},
             ]}}
 
 

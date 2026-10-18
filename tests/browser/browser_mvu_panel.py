@@ -51,7 +51,7 @@ async def main():
             'name': 'MVU 面板检查', 'first_mes': opening,
             'character_book': {'entries': [
                 {'id': 'initial', 'comment': '[InitVar] 默认开场终端数据', 'enabled': False,
-                 'content': 'hp: 45', 'extensions': {'terrarium': {'audience': 'runtime_init'}}},
+                 'content': 'hp: 45'},
                 {'id': 'ordinary', 'comment': '普通条目', 'content': '叙事设定'},
             ]},
         }).encode(), 'card.json')

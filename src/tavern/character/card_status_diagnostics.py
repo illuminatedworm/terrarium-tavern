@@ -36,10 +36,9 @@ def status_display_warnings(document):
     # model-facing diagnostics. The editor locates the full entry with read tools.
     fields.extend((f"世界书第 {i + 1} 条", e.get("content", ""), None)
                   for i, e in enumerate(entries) if e.get("enabled", True)
-                  and e.get("terrarium", {}).get("audience") != "runtime_init")
+                  and "[initvar]" not in e.get("comment", "").lower())
     base_init = any(
         "[initvar]" in str(e.get("comment") or "").lower()
-        or (e.get("enabled", True) and e.get("terrarium", {}).get("audience") == "runtime_init")
         for e in entries if e.get("content", "").strip()
     )
     initialized = [base_init or bool(INIT.search(text))

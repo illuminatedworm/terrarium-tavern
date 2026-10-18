@@ -151,11 +151,9 @@ def merge_script_lore(document, initial_lore, processed, *, include_existing=Fal
             for field, replacement in final[eid].items():
                 if old.get(field) == replacement:
                     continue
-                # Runtime expands initialization text and decorates init-only
-                # comments. Preserve their authored form unless a callback
+                # Runtime expands initialization text. Preserve its authored form unless a callback
                 # actually changed that field after the Tracker sync.
-                init_only = (entry.get("terrarium", {}).get("audience") == "runtime_init"
-                             or "[initvar]" in entry.get("comment", "").lower())
+                init_only = "[initvar]" in entry.get("comment", "").lower()
                 if init_only and field in ("content", "comment") and before_callbacks.get(field) == replacement:
                     continue
                 value[field] = copy.deepcopy(replacement)
