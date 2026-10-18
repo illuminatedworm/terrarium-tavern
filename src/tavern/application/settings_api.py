@@ -171,6 +171,11 @@ def register_settings_routes(app, store):
         return {"items": log.records(offset), "total": len(log.entries()),
                 "body_limit_bytes": BODY_LIMIT, "display_limit": MAX_RECORDS}
 
+    @app.delete("/api/debug/failed-requests")
+    async def clear_failed_requests():
+        from tavern.storage.maintenance import clear_request_debug
+        return clear_request_debug(store)
+
     @app.get("/api/debug/failed-requests/{identity}")
     async def download_failed_request(identity: UUID):
         from tavern.storage.request_debug import RequestDebugLog

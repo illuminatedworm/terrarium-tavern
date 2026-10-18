@@ -10,11 +10,20 @@ export type SettingField = {
   step?: number | string;
   type?: 'text' | 'number' | 'checkbox';
   optional?: boolean;
+  placeholder?: string;
   help?: string;
   menu?: boolean;
   options?: Array<{ value: string | number; label: string; disabled?: boolean }>;
 };
-const props = defineProps<{ value: SettingsObject; fields: SettingField[]; errorPrefix?: string }>();
+// `rows` lists each field as a settings row: label and help on the left, the
+// control on the right. Pages of independent switches read better this way than
+// in the dense multi-column grid used for numeric parameters.
+const props = defineProps<{
+  value: SettingsObject;
+  fields: SettingField[];
+  errorPrefix?: string;
+  layout?: 'grid' | 'rows';
+}>();
 const errors = inject<ComputedRef<Record<string, string>>>('settings-field-errors');
 const scope = inject<ComputedRef<string>>('settings-scope');
 const fieldError = (field: SettingField) =>
@@ -37,7 +46,7 @@ function update(field: SettingField, event: Event) {
 }
 </script>
 <template>
-  <div class="settings-field-grid">
+  <div :class="layout === 'rows' ? 'settings-field-rows' : 'settings-field-grid'">
     <component
       :is="field.menu ? 'div' : 'label'"
       v-for="field in fields"
@@ -98,7 +107,7 @@ function update(field: SettingField, event: Event) {
         :max="field.max"
         :step="field.step || 1"
         :aria-invalid="!!fieldError(field)"
-        :placeholder="field.optional ? '留空使用接口默认值' : ''"
+        :placeholder="field.placeholder ?? (field.optional ? '留空使用接口默认值' : '')"
         @input="update(field, $event)"
       />
       <small v-if="field.help">{{ field.help }}</small>

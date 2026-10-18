@@ -153,9 +153,8 @@ useTimedError(error);
     方案的非常驻条目使用原位置规则。对话偏好和本次重写要求仍会参与最终编排。
   </p>
   <p class="recipe-intro">
-    包括 Google GenAI 在内的部分 API 明确不支持中途 system 消息。Half Agent
-    会以最小位移将头部非系统资料后排，保持 system
-    连续及各组原顺序；规范顺序稳定复用，不随轮次反复移动。正文深度位置不变，可在“上下文”查看实际编排。
+    部分接口（如 Google GenAI）不接受对话中途的 system 消息。发送时，开头资料中的 system
+    消息集中在最前，其他角色的资料随后，两组内部保持配方顺序；每轮排法固定，不会反复移动。配方本身和带深度的正文块不受影响，实际顺序可在“上下文”查看。
   </p>
   <AppNotification :message="error" />
   <div class="recipe-layout" @input="error = ''" @change="error = ''">

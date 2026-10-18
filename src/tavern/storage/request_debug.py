@@ -33,21 +33,26 @@ class RequestDebugLog:
     def records(self, offset: int = 0) -> list[dict]:
         records = []
         for path in self.entries():
-            with zipfile.ZipFile(path) as archive:
-                record = json.loads(archive.read("metadata.json"))
-            records.append({**record, "bytes": path.stat().st_size})
+            records.append({**self._metadata(path), "bytes": path.stat().st_size})
         return sorted(records, key=lambda r: (r["created"], r["id"]), reverse=True)[offset:offset + MAX_RECORDS]
+
+    @staticmethod
+    def _metadata(path: Path) -> dict:
+        with zipfile.ZipFile(path) as archive:
+            return json.loads(archive.read("metadata.json"))
+
+    @staticmethod
+    def _protected(metadata: dict, protected: Collection[str]) -> bool:
+        return (metadata.get("turn_id") or "").split(":", 1)[0] in protected
 
     def plan(self, protected: Collection[str] = ()) -> tuple[list[Path], dict[str, int]]:
         entries = self.entries()
         protected_paths = set()
         created = {}
         for path in entries:
-            with zipfile.ZipFile(path) as archive:
-                metadata = json.loads(archive.read("metadata.json"))
-            owner = metadata.get("turn_id") or ""
+            metadata = self._metadata(path)
             created[path] = metadata["created"]
-            if owner.split(":", 1)[0] in protected:
+            if self._protected(metadata, protected):
                 protected_paths.add(path)
         # Backup restore changes filesystem timestamps; the recorded request
         # time must still determine ordering and expiry.
@@ -84,6 +89,21 @@ class RequestDebugLog:
                 raise ValueError("请求调试记录清理路径无效")
             path.unlink(missing_ok=True)
         return report
+
+    def clear(self, protected: Collection[str] = ()) -> dict[str, int]:
+        """Delete every published record except those of running or recoverable work.
+
+        Staging files belong to a writer that may still be active; they keep the
+        retention lifecycle of ``plan``.
+        """
+        removed = kept = 0
+        for path in self.entries():
+            if self._protected(self._metadata(path), protected):
+                kept += 1
+            else:
+                path.unlink(missing_ok=True)
+                removed += 1
+        return {"removed": removed, "protected": kept}
 
     def save(self, metadata: dict, request_body: bytes, response_body: bytes | None) -> None:
         identity = uuid.uuid4().hex

@@ -404,6 +404,68 @@
   align-self: start;
   padding-top: 0;
 }
+/* Row lists: one bordered card, label and help on the left, control on the
+   right. Used for pages of independent switches and single choices. */
+.settings-field-rows {
+  display: grid;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.018);
+}
+.settings-detail .settings-field-rows > * {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px);
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  gap: 0 32px;
+  min-height: 0;
+  padding: 14px 18px;
+}
+.settings-detail .settings-field-rows > .settings-check {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.settings-field-rows > * + * {
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-detail .settings-field-rows > * > span {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--text-primary);
+}
+.settings-detail .settings-field-rows > * > small {
+  grid-column: 1;
+  max-width: 68ch;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: 1.65;
+}
+.settings-detail .settings-field-rows > * > :not(span, small) {
+  grid-column: 2;
+  grid-row: 1 / -1;
+}
+/* Switches inside row lists; the control is still a native checkbox. */
+.settings-field-rows input[type='checkbox'] {
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-pill);
+  background: rgb(var(--well-rgb) / 0.6) radial-gradient(circle, var(--text-muted) 0 6.5px, transparent 7px)
+    no-repeat 1px 50% / 18px 18px;
+  transition:
+    background-position var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+.settings-field-rows input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.settings-field-rows input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: radial-gradient(circle, var(--on-accent) 0 6.5px, transparent 7px);
+  background-position: calc(100% - 1px) 50%;
+}
 .settings-advanced {
   margin-top: 22px;
   padding: 0;
@@ -569,6 +631,74 @@
 .settings-recipe-layout .settings-field-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+/* Compact term/description list for page rules, instead of stacked paragraphs. */
+.settings-detail .settings-notes {
+  display: grid;
+  max-width: 920px;
+  margin: 0 0 22px;
+  padding: 2px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(255 255 255 / 0.018);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+.settings-notes > div {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  gap: 16px;
+  padding: 9px 0;
+}
+.settings-notes > div + div {
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-notes dt {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.settings-notes dd {
+  margin: 0;
+  color: var(--text-muted);
+}
+.settings-block-editor {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+}
+.settings-block-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.settings-block-head strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.settings-detail .settings-block-head p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+.settings-block-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+.settings-block-actions .settings-block-remove:hover:not(:disabled) {
+  background: var(--danger-surface);
+  color: var(--danger);
+}
+.settings-block-split {
+  justify-self: start;
+}
 .settings-prompt-list,
 .settings-block-list {
   display: flex;
@@ -601,6 +731,19 @@
   background: rgb(255 255 255 / 0.08);
   box-shadow: inset 2px 0 0 var(--accent);
   color: var(--text-primary);
+}
+.settings-block-index {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.settings-block-list .off:not(.active) {
+  color: var(--text-faint);
+}
+.settings-block-list .settings-block-add {
+  margin-top: 4px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  box-shadow: 0 -1px 0 var(--border-subtle);
+  color: var(--text-muted);
 }
 .settings-detail .settings-prompt-warning {
   margin: 0 0 10px;
@@ -1046,6 +1189,27 @@
   .settings-detail .settings-check-help {
     padding-top: 0;
   }
+  .settings-detail .settings-field-rows > :not(.settings-check) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-detail .settings-field-rows > :not(.settings-check) > :not(span, small) {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 10px;
+  }
+  .settings-detail .settings-field-rows > * {
+    padding: 12px 14px;
+  }
+  .settings-notes > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .failed-request-error {
+    display: none;
+  }
+  .failed-request-body {
+    padding-left: 16px;
+  }
   .settings-prompt-layout,
   .settings-recipe-layout {
     grid-template-columns: 1fr;
@@ -1102,9 +1266,142 @@
 }
 
 /* ---------- Storage and providers ---------- */
-.failed-request-record {
-  margin-top: 12px;
+.failed-requests-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+}
+.settings-detail .failed-requests-heading h4 {
+  flex: 1;
+  margin: 0;
+}
+.failed-requests-heading button:not(.icon-button) {
+  padding: 5px 11px;
+  font-size: var(--fs-sm);
+}
+.settings-detail .failed-requests-confirm {
+  max-width: none;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--danger-edge);
+  border-radius: var(--radius-sm);
+  background: var(--danger-surface);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+.failed-requests-heading small {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.settings-detail .failed-requests-empty {
+  max-width: none;
+  margin: 0;
+  padding: 18px;
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.failed-request-list {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.018);
+}
+.failed-request-list > .failed-request-record {
+  padding: 0;
+  border: 0;
+}
+.failed-request-record + .failed-request-record {
+  border-top: 1px solid var(--border-subtle);
+}
+.failed-request-record > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 16px;
+  font-size: var(--fs-sm);
+  list-style: none;
+}
+.failed-request-record > summary::-webkit-details-marker {
+  display: none;
+}
+.failed-request-record > summary:hover {
+  background: var(--hover-wash);
+}
+.failed-request-caret {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform var(--dur) var(--ease-out);
+}
+.failed-request-record[open] .failed-request-caret {
+  transform: rotate(90deg);
+}
+.failed-request-record time {
+  flex: none;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.failed-request-model,
+.failed-request-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.failed-request-status {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--danger-surface);
+  color: var(--danger);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+}
+.failed-request-status.silent {
+  background: rgb(var(--warning-rgb) / 0.12);
+  color: var(--warning);
+}
+.failed-request-error {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.failed-request-body {
+  padding: 2px 16px 14px 42px;
   overflow-wrap: anywhere;
+}
+.settings-detail .failed-request-body .muted {
+  margin: 4px 0;
+}
+.failed-request-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0 8px;
+  color: var(--accent-hover);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+.failed-request-download:hover {
+  text-decoration: underline;
+}
+.failed-requests-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 10px;
+}
+.failed-requests-pager small {
+  margin-right: auto;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
 }
 .storage-report {
   display: grid;

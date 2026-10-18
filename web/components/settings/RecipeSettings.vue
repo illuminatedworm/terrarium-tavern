@@ -6,6 +6,7 @@ import MessageTypeSelect from './MessageTypeSelect.vue';
 import type { SettingsObject } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import SavedText from './SavedText.vue';
+import Icon from '../common/Icon.vue';
 const props = defineProps<{
   recipe: SettingsObject;
   saved: SettingsObject;
@@ -24,6 +25,7 @@ watch(
   },
 );
 const block = computed(() => props.recipe.blocks[index.value]);
+const source = (value: string) => sources.find((s) => s.value === value);
 const path = computed(() => `context_recipe.blocks.${index.value}.content`);
 const fields: SettingField[] = [
   { path: 'source', label: '内容来源', options: sources.map((s) => ({ value: s.value, label: s.label })) },
@@ -74,36 +76,79 @@ function splitCharacter() {
 }
 </script>
 <template>
-  <p class="muted">新对话复制此编排；已有对话保持原编排。顺序和参数自动保存，文本修改需点击绿色勾。</p>
-  <p class="muted">每块可单独上移、下移或设置深度；深度留空时按列表顺序注入，0 放在末尾。</p>
-  <p class="muted">
-    包括 Google GenAI 在内的部分 API 明确不支持中途 system 消息。Half Agent
-    会以最小位移将头部非系统资料后排，保持 system
-    连续及各组原顺序；规范顺序稳定复用，不随轮次反复移动。正文深度位置不变，可在“上下文”查看实际编排。
-  </p>
+  <dl class="settings-notes">
+    <div>
+      <dt>作用范围</dt>
+      <dd>新对话复制此编排，已有对话保持各自的编排。</dd>
+    </div>
+    <div>
+      <dt>保存</dt>
+      <dd>顺序和参数自动保存；自定义文本需点击绿色勾。</dd>
+    </div>
+    <div>
+      <dt>注入深度</dt>
+      <dd>留空时按列表顺序注入；0 表示放在末尾。</dd>
+    </div>
+    <div>
+      <dt>system 连续</dt>
+      <dd>
+        部分接口（如 Google GenAI）不接受对话中途的 system 消息。发送时，开头资料中的 system
+        消息集中在最前，其他角色的资料随后，两组内部保持列表顺序；每轮排法固定，不会反复移动。列表本身和带深度的正文块不受影响，实际顺序可在“上下文”查看。
+      </dd>
+    </div>
+  </dl>
   <div class="settings-recipe-layout">
     <div class="settings-block-list">
       <button
         v-for="(item, i) in recipe.blocks"
         :key="i"
-        :class="{ active: index === i }"
+        :class="{ active: index === i, off: !item.enabled }"
         @click="guard(() => (index = Number(i)))"
       >
-        {{ Number(i) + 1 }} · {{ sources.find((s) => s.value === item.source)?.label || item.source }}</button
-      ><button @click="add">添加内容块</button>
+        <span class="settings-block-index">{{ Number(i) + 1 }} ·</span>
+        {{ source(item.source)?.label || item.source }}</button
+      ><button class="settings-block-add" @click="add"><Icon name="plus" :size="14" />添加内容块</button>
     </div>
-    <div v-if="block">
-      <div class="profile-actions">
-        <button :disabled="index === 0" @click="move(-1)">上移</button
-        ><button :disabled="index === recipe.blocks.length - 1" @click="move(1)">下移</button
-        ><button @click="remove">移除块</button>
-      </div>
-      <p class="muted">{{ sources.find((s) => s.value === block.source)?.description }}</p>
-      <button v-if="block.source === 'character'" @click="splitCharacter">拆分角色设定为独立块</button>
+    <div v-if="block" class="settings-block-editor">
+      <header class="settings-block-head">
+        <div>
+          <strong>{{ source(block.source)?.label || block.source }}</strong>
+          <p v-if="source(block.source)?.description">{{ source(block.source)?.description }}</p>
+        </div>
+        <div class="settings-block-actions">
+          <button
+            class="icon-button"
+            aria-label="上移"
+            title="上移"
+            :disabled="index === 0"
+            @click="move(-1)"
+          >
+            <Icon name="arrow-up" :size="16" /></button
+          ><button
+            class="icon-button"
+            aria-label="下移"
+            title="下移"
+            :disabled="index === recipe.blocks.length - 1"
+            @click="move(1)"
+          >
+            <Icon name="arrow-down" :size="16" /></button
+          ><button
+            class="icon-button settings-block-remove"
+            aria-label="移除块"
+            title="移除块"
+            @click="remove"
+          >
+            <Icon name="trash" :size="16" />
+          </button>
+        </div>
+      </header>
+      <button v-if="block.source === 'character'" class="settings-block-split" @click="splitCharacter">
+        拆分角色设定为独立块
+      </button>
       <SettingsFields :value="block" :fields="fields" />
       <MessageTypeSelect v-model="block.message_type" :disabled="block.source === 'history'" />
       <SavedText
-        v-if="block.source === 'custom' || !sources.some((s) => s.value === block.source)"
+        v-if="block.source === 'custom' || !source(block.source)"
         :key="block.id"
         label="自定义内容"
         :model-value="textValue(path)"

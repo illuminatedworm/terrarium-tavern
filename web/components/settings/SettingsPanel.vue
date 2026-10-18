@@ -17,7 +17,11 @@ import {
   historyFields,
   memoryFields,
   networkFields,
+  requestFields,
+  proxyFields,
   miscFields,
+  shortcutFields,
+  debugFields,
 } from '../../lib/settingsFields';
 import SettingsFields from './SettingsFields.vue';
 import PolicySelect from './PolicySelect.vue';
@@ -639,10 +643,18 @@ onMounted(async () => {
             :settings="draft.shared"
             :flush="editor.flush"
           />
-          <SettingsFields v-else-if="page.key === 'network'" :value="draft.shared" :fields="networkFields" />
+          <template v-else-if="page.key === 'network'">
+            <h4>请求方式</h4>
+            <SettingsFields :value="draft.shared" :fields="requestFields" layout="rows" />
+            <h4>代理</h4>
+            <SettingsFields :value="draft.shared" :fields="proxyFields" layout="rows" />
+          </template>
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
           <template v-else-if="page.key === 'misc'">
-            <SettingsFields :value="draft.shared" :fields="miscFields" />
+            <h4>输入</h4>
+            <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
+            <h4>调试</h4>
+            <SettingsFields :value="draft.shared" :fields="debugFields" layout="rows" />
             <FailedRequestLogs />
           </template>
           <DataTransferSettings

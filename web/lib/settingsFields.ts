@@ -1,25 +1,28 @@
 import type { SettingField } from '../components/settings/SettingsFields.vue';
 import { sendShortcutOptions } from './composerShortcut';
-export const miscFields: SettingField[] = [
-  {
-    path: 'debug_full_agent_prefix',
-    label: 'Full Agent 前缀消息稳定性测试（Debug）',
-    type: 'checkbox',
-    help: '默认关闭，从下一次 Full Agent 操作生效。仅在运行时内存暂存最近两次 SDK 序列化后的真实请求，包括工具续答和重试；逐项比较 messages、tools 及其他实际参数，不拼接或推测服务商的提示词。通知中，消息参数说明公共前缀与首个差异是否错位，其他参数只显示一致或不一致。切换会话或模型仍比较最近两次请求；关闭后在下一次 Full Agent 操作或退出应用时清除暂存。',
-  },
-  {
-    path: 'debug_failed_requests',
-    label: '保留失败请求原始数据（Debug）',
-    type: 'checkbox',
-    help: '默认关闭，从下一次操作生效。开启后仅保存失败的模型生成请求和已收到的原始响应，认证凭据脱敏。请求和响应单侧最多保留 8 MiB，并受详细日志容量限制；超限或未接收完整会明确标记。记录可能包含角色卡和剧情，可在下方下载。关闭后已有记录继续按日志保留设置清理。',
-  },
+export const shortcutFields: SettingField[] = [
   {
     path: 'send_shortcut',
     label: '输入时发送和换行',
     options: sendShortcutOptions,
-    help: '用于剧情、参谋 agent 和角色卡编辑 agent 的聊天输入框，保存后立即生效。Ctrl+Enter 方案也支持 macOS 的 Command+Enter。放大编辑和历史编辑保留各自的应用、保存快捷键。',
+    help: '用于剧情、参谋 agent 和角色卡编辑 agent 的输入框，保存后立即生效；Ctrl+Enter 方案在 macOS 上也接受 Command+Enter。放大编辑和历史编辑保留各自的快捷键。',
   },
 ];
+export const debugFields: SettingField[] = [
+  {
+    path: 'debug_full_agent_prefix',
+    label: 'Full Agent 前缀消息稳定性测试',
+    type: 'checkbox',
+    help: '在内存中暂存最近两次 SDK 实际序列化的请求（含工具续答和重试），逐项比较 messages、tools 和其余参数，并在通知中报告公共前缀与首个差异。切换会话或模型不重置比较；关闭后在下一次 Full Agent 操作或退出应用时清除。',
+  },
+  {
+    path: 'debug_failed_requests',
+    label: '保留失败请求原始数据',
+    type: 'checkbox',
+    help: '保存失败的模型生成请求与已收到的原始响应，认证凭据脱敏。请求、响应各最多 8 MiB，超限或未收完整会标记。记录可能包含角色卡和剧情；关闭后已有记录仍按日志保留设置清理。',
+  },
+];
+export const miscFields: SettingField[] = [...shortcutFields, ...debugFields];
 const number = (
   path: string,
   label: string,
@@ -112,29 +115,33 @@ export const memoryFields: SettingField[] = [
   number('memory_timeout', '每次维护超时（秒）', 5, 180),
   { path: 'memory_review_enabled', label: '允许一次疑难复核', type: 'checkbox' },
 ];
-export const networkFields: SettingField[] = [
+export const requestFields: SettingField[] = [
   {
     path: 'model_request_mode',
     label: '模型请求方式',
     options: [
-      { value: 'auto', label: '保持现有行为' },
+      { value: 'auto', label: '由各任务决定' },
       { value: 'stream', label: '流式' },
       { value: 'non_stream', label: '非流式' },
     ],
-    help: '统一控制普通 API 的正文、后台和制卡请求，保存后从下一次操作生效。保持现有行为时由各任务选择。Full Agent 流式正文先显示为未保存预览，完整校验通过后才正式保存。ChatGPT 订阅通道始终使用流式。',
+    help: '作用于普通 API 的正文、后台和制卡请求，从下一次操作生效；ChatGPT 订阅通道始终流式。Full Agent 的流式正文先显示为未保存预览，完整校验通过后才保存。',
   },
+];
+export const proxyFields: SettingField[] = [
   {
     path: 'network.proxy',
     label: '代理地址',
     type: 'text',
-    help: '默认为空，留空时直连。填写完整 HTTP(S) 代理地址后，再选择下方需要使用代理的请求类型。应用请求不自动继承系统环境代理。',
+    placeholder: '留空直连',
+    help: '完整的 HTTP(S) 代理地址，再在下方选择使用代理的请求。不读取系统环境中的代理设置。',
   },
   {
     path: 'network.api_proxy',
-    label: '模型接口请求使用代理',
+    label: '模型接口使用代理',
     type: 'checkbox',
-    help: '同时控制本地搜索和网页读取；本地接入不受提供商代理开关影响。',
+    help: '也用于联网搜索和网页读取。模型请求还需对应提供商开启“使用接口代理”。',
   },
   { path: 'network.hf_proxy', label: '本地模型下载使用代理', type: 'checkbox' },
-  { path: 'network.resources_proxy', label: '角色外部资源使用代理', type: 'checkbox' },
+  { path: 'network.resources_proxy', label: '角色卡外部资源使用代理', type: 'checkbox' },
 ];
+export const networkFields: SettingField[] = [...requestFields, ...proxyFields];

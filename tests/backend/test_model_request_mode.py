@@ -323,3 +323,8 @@ async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_
         assert storage["request_debug_bytes"] > 0 and storage["request_debug_reclaimable_bytes"] > 0
         await client.post("/api/storage/cleanup", json={})
         assert not log.records()
+        log.save({**record, "turn_id": "recoverable:tracker:0"}, b"request", None)
+        log.save(record, b"request", None)
+        assert log.clear({"recoverable"}) == {"removed": 1, "protected": 1}
+        assert (await client.delete("/api/debug/failed-requests")).json() == {"removed": 1, "protected": 0}
+        assert not log.records()

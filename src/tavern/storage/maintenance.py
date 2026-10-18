@@ -19,14 +19,29 @@ def _files(root: Path):
             and p.resolve().is_relative_to(resolved)]
 
 
-def _debug_plan(store, db, turns):
-    from tavern.storage.request_debug import RequestDebugLog
-
+def _debug_protected(db, turns):
     protected = {turn["id"] for turn in turns if turn["protected"]}
     protected.update(r[0] for r in db.execute("SELECT run FROM card_editor_progress"))
     protected.update(r[0] for r in db.execute(
         "SELECT id FROM advisor_runs WHERE progress IS NOT NULL OR status IN ('queued','running')"))
-    return RequestDebugLog(store.root, store.settings()).plan(protected)
+    return protected
+
+
+def _debug_plan(store, db, turns):
+    from tavern.storage.request_debug import RequestDebugLog
+
+    return RequestDebugLog(store.root, store.settings()).plan(_debug_protected(db, turns))
+
+
+def clear_request_debug(store):
+    """Remove failed-request evidence on demand, keeping running and recoverable owners."""
+    from tavern.storage.request_debug import RequestDebugLog
+
+    with store.connection() as db:
+        # Hold the write lock so no owner leaves the protected set mid-deletion.
+        db.execute("BEGIN IMMEDIATE")
+        turns = _plan(store, db, time.time())[0]
+        return RequestDebugLog(store.root, store.settings()).clear(_debug_protected(db, turns))
 
 
 def _plan(store, db, now):
