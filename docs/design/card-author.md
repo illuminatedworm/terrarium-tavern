@@ -68,7 +68,20 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 
 测试与页面共用 `compat/presentation.ts` 和变量宏逻辑：独立 MVU 面板按右栏检查，其余情形检查全部正文、Markdown 和 HTML 内容块。草稿、正式故事和脚本权限保持原值。
 
-两种模式共用 writer 叙事、tracker_mvu 变量规则与 runtime_init 初始化的分流及静态检查。普通制卡和 MVU 设计不要求目标模式；可选 target_mode 只记录用户的兼容性目标，特殊脚本能力影响方案时才需明确。共用 runtime-guide.md 与适配资料解释执行差异，不为 Full Agent 另设规则迁移流程。开场工具只编辑完整原文，保留有效内联初值，不创建独立关联或隐藏初值副本。
+两种模式共用 writer 叙事、tracker_mvu 变量规则与 runtime_init 初始化的分流及静态检查。普通制卡和 MVU 设计不要求目标模式；可选 target_mode 只记录用户的兼容性目标，特殊脚本能力影响方案时才需明确。开场工具只编辑完整原文，保留有效内联初值，不创建独立关联或隐藏初值副本。
+
+## 内置指引
+
+`src/tavern/skills/` 随包提供，`read_skill` 按白名单完整返回。主提示词只保留流程、工具和所有任务共用的数据约定，并按任务给出读取入口；专项规则放在指引中，跨链路共用的规则放在链路上游，下游文件只写本环节特有的内容：
+
+| 链路 | 读取顺序 |
+|---|---|
+| 从零制卡 | card-guide.md → card-format.md |
+| 变量、正则与脚本 | runtime-guide.md → references/regex-display.md |
+| 适配与状态栏迁移 | SKILL.md → runtime-guide.md → references/workflow.md → references/status-display.md、references/regex-display.md |
+| 模式差异 | half-agent.md、full-agent.md：各模式的请求结构、可见数据、世界书位置、变量与脚本能力 |
+
+改变运行行为时同步修改对应指引。保存的自定义主提示词不随默认文本更新，旧提示词引用的资源名保持可读。
 
 ## API 与迁移
 

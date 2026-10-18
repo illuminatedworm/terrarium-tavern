@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from pydantic import ValidationError
 from tavern.application.service import RoleplayRuntime
 from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
+from tavern.character.editor_config import SYSTEM
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import Skill, tool_definitions
 from tavern.conversation.context import compile_context
@@ -113,21 +115,30 @@ def test_invalid_structure_stops_semantic_diagnostics():
 
 
 async def test_skill_is_whitelisted_and_full_resource_reaches_editor_model(tmp_path):
-    resource = "references/status-display.md"
     definitions = {t["function"]["name"]: t["function"] for t in tool_definitions()}
-    assert resource in definitions["read_skill"]["parameters"]["properties"]["resource"]["enum"]
+    resources = definitions["read_skill"]["parameters"]["properties"]["resource"]["enum"]
+    assert "references/status-display.md" in resources
     with pytest.raises(ValidationError):
         Skill(resource="../editor_config.py")
+    # Guides point to each other by resource name; every named guide must stay readable.
+    root = Path(__file__).parents[2] / "src/tavern/skills"
+    texts = [SYSTEM, *(path.read_text(encoding="utf-8") for path in root.rglob("*.md"))]
+    named = {name for text in texts for name in re.findall(r"(?:references/)?[\w-]+\.md", re.sub(r"https?://\S+", "", text))}
+    assert named <= set(resources)
     store = Store(tmp_path)
+    settings = store.settings_document()
+    settings.shared.card_author.context_tokens = 200000  # all guides together exceed the default window
+    store.save_settings(settings)
     editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
-    provider = ToolLLM([("read_skill", {"resource": resource})])
+    provider = ToolLLM([("read_skill", {"resource": resource}) for resource in resources])
     try:
         result = await run(editor, wid, provider, "说明正文状态栏的迁移方法")
         assert result["status"] == "completed", result["error"]
-        source = (Path(__file__).parents[2] / "src/tavern/skills/adapt-card-to-tavern" / resource).read_text(encoding="utf-8")
         returned = [json.loads(m["content"]) for m in provider.call_log[-1] if m.get("role") == "tool"]
-        assert returned[-1]["text"] == source
+        sources = {path.relative_to(path.parents[1] if path.parent.name == "references" else path.parent).as_posix():
+                   path.read_text(encoding="utf-8") for path in root.rglob("*.md")}
+        assert {item["resource"]: item["text"] for item in returned} == sources
         assert not store.cards()
     finally:
         await editor.close()

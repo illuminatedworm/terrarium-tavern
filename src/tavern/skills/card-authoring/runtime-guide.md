@@ -1,33 +1,107 @@
-# 通用变量与运行兼容性
+# 变量、正则与脚本
 
-Half Agent 与 Full Agent 使用相同的卡片数据契约。普通制卡和 MVU 设计无需选择模式，也不为模式复制或迁移变量规则。
+新增或修改变量、状态展示、正则或脚本时读取本指引；适配已有卡时由 `SKILL.md` 引导至此。HTML/MVU 前端的可执行配方与测试见 `references/regex-display.md`；两种游玩模式如何执行这些机制见 `half-agent.md`、`full-agent.md`。
 
-世界书原始条目的用途写入 extensions.terrarium.audience：
+## 设计顺序
 
-- writer：稳定人物、世界和叙事设定，默认值；沿常驻和检索规则注入。
-- tracker_mvu：变量含义、变化条件、范围、关系和约束；授权更新变量时完整提供全部启用条目，不按关键词、概率或检索排名裁剪。
-- runtime_init：确定性 InitVar 初始化数据，供程序执行，不作为模型任务规则。
+1. **列变量**：每项写明含义与归属、类型、初值及来源、变化依据、取值范围、未知值表示和清空条件。
+2. **写初值**：共用初值放 `[InitVar]` 世界书条目；不同开场需要不同初值时，在该开场原文写完整 `<initvar>`，并加隐藏正则。
+3. **写规则**：在 `tracker_mvu` 条目中写变量含义、触发条件、范围、关系和校验要求。
+4. **写叙事设定**：影响剧情的世界机制（营业规则、战斗规则等）留在 `writer` 条目或角色字段。
+5. **做展示**：文字或 Markdown 用变量宏；HTML 面板按 `references/regex-display.md` 写展示正则。
+6. **验证**：运行 `validate_draft`，再对每个受影响的开场运行 `test_draft`。
 
-开场 `<initvar>` 中的完整对象覆盖角色卡世界书初始化，不从条目递归补齐缺失字段。没有开场 `<initvar>` 时读取世界书初值；传统 `[InitVar]` 条目即使禁用也参与初始化，未带该标记的 runtime_init 条目仍按启停设置处理。这是上游明确支持的按开场区分初值的机制。共用默认值优先沿用 [InitVar] 条目，不为了规范化把有效内联数据搬走；已有对话的初始化记录不会自动重演，修改初值应在新对话中验证。
+## 世界书用途
 
-卡内正则 promptOnly/markdownOnly 决定模型/展示通道。Runtime 先从原始开场初始化，再生成 model/display，不删除原文。已经正确初始化、并在模型通道隐藏的特殊数据和正则必须保留，包括迁移正文状态栏时。通过 test_draft 检查实际转换，不能把“仅界面隐藏”当成“对模型隐藏”。
+用途写在条目的 `extensions.terrarium.audience`：
 
-区分完整 initvar 覆盖与开场 UpdateVariable/JSONPatch 增量：上游支持初始化后叠加增量，本项目原文增量需明确的脚本处理，不会仅因标签存在而自动生效。不得创建项目专属的隐藏初值副本。详细异常与适配流程见 references/workflow.md。
+| 用途 | 内容 | 运行时行为 |
+|---|---|---|
+| `writer`（默认） | 人物、世界和叙事设定 | 按常驻与检索规则注入游玩请求 |
+| `tracker_mvu` | 变量含义、变化条件、范围、关系和约束 | 授权变量任务完整提供全部启用条目，不经关键词、概率或检索排名；规则和宏值在任务开始时固定，修改从后续任务生效 |
+| `runtime_init` | InitVar 数据 | 只供程序初始化，不进入模型请求 |
 
-Half Agent 在正文生成后向 Tracker 提供变量规则。Full Agent 在当前有效上下文首次授权变量更新时追加规则，同一有效版本不重复注入；换窗或重建后按需补入。规则及宏值在各自任务开始时固定，任务内修改从后续任务起生效。历史中保留规则不意味着持续获得修改权限。
+## 初始化
 
-两种模式均用 patch_state 提交相对于 stat_data 的 JSON Patch，无变化提交 []。卡片写清业务语义，不复制工具 schema，不要求模型在故事正文中输出 UpdateVariable、JSONPatch 或其他变量命令块。把影响叙事的世界机制与机械更新条件分开，保留必要的 schema 注册、校验回调、宏和资源。
+MVU 是社区框架，以下依据其固定上游实现与教程（[初始化实现](https://github.com/MagicalAstrogy/MagVarUpdate/blob/4a3645f19705e9e73bb4df3a8e731d5ff994ce80/src/function/initvar/variable_init.ts)、[教程](https://github.com/MagicalAstrogy/MagVarUpdate/blob/4a3645f19705e9e73bb4df3a8e731d5ff994ce80/doc/tutorial.md)）。社区模板各有写法，以下各种合法形式都要识别。
 
-仅在能力影响方案时确认用户的兼容性目标：Full Agent 不支持脚本额外模型请求或 HTML 交互生成；普通初始化、支持的正则、schema 和回调不因此要求选择模式。遇到不支持的能力，说明具体依赖并讨论替代交互，不能仅凭静态检查声称完整兼容。已有目标只作此类兼容性依据。
+- **世界书初值**：条目标题含 `[InitVar]`（不区分大小写），正文是 YAML/JSON 对象，可用支持的标签或代码块包裹。传统 `[InitVar]` 条目关闭后仍参与初始化，关闭只停止它的常规注入；无此标记的 `runtime_init` 条目按启停设置处理。
+- **开场初值**：开场原文中的 `<initvar>…</initvar>` 是该开场的**完整对象**，整体替换世界书初值，缺少的字段不会从世界书补齐。
+- **合并**：同一来源的多个初始化块按顺序合并，同名时后者覆盖，数组整体替换。
+- **增量指令**：上游支持在初值之后执行开场中的 `<UpdateVariable>` 或 JSON Patch 增量。本项目只自动读取 `<initvar>`；增量只在卡片脚本处理时生效，用 `test_draft` 核对实际状态。
+- 已开始的故事不会因改卡重演初值，修改初值后在新故事中验证。
 
-适配已有卡读取 SKILL.md 和 references/workflow.md，两种模式共用流程。普通润色保留已有开场与内联初始化；set_opening 只编辑完整开场原文。test_draft 检查所选开场的本地初始化、脚本启动和正则；真实叙事、变量判断、其他开场及完整视觉交互需另行验收。
+示例：共用初值写在一个关闭的条目里，标题为 `[InitVar] 初始状态`：
 
-遇到模型逐轮生成 HTML、Markdown 或固定标签状态栏，读取 references/status-display.md，将有依据的状态迁入独立变量，并按 references/regex-display.md 把原 HTML 前端写入 extensions.regex_scripts，绑定 stat_data 后由项目变量区展示。项目只提供变量树兜底，不会从补丁日志自动重建原界面；除非用户明确仅要变量树，否则保留原视觉设计。用户明确要求迁移正文状态栏时也处理相关开场示范；普通排版和已有程序展示不因此迁移。诊断无警告不代表完整适配。
+```yaml
+旅店:
+  余额: 120
+  客房: 3
+林默:
+  好感: 0
+```
 
-制作或补全正则、HTML/MVU 前端时必须读取 references/regex-display.md，使用其中的真实字段、可用 SDK 和 test_draft 展示断言；普通 patch_state 更新不要求用户提供额外 patch note 格式。
+“旅店遭砸”开场需要不同初值，在该开场原文末尾写完整对象（两个顶层键都要写全）：
 
-MVU 变量与 UI 分开：已有程序化文字、Markdown、纯 HTML/CSS 状态栏不必改为 JavaScript 面板。get_message_variable / format_message_variable 等 Helper 宏可直接读取 stat_data；旧式 [值, 描述] 与普通数组均保留，取旧值需显式索引 0，JSON Patch 也指向该值的位置。不要把所有两项数组自动压成单值。多种展示形式均需用同一 test_draft 检查完整内容和补丁后的变化。
+```text
+……门板在你身后哐当倒下。
+<initvar>
+旅店: {余额: 40, 客房: 0}
+林默: {好感: 0}
+</initvar>
+```
 
-新建纯展示面板优先采用 `<meta name="tavern-capabilities" content="display-only live-state">`，启动时绘制一次，并监听 `tavern_state_updated` 更新 DOM；这样无需每轮在后台重建展示脚本，也无需前端重载页面。仅在确认没有服务端变量回调或初始化副作用后才给已有卡添加 `display-only`，不根据代码关键词猜测。通过公开 `Mvu` API 访问变量，执行核心在 `Mvu.parseMessage` 时按需加载，不直接引用内部 `MVUReference`。
+并在 `extensions.regex_scripts` 追加一条同时作用于模型与界面的隐藏正则：
 
-需要离屏释放的面板再声明 `suspend`，实现 `window.TavernPanel.save()` / `restore(saved)`，保存全部临时表单与界面状态；持久变量仍通过原 API 提交。允许复用资源时声明 `shared-assets`，避免依赖匿名 style 节点或内联 URL 身份。四种声明是本项目扩展，不代表原生酒馆能力；未适配的旧卡继续保留完整执行和交互生命周期。除 test_draft 外，必须在实际界面验证状态更新、未提交输入和离屏恢复。
+```json
+{"scriptName": "隐藏开场初值", "findRegex": "/<initvar>[\\s\\S]*?<\\/initvar>/gi", "replaceString": "", "placement": [2], "disabled": false, "markdownOnly": true, "promptOnly": true}
+```
+
+初值只来自上述世界书条目与开场原文。
+
+## 变量规则写法
+
+规则只写业务语义。示例（`tracker_mvu` 条目正文）：
+
+```text
+旅店.余额：整数，单位铜币。客人实际付款后增加，采购或修缮实际支出后减少；报价、赊账不改变余额。
+林默.好感：0–100 的整数。{{user}} 的言行明显触动林默时增减 1～5，同一事件只计一次。
+```
+
+- 区分意向与完成、收费与到账；只在已发生的剧情有依据时改变变量。
+- 工具 schema、独立助手身份和纯 JSON 回复格式由运行时协议决定，社区卡规则里的这类内容删去即可。
+- 旧式 `[值, 描述]` 变量保留原结构：宏取值写 `stat_data.hp.0`，补丁指向 `/hp/0`。普通数组保持完整结构，不把两项数组一律当作值与描述。
+
+## 正则与通道
+
+卡内 `extensions.regex_scripts` 的 `placement` 中，1 作用于用户输入，2 作用于助手文本（含开场）。
+
+| `promptOnly` | `markdownOnly` | 作用 |
+|---|---|---|
+| true | false | 只改模型上下文 |
+| false | true | 只改界面 |
+| true | true | 两条通道都改 |
+
+Runtime 先从原始开场读取初始化，再用正则生成模型文本与展示文本，原文保持不变。界面上看不到不代表模型看不到，用 `test_draft` 的 `output_model` 与 `output_display` 检查实际结果。还要核对 `disabled`、匹配表达式、规则顺序和深度条件；名称不能证明规则实际命中。正则语法与前端写法见 `references/regex-display.md`。
+
+## 展示与变量宏
+
+MVU 是变量系统，展示形式可选，已有的文字、Markdown 或纯 HTML/CSS 展示可以继续使用。
+
+- 文字和 Markdown：`{{format_message_variable::stat_data.旅店.余额}}`（字符串原文，其他值 YAML）或 `{{get_message_variable::stat_data.旅店.余额}}`（其他值 JSON）；作用域还支持 chat、character、preset、global。宏递归省略 `$` 前缀字段，缺失值显示 null。
+- 模型文本：`{{getvar::stat_data.旅店.余额}}`，路径从变量根开始。宏只读取已有变量，变量须有初值。
+- 固定资料区（角色字段、常驻条目）里的变量宏每次取值变化都会改变请求前缀、降低缓存命中；常变的数值交给展示面板或各模式的状态通道（见模式文档）。
+- EJS 的 `<% … %>` 不是这些宏，需要另行适配。
+- HTML 面板：按 `references/regex-display.md` 写展示正则，读取 `stat_data`。
+
+## 脚本
+
+- 保留 schema 注册、校验回调、宏和资源；这些可能是变量系统运行所必需的，禁用全部脚本不能作为通过检查的手段。
+- 脚本额外发起模型请求（generate/generateRaw）和 HTML 交互生成只在 Half Agent 可用。方案依赖它们时读取 `full-agent.md` 的能力边界，与用户确认兼容性目标并用 `configure_card` 记录；遇到不支持的能力，说明具体依赖并讨论替代交互。
+- 脚本权限按对话保存，由用户在 MVU 页或会话设置中开启；`test_draft` 在隔离沙盒中执行。
+
+## 验证
+
+- `validate_draft` 输出结构错误、完整性提示和静态兼容性提示。无警告只表示通过了已实现的静态检查。
+- `test_draft` 检查所选开场的初始化、脚本启动、正则样例和 DOM 断言，不发起模型请求。
+- 报告分开写静态检查、本地运行检查和未覆盖范围；真实叙事、变量判断、其他开场和完整视觉交互需在新故事中验收。

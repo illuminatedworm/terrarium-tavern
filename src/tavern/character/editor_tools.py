@@ -124,7 +124,7 @@ class Opening(Card):
 
 
 class Skill(Arguments):
-    resource: Literal["card-guide.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md", "references/status-display.md", "references/regex-display.md"] = Field(default="card-guide.md", description="Built-in documentation resource. SKILL.md and references/workflow.md share one adaptation contract for both modes. references/status-display.md covers status migration; references/regex-display.md gives the executable regex/HTML/MVU display contract, patch_draft examples and test_draft assertions. runtime-guide.md covers MVU and script compatibility.")
+    resource: Literal["card-guide.md", "card-format.md", "runtime-guide.md", "half-agent.md", "full-agent.md", "SKILL.md", "references/workflow.md", "references/status-display.md", "references/regex-display.md"] = Field(default="card-guide.md", description="Built-in documentation resource. card-guide.md: from-scratch creation steps; card-format.md: card fields, injection and worldbook entry format; runtime-guide.md: variables, initialization, regex and scripts; half-agent.md/full-agent.md: how each play mode consumes a card; SKILL.md: adaptation procedure, followed by references/workflow.md (initialization and opening checks), references/status-display.md (status migration) and references/regex-display.md (executable regex/HTML/MVU display recipe and test_draft assertions).")
 
 
 class Handoff(Arguments):

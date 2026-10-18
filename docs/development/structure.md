@@ -22,7 +22,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `storage/` | SQLite、事务、分支、备份与存储清理 |
 | `scripting/` | 共享模型传输、原生回复、隔离脚本、依赖和 MVU 处理 |
 
-`skills/`、`tokenizer_data/` 是随包资源，`static/` 保存生成的界面与脚本。角色卡适配使用随项目提供的[内置 skill](../../src/tavern/skills/adapt-card-to-tavern/SKILL.md)。
+`skills/`、`tokenizer_data/` 是随包资源，`static/` 保存生成的界面与脚本。制卡 agent 的内置指引分为[制卡](../../src/tavern/skills/card-authoring/card-guide.md)与[适配](../../src/tavern/skills/adapt-card-to-tavern/SKILL.md)两组，读取链路见[制卡 agent 设计](../design/card-author.md#内置指引)。
 
 ## 前端与生成资源
 

@@ -172,7 +172,7 @@ class EditorContext:
             self.update("persona_changes", [{"persona_ref": ref, **change["data"]} for ref, change in changes.items()],
                         "本任务待保存的用户角色（正常完成时保存；新要求撤销操作时用 update_persona(revert=true)）：")
         if owner.request.get("adapt"):
-            self.update("adapt", True, "本轮用户要求适配工作流：读取共用的 SKILL.md 和 references/workflow.md；MVU 分流无需先选择模式，仅在特殊脚本能力影响方案时确认兼容性目标。")
+            self.update("adapt", True, "本轮用户要求适配工作流：先读取 SKILL.md，按其中的顺序读取后续资料。")
         else:
             self.update("adapt", False, "本轮无额外适配要求：")
         tokens = self.tokens()

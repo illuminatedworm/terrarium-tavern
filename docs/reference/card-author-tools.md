@@ -30,7 +30,7 @@
 | `set_opening` | `card_ref`、`action=update/add/remove/move`、必填 `index`；N 个开场时新增接受 0–N，其余接受 0–N−1，均含两端。新增/修改须传完整 `narrative`；移动须传 0-based 的 `to_index`（0–N−1，移动后的位置），其余操作省略 |
 | `validate_draft` | `card_ref`；分别返回结构错误、完整性提示和静态兼容性信息 |
 | `test_draft` | `card_ref`、`index=0`（0-based，0–N−1，N 为开场数量）、可选完整文本 `samples`、`display_assertions`、`state_patch`；断言 sample_index 范围 0–len(samples)，0 为所选开场，1 对应 samples[0]。检查初始化、正则、脚本和 DOM 值，临时补丁验证更新后显示，返回结果、日志和未测范围 |
-| `read_skill` | 白名单 `resource`：card-guide.md、runtime-guide.md、half-agent.md、full-agent.md、SKILL.md、references/workflow.md、references/status-display.md、references/regex-display.md；状态栏迁移参考文档覆盖 HTML、Markdown 与固定标签展示 |
+| `read_skill` | 白名单 `resource`，完整返回内置指引：card-guide.md（从零制卡步骤）、card-format.md（字段去向与世界书条目格式）、runtime-guide.md（变量、初始化、正则与脚本）、half-agent.md／full-agent.md（两种游玩模式如何使用卡片）、SKILL.md（适配步骤）及其后续 references/workflow.md、references/status-display.md、references/regex-display.md |
 | `write_handoff` | 完整替换 `content`；非空且符合配置 token 上限，不取代确认方案原文 |
 | `new_context` | 保存 `content` 后换窗，必须单独调用；继续当前任务且不重置批次调用额度 |
 | `search_history` | `query`、`limit=5`（1–20）；`*` 列出最近记录，返回 H 引用与定位摘要 |
