@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useAdvisor } from '../../composables/useAdvisor';
-import { advisorRunning, toolLabels } from '../../lib/advisor';
+import { advisorOffers, advisorRunning, toolLabels } from '../../lib/advisor';
 import { channelProviders } from '../../lib/channels';
 import type { SettingsDocument } from '../../lib/settingsDocument';
 import { useModelCatalog } from '../../lib/modelCatalog';
@@ -19,8 +19,14 @@ const props = defineProps<{
   settings: SettingsDocument;
   /** Round of each story message, for the context preview. */
   storyRounds?: number[];
+  storyTitle?: string;
 }>();
-const emit = defineEmits<{ settings: []; preferenceSaved: [] }>();
+const emit = defineEmits<{
+  settings: [];
+  preferenceSaved: [];
+  useInput: [text: string];
+  title: [text: string];
+}>();
 const {
   state,
   error,
@@ -161,6 +167,20 @@ async function selectRange(value: number | null) {
   await options({ recent_exchanges: value });
   if (!error.value) showRange.value = false;
 }
+const offers = computed(
+  () => new Map((state.value?.exchanges || []).map((e) => [e.seq, advisorOffers(e.trace)])),
+);
+// Starter questions double as a list of what the advisor can do.
+const starters = computed(() => [
+  '帮我梳理一下现在的局面。',
+  '下一步可以怎么走？给几个我能直接点选的行动。',
+  '查一下人物设定和世界书里关于……的内容。',
+  '现在的变量、记忆和剧情规划里记着哪些要点？',
+  '我们之前讨论过……，帮我找回当时的结论。',
+  ...(props.settings.shared.advisor.web.mode === 'off' ? [] : ['联网查查原著里这段剧情是怎么发展的。']),
+  '把“节奏放慢一点，多写对话”加入本轮偏好。',
+  '给这个对话起几个标题让我选。',
+]);
 const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
   trace.reduce((sum, m) => sum + (m.tool_calls?.length || 0), 0);
 </script>
@@ -293,7 +313,7 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         <h3>故事之外，也可以聊聊。</h3>
         <p>回顾线索、查阅资料，或一起想想下一步。</p>
         <button
-          v-for="question in ['帮我梳理一下现在的局面。', '下一步可以怎么走？']"
+          v-for="question in starters"
           :key="question"
           @click="
             draft = question;
@@ -310,6 +330,37 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
           <div class="advisor-answer-content">
             <span class="advisor-speaker">参谋 agent</span>
             <div class="advisor-answer-bubble"><StoryProse :text="exchange.response" /></div>
+            <div
+              v-if="offers.get(exchange.seq)?.inputs.length"
+              class="advisor-offers"
+              role="group"
+              aria-label="可选行动"
+            >
+              <span>点击填入主对话输入框</span>
+              <button
+                v-for="(text, i) in offers.get(exchange.seq)!.inputs"
+                :key="i"
+                @click="emit('useInput', text)"
+              >
+                {{ text }}
+              </button>
+            </div>
+            <div
+              v-if="offers.get(exchange.seq)?.titles.length"
+              class="advisor-offers"
+              role="group"
+              aria-label="候选标题"
+            >
+              <span>点击设为对话标题</span>
+              <button
+                v-for="(text, i) in offers.get(exchange.seq)!.titles"
+                :key="i"
+                :disabled="text === storyTitle"
+                @click="emit('title', text)"
+              >
+                {{ text }}<small v-if="text === storyTitle">当前标题</small>
+              </button>
+            </div>
             <WebSources :sources="webSources(exchange.trace)" />
             <details v-if="exchange.trace.some((m) => m.web_activity?.length)" class="advisor-tool-record">
               <summary>联网服务记录</summary>

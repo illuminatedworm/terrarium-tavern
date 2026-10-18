@@ -235,6 +235,41 @@
   overflow: auto;
   white-space: pre-wrap;
 }
+.advisor-offers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.advisor-offers > span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.advisor-offers button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.advisor-offers button:hover:not(:disabled) {
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  color: var(--text-primary);
+}
+.advisor-offers small {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
 .advisor-tool-record {
   margin-top: 10px;
   border: 1px solid var(--border-subtle);

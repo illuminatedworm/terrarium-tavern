@@ -19,7 +19,8 @@ export interface AdvisorExchange {
     content: string;
     web_sources?: Array<{ url: string; title: string }>;
     web_activity?: Array<Record<string, any>>;
-    tool_calls?: Array<{ function: { name: string; arguments: string } }>;
+    tool_call_id?: string;
+    tool_calls?: Array<{ id?: string; function: { name: string; arguments: string } }>;
   }>;
 }
 export interface AdvisorState {
@@ -61,8 +62,26 @@ export const toolLabels: Record<string, string> = {
   read_consultation: '读取旧咨询',
   web_search: '搜索网页',
   read_webpage: '读取网页',
+  offer_inputs: '提供可选行动',
+  offer_titles: '提供候选标题',
   update_turn_preference: '准备修改本轮偏好',
 };
+
+/** Clickable offers are the persisted arguments of calls whose result was not an error. */
+export function advisorOffers(trace: AdvisorExchange['trace']) {
+  const failed = new Set(
+    trace.filter((m) => m.role === 'tool' && JSON.parse(m.content).error).map((m) => m.tool_call_id),
+  );
+  const offers = { inputs: [] as string[], titles: [] as string[] };
+  for (const call of trace.flatMap((m) => m.tool_calls || [])) {
+    if (failed.has(call.id)) continue;
+    if (call.function.name === 'offer_inputs')
+      offers.inputs.push(...JSON.parse(call.function.arguments).options.map((t: string) => t.trim()));
+    if (call.function.name === 'offer_titles')
+      offers.titles.push(...JSON.parse(call.function.arguments).titles.map((t: string) => t.trim()));
+  }
+  return offers;
+}
 export function advisorRunning(run?: AdvisorRun | null) {
   return !!run && ['queued', 'running'].includes(run.status);
 }

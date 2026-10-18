@@ -1113,25 +1113,49 @@ async function saveSessionTitle(item: any) {
   savingSessionTitle.value = true;
   try {
     await guarded(async () => {
-      const updated = await api(
-        `/sessions/${item.id}/title`,
-        {
-          title,
-          expected_revision: session.value?.id === item.id ? session.value.revision : item.revision,
-        },
-        'PUT',
-      );
-      item.title = updated.title;
-      item.revision = updated.revision;
-      if (session.value?.id === item.id) {
-        session.value.title = updated.title;
-        session.value.revision = updated.revision;
-      }
+      await renameSession(item, title);
       cancelSessionTitle();
     });
   } finally {
     savingSessionTitle.value = false;
   }
+}
+async function renameSession(item: any, title: string) {
+  const updated = await api(
+    `/sessions/${item.id}/title`,
+    {
+      title,
+      expected_revision: session.value?.id === item.id ? session.value.revision : item.revision,
+    },
+    'PUT',
+  );
+  item.title = updated.title;
+  item.revision = updated.revision;
+  if (session.value?.id === item.id) {
+    session.value.title = updated.title;
+    session.value.revision = updated.revision;
+  }
+}
+/** A title the user clicked among the advisor's candidates. */
+async function applyAdvisorTitle(title: string) {
+  const current = session.value;
+  if (!current || savingSessionTitle.value) return;
+  savingSessionTitle.value = true;
+  try {
+    await guarded(() => renameSession(sessions.value.find((s) => s.id === current.id) || current, title));
+  } finally {
+    savingSessionTitle.value = false;
+  }
+}
+/** An advisor option only fills the main input; the user still edits and sends it. */
+function useAdvisorInput(text: string) {
+  input.value = input.value.trim()
+    ? `${input.value.trimEnd()}
+${text}`
+    : text;
+  storyView.value = 'dialogue';
+  if (rightOverlay.value) layout.value.rightCollapsed = true;
+  nextTick(() => composer.value?.querySelector('textarea')?.focus());
 }
 function trackScroll() {
   const el = chat.value;
@@ -3116,7 +3140,10 @@ useTimedError(error);
             settingsChannel = session.channel_origin;
             panel = 'settings';
           "
+          :story-title="session.title"
           @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
+          @use-input="useAdvisorInput"
+          @title="applyAdvisorTitle"
         />
         <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
           <CacheBreakpointPanel

@@ -56,6 +56,19 @@ async def test_preference_commits_and_respects_latest_revision(tmp_path):
     assert store.session(session["id"])["messages"] == session["messages"]
 
 
+async def test_offers_are_visible_calls_without_story_writes(tmp_path):
+    _, store, session, advisor = setup(tmp_path)
+    provider = ToolLLM([("read_story_context", {"field": "title"}), ("offer_titles", {"titles": [" 雨夜来客 "], "request_ref": "Q1"}),
+                        ("offer_inputs", {"options": []})])
+    result = await ask(advisor, session["id"], provider, "给对话起几个标题")
+    assert result["status"] == "completed", result
+    after = store.session(session["id"])
+    assert (after["title"], after["revision"]) == (session["title"], session["revision"])
+    trace = advisor.public(session["id"])["exchanges"][0]["trace"]
+    assert session["title"] in trace[1]["content"]
+    assert "error" not in trace[3]["content"] and "error" in trace[5]["content"]
+
+
 class Failure(ToolLLM):
     async def chat(self, messages, **kwargs):
         if self.call_count:

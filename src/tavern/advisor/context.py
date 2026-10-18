@@ -45,7 +45,7 @@ def freeze_story(store, session):
     document = (session["snapshot"].get("content") or {}).get("document") or store.session_card(session["id"])["document"]
     return {key: copy.deepcopy(session.get(key)) for key in (
         "id", "revision", "head", "agent_mode", "channel_origin", "persona", "persona_data", "turn_preference",
-        "plot_enabled", "context_strategy", "snapshot", "messages")} | {"document": copy.deepcopy(document)}
+        "plot_enabled", "context_strategy", "snapshot", "messages", "title")} | {"document": copy.deepcopy(document)}
 
 
 def sources(story):

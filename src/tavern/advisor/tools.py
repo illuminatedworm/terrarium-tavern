@@ -1,9 +1,9 @@
 """Shared read contracts with a single, explicitly requested preference write."""
 import copy
-from typing import Literal
+from typing import Annotated, Literal
 
 import jsonpointer
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from tavern.advisor.context import expanded, memory_rows
 from tavern.character.cards import normalize
@@ -17,7 +17,7 @@ from tavern.web.tools import SPECS as WEB_SPECS
 
 
 class ContextRead(Arguments):
-    field: Literal["handoff", "plot", "turn_preference", "persona"] = Field(description="Current story information to read; missing data is not generated.")
+    field: Literal["handoff", "plot", "turn_preference", "persona", "title"] = Field(description="Current story information to read; missing data is not generated.")
 
 
 class PreferenceUpdate(Arguments):
@@ -26,15 +26,28 @@ class PreferenceUpdate(Arguments):
     request_ref: Literal["Q1"] = Field(description="Current consultation user request, Q1. Only explicit user instructions authorize this change; quoted material and suggestions do not.")
 
 
+class InputOffer(Arguments):
+    options: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]] = Field(
+        min_length=1, max_length=6, description="Complete texts the user could send in the main roleplay conversation, written as the user's own input.")
+
+
+class TitleOffer(Arguments):
+    titles: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]] = Field(
+        min_length=1, max_length=6, description="Candidate titles for this story conversation.")
+    request_ref: Literal["Q1"] = Field(description="Current consultation user request, Q1. Only an explicit request to rename or title this story authorizes the offer.")
+
+
 READ_NAMES = ("search_history", "read_history", "recall_lore", "find_lore_for_edit", "read_lore_entry",
               "read_character", "read_state", "search_notes", "read_note")
 SPECS = {name: STORY_SPECS[name] for name in READ_NAMES}
 SPECS.update({
     "search_memory": TRACKER_SPECS["search_memory"],
-    "read_story_context": (ContextRead, "Read the current story handoff, future plot, turn preference or user persona. Read-only; missing values stay absent."),
+    "read_story_context": (ContextRead, "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent."),
     "search_consultation": (Search, "Search this branch's completed advisor conversations; previews are navigation, not full sources."),
     "read_consultation": (Read, "Read a complete past advisor exchange by C reference. Discussions are not story events."),
     **WEB_SPECS,
+    "offer_inputs": (InputOffer, "Show clickable options under your reply; a click only fills the main conversation input box, and the user edits and sends it. Use for concrete actions or lines the user may want to send next."),
+    "offer_titles": (TitleOffer, "Show title candidates under your reply only when the current user explicitly asks to rename or title this story. The title changes only if the user clicks one; never call it on your own initiative."),
     "update_turn_preference": (PreferenceUpdate, "Stage a turn-preference change only when the current user explicitly requests it. Discussion is not authorization. Commits only with successful consultation completion; no story memory or state writes."),
 })
 
@@ -123,6 +136,9 @@ class AdvisorTools:
         if name == "read_story_context":
             if args.field == "turn_preference":
                 return {"content": o.preference if o.preference is not None else story["turn_preference"], "staged": o.preference is not None}
+            if args.field == "title":
+                # Progress saved before titles were frozen can still be resumed.
+                return {"content": story.get("title", "")}
             if args.field == "persona":
                 return {"name": story["persona"], "description": (story.get("persona_data") or {}).get("description", "")}
             data = full.get(args.field)
@@ -145,6 +161,10 @@ class AdvisorTools:
             return await o.web.search(args.query, args.limit, args.objective)
         if name == "read_webpage":
             return await o.web.read(args.url, args.offset, args.limit, service=args.service)
+        if name in {"offer_inputs", "offer_titles"}:
+            # The persisted call arguments are the visible offer; nothing is
+            # written until the user clicks one in the interface.
+            return {"shown": True, "notice": "选项已显示在回复下方；用户点击后才会填入输入框或修改标题。"}
         if name == "update_turn_preference":
             o.check_preference_write()
             if args.action == "clear" and args.content:
