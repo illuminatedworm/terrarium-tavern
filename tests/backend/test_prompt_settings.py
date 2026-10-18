@@ -54,7 +54,7 @@ def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text
     assert Store(tmp_path).settings().retrieval.protocol_prompt == "自定义检索协议"
 
 
-@pytest.mark.parametrize("fixture", ["advisor_prompt_before_independent.txt", "advisor_prompt_before_gui.txt", "advisor_prompt_before_agent_name.txt"])
+@pytest.mark.parametrize("fixture", ["advisor_prompt_before_independent.txt", "advisor_prompt_before_gui.txt", "advisor_prompt_before_agent_name.txt", "advisor_prompt_before_tag_map.txt"])
 def test_advisor_default_upgrade_preserves_custom_text_and_is_idempotent(tmp_path, fixture):
     from tavern.advisor.config import SYSTEM
     from tavern.storage.store import Store
