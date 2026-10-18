@@ -17,17 +17,17 @@ const query = ref('');
 const greetings = computed(() => [data.value.first_mes || '', ...(data.value.alternate_greetings || [])]);
 const fields = computed(() =>
   [
-    { key: 'description', label: '核心设定' },
-    { key: 'personality', label: '性格与行为' },
-    { key: 'scenario', label: '故事背景' },
+    { key: 'description', label: '角色描述' },
+    { key: 'personality', label: '性格' },
+    { key: 'scenario', label: '场景' },
   ].filter((field) => data.value[field.key]?.trim()),
 );
 const additional = computed(() =>
   [
-    { key: 'mes_example', label: '对话示例' },
-    { key: 'system_prompt', label: '创作要求' },
-    { key: 'post_history_instructions', label: '后置要求' },
-    { key: 'creator_notes', label: '作者说明' },
+    { key: 'mes_example', label: '示例对话' },
+    { key: 'system_prompt', label: '角色系统提示' },
+    { key: 'post_history_instructions', label: '历史后提示' },
+    { key: 'creator_notes', label: '作者备注' },
   ].filter((field) => data.value[field.key]?.trim()),
 );
 const matches = computed(() => {
@@ -81,9 +81,9 @@ watch(opening, () => {
         <h4>开场</h4>
         <select v-if="greetings.length > 1" v-model="opening" aria-label="预览开场">
           <option v-for="(_, index) in greetings" :key="index" :value="index">
-            {{ index ? `候选开场 ${index}` : '默认开场' }}
+            {{ index ? `开场 ${index + 1}` : '开场 1（默认）' }}
           </option></select
-        ><small v-else>默认开场</small>
+        ><small v-else>开场 1（默认）</small>
       </div>
       <div
         v-if="greetings[opening]"
@@ -121,7 +121,7 @@ watch(opening, () => {
         v-for="entry in matches"
         :key="entry.key"
         class="draft-lore-entry"
-        :class="{ disabled: entry.stateLabel === '停用' }"
+        :class="{ disabled: entry.stateLabel === '未启用' }"
       >
         <summary>
           <CardWorkspaceIcon name="chevron" /><span>{{ entry.title }}</span
@@ -132,7 +132,7 @@ watch(opening, () => {
           }}</small>
         </summary>
         <div class="draft-lore-content">
-          <p v-if="entry.keywords.length" class="draft-keywords">关键词：{{ entry.keywords.join('、') }}</p>
+          <p v-if="entry.keywords.length" class="draft-keywords">主触发词：{{ entry.keywords.join('、') }}</p>
           <CardPreviewProse :text="entry.content" />
         </div>
       </details>

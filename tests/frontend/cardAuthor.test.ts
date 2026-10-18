@@ -140,7 +140,7 @@ describe('current draft reading preview', () => {
         stateLabel: '',
         trigger: '常驻',
         audience: 'tracker_mvu',
-        purpose: '变量规则',
+        purpose: 'Tracker 变量规则',
         keywords: [],
       },
     ]);
