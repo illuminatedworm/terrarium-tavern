@@ -3,11 +3,14 @@ import type { SendShortcut } from './composerShortcut';
 import type { MessageAdapterConfig } from './messageAdapter';
 export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
 export type SettingsObject = Record<string, any>;
-export interface ModelProfile {
-  provider_id: string;
+export interface ModelConnection {
   model: string;
   api_mode: string;
   api_path: string;
+}
+export interface ModelProfile extends ModelConnection {
+  provider_id: string;
+  provider_connections: Record<string, ModelConnection>;
   context_tokens: number;
   reply_tokens: number;
   reasoning_effort: string;
@@ -23,7 +26,9 @@ export interface ModelProfile {
   capability: string;
   capability_key: string;
 }
-export type ConversationModelSelection = Pick<ModelProfile, 'provider_id' | 'model'>;
+export type ConversationModelSelection = Pick<ModelProfile, 'provider_id' | 'model'> & {
+  provider_models?: Record<string, string>;
+};
 export interface Provider {
   id: string;
   name: string;
@@ -77,7 +82,7 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 3;
+  version: 4;
   full_agent: SettingsObject & {
     model: ModelProfile;
     official_model: ModelProfile | null;
@@ -143,7 +148,9 @@ export function difference(before: SettingsObject, after: SettingsObject, prefix
       typeof before[key] === 'object' &&
       !Array.isArray(before[key]) &&
       !(prefix.endsWith('cache') && (key === 'value' || key === 'request')) &&
-      key !== 'message_adapter'
+      key !== 'message_adapter' &&
+      // Provider IDs can contain dots, and switching removes the active entry.
+      key !== 'provider_connections'
     ) {
       Object.assign(result, difference(before[key], value, path));
     } else result[path] = clone(value);

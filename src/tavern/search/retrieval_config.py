@@ -45,12 +45,27 @@ class Provider(BaseModel):
         return self
 
 
-class ModelProfile(BaseModel):
-    provider_id: str = "default"
+class ModelConnection(BaseModel):
     model: str = ""
     api_mode: ApiMode = "chat_completions"
-    message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     api_path: str = Field(default="", max_length=256)
+
+    @field_validator("api_path")
+    @classmethod
+    def valid_api_path(cls, value):
+        value = value.strip().strip("/")
+        if value and (not re.fullmatch(r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*", value)
+                      or any(part in (".", "..") for part in value.split("/"))):
+            raise ValueError("API 路径应为 v1、v1beta 等路径，不含域名或查询参数")
+        return value
+
+
+class ModelProfile(ModelConnection):
+    provider_id: str = "default"
+    # Only inactive providers live here. The visible fields above remain the
+    # sole source for the selected provider, including imports and page undo.
+    provider_connections: dict[str, ModelConnection] = Field(default_factory=dict)
+    message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     context_tokens: int = Field(32768, ge=2048, le=2000000)
     reply_tokens: int = Field(2048, ge=128, le=65536)
@@ -69,17 +84,20 @@ class ModelProfile(BaseModel):
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""
 
-    @field_validator("api_path")
-    @classmethod
-    def valid_api_path(cls, value):
-        value = value.strip().strip("/")
-        if value and (not re.fullmatch(r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*", value)
-                      or any(part in (".", "..") for part in value.split("/"))):
-            raise ValueError("API 路径应为 v1、v1beta 等路径，不含域名或查询参数")
-        return value
+    def for_provider(self, provider_id: str) -> "ModelProfile":
+        result = self.model_copy(deep=True)
+        if provider_id == self.provider_id:
+            return result
+        connection = result.provider_connections.pop(provider_id, ModelConnection())
+        if self.provider_id:
+            result.provider_connections[self.provider_id] = ModelConnection(
+                model=self.model, api_mode=self.api_mode, api_path=self.api_path)
+        return result.model_copy(update={"provider_id": provider_id, **connection.model_dump()})
 
     @model_validator(mode="after")
     def budget(self):
+        if self.provider_id in self.provider_connections:
+            raise ValueError("当前提供商的连接参数重复，请保留模型设置中显示的参数并移除重复记录")
         if self.context_tokens <= self.reply_tokens + 2048:
             raise ValueError("模型上下文窗口必须大于输出预算加 2048 tokens")
         return self

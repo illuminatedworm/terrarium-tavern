@@ -43,7 +43,7 @@ export interface EditorFile {
 export interface EditorConversation {
   files?: EditorFile[];
   channel_origin?: 'standard' | 'chatgpt' | null;
-  model_selection?: { provider_id: string; model: string };
+  model_selection?: { provider_id: string; model: string; provider_models?: Record<string, string> };
   id: string;
   title: string;
   revision: number;

@@ -1,4 +1,6 @@
 """Persist composer choices under the conversation's immutable channel."""
+import json
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.core.channels import Channel
@@ -33,11 +35,12 @@ def register_model_selection_routes(app, store, editor):
             if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
                 raise Conflict("请先完成或取消上下文整理")
             role = "full_agent" if row["agent_mode"] == "full_agent" else "foreground"
-            select_runtime(store.settings(row["agent_mode"], row["channel_origin"]), role,
-                           edit.selection.model_dump(), row["channel_origin"])
+            settings = store.settings(row["agent_mode"], row["channel_origin"])
+            selection = edit.selection.remember(json.loads(row["model_selection"]), getattr(settings, role))
+            select_runtime(settings, role, selection.model_dump(), row["channel_origin"])
             # Connection preferences do not change story revision: resumable work
             # still references the same story, with its complete original context.
-            db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (edit.selection.model_dump_json(), sid))
+            db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (selection.model_dump_json(exclude_defaults=True), sid))
         return store.session(sid)
 
     @app.put("/api/card-author/conversations/{wid}/model")
@@ -47,9 +50,11 @@ def register_model_selection_routes(app, store, editor):
             workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False)
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("请先等待或停止当前编辑任务")
-            select_runtime(store.settings(), "card_author", edit.selection.model_dump(), workspace["channel_origin"])
+            settings = store.settings()
+            selection = edit.selection.remember(workspace["model_selection"], settings.card_author)
+            select_runtime(settings, "card_author", selection.model_dump(), workspace["channel_origin"])
             db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
-                       (edit.selection.model_dump_json(), wid))
+                       (selection.model_dump_json(exclude_defaults=True), wid))
         return editor.edits.conversation(wid)
 
     @app.put("/api/card-author/conversations/{wid}/channel-origin")

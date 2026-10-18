@@ -8,7 +8,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM, ScriptEntry
 from tavern.application.api import create_app
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.core.models import SessionCreate, TurnRequest
-from tavern.search.retrieval_config import ModelProfile, Provider
+from tavern.search.retrieval_config import ModelConnection, ModelProfile, Provider
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_full_agent import Model, ScriptHost
 
@@ -40,7 +40,8 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
     store, service, editor = app.state.store, app.state.service, app.state.editor
     settings = store.settings_document()
     for profile in (settings.full_agent.model, settings.half_agent.foreground, settings.shared.card_author):
-        profile.api_mode, profile.api_path = "responses", "v2"
+        profile.api_mode, profile.api_path = "gemini", "gateway/v1beta"
+        profile.provider_connections["second"] = ModelConnection(api_mode="responses", api_path="v2", model="second-default")
     store.save_settings(settings)
     configured = store.settings_document().model_dump()
     conversation = (editor.edits.create_conversation() if mode == "editor" else
@@ -48,6 +49,7 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
     cid = conversation["id"]
     base = f"/api/card-author/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
     selection = {"provider_id": "second", "model": "chosen"}
+    remembered = {**selection, "provider_models": {"default": "configured"}}
     configs, messages, half_models = [], [], []
 
     async def make(cfg, *args, **kwargs):
@@ -77,11 +79,16 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
             response = await api.put(base + "/model", json={"expected_revision": 0, "selection": selection})
             assert response.status_code == 200, response.text
-            assert response.json()["model_selection"] == selection
+            assert response.json()["model_selection"] == remembered
             assert response.json()["channel_origin"] == "standard"
             if mode == "editor":
                 assert (await api.get("/api/card-author/conversations")).json()[0]["channel_origin"] == "standard"
             assert response.json()["revision"] == 0
+            switched = await api.put(base + "/model", json={"expected_revision": 0,
+                                     "selection": {"provider_id": "default", "model": "configured"}})
+            assert switched.json()["model_selection"]["provider_models"] == {"second": "chosen"}
+            restored = await api.put(base + "/model", json={"expected_revision": 0, "selection": selection})
+            assert restored.json()["model_selection"] == remembered
             rejected = await api.put(base + "/model", json={"expected_revision": 0, "selection": {**selection, "provider_id": "official"}})
             assert rejected.status_code == 400 and "渠道" in rejected.text
             rejected = await api.put(base + "/model", json={"expected_revision": 99, "selection": selection})
@@ -113,10 +120,10 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
             if mode != "editor":
                 saved = store.session(cid)
                 fork = store.fork_session(cid, saved["head"], saved["revision"])
-                assert fork["model_selection"] == selection
+                assert fork["model_selection"] == remembered
         restarted = create_app(tmp_path)
         if mode == "editor":
-            assert restarted.state.editor.edits.conversation(cid)["model_selection"] == selection
+            assert restarted.state.editor.edits.conversation(cid)["model_selection"] == remembered
             assert editor_runtime_config(restarted.state.store, cid, {}).model == "chosen"
         else:
             assert restarted.state.store.session_settings(cid).model == "chosen"

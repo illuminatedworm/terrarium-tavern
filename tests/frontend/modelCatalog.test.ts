@@ -5,10 +5,86 @@ import { modelEndpoint } from '../../web/lib/cachePolicy';
 import type { ModelProfile, Provider } from '../../web/lib/settingsDocument';
 import { api } from '../../web/lib/api';
 import { chatgptState } from '../../web/lib/chatgptAccounts';
+import { conversationModelProfile, selectProfileProvider } from '../../web/lib/modelConnections';
+import { clone, difference, rebaseSettings, type SettingsDocument } from '../../web/lib/settingsDocument';
 
 vi.mock('../../web/lib/api', () => ({ api: vi.fn() }));
 
 describe('persistent model catalog UI', () => {
+  it('restores per-provider connections before fetching and preserves rapid switches across save acknowledgements', async () => {
+    vi.mocked(api).mockReset().mockResolvedValue({ models: [], updated_at: null });
+    const original = {
+      provider_id: 'first.provider',
+      api_mode: 'gemini',
+      api_path: 'gateway/v1beta',
+      model: 'first-model',
+      provider_connections: {},
+      reply_tokens: 2048,
+    } as ModelProfile;
+    const draft = reactive(clone(original));
+    const scope = effectScope();
+    const catalog = scope.run(() =>
+      useModelCatalog(
+        () => draft,
+        () => undefined,
+      ),
+    )!;
+    Object.assign(draft, selectProfileProvider(draft, 'second.provider'));
+    expect([draft.api_mode, draft.api_path, draft.model]).toEqual(['chat_completions', '', '']);
+    Object.assign(draft, { api_mode: 'responses', api_path: 'proxy/v2', model: 'second-model' });
+    await catalog.refresh();
+    expect(api).toHaveBeenLastCalledWith('/settings/models', {
+      provider_id: 'second.provider',
+      api_mode: 'responses',
+      api_path: 'proxy/v2',
+    });
+    const saved = {
+      version: 4,
+      full_agent: { model: original },
+      half_agent: {},
+      shared: {},
+      revisions: { full_agent: 0, half_agent: 0, shared: 0 },
+    } as unknown as SettingsDocument;
+    const sent = difference(saved.full_agent, { model: draft });
+    expect(sent['model.provider_connections']).toEqual({
+      'first.provider': { api_mode: 'gemini', api_path: 'gateway/v1beta', model: 'first-model' },
+    });
+    const response = clone(saved);
+    response.full_agent.model = clone(draft);
+    Object.assign(draft, selectProfileProvider(draft, 'first.provider'));
+    draft.model = 'latest-first-model';
+    const current = clone(saved);
+    current.full_agent.model = clone(draft);
+    const acknowledged = rebaseSettings(saved, current, response, 'full_agent', sent);
+    expect(acknowledged.full_agent.model).toEqual(draft);
+    expect(draft.provider_connections).not.toHaveProperty('first.provider');
+    expect(original.model).toBe('first-model');
+    expect(draft.reply_tokens).toBe(2048);
+    const reopened = clone(acknowledged.full_agent.model);
+    const conversation = conversationModelProfile(reopened, {
+      provider_id: 'second.provider',
+      model: 'conversation-model',
+      provider_models: { 'first.provider': 'conversation-first' },
+    });
+    expect([conversation.api_mode, conversation.api_path, conversation.model]).toEqual([
+      'responses',
+      'proxy/v2',
+      'conversation-model',
+    ]);
+    expect(selectProfileProvider(conversation, 'first.provider').model).toBe('conversation-first');
+    expect(reopened.model).toBe('latest-first-model');
+    Object.assign(draft, selectProfileProvider(draft, 'official', true));
+    expect([draft.api_mode, draft.api_path, draft.model]).toEqual(['responses', 'v1', '']);
+    Object.assign(draft, selectProfileProvider(draft, 'first.provider'));
+    await catalog.refresh();
+    expect(api).toHaveBeenLastCalledWith('/settings/models', {
+      provider_id: 'first.provider',
+      api_mode: 'gemini',
+      api_path: 'gateway/v1beta',
+    });
+    expect(draft.model).toBe('latest-first-model');
+    scope.stop();
+  });
   it('reads cached lists on entry and only refreshes explicitly, preserving a failed refresh', async () => {
     const cached = { models: ['cached-model'], updated_at: 100 };
     vi.mocked(api).mockReset().mockResolvedValue(cached);

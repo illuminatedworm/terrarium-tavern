@@ -41,13 +41,16 @@ class Store(MessageAdapters):
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2", "3", "4", "5", "6"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1–6")
+                if version is None or version[0] not in {"1", "2", "3", "4", "5", "6", "7"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1–7")
                 if version[0] in {"1", "2", "3"}:
                     with closing(sqlite3.connect(root / f"before-advisor-v4-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
+                if version[0] != "7" or raw.get("version") != 4:
+                    with closing(sqlite3.connect(root / f"before-provider-connections-v7-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
                 # Older checks below read the renamed keys; the stored raw document stays untouched.
                 keys = copy.deepcopy(raw)
                 rename_card_author(keys)
@@ -76,7 +79,7 @@ class Store(MessageAdapters):
                     backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
-                elif raw.get("version") not in {2, 3}:
+                elif raw.get("version") not in {2, 3, 4}:
                     raise ValueError("设置版本与数据库版本不一致")
                 elif any("cache" not in keys.get(scope, {}).get(key, {}) for scope, key in
                          (("full_agent", "model"), ("half_agent", "foreground"),
@@ -211,8 +214,8 @@ class Store(MessageAdapters):
         initialize_advisor(self)
         self.initialize_message_adapters()
         with self.connection() as db:
-            # Schema 6 renames Card Editor tables and settings keys to Card Author.
-            db.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
+            # Schema 7 stores per-provider model choices in conversation selections.
+            db.execute("UPDATE meta SET value='7' WHERE key='schema_version'")
 
     @contextmanager
     def connection(self):

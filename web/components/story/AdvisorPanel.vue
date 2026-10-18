@@ -5,6 +5,11 @@ import { advisorOffers, advisorRunning, toolLabels } from '../../lib/advisor';
 import { channelProviders } from '../../lib/channels';
 import type { SettingsDocument } from '../../lib/settingsDocument';
 import { useModelCatalog } from '../../lib/modelCatalog';
+import {
+  conversationModelProfile,
+  modelConnectionSummary,
+  selectProfileProvider,
+} from '../../lib/modelConnections';
 import { positionPopover } from '../../lib/anchoredPopover';
 import ModelSelect from '../settings/ModelSelect.vue';
 import StoryProse from './AdvisorProse.vue';
@@ -73,11 +78,21 @@ const base = computed(() =>
     ? props.settings.shared.advisor.official_model
     : props.settings.shared.advisor.model,
 );
+const savedProfile = computed(() =>
+  conversationModelProfile(
+    base.value || props.settings.shared.advisor.model,
+    state.value?.effective.model_selection,
+  ),
+);
 const profile = computed(() => ({
-  ...(base.value || props.settings.shared.advisor.model),
-  provider_id: providerId.value,
+  ...selectProfileProvider(savedProfile.value, providerId.value, channel.value === 'chatgpt'),
   model: model.value,
 }));
+function chooseProvider(value: string) {
+  const selected = selectProfileProvider(savedProfile.value, value, channel.value === 'chatgpt');
+  providerId.value = selected.provider_id;
+  model.value = selected.model;
+}
 const provider = computed(() => providers.value.find((p) => p.id === providerId.value));
 const {
   catalog,
@@ -323,7 +338,11 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
     </div>
     <div v-if="showModel" class="advisor-controls">
       <label
-        >同渠道提供商<select v-model="providerId" aria-label="参谋 agent 提供商">
+        >同渠道提供商<select
+          :value="providerId"
+          aria-label="参谋 agent 提供商"
+          @change="chooseProvider(($event.target as HTMLSelectElement).value)"
+        >
           <option value="" disabled>选择提供商</option>
           <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }}</option>
         </select></label
@@ -335,6 +354,7 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
           :details="catalog?.model_details"
           :error="catalogError.message"
           :refresh="refreshModels"
+          :connection="modelConnectionSummary(profile, provider)"
           label="参谋 agent 模型"
           :disabled="!providerId"
       /></label>

@@ -12,7 +12,8 @@ import { modelEffortOptions } from '../../lib/reasoningEffort';
 import { useApiReasoning } from '../../lib/apiReasoning';
 import { loadChatGPTAccounts, subscriptionProvider } from '../../lib/chatgptAccounts';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
-import { blankChannelProfile, channelProviders, providerChannel, type Channel } from '../../lib/channels';
+import { channelProviders, providerChannel, type Channel } from '../../lib/channels';
+import { selectProfileProvider } from '../../lib/modelConnections';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import SelectMenu from '../common/SelectMenu.vue';
 import ModelSelect from './ModelSelect.vue';
@@ -47,8 +48,23 @@ const providerOptions = computed(() =>
 );
 function switchEditorChannel(channel: Channel) {
   editorChannel.value = channel;
-  Object.assign(props.profile, blankChannelProfile(props.profile, props.providers, channel));
+  const providers = channelProviders(props.providers, channel);
+  const previous = providers.find((item) => item.id in props.profile.provider_connections);
+  chooseProvider(previous?.id || providers[0]?.id || '');
 }
+function chooseProvider(value: string) {
+  Object.assign(
+    props.profile,
+    selectProfileProvider(
+      props.profile,
+      value,
+      subscriptionProvider(props.providers.find((item) => item.id === value)),
+    ),
+  );
+}
+watch(provider, (value) => {
+  if (value) editorChannel.value = providerChannel(value);
+});
 watch(
   subscription,
   async (enabled) => {
@@ -190,10 +206,11 @@ async function action(check: boolean) {
         <div class="settings-select-field">
           <span>提供商</span>
           <SelectMenu
-            v-model="profile.provider_id"
+            :model-value="profile.provider_id"
             :options="providerOptions"
             label="提供商"
             :disabled="busy"
+            @update:model-value="chooseProvider"
           />
         </div>
         <label v-if="!subscription"
@@ -232,6 +249,7 @@ async function action(check: boolean) {
         </button>
       </div>
     </div>
+    <p class="muted">API 路径、接口方式和模型名称按本页的提供商分别保存；切换提供商会恢复上次设置。</p>
     <p v-if="feedback" role="status" class="inline-feedback">{{ feedback }}</p>
     <p v-else-if="catalogError.message" class="inline-feedback">{{ catalogError.message }}</p>
     <p class="muted">

@@ -137,7 +137,7 @@ class Settings(BaseModel):
             return self.model_copy(deep=True, update={"model": "", "api_key": "", "channel_origin": None if role == "card_author" else self.channel_origin})
         if provider is None:
             raise ValueError("所选模型引用了不存在的提供商")
-        result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
+        result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id", "provider_connections"}),
             "cache": profile.cache.model_copy(deep=True),
             "message_adapter": profile.message_adapter.model_copy(deep=True),
             "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path), "api_key": provider.api_key,

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import httpx
 import pytest
@@ -7,9 +8,79 @@ from pydantic import ValidationError
 from tavern.application.api import create_app
 from tavern.application.settings_api import invalidate_capabilities
 from tavern.core.cache_policy import endpoint
+from tavern.core.model_selection import ModelSelection
 from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.search.retrieval_config import ModelProfile, Provider
 from tavern.storage.store import Store
+
+
+async def test_provider_connections_migrate_save_restore_and_undo_without_hidden_overrides(tmp_path):
+    store = Store(tmp_path)
+    doc = store.settings_document()
+    doc.shared.providers.append(Provider(id="second.provider", base_url="https://second.test"))
+    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background,
+                    doc.shared.card_author, doc.shared.advisor.model):
+        profile.provider_id = "default"
+        profile.api_mode, profile.api_path, profile.model = "gemini", "proxy/v1beta", "original-model"
+    raw = doc.model_dump()
+    raw["version"] = 3
+    for scope, key, _ in doc.profiles():
+        raw[scope][key].pop("provider_connections")
+    raw["shared"]["advisor"]["model"].pop("provider_connections")
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
+        db.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
+    app = create_app(tmp_path)
+    store = app.state.store
+    migrated = store.settings_document()
+    assert migrated.version == 4
+    assert migrated.full_agent.model.model_dump() == doc.full_agent.model.model_dump()
+    backups = list(tmp_path.glob("before-provider-connections-v7-*.sqlite3"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as db:
+        assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
+    # Every role owns its own records, and new providers never borrow the active path/model.
+    for profile in (migrated.full_agent.model, migrated.half_agent.foreground, migrated.half_agent.background,
+                    migrated.shared.card_author, migrated.shared.advisor.model):
+        fresh = profile.for_provider("second.provider")
+        assert (fresh.api_mode, fresh.api_path, fresh.model) == ("chat_completions", "", "")
+        fresh.api_mode, fresh.api_path, fresh.model = "responses", "gateway/v2", "second-model"
+        restored = fresh.for_provider("default")
+        assert (restored.api_mode, restored.api_path, restored.model) == ("gemini", "proxy/v1beta", "original-model")
+        assert ModelSelection(provider_id="second.provider", model="conversation-model").profile(restored).api_path == "gateway/v2"
+        assert not profile.provider_connections
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
+        opened = (await api.post("/api/settings/edit-sessions", json={})).json()
+        selected = migrated.full_agent.model.for_provider("second.provider")
+        selected.api_mode, selected.api_path, selected.model = "responses", "gateway/v2", "second-model"
+        response = await api.patch("/api/settings/full_agent", json={
+            "expected_revision": migrated.revisions["full_agent"], "edit_session": opened["id"],
+            "changes": {"model": selected.model_dump()},
+        })
+        assert response.status_code == 200, response.text
+        selected = store.settings_document().full_agent.model.for_provider("default")
+        response = await api.patch("/api/settings/full_agent", json={
+            "expected_revision": response.json()["revisions"]["full_agent"], "edit_session": opened["id"],
+            "changes": {"model." + key: value for key, value in selected.model_dump().items()
+                        if key in {"provider_id", "api_mode", "api_path", "model", "provider_connections"}},
+        })
+        assert response.status_code == 200, response.text
+        reloaded = Store(tmp_path).settings_document()
+        assert reloaded.full_agent.model == selected
+        assert reloaded.full_agent.model.for_provider("second.provider").api_path == "gateway/v2"
+        assert reloaded.half_agent == migrated.half_agent and reloaded.shared == migrated.shared
+        duplicate = {"model.provider_connections": {"default": {"api_mode": "responses", "api_path": "hidden", "model": "stale"}}}
+        rejected = await api.patch("/api/settings/full_agent", json={
+            "expected_revision": response.json()["revisions"]["full_agent"], "changes": duplicate,
+        })
+        assert rejected.status_code == 400 and "重复" in rejected.text
+        undone = await api.post(f"/api/settings/edit-sessions/{opened['id']}/undo", json={
+            "page": "full_agent.model", "expected_revision": response.json()["revisions"]["full_agent"],
+        })
+        assert undone.status_code == 200, undone.text
+        assert store.settings_document().full_agent.model == migrated.full_agent.model
+        assert len(list(tmp_path.glob("before-provider-connections-v7-*.sqlite3"))) == 1
 
 
 @pytest.mark.parametrize("mode,path,expected", [

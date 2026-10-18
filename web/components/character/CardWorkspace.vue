@@ -11,6 +11,7 @@ import {
 } from '../../lib/cardAuthor';
 import type { CardReferenceOption } from '../../lib/cardReferences';
 import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
+import { conversationModelProfile } from '../../lib/modelConnections';
 import { editorCacheRate, type EditorContextStats } from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
@@ -53,10 +54,9 @@ const portraitFiles = computed(() =>
 );
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
-const selectedProfile = computed(() => ({
-  ...props.modelProfile,
-  ...workspace.value?.model_selection,
-}));
+const selectedProfile = computed(() =>
+  conversationModelProfile(props.modelProfile, workspace.value?.model_selection),
+);
 async function selectModel(selection: ConversationModelSelection) {
   if (busy.value || active.value) return;
   await guard(async () => {
@@ -312,6 +312,7 @@ function observe(id: string) {
 async function send(resume = false) {
   if (
     !workspace.value?.channel_origin ||
+    !selectedProfile.value.model ||
     busy.value ||
     active.value ||
     referencePicker.open ||
@@ -787,6 +788,7 @@ onBeforeUnmount(() => {
                 :disabled="
                   busy ||
                   !workspace?.channel_origin ||
+                  !selectedProfile.model ||
                   referencePicker.open ||
                   (!input.trim() && !workspace?.pending)
                 "

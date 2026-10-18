@@ -411,12 +411,12 @@ def test_schema_six_renames_card_editor_storage_and_settings_in_place(tmp_path):
         db.execute("INSERT INTO sent_cache_breakpoints VALUES (?,'card_editor','i','p','{}')", (wid,))
         db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
     reopened = Store(tmp_path)
-    assert reopened.settings_document().version == 3
+    assert reopened.settings_document().version == 4
     assert reopened.settings_document().shared.card_author_config.system_prompt == "旧版自定义规则"
     assert CardAuthorService(reopened).edits.conversation(wid)["title"] == "旧制卡"
     assert reopened.message_adapter("editor", wid, "card_author")
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "6"
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "7"
         assert db.execute("SELECT scope FROM sent_cache_breakpoints WHERE owner=?", (wid,)).fetchone()[0] == "card_author"
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'card_editor_%'").fetchone()
     assert len(list(tmp_path.glob("before-card-author-v6-*.sqlite3"))) == 1

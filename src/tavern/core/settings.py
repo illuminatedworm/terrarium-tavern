@@ -178,7 +178,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[3] = 3
+    version: Literal[4] = 4
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -251,7 +251,7 @@ class SettingsDocument(StrictSettings):
             data.update(foreground=agent.model.model_dump(), background=agent.model.model_dump(),
                         lore_injection_mode="conversation")
         profile = agent.model if mode == "full_agent" else agent.foreground
-        data.update(profile.model_dump(exclude={"provider_id"}))
+        data.update(profile.model_dump(exclude={"provider_id", "provider_connections"}))
         # Runtime-only Half Agent fields are irrelevant to a Full Agent request.
         if mode == "full_agent":
             data.update(memory_output_tokens=256, chunk_mode="off")
@@ -341,6 +341,11 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
+        if raw["version"] == 3:
+            # The active connection stays verbatim; inactive provider records
+            # start empty rather than inventing settings for other providers.
+            raw["version"] = 4
+            changed_scopes.update(("full_agent", "half_agent", "shared"))
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

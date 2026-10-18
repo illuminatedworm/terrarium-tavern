@@ -2,11 +2,11 @@
 
 设置按范围保存，并通过修订号处理并发修改。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档为版本 3。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`，设置文档为版本 4。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 3；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 4；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -29,13 +29,17 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 2，由三个独立范围组成：
+数据库中的设置文档版本为 4，由三个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
 | `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model`、`official_model` |
 | `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background`、`official_foreground`、`official_background` |
 | `shared` | 提供商、参谋 agent、制卡 agent、联网服务、本地模型、偏好及清理参数 | `card_author`、`advisor.model`、`advisor.official_model` |
+
+每个模型配置的 `provider_id` 指向当前提供商，平铺的 `api_mode`、`api_path`、`model` 是当前生效值。`provider_connections` 按提供商 ID 保存其他提供商的这三个字段，不能包含当前提供商，否则以重复连接配置报错，防止历史值覆盖可见编辑。切换时将原提供商的当前值移入记录，再取出目标提供商的记录作为当前值；无记录时使用空模型、空路径与 `chat_completions`（官方渠道固定为 Responses）。该映射整体 PATCH，例如 `model.provider_connections`，与当前提供商及三个字段在一次请求中保存，支持页面撤回和设置导入导出。
+
+游玩、制卡和参谋 agent 的对话级 `model_selection` 包含当前 `provider_id/model`，以及可选的 `provider_models`，保存其他提供商在此对话中上次选择的模型名称；由服务器在切换时更新，不改变全局模型名称。对话选择的协议和路径通过相应角色的 `provider_connections` 查找，不从另一提供商继承。游玩和制卡允许 `model: ""` 表示所选提供商尚未配置模型；此时禁止发送。现有对话与分支继承这些记录。
 
 两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
@@ -142,9 +146,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-当前数据库为 **schema 6**，设置文档为 **version 3**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
+当前数据库为 **schema 7**，设置文档为 **version 4**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-存储层接受 schema 1–6，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+存储层接受 schema 1–7，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+
+升级至 schema 7 / 设置 version 4 前生成 `before-provider-connections-v7-*.sqlite3` 备份。当前提供商的三个连接值保持原样，其他提供商的记录初始为空，不猜测旧值；对话级提供商模型记录随以后切换积累。设置导入接受旧版并使用相同迁移规则，导出保存全部提供商记录；旧程序不能直接打开新版数据库。
 
 迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的制卡 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 

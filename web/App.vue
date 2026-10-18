@@ -17,6 +17,7 @@ import { useStartupWarmup } from './composables/useStartupWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import type { ConversationModelSelection } from './lib/settingsDocument';
+import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
@@ -181,7 +182,9 @@ const configuredModel = computed(
           session.value?.channel_origin === 'chatgpt' ? 'official_foreground' : 'foreground'
         ]) || {},
 );
-const activeModel = computed(() => ({ ...configuredModel.value, ...session.value?.model_selection }));
+const activeModel = computed(() =>
+  conversationModelProfile(configuredModel.value, session.value?.model_selection),
+);
 const modelSaving = ref(false);
 async function selectStoryModel(selection: ConversationModelSelection) {
   if (!session.value || modelSaving.value) return;

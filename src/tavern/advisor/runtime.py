@@ -84,6 +84,12 @@ class AdvisorService:
     def options(self, sid, request):
         state, session = self.data.get(sid), self.store.session(sid)
         update = request.model_dump(exclude_unset=True, exclude={"expected_revision"})
+        if request.model_selection:
+            config = self.store.settings_document().shared.advisor
+            profile = config.official_model if session["channel_origin"] == "chatgpt" else config.model
+            if profile is not None:
+                update["model_selection"] = request.model_selection.remember(
+                    state["options"].get("model_selection"), profile).model_dump(exclude_defaults=True)
         if update.get("context_strategy") == "openai_compact" and session["channel_origin"] != "chatgpt":
             raise ValueError("只有官方渠道可使用云端 compact")
         runtime_config(self.store, session, {**state["options"], **update})

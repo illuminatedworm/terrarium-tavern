@@ -72,7 +72,7 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 2. 将新版源码或发行包放入新程序目录，安装依赖。
 3. 用 `-Data` 或 `--data` 指向原数据目录并启动。
 
-当前数据库格式为 **schema 6**（`v0.5.0` 标签为 schema 4），设置文档版本为 **3**。schema 6 将角色卡编辑 agent 更名为制卡 agent（Card Author）并迁移对应的表和设置键。程序可打开 schema 1–6；旧格式先备份再迁移，其他版本在写入前报错。回退旧程序时，从升级前备份恢复到新的空目录。迁移规则见[设置存储](../reference/settings-api.md#数据库与设置迁移)。
+当前数据库格式为 **schema 7**（`v0.5.0` 标签为 schema 4），设置文档版本为 **4**。schema 7 保存对话内各提供商的模型选择，设置 version 4 按提供商保留 API 路径、接口方式与模型名称，升级前生成 `before-provider-connections-v7-*.sqlite3` 备份并保留当前连接值。此前 schema 6 将角色卡编辑 agent 更名为制卡 agent（Card Author）并迁移对应的表和设置键。程序可打开 schema 1–7；旧格式先备份再迁移，其他版本在写入前报错。回退旧程序时，从升级前备份恢复到新的空目录。迁移规则见[设置存储](../reference/settings-api.md#数据库与设置迁移)。
 
 ## 清理与资源保留
 

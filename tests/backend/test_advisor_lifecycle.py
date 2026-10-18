@@ -8,7 +8,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from tavern.advisor.context import runtime_config
 from tavern.advisor.runtime import ConsultationRequest, OptionsRequest
 from tavern.core.model_selection import ModelSelection
-from tavern.search.retrieval_config import ModelProfile, Provider
+from tavern.search.retrieval_config import ModelConnection, ModelProfile, Provider
 from tavern.storage.backup import backup, restore
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Conflict, Store, dump, uid
@@ -22,6 +22,10 @@ def test_independent_models_but_immutable_channel(tmp_path):
     settings = store.settings_document()
     settings.shared.providers += [Provider(id="independent", name="独立供应商"), Provider(id="official", name="官方", auth_mode="chatgpt_subscription")]
     settings.shared.advisor.model = ModelProfile(provider_id="independent", model="different-model")
+    settings.shared.advisor.model.api_mode = "gemini"
+    settings.shared.advisor.model.api_path = "proxy/v1beta"
+    settings.shared.advisor.model.provider_connections["default"] = ModelConnection(
+        api_mode="responses", api_path="other/v2", model="other-model")
     settings.shared.advisor.official_model = ModelProfile(provider_id="official", model="official-model")
     store.save_settings(settings)
     cfg, _ = runtime_config(store, session, {})
@@ -30,6 +34,16 @@ def test_independent_models_but_immutable_channel(tmp_path):
         advisor.options(session["id"], OptionsRequest(expected_revision=0, model_selection=ModelSelection(provider_id="official", model="official-model")))
     with pytest.raises(ValueError, match="官方"):
         advisor.options(session["id"], OptionsRequest(expected_revision=0, context_strategy="openai_compact"))
+    selected = advisor.options(session["id"], OptionsRequest(expected_revision=0,
+        model_selection=ModelSelection(provider_id="default", model="my-model")))
+    assert selected["effective"]["model_selection"]["provider_models"] == {"independent": "different-model"}
+    cfg, _ = runtime_config(store, session, selected["options"])
+    assert (cfg.model, cfg.api_mode, cfg.api_path) == ("my-model", "responses", "other/v2")
+    selected = advisor.options(session["id"], OptionsRequest(expected_revision=1,
+        model_selection=ModelSelection(provider_id="independent", model="different-model")))
+    assert selected["effective"]["model_selection"]["provider_models"] == {"default": "my-model"}
+    cfg, _ = runtime_config(store, session, selected["options"])
+    assert (cfg.model, cfg.api_mode, cfg.api_path) == ("different-model", "gemini", "proxy/v1beta")
 
 
 class ConcurrentEdit(ToolLLM):

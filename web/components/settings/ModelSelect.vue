@@ -11,6 +11,7 @@ const props = defineProps<{
   compact?: boolean;
   disabled?: boolean;
   error?: string;
+  connection?: string;
   /** Requests the provider catalogue from inside the menu; omitted where a page has its own button. */
   refresh?: () => Promise<{ models: string[] }>;
 }>();
@@ -54,6 +55,9 @@ async function fetchModels() {
     :empty-text="refresh ? '暂无模型列表，可获取列表或输入模型 ID' : '暂无模型列表，可输入模型 ID 使用'"
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <template v-if="connection" #context>
+      <p class="model-connection muted">{{ connection }}</p>
+    </template>
     <template v-if="refresh" #heading-action>
       <button
         type="button"
@@ -70,6 +74,12 @@ async function fetchModels() {
 </template>
 
 <style scoped>
+.model-connection {
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .model-fetch {
   display: inline-flex;
   align-items: center;

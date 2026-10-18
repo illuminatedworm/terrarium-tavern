@@ -11,12 +11,13 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
-from tavern.core.models import ContextBlock
+from tavern.core.models import ContextBlock, SessionCreate
+from tavern.search.retrieval_config import Provider
 from tavern.storage.request_debug import RequestDebugLog
-from tests.browser.select_menu import choose_model
+from tests.browser.select_menu import choose_menu, choose_model, menu_popup
 
 
-async def main(*, misc_only=False):
+async def main(*, misc_only=False, connections_only=False):
     output = Path('.cache/settings-redesign')
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='tavern-settings-browser-') as root:
@@ -28,7 +29,17 @@ async def main(*, misc_only=False):
         recipe.blocks.insert(2, ContextBlock(id='character', source='character', depth=2, priority=90))
         # The picker cannot choose an empty model, so give the round trip a real original.
         settings.full_agent.model.model = 'original-full-model'
+        if connections_only:
+            settings.shared.providers += [Provider(id='connection-b', name='连接 B', base_url='https://b.test'),
+                                          Provider(id='unconfigured', name='未配置连接', base_url='https://new.test')]
+            for profile in (settings.full_agent.model, settings.half_agent.foreground, settings.half_agent.background,
+                            settings.shared.card_author, settings.shared.advisor.model):
+                profile.provider_id = 'default'
+                profile.api_mode, profile.api_path, profile.model = 'gemini', 'a/v1beta', 'original-model'
         app.state.store.save_settings(settings)
+        if connections_only:
+            card = app.state.store.import_card(b'{"name":"Connection fixture","first_mes":"Opening"}', 'fixture.json')
+            session = app.state.store.new_session(SessionCreate(card_id=card['id'], agent_mode='full_agent'))
         if misc_only:
             RequestDebugLog(Path(root), app.state.store.settings()).save({
                 "model": "debug-fixture", "purpose": "full_agent", "error_type": "JSONDecodeError",
@@ -48,7 +59,7 @@ async def main(*, misc_only=False):
                     break
                 await asyncio.sleep(.05)
             frontend = address
-            if misc_only:
+            if misc_only or connections_only:
                 # Serve current Vue sources, avoiding a production build and
                 # the user's running backend. This process belongs to this test.
                 source = """
@@ -86,6 +97,60 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     async def saved():
                         await expect(page.locator('.settings-save-status')).to_contain_text('已保存')
                     before = await read()
+                    if connections_only:
+                        for label, index, name in [('full agent 模型与生成', 0, 'full'),
+                                                  ('half agent 模型与生成', 0, 'writer'),
+                                                  ('half agent 模型与生成', 1, 'tracker'),
+                                                  ('通用 制卡 agent', 0, 'author'), ('通用 参谋 agent', 0, 'advisor')]:
+                            await select(label)
+                            profile = dialog.locator('.profile-editor').nth(index)
+                            provider = profile.get_by_role('button', name='提供商', exact=True)
+                            model = profile.get_by_role('button', name='模型名称', exact=True)
+                            path = profile.get_by_label('API 路径', exact=True)
+                            protocol = profile.get_by_label('接口方式', exact=True)
+                            await choose_menu(provider, 'connection-b')
+                            await expect(path).to_have_value('')
+                            await expect(protocol).to_have_value('chat_completions')
+                            await expect(model).to_have_attribute('data-value', '')
+                            await path.fill(f'b/{name}/v2')
+                            await protocol.select_option('responses')
+                            await choose_model(model, f'{name}-b')
+                            await saved()
+                            await choose_menu(provider, 'default')
+                            await expect(path).to_have_value('a/v1beta')
+                            await expect(protocol).to_have_value('gemini')
+                            await expect(model).to_have_attribute('data-value', 'original-model')
+                            await choose_menu(provider, 'connection-b')
+                            await expect(path).to_have_value(f'b/{name}/v2')
+                            await expect(model).to_have_attribute('data-value', f'{name}-b')
+                            await saved()
+                        await dialog.get_by_role('button', name='关闭', exact=True).click()
+                        await page.evaluate('sid=>localStorage.setItem("tavern-session",sid)', session['id'])
+                        await page.reload()
+                        provider = page.get_by_role('button', name='对话供应商', exact=True)
+                        model = page.get_by_role('button', name='对话模型', exact=True)
+                        await expect(model).to_have_attribute('data-value', 'full-b')
+                        await choose_model(model, 'story-b')
+                        await choose_menu(provider, 'default')
+                        await expect(model).to_have_attribute('data-value', 'original-model')
+                        await choose_menu(provider, 'connection-b')
+                        await expect(model).to_have_attribute('data-value', 'story-b')
+                        async def catalogue(route):
+                            assert route.request.post_data_json == {'provider_id': 'connection-b', 'api_mode': 'responses', 'api_path': 'b/full/v2'}
+                            await route.fulfill(json={'models': ['fresh-b'], 'updated_at': 100})
+                        await page.route('**/api/settings/models', catalogue)
+                        popup = await menu_popup(model)
+                        await expect(popup).to_contain_text('Responses · /b/full/v2')
+                        await popup.get_by_role('button', name='获取模型列表', exact=True).click()
+                        await expect(popup.get_by_role('option', name='fresh-b', exact=True)).to_be_visible()
+                        await page.keyboard.press('Escape')
+                        await choose_menu(provider, 'unconfigured')
+                        await expect(model).to_have_attribute('data-value', '')
+                        await expect(page.locator('.send.conversation-compose-send')).to_be_disabled()
+                        await page.screenshot(path=str(output / 'provider-connections.png'))
+                        assert not errors, errors
+                        print('Five model settings, provider restore, composer model history and catalogue connection passed.')
+                        return
                     await select('通用 杂项')
                     prefix_debug = page.get_by_role('checkbox', name='Full Agent 前缀消息稳定性测试（Debug）', exact=False)
                     await expect(prefix_debug).not_to_be_checked()

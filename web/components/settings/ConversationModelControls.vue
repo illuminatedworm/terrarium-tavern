@@ -4,6 +4,7 @@ import type { ConversationModelSelection, ModelProfile, Provider } from '../../l
 import { channelProviders, channelLabels, type Channel } from '../../lib/channels';
 import { useModelCatalog } from '../../lib/modelCatalog';
 import { useApiReasoning } from '../../lib/apiReasoning';
+import { modelConnectionSummary, selectProfileProvider } from '../../lib/modelConnections';
 import { effortOptions, modelEffortOptions } from '../../lib/reasoningEffort';
 import EffortControl from './EffortControl.vue';
 import SelectMenu from '../common/SelectMenu.vue';
@@ -65,7 +66,7 @@ const efforts = computed(() =>
   ),
 );
 function save() {
-  if (props.disabled || !draft.value.model.trim() || !provider.value) return;
+  if (props.disabled || !provider.value) return;
   if (
     ['provider_id', 'model'].every(
       (key) => draft.value[key as keyof ModelProfile] === props.profile[key as keyof ModelProfile],
@@ -78,8 +79,7 @@ function save() {
   });
 }
 function chooseProvider(value: string) {
-  draft.value.provider_id = value;
-  // Equivalent providers can use the same model ID, even without a catalogue.
+  draft.value = selectProfileProvider(draft.value, value, subscription.value);
   save();
 }
 function chooseModel(value: string) {
@@ -107,6 +107,7 @@ function chooseModel(value: string) {
       :details="catalog?.model_details"
       :error="catalogError.message"
       :refresh="refresh"
+      :connection="modelConnectionSummary(draft, provider)"
       :disabled="disabled || !provider"
       label="对话模型"
       compact

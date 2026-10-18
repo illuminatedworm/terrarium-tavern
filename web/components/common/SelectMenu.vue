@@ -268,6 +268,7 @@ onBeforeUnmount(() => {
         <span>{{ caption || label }}</span
         ><slot name="heading-action" />
       </div>
+      <slot name="context" />
       <div v-if="searchable" class="select-menu-search">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.4" />

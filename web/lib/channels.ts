@@ -18,10 +18,11 @@ export function blankChannelProfile(
     ...JSON.parse(JSON.stringify(base)),
     provider_id: channelProviders(providers, channel)[0]?.id || '',
     model: '',
+    provider_connections: {},
     capability: 'unknown',
     capability_key: '',
     ...(channel === 'chatgpt'
       ? { api_mode: 'responses', api_path: 'v1', cache: { ...base.cache, mode: 'cloud' } }
-      : {}),
+      : { api_mode: 'chat_completions', api_path: '' }),
   };
 }
