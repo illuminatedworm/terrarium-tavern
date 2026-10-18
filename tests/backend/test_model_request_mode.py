@@ -10,6 +10,7 @@ from tavern.application.api import create_app
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
 from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
+from tavern.scripting.model_stream import StreamState
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
@@ -137,6 +138,7 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
             "function": {"name": "lookup", "arguments": '{"q":'}}]}}]},
         {"choices": [{"delta": {"tool_calls": [{"index": 0,
             "function": {"arguments": '"原文"}'}}]}, "finish_reason": "tool_calls"}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
         {"usage": reply("chat_completions")["usage"]},
     ]
     cfg = config(model_request_mode="stream")
@@ -145,10 +147,20 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
         assert result.finish_reason == "tool_calls"
         assert p.last_tool_calls[0].name == "lookup"
         assert json.loads(p.last_tool_calls[0].arguments) == {"q": "原文"}
+        assert result.usage["prompt_tokens"] == 10
+        assert len(p.last_tool_calls) == 1
     async with provider(cfg, lambda _: sse(events=tool_events[:1])) as p:
         with pytest.raises(ValueError, match="提前结束"):
             await p.chat_complete(MESSAGES, tools=TOOLS)
         assert not p.usage_history and not p.last_tool_calls
+
+    state = StreamState("chat_completions")
+    for event in tool_events:
+        state.feed(event)
+    with pytest.raises(ValueError, match="完成事件之后"):
+        state.feed({"choices": [{"delta": {"content": "非法追加"}, "finish_reason": "stop"}]})
+    with pytest.raises(ValueError, match="完成事件之后"):
+        state.feed(tool_events[1])
 
 
 @pytest.mark.parametrize("entry", ["complete", "chat", "preview"])

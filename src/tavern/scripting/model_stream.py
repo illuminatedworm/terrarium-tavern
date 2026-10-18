@@ -21,7 +21,13 @@ class StreamState:
         if self.done:
             # Chat Completions/Gemini can report usage after the terminal chunk.
             # Content or tool fragments after completion must never become story.
-            if ((api == "chat_completions" and event.get("choices"))
+            # Some compatible endpoints append an empty stop after tool_calls.
+            # Accept only empty terminal choices; keep the first finish reason
+            # so a redundant stop cannot turn a tool response into a plain reply.
+            if ((api == "chat_completions" and any(
+                    choice.get("delta") != {} or choice.get("index", 0) != 0
+                    or choice.get("finish_reason") not in ("stop", self.result["finish_reason"])
+                    for choice in event.get("choices") or []))
                     or (api == "gemini" and event.get("candidates"))
                     or (api in ("responses", "anthropic") and event.get("type") != "ping")):
                 raise ValueError("模型完成事件之后仍有响应内容，本回合未提交")
@@ -42,7 +48,7 @@ class StreamState:
                 self.result["usage"] = event["usage"]
             self.result["model"] = event.get("model", self.result.get("model"))
             choices = event.get("choices") or []
-            if not choices:
+            if self.done or not choices:
                 return ""
             choice = choices[0]
             delta = choice.get("delta") or {}
