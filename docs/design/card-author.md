@@ -44,7 +44,7 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 
 各接口分别构造图片块：Chat Completions 使用 `image_url` data URL，Responses 使用 `input_image`，Anthropic 使用 `image.source` 的 Base64 与 MIME 类型，Gemini 的现有 `generateContent` 使用 `parts[].inlineData`；ChatGPT 订阅走独立 provider 的 Responses 路线，并保留认证和工具命名空间约束。仅在传输请求副本中展开 Base64；预览返回图片元数据，请求事件保留图片位置与类型并明确标记二进制省略，实际 HTTP 请求不受影响。本地计数排除图片编码，统计接口与事件返回 `image_count`、`image_tokens_included=false` 及 `estimated_tokens_complete`，有图时不把文本估算冒充完整输入用量。
 
-系统说明和严格 schema 由固定目录维护，动态卡片概览、确认方案、handoff 只在变化时追加。工具说明、只读预览和模型请求使用同一注册表。读取结果完整投影后发送；日志摘要长度不影响模型正文。
+系统说明和严格 schema 由固定目录维护，动态卡片概览、确认方案、handoff 只在变化时追加。工具说明、只读预览和模型请求使用同一注册表。读取结果完整投影后发送；日志摘要长度不影响模型正文。制卡 agent 的工具日志分别在被省略的调用参数或工具返回下方提示“仅省略展示”，说明工具收到的参数或模型收到的本次返回保持完整。
 
 首次发送在创建运行记录的同一事务中，将后端电脑的操作系统版本、本地时间（到秒）与数字 UTC 偏移保存到对话 payload 的 `environment`。独立的 `editor_environment` system 消息紧接完整主系统规则，位于历史和引用资料之前；它不可映射为其他角色。续聊、停止/续接、丢弃进度、换窗、模型/规则重建及重启均复用原快照，保持缓存前缀稳定。预览可查看实际生效消息；首次发送前的环境值仅供预览，不写入对话。旧对话首次补录时使用最早用户消息关联的原始请求时间戳，以当前本地时区换算，并明确标注系统版本为补录值；原始请求已清理时不猜测历史时间。
 

@@ -7,7 +7,7 @@ const props = defineProps<{
   item: AgentActivity;
   endpoint: string;
   title?: string;
-  note?: string;
+  partNotes?: Partial<Record<'arguments' | 'result' | 'content', string>>;
   statusLabel?: string;
 }>();
 type Part = 'arguments' | 'result' | 'content';
@@ -100,12 +100,12 @@ onBeforeUnmount(() => {
       >
     </summary>
     <div v-if="opened" class="activity-details">
-      <p v-if="note" class="activity-note">{{ note }}</p>
       <section v-for="part in parts" :key="part" class="activity-part" :aria-label="labels[part]">
         <h3>{{ labels[part] }}</h3>
         <p v-if="part === 'result' && item.status === 'running'" class="muted">等待工具返回…</p>
         <template v-else>
           <pre v-if="pages[part]">{{ pages[part]!.text || '（空）' }}</pre>
+          <p v-if="pages[part] && partNotes?.[part]" class="activity-note">{{ partNotes[part] }}</p>
           <p v-if="loading.has(part)" class="muted">读取中…</p>
           <p v-if="errors[part]" role="alert">
             {{ errors[part] }} <button @click="load(part, !!pages[part])">重试</button>

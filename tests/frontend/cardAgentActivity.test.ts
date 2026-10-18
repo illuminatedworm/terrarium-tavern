@@ -40,7 +40,8 @@ describe('editor action timeline', () => {
         arguments: '{"path":"/description"}',
         result: '角色描述',
         duration: 30,
-        truncated: undefined,
+        argumentsTruncated: undefined,
+        resultTruncated: undefined,
       },
     ]);
   });
@@ -55,15 +56,32 @@ describe('editor action timeline', () => {
       result: '字段不存在',
     });
   });
-  it('handles intentionally truncated arguments and preserves repeated calls to the same tool', () => {
+  it('distinguishes omitted log previews for arguments and results while preserving repeated calls', () => {
     const next = {
       ...started,
       seq: 5,
-      payload: { ...started.payload, action_id: 'read-2', arguments: '{', arguments_truncated: true },
+      payload: {
+        ...started.payload,
+        action_id: 'read-2',
+        tool: 'read_skill',
+        arguments: '{',
+        arguments_truncated: true,
+      },
     };
-    const actions = editorActions([started, finished, next], 'running');
+    const skillStarted = {
+      ...started,
+      payload: { ...started.payload, tool: 'read_skill', arguments: '{"path":"runtime-guide.md"}' },
+    };
+    const skillFinished = {
+      ...finished,
+      payload: { ...finished.payload, tool: 'read_skill', result_truncated: true },
+    };
+    const actions = editorActions([skillStarted, skillFinished, next], 'running');
     expect(actions).toHaveLength(2);
-    expect(actions[1]).toMatchObject({ status: 'running', truncated: true, target: '' });
+    expect(actions[0]).toMatchObject({ title: '读取 skill', status: 'completed', resultTruncated: true });
+    expect(actions[0].argumentsTruncated).toBeUndefined();
+    expect(actions[1]).toMatchObject({ status: 'running', argumentsTruncated: true, target: '' });
+    expect(actions[1].resultTruncated).toBeUndefined();
   });
   it('shows operation comments while retaining remarks from legacy activity records', () => {
     const events = [

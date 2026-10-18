@@ -141,7 +141,14 @@ onBeforeUnmount(() => {
             :title="step.title"
             :status-label="actionStatus(step.status)"
             endpoint=""
-            :note="step.truncated ? '这里只展示日志摘要；模型读取的原文保持完整。' : undefined"
+            :part-notes="{
+              arguments: step.argumentsTruncated
+                ? '……后续参数仅省略展示；工具收到的调用参数保持完整。'
+                : undefined,
+              result: step.resultTruncated
+                ? '……后续内容仅省略展示；本次工具返回已完整提供给模型。'
+                : undefined,
+            }"
           />
           <CardModelRequests
             v-if="requests(block.actions).length"

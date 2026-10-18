@@ -14,7 +14,8 @@ export interface EditorAction {
   status: string;
   arguments?: string;
   result?: string;
-  truncated?: boolean;
+  argumentsTruncated?: boolean;
+  resultTruncated?: boolean;
   duration?: number;
   model?: string;
   searchFallback?: boolean;
@@ -29,7 +30,7 @@ const labels: Record<string, string> = {
   set_text_field: '编辑文本字段',
   set_opening: '编辑开场',
   validate_draft: '验证草稿',
-  read_skill: '读取适配 skill',
+  read_skill: '读取 skill',
   create_draft: '创建草稿',
   set_portrait: '设置头像',
   configure_card: '记录目标模式',
@@ -85,7 +86,7 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
       };
       if (event.kind === 'tool_started') {
         action.arguments = p.arguments;
-        action.truncated = p.arguments_truncated;
+        action.argumentsTruncated = p.arguments_truncated;
         try {
           const args = JSON.parse(p.arguments);
           action.target =
@@ -104,7 +105,7 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
         action.status = p.status;
         action.result = p.result || p.detail;
         action.duration = p.duration_ms;
-        action.truncated ||= p.result_truncated;
+        action.resultTruncated = p.result_truncated;
       }
       actions.set(id, action);
     }
