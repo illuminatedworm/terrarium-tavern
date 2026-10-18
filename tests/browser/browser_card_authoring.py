@@ -5,15 +5,18 @@ import json
 import re
 import socket
 import tempfile
+from io import BytesIO
 from pathlib import Path
 from threading import Thread
 
 import uvicorn
+from PIL import Image
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
+from tavern.character.editor_attachments import attach_file
 from tavern.storage.store import dump
-from tests.backend.test_card_editor import ToolLLM, fixture
+from tests.backend.test_card_author import ToolLLM, fixture
 
 
 async def main():
@@ -202,7 +205,7 @@ async def main():
                     updated.get("data", updated)["creator_notes"] = "表单保存检查"
                     await raw.fill(json.dumps(updated, ensure_ascii=False))
                     selected_ref = await page.get_by_role("combobox", name="选择卡片", exact=True).input_value()
-                    endpoint = f'**/api/card-editor/conversations/{wid}/drafts/{selected_ref}'
+                    endpoint = f'**/api/card-author/conversations/{wid}/drafts/{selected_ref}'
                     await page.route(endpoint, lambda route: route.fulfill(
                         status=409, content_type="application/json", body='{"detail":"测试保存冲突"}',
                     ))
@@ -230,7 +233,23 @@ async def main():
                     await expect(page.get_by_label("制卡上下文用量")).to_contain_text("缓存命中率")
                     await expect(page.get_by_role("button", name="对话模型", exact=True)).to_be_visible()
                     await expect(page.get_by_role("button", name="本次思考强度", exact=True)).to_be_visible()
-                    mobile = await browser.new_page(viewport={"width": 360, "height": 792}, device_scale_factor=3)
+                    cover = BytesIO()
+                    Image.new("RGB", (24, 32), (120, 80, 40)).save(cover, "PNG")
+                    attach_file(editor.edits, wid, editor.edits.conversation(wid)["revision"], "封面.png", cover.getvalue())
+                    await page.reload()
+                    inspector = page.get_by_role("navigation", name="卡片信息")
+                    await inspector.get_by_role("button", name="数据", exact=True).click()
+                    await page.get_by_role("combobox", name="头像").select_option(label="封面.png")
+                    await expect(page.get_by_role("button", name="移除头像", exact=True)).to_be_visible()
+                    await inspector.get_by_role("button", name="预览", exact=True).click()
+                    await expect(page.locator(".draft-preview-heading img")).to_have_attribute("src", re.compile(r"/portraits/[0-9a-f]{64}$"))
+                    await page.wait_for_function(
+                        "() => { const image = document.querySelector('.draft-preview-heading img');"
+                        " return image && image.complete && image.naturalWidth === 24; }")
+                    await inspector.get_by_role("button", name="数据", exact=True).click()
+                    await page.get_by_role("button", name="移除头像", exact=True).click()
+                    await expect(page.get_by_role("button", name="移除头像", exact=True)).to_have_count(0)
+                    mobile =await browser.new_page(viewport={"width": 360, "height": 792}, device_scale_factor=3)
                     await mobile.add_init_script("localStorage.setItem('tavern-sidebar-section','editor');"
                                                  + f"localStorage.setItem('tavern-active-card-conversation','{wid}');")
                     await mobile.goto(address)
@@ -240,7 +259,7 @@ async def main():
                     assert await mobile.evaluate("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight")
                     await mobile.close()
                     assert not errors, errors
-                    print("Card authoring browser acceptance passed: create, references, save/conflict, recovery, forms, responsive layouts.")
+                    print("Card authoring browser acceptance passed: create, references, save/conflict, recovery, forms, portraits, responsive layouts.")
                 finally:
                     await browser.close()
         finally:

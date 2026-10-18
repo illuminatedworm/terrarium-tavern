@@ -1,4 +1,4 @@
-"""Opt-in live Card Editor evaluation. Credentials are read-only; data is isolated.
+"""Opt-in live Card Author evaluation. Credentials are read-only; data is isolated.
 
 Run with --baseline before changing the editor, then without it for the new editor.
 Every outbound inference attempt shares the persistent 60-request budget.
@@ -14,9 +14,9 @@ from pathlib import Path
 
 import httpx
 
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.cards import lore_entries
-from tavern.core.models import CardEditorRequest
+from tavern.core.models import CardAuthorRequest
 from tavern.core.settings import migrate_settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store, dump, uid
@@ -38,8 +38,8 @@ async def evaluate(args):
     # Evaluation artifacts must not contain copied production credentials.
     # Only the in-memory operation snapshot retains the explicitly authorized key.
     store.settings = lambda: runtime_settings.model_copy(deep=True)
-    service = CardEditorService(store)
-    cfg = store.settings().for_role("card_editor")
+    service = CardAuthorService(store)
+    cfg = store.settings().for_role("card_author")
     results = []
 
     async def run(workspace, text, label="baseline", *, interrupt_after_edit=False, **options):
@@ -68,7 +68,7 @@ async def evaluate(args):
                                    event_hooks={"request": [counted]})
         provider = ModelTransport(cfg, cfg.api_key or os.environ.get("TAVERN_API_KEY", ""), http_client=client)
         service.provider_factory = lambda: provider
-        request = CardEditorRequest(text=text, expected_revision=workspace["revision"], operation_id=uid(), **options)
+        request = CardAuthorRequest(text=text, expected_revision=workspace["revision"], operation_id=uid(), **options)
         before = budget["requests"]
         started = time.monotonic()
         task = service.submit(workspace["id"], request, legacy=args.baseline)
@@ -154,7 +154,7 @@ async def evaluate(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, default=Path("data/tavern.sqlite3"))
-    parser.add_argument("--output", type=Path, default=Path(".cache/card-editor-evaluation"))
+    parser.add_argument("--output", type=Path, default=Path(".cache/card-author-evaluation"))
     parser.add_argument("--baseline", action="store_true")
     parser.add_argument("--cases", choices=("core", "remaining", "all"), default="all")
     asyncio.run(evaluate(parser.parse_args()))

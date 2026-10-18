@@ -1,4 +1,4 @@
-# 角色卡编辑 agent 工具与接口
+# 制卡 agent 工具与接口
 
 工具运行在本轮未提交进度上，完整结束后共同更新独立卡片草稿及用户明确要求的用户角色；模型不能保存书架卡片，用户角色修改则直接保存到用户角色库。参数由 [editor_tools.py](../../src/tavern/character/editor_tools.py) 的严格类型生成，实际请求、预览和运行时校验共用目录。
 
@@ -21,7 +21,8 @@
 | `overview` | 可选 `card_ref`；查看当前目录或指定卡的根路径、格式、字段用途/类型/大小 |
 | `read_field` | `card_ref`、JSON Pointer `path`；空路径读整卡。`version=current/round_start/saved` 分别读取当前、任务开始前或书架基准，始终返回完整原文 |
 | `search_entries` | `card_ref`、`query`；空查询列出全部。提供标题、定位路径及明确标识的摘要，修改前读取全文 |
-| `create_draft` | `name`、可选 `source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。返回新引用与初始文档 |
+| `create_draft` | `name`、可选 `fields`、`source_ref`、`proposal_ref`、`confirmation_ref`；明确直接制作或机械复制使用 `direct_instruction=true`。`fields` 可一次写入 description、personality、scenario、first_mes、alternate_greetings、mes_example、system_prompt、post_history_instructions、creator_notes、tags 的完整正文，省略项留空或沿用来源卡；世界书条目随后用 `patch_draft` 追加。返回新引用与校验结果；复制来源卡或未传 `fields` 时附完整初始文档，避免回传模型刚写入的正文 |
+| `set_portrait` | `card_ref`、`file_ref`（本对话图片附件的 F 编号，null 移除）；仅在用户表示该图用作头像时调用。JPEG/WebP 转为 PNG，草稿成为标准 PNG 卡容器，保存时写入书架；CHARX 卡不支持 |
 | `configure_card` | `card_ref`、`target_mode=half_agent/full_agent`、用户选择的 `confirmation_ref`；可选兼容性目标，普通制卡和 MVU 无需调用，不自动迁移内容 |
 | `patch_draft` | `card_ref`、`operations`、`comment`；严格 JSON Patch，一批 1–100 项原子应用 |
 | `set_text_field` | `card_ref`、`path`、完整 `text`、`comment`；替换单个已有字符串字段，空文本清空；由程序生成补丁，沿用读取、投影和文档校验 |
@@ -41,7 +42,7 @@
 
 ## 外部文件读取
 
-PNG、JPEG、静态 WebP 图片通过与文档相同的文件选择器引用，随所属用户消息直接发送，不使用 `read_text_file` 或 `read_document`。换窗后调用 `read_history` 回读所属 H 消息，Runtime 会在本批工具结果结束后恢复原图；已在当前上下文中的图片不会重复追加。图片不授予草稿修改权限，附件限制与说明见[读取本地资料](../guides/card-editor.md#读取本地资料)。
+PNG、JPEG、静态 WebP 图片通过与文档相同的文件选择器引用，随所属用户消息直接发送，不使用 `read_text_file` 或 `read_document`。换窗后调用 `read_history` 回读所属 H 消息，Runtime 会在本批工具结果结束后恢复原图；已在当前上下文中的图片不会重复追加。图片不授予草稿修改权限，附件限制与说明见[读取本地资料](../guides/card-author.md#读取本地资料)。
 
 两个文件工具只读后端电脑上的普通文件，要求绝对本地路径，返回解析后的绝对 `path`。源文件上限为 32 MiB，URL、网络共享、设备和目录作为无效路径处理。内容作为外部参考；写入权限按用户请求与工具规则校验，草稿读取依据由 `read_field` 建立。
 
@@ -83,13 +84,15 @@ Agent 优先使用对应的专门工具：世界书正文、标题、人物介�
 
 | 入口 | 用途 |
 |---|---|
-| `GET/POST /api/card-editor/conversations` | 列表及空对话创建 |
-| `GET/PUT/DELETE /api/card-editor/conversations/{id}` | 读取、改名、删除 |
+| `GET/POST /api/card-author/conversations` | 列表及空对话创建 |
+| `GET/PUT/DELETE /api/card-author/conversations/{id}` | 读取、改名、删除 |
 | `POST .../{id}/references` | 引用书架卡，可携带当前表单和原卡版本 |
 | `DELETE .../{id}/references/{ref}` | 移除该卡的引用、草稿和撤销历史 |
 | `PUT .../{id}/drafts/{ref}` | 手工修改文档；target_mode 省略保留兼容性目标，null 清除目标 |
 | `POST .../{id}/drafts/{ref}/save` | `mode=create/overwrite/copy`，携带 operation_id |
 | `POST .../{id}/drafts/{ref}/undo`、`reload`、`test` | 撤销、重新载入、运行本地检查 |
+| `PUT .../{id}/drafts/{ref}/portrait` | `file_ref` 为图片附件 F 编号时设置头像，null 移除；可撤销 |
+| `GET .../{id}/portraits/{digest}` | 读取当前、待续或可撤销草稿正在使用的 PNG 头像 |
 | `POST .../{id}/runs` | 发送；`resume_run_id` 续接，非空 text 表示补充要求 |
 | `DELETE .../{id}/progress` | 丢弃本轮未提交进度 |
 | `GET .../{id}/context`、`tools`；`POST .../{id}/preview` | 上下文状态、工具说明和只读请求预览 |

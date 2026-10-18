@@ -119,7 +119,7 @@ export function splitMvuPanel(text: string): { panel: string; narrative: string 
   return { panel: panels.map((part) => part.html).join('\n'), narrative };
 }
 
-/** One structural parser for the UI, message callbacks and Card Editor probes.
+/** One structural parser for the UI, message callbacks and Card Author probes.
  * CSS-only and ordinary HTML stay inline; recognized MVU scripts move to the
  * sidebar. Both paths preserve all surrounding prose and every HTML block.
  */

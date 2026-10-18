@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { cardName, type EditorCard } from '../../lib/cardEditor';
+import { cardName, type EditorCard } from '../../lib/cardAuthor';
 import { previewCardData, previewLore } from '../../lib/cardPreview';
 import { cardPortraitUrl } from '../../lib/portraits';
 import CharacterPortrait from './CharacterPortrait.vue';
 import CardPreviewProse from './CardPreviewProse.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 
-const props = defineProps<{ card: EditorCard; status: string; disabled?: boolean }>();
+const props = defineProps<{ card: EditorCard; conversationId: string; status: string; disabled?: boolean }>();
 defineEmits<{ edit: [] }>();
 const data = computed(() => previewCardData(props.card.document));
 const lore = computed(() => previewLore(props.card.document));
@@ -38,11 +38,16 @@ const matches = computed(() => {
     ),
   );
 });
-const portrait = computed(() =>
-  props.card.source_exists === false
+// A PNG portrait may be set in the draft before it reaches the library, so the
+// conversation serves the draft's own image; CHARX icons still come from the saved card.
+const portrait = computed(() => {
+  const source = props.card.source || {};
+  if (source.container === 'png' && source.original)
+    return `/api/card-author/conversations/${encodeURIComponent(props.conversationId)}/portraits/${encodeURIComponent(source.original)}`;
+  return props.card.source_exists === false
     ? ''
-    : cardPortraitUrl({ ...props.card.source, document: props.card.document }),
-);
+    : cardPortraitUrl({ ...source, document: props.card.document });
+});
 watch(greetings, (value) => {
   if (opening.value >= value.length) opening.value = 0;
 });

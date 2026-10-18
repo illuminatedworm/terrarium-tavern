@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { editorSkillPresets, type EditorSkillPreset } from '../../lib/cardEditorSkills';
-import { cardName, type EditorCard } from '../../lib/cardEditor';
+import { editorSkillPresets, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
+import { cardName, type EditorCard } from '../../lib/cardAuthor';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 
 defineProps<{ cards: EditorCard[]; selected: string; disabled?: boolean }>();

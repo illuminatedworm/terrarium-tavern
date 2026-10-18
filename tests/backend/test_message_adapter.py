@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from tavern.application.api import create_app
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.core.message_adapter import (
     APIS,
     MessageAdapterConfig,
@@ -55,17 +55,17 @@ def test_removed_call_notifications_are_purged_from_settings_and_catalog(api):
     cleaned = MessageAdapterConfig.model_validate(original).model_dump()
     assert cleaned["mappings"][api] == {"handoff": {"role": "user", "wrap": False}}
     assert original == before
-    for lane in ("full_agent", "card_editor"):
+    for lane in ("full_agent", "card_author"):
         assert not {"call_budget", "last_call_notice"} & {item["id"] for item in catalog(lane)}
 
 
 @pytest.mark.parametrize("kind", ["story", "editor"])
 async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind):
     store, session = story(tmp_path, "full_agent")
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     try:
         owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
-        lane = "full_agent" if kind == "story" else "card_editor"
+        lane = "full_agent" if kind == "story" else "card_author"
         saved = {lane: config(last_call_notice={"role": "user", "wrap": True})}
         with store.connection() as db:
             db.execute("UPDATE message_adapter_configs SET config=? WHERE owner_kind=? AND owner_id=?",
@@ -88,7 +88,7 @@ async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind
 @pytest.mark.parametrize("api", APIS)
 def test_configurable_message_defaults_follow_protocol_across_lanes(api):
     expected = "user" if api == "gemini" else "system"
-    for lane in ("foreground", "full_agent", "background", "card_editor", "advisor"):
+    for lane in ("foreground", "full_agent", "background", "card_author", "advisor"):
         settings = Settings(runtime_mode="full_agent" if lane == "full_agent" else "half_agent", api_mode=api)
         settings._adapter_lane = lane
         directory = catalog(lane)
@@ -127,7 +127,7 @@ def test_note_list_defaults_are_wrapped_and_mapping_is_reversible(api):
     directory_type = next(t for t in catalog("full_agent") if t["id"] == "note_list")
     assert directory_type["configurable"] and not directory_type["appendable"]
     assert directory_type["defaults"][api] == {"role": expected, "wrap": True}
-    assert all(t["id"] != "note_list" for lane in ("foreground", "background", "card_editor") for t in catalog(lane))
+    assert all(t["id"] != "note_list" for lane in ("foreground", "background", "card_author") for t in catalog(lane))
     settings.message_adapter = MessageAdapterConfig.model_validate({
         "mappings": {api: {"note_list": {"role": "user", "wrap": False}}}})
     projected, _, _ = adapt_messages(messages, settings)
@@ -417,10 +417,10 @@ def test_global_defaults_are_snapshotted_and_forks_and_reopen_are_independent(tm
 @pytest.mark.parametrize("kind", ["story", "editor"])
 async def test_next_sdk_call_uses_live_adapter_while_current_request_keeps_snapshot(tmp_path, kind):
     store, session = story(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     try:
         owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
-        lane = "foreground" if kind == "story" else "card_editor"
+        lane = "foreground" if kind == "story" else "card_author"
         cfg = bind_adapter(Settings(model="fixture", base_url="https://fixture.test", use_proxy=False), store, kind, owner, lane)
         received, release = asyncio.Event(), asyncio.Event()
         requests = []

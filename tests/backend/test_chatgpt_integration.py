@@ -8,10 +8,10 @@ import pytest
 
 from tavern.application.api import create_app
 from tavern.application.modes import ModeRuntime
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.chatgpt import API_ROOT
 from tavern.chatgpt.errors import ChatGPTError
-from tavern.core.models import CardEditorRequest, SessionCreate, TurnRequest
+from tavern.core.models import CardAuthorRequest, SessionCreate, TurnRequest
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store, uid
 from tavern.storage.transfer import ExportSelection, export_package, read_package
@@ -42,7 +42,7 @@ def connected_store(root):
     doc.half_agent.official_foreground = doc.half_agent.foreground.model_copy(deep=True)
     doc.half_agent.official_background = doc.half_agent.background.model_copy(deep=True)
     for profile, name in ((doc.full_agent.official_model, "fixture-full"), (doc.half_agent.official_foreground, "fixture-writer"),
-                          (doc.half_agent.official_background, "fixture-tracker"), (doc.shared.card_editor, "fixture-editor")):
+                          (doc.half_agent.official_background, "fixture-tracker"), (doc.shared.card_author, "fixture-editor")):
         profile.provider_id = provider.id
         profile.model = name
     doc.full_agent.tools.auto_retrieval = False
@@ -135,7 +135,7 @@ async def test_tracker_uses_namespace_tools_and_returns_complete_result(tmp_path
     assert requests[1]["input"][-1]["type"] == "function_call_output"
 
 
-async def test_card_editor_and_nested_script_requests_share_account_resolution(tmp_path, monkeypatch):
+async def test_card_author_and_nested_script_requests_share_account_resolution(tmp_path, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     requests = []
     def model(request):
@@ -143,10 +143,10 @@ async def test_card_editor_and_nested_script_requests_share_account_resolution(t
         requests.append(body)
         return sse(completed("编辑建议完成。" if body["model"] == "fixture-editor" else "嵌套与正文回复。"))
     store.chatgpt.http_transport = httpx.MockTransport(model)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     workspace = editor.edits.create_conversation()
     try:
-        task = editor.submit(workspace["id"], CardEditorRequest(text="请提供角色设定建议，不修改卡片。",
+        task = editor.submit(workspace["id"], CardAuthorRequest(text="请提供角色设定建议，不修改卡片。",
             expected_revision=workspace["revision"], operation_id=uid()), legacy=False)
         await editor.tasks[task["id"]]
         result = editor.edits.run(task["id"])
@@ -257,7 +257,7 @@ async def test_operation_snapshot_cannot_silently_take_new_authorization(tmp_pat
     generation = snapshot._auth_generation
     seed_account(store.chatgpt, account_id=account_id)
     assert store.settings()._auth_generation != generation
-    for role in ("foreground", "background", "full_agent", "card_editor"):
+    for role in ("foreground", "background", "full_agent", "card_author"):
         config = snapshot.for_role(role)
         assert config._auth_generation == generation
         with pytest.raises(ChatGPTError, match="sign_in_required"):

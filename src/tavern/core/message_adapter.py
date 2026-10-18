@@ -27,12 +27,12 @@ class MessageType:
     configurable: bool = False
     appendable: bool = False
     role: str = "system"
-    scopes: tuple = ("foreground", "full_agent", "background", "card_editor", "advisor")
+    scopes: tuple = ("foreground", "full_agent", "background", "card_author", "advisor")
 
 
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
-    MessageType("editor_environment", "对话时间与系统环境", scopes=("card_editor",)),
+    MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),
     MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
     MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
     MessageType("user", "用户输入", role="user"),
@@ -68,7 +68,7 @@ TYPES = {item.id: item for item in (
         ("reply_correction", "回复纠正要求"), ("required_tool_notice", "必要工具提醒"),
         ("tracker_task_update", "Tracker 任务更新"))],
     *[MessageType("editor_" + name, label, "tavern_editor_" + name, True, True,
-                  scopes=("card_editor",)) for name, label in (
+                  scopes=("card_author",)) for name, label in (
         ("overview", "草稿概览"), ("briefs", "确认资料"), ("handoff", "交接笔记"),
         ("persona_attachments", "引用用户角色"),
         ("files", "引用本地文件"),
@@ -86,7 +86,7 @@ SCOPES = {
     **{name: ("foreground",) for name in ("retrieval_protocol", "author_note", "memory", "state")},
     **{name: ("full_agent",) for name in ("handoff", "mvu_rules", "regenerate_instruction",
        "turn_variable_instruction", "context_warning", "context_status", "context_budget")},
-    "reply_correction": ("full_agent", "card_editor"), "required_tool_notice": ("background",),
+    "reply_correction": ("full_agent", "card_author"), "required_tool_notice": ("background",),
     "tracker_task_update": ("background",),
     "message_edit_notice": ("foreground", "full_agent", "background"),
 }

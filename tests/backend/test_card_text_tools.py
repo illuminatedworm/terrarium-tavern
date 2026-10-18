@@ -5,13 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_reads import known
 from tavern.character.editor_tools import EditorTools
 from tavern.core.model_view import ModelView
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM, fixture, import_fixture
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM, fixture, import_fixture
 
 
 def text_call(path, text):
@@ -104,7 +104,7 @@ async def test_previews_and_historical_versions_do_not_grant_current_read_eviden
 
 async def test_completed_reads_and_writes_survive_next_run_and_service_restart(tmp_path):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create(import_fixture(store)["id"])["id"]
     try:
         first = await run(editor, wid, ToolLLM([
@@ -114,7 +114,7 @@ async def test_completed_reads_and_writes_survive_next_run_and_service_restart(t
         assert first["status"] == "completed"
         saved = editor.edits.context(wid)
         await editor.close()
-        editor = CardEditorService(Store(tmp_path))
+        editor = CardAuthorService(Store(tmp_path))
         provider = ToolLLM([("patch_draft", {"card_ref": "C1", "comment": "下一轮直接编辑已知版本",
             "operations": [{"op": "replace", "path": "/character_book/entries/0/content", "value": "第二轮正文"},
                            {"op": "replace", "path": "/character_book/entries/0/comment", "value": "第二轮标题"}]})])
@@ -137,7 +137,7 @@ async def test_completed_reads_and_writes_survive_next_run_and_service_restart(t
 @pytest.mark.parametrize("invalidation", ["rollover", "model", "draft", "old_context", "revert"])
 async def test_removed_or_rebuilt_context_requires_fresh_read(tmp_path, invalidation):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create(import_fixture(store)["id"])["id"]
     try:
         await run(editor, wid, ToolLLM([("read_field", {"card_ref": "C1", "path": "/description"})]))
@@ -148,7 +148,7 @@ async def test_removed_or_rebuilt_context_requires_fresh_read(tmp_path, invalida
             prefix = [text_call("/description", "临时更改"), ("revert_draft", {"card_ref": "C1", "comment": "撤销"})]
         elif invalidation == "model":
             settings = store.settings_document()
-            settings.shared.card_editor.model = "different-model"
+            settings.shared.card_author.model = "different-model"
             store.save_settings(settings)
         else:
             # Simulate an externally edited draft or a pre-upgrade context record.
@@ -176,7 +176,7 @@ async def test_removed_or_rebuilt_context_requires_fresh_read(tmp_path, invalida
 
 async def test_read_versions_resume_after_transport_failure(tmp_path):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create(import_fixture(store)["id"])["id"]
 
     class Failure(ToolLLM):
@@ -191,7 +191,7 @@ async def test_read_versions_resume_after_transport_failure(tmp_path):
             ("read_field", {"card_ref": "C1", "path": "/description"}), text_call("/description", "中断前版本")]))
         assert failed["status"] == "error"
         await editor.close()
-        editor = CardEditorService(Store(tmp_path))
+        editor = CardAuthorService(Store(tmp_path))
         resumed = await run(editor, wid, ToolLLM([text_call("/description", "续接版本")]), "", resume=failed["id"])
         assert resumed["status"] == "completed", resumed["error"]
         assert editor.edits.get(wid)["document"]["description"] == "续接版本"

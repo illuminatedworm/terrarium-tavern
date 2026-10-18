@@ -35,7 +35,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 |---|---|---|
 | `full_agent` | 模型、工具与记忆、检索、提示词及默认修改保存方式 | `model`、`official_model` |
 | `half_agent` | 模型、历史与记忆、检索、提示词、上下文配方及默认修改保存方式 | `foreground`、`background`、`official_foreground`、`official_background` |
-| `shared` | 提供商、参谋 agent、角色卡编辑 agent、联网服务、本地模型、偏好及清理参数 | `card_editor`、`advisor.model`、`advisor.official_model` |
+| `shared` | 提供商、参谋 agent、制卡 agent、联网服务、本地模型、偏好及清理参数 | `card_author`、`advisor.model`、`advisor.official_model` |
 
 两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
@@ -43,7 +43,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围中的模型能力检查失效，因此一次响应可能包含多个范围的新修订号。客户端应合并响应中的实际值，不能只递增提交范围的本地计数。
 
-`SettingsDocument.runtime(mode)` 生成一次操作的深拷贝配置。正在执行的回合继续使用开始时的快照；保存后的配置用于后续操作。Full Agent 与 角色卡编辑 agent 都有明确模型配置，不在运行时继承 Half Agent 模型。
+`SettingsDocument.runtime(mode)` 生成一次操作的深拷贝配置。正在执行的回合继续使用开始时的快照；保存后的配置用于后续操作。Full Agent 与 制卡 agent 都有明确模型配置，不在运行时继承 Half Agent 模型。
 
 `full_agent.tools.parallel_tool_calls` 为严格布尔值，默认 `true`；旧设置缺少此字段时自动采用开启值。它对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent；通过 `PATCH /api/settings/full_agent` 的 `changes` 传入 `{"tools.parallel_tool_calls":false}` 可关闭。
 
@@ -102,15 +102,15 @@ Content-Type: application/json
 
 ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
-导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及角色卡编辑 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
+导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及制卡 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 
 ## 消息适配
 
 模型配置的 `message_adapter` 字典整体写入，例如 `model.message_adapter`、`foreground.message_adapter`。结构为 `{"version":1,"mappings":{"chat_completions":{"state":{"role":"user","wrap":false}}}}`；省略类型使用程序默认值。只允许覆盖类型目录中 `configurable=true` 的项。
 
-`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_editor`、`advisor`。
+`GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_author`、`advisor`。
 
-对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`；制卡使用 `GET/PUT /api/card-editor/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整的新值。这个修订号独立于剧情／草稿修订号，运行中也可保存。下一次模型调用读取新值，同次调用的重试保持原快照。
+对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`；制卡使用 `GET/PUT /api/card-author/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整的新值。这个修订号独立于剧情／草稿修订号，运行中也可保存。下一次模型调用读取新值，同次调用的重试保持原快照。
 
 全局 adapter 默认值只在创建对话时复制，分支复制父对话当前设置；全局修改不影响已有对话。持久化保存在 `message_adapter_configs`，随对话删除和备份管理。
 
@@ -142,11 +142,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-当前数据库为 **schema 5**，设置文档为 **version 2**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
+当前数据库为 **schema 6**，设置文档为 **version 3**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-存储层接受 schema 1–5，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+存储层接受 schema 1–6，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
 
-迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的角色卡编辑 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
+迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的制卡 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 
 其他配置迁移由同一设置层管理：
 

@@ -13,18 +13,18 @@ from tavern.storage.store import Conflict, dump, uid
 def initialize(store):
     with store.connection() as db:
         db.executescript("""BEGIN IMMEDIATE;
-            CREATE TABLE IF NOT EXISTS card_editor_conversations(
+            CREATE TABLE IF NOT EXISTS card_author_conversations(
                 id TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, title TEXT NOT NULL DEFAULT '',
                 payload TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL, next_ref INTEGER NOT NULL DEFAULT 1);
-            CREATE TABLE IF NOT EXISTS card_editor_progress(workspace TEXT PRIMARY KEY, run TEXT NOT NULL, payload TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS card_editor_messages(workspace TEXT NOT NULL, seq INTEGER NOT NULL,
+            CREATE TABLE IF NOT EXISTS card_author_progress(workspace TEXT PRIMARY KEY, run TEXT NOT NULL, payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS card_author_messages(workspace TEXT NOT NULL, seq INTEGER NOT NULL,
                 role TEXT NOT NULL, content TEXT NOT NULL, run TEXT NOT NULL, PRIMARY KEY(workspace,seq));
-            CREATE TABLE IF NOT EXISTS card_editor_traces(run TEXT PRIMARY KEY, payload TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS card_author_traces(run TEXT PRIMARY KEY, payload TEXT NOT NULL);
         """)
-        columns = {r[1] for r in db.execute("PRAGMA table_info(card_editor_conversations)")}
+        columns = {r[1] for r in db.execute("PRAGMA table_info(card_author_conversations)")}
         if "channel_origin" not in columns:
-            db.execute("ALTER TABLE card_editor_conversations ADD COLUMN channel_origin TEXT")
-            db.execute("ALTER TABLE card_editor_conversations ADD COLUMN model_selection TEXT NOT NULL DEFAULT '{}'")
+            db.execute("ALTER TABLE card_author_conversations ADD COLUMN channel_origin TEXT")
+            db.execute("ALTER TABLE card_author_conversations ADD COLUMN model_selection TEXT NOT NULL DEFAULT '{}'")
         if "ref" not in {r[1] for r in db.execute("PRAGMA table_info(card_edit_versions)")}:
             db.execute("ALTER TABLE card_edit_versions ADD COLUMN ref TEXT NOT NULL DEFAULT 'C1'")
         if "snapshot" not in {r[1] for r in db.execute("PRAGMA table_info(card_edit_versions)")}:
@@ -32,14 +32,14 @@ def initialize(store):
         for row in db.execute("SELECT * FROM card_edits").fetchall():
             item = {key: json.loads(row[key]) for key in ("source", "base_document", "document")}
             item.update(ref="C1", card=row["card"], base_revision=row["base_revision"], kind="draft", target_mode=None, brief="")
-            db.execute("INSERT OR IGNORE INTO card_editor_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,?, '', ?, ?, ?, 2)",
+            db.execute("INSERT OR IGNORE INTO card_author_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,?, '', ?, ?, ?, 2)",
                        (row["id"], row["revision"], dump({"cards": [item], "state": {}}), row["created"], row["created"]))
             seq = 0
             for run in db.execute("SELECT * FROM card_edit_runs WHERE workspace=? ORDER BY created,rowid", (row["id"],)):
                 for role, text in (("user", json.loads(run["request"]).get("text", "")), ("assistant", run["response"])):
                     if text:
                         seq += 1
-                        db.execute("INSERT OR IGNORE INTO card_editor_messages VALUES (?,?,?,?,?)", (row["id"], seq, role, text, run["id"]))
+                        db.execute("INSERT OR IGNORE INTO card_author_messages VALUES (?,?,?,?,?)", (row["id"], seq, role, text, run["id"]))
             context = db.execute("SELECT payload FROM card_edit_contexts WHERE workspace=?", (row["id"],)).fetchone()
             latest = db.execute("SELECT id FROM card_edit_runs WHERE workspace=? AND status='completed' ORDER BY created DESC LIMIT 1", (row["id"],)).fetchone()
             if context and latest:
@@ -54,14 +54,14 @@ def initialize(store):
                             message["content"] = view.restore(message["content"])
                         for call in message.get("tool_calls", []):
                             call["function"]["arguments"] = view.restore(call["function"]["arguments"])
-                db.execute("INSERT OR IGNORE INTO card_editor_traces VALUES (?,?)", (latest[0], dump(messages)))
+                db.execute("INSERT OR IGNORE INTO card_author_traces VALUES (?,?)", (latest[0], dump(messages)))
         db.execute("DELETE FROM card_edits")
         db.execute("UPDATE meta SET value='3' WHERE key='schema_version' AND value IN ('1','2')")
 
 
 class Conversations:
     def load(self, db, wid):
-        row = db.execute("SELECT * FROM card_editor_conversations WHERE id=?", (wid,)).fetchone()
+        row = db.execute("SELECT * FROM card_author_conversations WHERE id=?", (wid,)).fetchone()
         if not row:
             raise KeyError("制卡对话不存在")
         return {**dict(row), **json.loads(row["payload"]), "model_selection": json.loads(row["model_selection"])}
@@ -72,7 +72,7 @@ class Conversations:
             payload["files"] = workspace["files"]
         if workspace.get("environment"):
             payload["environment"] = workspace["environment"]
-        db.execute("UPDATE card_editor_conversations SET payload=?,revision=revision+?,updated=? WHERE id=?",
+        db.execute("UPDATE card_author_conversations SET payload=?,revision=revision+?,updated=? WHERE id=?",
                    (dump(payload), int(increment), time.time(), workspace["id"]))
 
     def environment_snapshot(self, db, workspace, timestamp=None):
@@ -80,7 +80,7 @@ class Conversations:
             return copy.deepcopy(workspace["environment"])
         # Old conversations can recover their first request's time, but cannot
         # reconstruct the OS used then. Never silently present today's OS as it.
-        first = db.execute("""SELECT r.created FROM card_editor_messages m
+        first = db.execute("""SELECT r.created FROM card_author_messages m
             LEFT JOIN card_edit_runs r ON r.id=m.run
             WHERE m.workspace=? AND m.role='user' ORDER BY m.seq LIMIT 1""", (workspace["id"],)).fetchone()
         snapshot = capture_environment(first[0] if first and first[0] is not None else timestamp)
@@ -97,35 +97,35 @@ class Conversations:
             raise Conflict("制卡对话已改变，请重新载入")
         if idle and db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
             raise Conflict("请先等待或停止当前编辑任务")
-        if idle and db.execute("SELECT 1 FROM card_editor_progress WHERE workspace=?", (wid,)).fetchone():
+        if idle and db.execute("SELECT 1 FROM card_author_progress WHERE workspace=?", (wid,)).fetchone():
             raise Conflict("请先继续或丢弃本轮未完成进度")
         return workspace
 
     def initialize_channel(self, db, wid):
         from tavern.core.channels import provider_channel
-        profile = self.store.settings_document().shared.card_editor
-        cfg = self.store.settings().for_role("card_editor")
+        profile = self.store.settings_document().shared.card_author
+        cfg = self.store.settings().for_role("card_author")
         selection = {key: getattr(profile, key) for key in ("provider_id", "model")}
-        db.execute("UPDATE card_editor_conversations SET channel_origin=?,model_selection=? WHERE id=?",
+        db.execute("UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
                    (provider_channel(cfg), dump(selection) if profile.model else "{}", wid))
 
     def create_conversation(self, title=""):
         wid, now = uid(), time.time()
         with self.store.connection() as db:
-            db.execute("INSERT INTO card_editor_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,?,?,?,?,1)",
+            db.execute("INSERT INTO card_author_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,?,?,?,?,1)",
                         (wid, title, dump({"cards": [], "state": {}}), now, now))
             self.initialize_channel(db, wid)
-            self.store.create_message_adapter(db, "editor", wid, "card_editor")
+            self.store.create_message_adapter(db, "editor", wid, "card_author")
         return self.conversation(wid)
 
     def conversations(self, cid=None):
         with self.store.connection() as db:
             rows = db.execute("""SELECT c.*,
-                (SELECT substr(content,1,64) FROM card_editor_messages WHERE workspace=c.id AND role='user' ORDER BY seq LIMIT 1) AS first_input,
+                (SELECT substr(content,1,64) FROM card_author_messages WHERE workspace=c.id AND role='user' ORDER BY seq LIMIT 1) AS first_input,
                 coalesce((SELECT status FROM card_edit_runs WHERE workspace=c.id ORDER BY created DESC,rowid DESC LIMIT 1),'empty') AS status,
                 (SELECT count(*) FROM card_edit_runs WHERE workspace=c.id) AS turn_count,
-                EXISTS(SELECT 1 FROM card_editor_progress WHERE workspace=c.id) AS resumable
-                FROM card_editor_conversations c ORDER BY updated DESC,rowid DESC""").fetchall()
+                EXISTS(SELECT 1 FROM card_author_progress WHERE workspace=c.id) AS resumable
+                FROM card_author_conversations c ORDER BY updated DESC,rowid DESC""").fetchall()
         result = []
         for row in rows:
             payload = json.loads(row["payload"])
@@ -143,11 +143,11 @@ class Conversations:
         files = self.load(db, wid).get("files", [])
         return [{**dict(r), "ref": f"H{r['seq']}",
                  "attachments": [f for f in files if f.get("message_ref") == f"H{r['seq']}"]}
-                for r in db.execute("SELECT * FROM card_editor_messages WHERE workspace=? ORDER BY seq", (wid,))]
+                for r in db.execute("SELECT * FROM card_author_messages WHERE workspace=? ORDER BY seq", (wid,))]
 
     def message(self, db, wid, role, text, rid):
-        seq = db.execute("SELECT coalesce(max(seq),0)+1 FROM card_editor_messages WHERE workspace=?", (wid,)).fetchone()[0]
-        db.execute("INSERT INTO card_editor_messages VALUES (?,?,?,?,?)", (wid, seq, role, text, rid))
+        seq = db.execute("SELECT coalesce(max(seq),0)+1 FROM card_author_messages WHERE workspace=?", (wid,)).fetchone()[0]
+        db.execute("INSERT INTO card_author_messages VALUES (?,?,?,?,?)", (wid, seq, role, text, rid))
         return f"H{seq}"
 
     def conversation(self, wid):
@@ -161,7 +161,7 @@ class Conversations:
                             can_undo=bool(db.execute("SELECT 1 FROM card_edit_versions WHERE workspace=? AND ref=?", (wid, item["ref"])).fetchone()))
             result["messages"] = self.messages(wid, db)
             result["runs"] = [{**dict(r), "request": json.loads(r["request"])} for r in db.execute("SELECT * FROM card_edit_runs WHERE workspace=? ORDER BY created,rowid", (wid,))]
-            pending = db.execute("SELECT run,payload FROM card_editor_progress WHERE workspace=?", (wid,)).fetchone()
+            pending = db.execute("SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
             value = json.loads(pending[1]) if pending else None
             result["pending"] = {"run": pending[0], "cards": value["working"]["cards"],
                                  "state": value["working"]["state"], "calls": value.get("calls", 0)} if pending else None
@@ -171,7 +171,7 @@ class Conversations:
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.check(db, wid, revision)
-            db.execute("UPDATE card_editor_conversations SET title=? WHERE id=?", (title, wid))
+            db.execute("UPDATE card_author_conversations SET title=? WHERE id=?", (title, wid))
             self.write(db, workspace)
         return self.conversation(wid)
 
@@ -203,7 +203,7 @@ class Conversations:
                 workspace["cards"].append({"ref": f"C{workspace['next_ref']}", "card": cid, "source": source,
                     "kind": "draft" if editable or document != source["document"] else "reference", "target_mode": None,
                     "base_revision": source["revision"], "base_document": source["document"], "document": document, "brief": ""})
-                db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+                db.execute("UPDATE card_author_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
                 self.write(db, workspace)
         return self.conversation(wid)
 
@@ -222,7 +222,7 @@ class Conversations:
                 ref = next((ref for ref, value in refs.items() if value == pid), None)
                 if ref is None:
                     ref = f"P{workspace['next_ref']}"
-                    db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+                    db.execute("UPDATE card_author_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
                     refs[ref] = pid
                 attachments[ref] = {key: row[key] for key in ("id", "name", "description", "version")}
                 self.write(db, workspace)
@@ -285,6 +285,34 @@ class Conversations:
             self.write(db, workspace)
         return self.conversation(wid)
 
+    def set_portrait(self, wid, ref, file_ref, revision):
+        from tavern.character.editor_images import apply_portrait, portrait_png
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            workspace = self.check(db, wid, revision)
+            item = self.item(workspace, ref)
+            file = next((f for f in workspace.get("files", []) if f["ref"] == file_ref), None) if file_ref else None
+            if file_ref and file is None:
+                raise KeyError("文件引用不存在")
+            digest = portrait_png(self.store, wid, file) if file else None
+            if digest != item.get("source", {}).get("original") or not digest and item.get("source", {}).get("container") == "png":
+                self.version(db, wid, item, "设置头像" if digest else "移除头像")
+                apply_portrait(item, digest)
+                self.write(db, workspace)
+        return self.conversation(wid)
+
+    def portrait(self, wid, digest):
+        """Serve only images that a current, pending or undoable draft actually uses."""
+        with self.store.connection() as db:
+            workspace = self.load(db, wid)
+            sources = [c.get("source", {}) for c in workspace["cards"]]
+            pending = db.execute("SELECT payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
+            if pending:
+                sources.extend(c.get("source", {}) for c in json.loads(pending[0])["working"]["cards"])
+        if not any(s.get("container") == "png" and s.get("original") == digest for s in sources):
+            raise KeyError("头像不存在")
+        return self.store.root / "blobs" / digest
+
     def remove_card(self, wid, ref, revision):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -313,12 +341,16 @@ class Conversations:
             document, source = copy.deepcopy(item["document"]), item["source"]
             dependencies = {"resources": {}, "scripts": {}, **source.get("dependencies", {})}
             validate_document(document)
+            # A portrait set in the draft replaces the PNG container image; removing it
+            # leaves a JSON card whose original is the document itself.
+            original = source.get("original") or self.store.blob(dump(document).encode())
             if mode == "overwrite":
                 current = db.execute("SELECT revision FROM cards WHERE id=?", (item["card"],)).fetchone()
                 if not current or current[0] != item["base_revision"]:
                     raise Conflict("原卡已改变或删除；草稿已保留，请另存或重新载入")
                 cid = item["card"]
-                db.execute("UPDATE cards SET document=?,name=?,report=?,revision=revision+1 WHERE id=?", (dump(document), normalize(document)["name"], dump(diagnose(document)), cid))
+                db.execute("UPDATE cards SET document=?,name=?,report=?,original=?,container=?,revision=revision+1 WHERE id=?",
+                           (dump(document), normalize(document)["name"], dump(diagnose(document)), original, source["container"], cid))
             elif mode in {"copy", "create"}:
                 if mode == "create" and item["card"]:
                     raise ValueError("草稿已有保存目标，请使用覆盖或另存")
@@ -331,7 +363,6 @@ class Conversations:
                     while name in names:
                         name, index = f"{base} {index}", index + 1
                     data["name"] = name
-                original = source.get("original") or self.store.blob(dump(document).encode())
                 # Permission is a current user setting, not an editable draft field.
                 # A long-lived editor source may predate either approval or revocation.
                 live_source = db.execute("SELECT permission FROM cards WHERE id=?", (source.get("id"),)).fetchone()
@@ -360,10 +391,10 @@ class Conversations:
             sources.extend(json.loads(r[0]).get("source", {}) for r in db.execute(
                 "SELECT snapshot FROM card_edit_versions WHERE workspace=? AND snapshot IS NOT NULL", (wid,)))
             db.execute("DELETE FROM card_edit_events WHERE run IN (SELECT id FROM card_edit_runs WHERE workspace=?)", (wid,))
-            db.execute("DELETE FROM card_editor_traces WHERE run IN (SELECT id FROM card_edit_runs WHERE workspace=?)", (wid,))
-            for table in ("card_edit_runs", "card_edit_versions", "card_edit_saves", "card_edit_contexts", "card_editor_messages", "card_editor_progress"):
+            db.execute("DELETE FROM card_author_traces WHERE run IN (SELECT id FROM card_edit_runs WHERE workspace=?)", (wid,))
+            for table in ("card_edit_runs", "card_edit_versions", "card_edit_saves", "card_edit_contexts", "card_author_messages", "card_author_progress"):
                 db.execute(f"DELETE FROM {table} WHERE workspace=?", (wid,))
-            db.execute("DELETE FROM card_editor_conversations WHERE id=?", (wid,))
+            db.execute("DELETE FROM card_author_conversations WHERE id=?", (wid,))
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (wid,))
         for source in sources:
             self.store.prune_card_assets({**source, "id": wid}, source.get("dependencies", {}))
@@ -376,25 +407,25 @@ class Conversations:
             workspace = self.check(db, wid, revision, idle=False)
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("请先停止任务")
-            db.execute("DELETE FROM card_editor_progress WHERE workspace=?", (wid,))
+            db.execute("DELETE FROM card_author_progress WHERE workspace=?", (wid,))
             self.write(db, workspace)
         return self.conversation(wid)
 
     def reserve_ref(self, wid, prefix="C"):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            number = db.execute("SELECT next_ref FROM card_editor_conversations WHERE id=?", (wid,)).fetchone()[0]
-            db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+            number = db.execute("SELECT next_ref FROM card_author_conversations WHERE id=?", (wid,)).fetchone()[0]
+            db.execute("UPDATE card_author_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
         return f"{prefix}{number}"
 
     def progress(self, wid):
         with self.store.connection() as db:
-            row = db.execute("SELECT payload FROM card_editor_progress WHERE workspace=?", (wid,)).fetchone()
+            row = db.execute("SELECT payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def save_progress(self, wid, rid, payload):
         with self.store.connection() as db:
-            db.execute("INSERT OR REPLACE INTO card_editor_progress VALUES (?,?,?)", (wid, rid, dump(payload)))
+            db.execute("INSERT OR REPLACE INTO card_author_progress VALUES (?,?,?)", (wid, rid, dump(payload)))
 
     def get(self, wid):
         value = self.conversation(wid)
@@ -418,10 +449,10 @@ class Conversations:
             current = db.execute("SELECT revision FROM cards WHERE id=?", (cid,)).fetchone()
             if not current or current[0] != source["revision"]:
                 raise Conflict("角色卡已改变或删除，请刷新后创建编辑草稿")
-            db.execute("INSERT INTO card_editor_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,'',?,?,?,2)",
+            db.execute("INSERT INTO card_author_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,'',?,?,?,2)",
                        (wid, dump({"cards": [item], "state": {}}), now, now))
             self.initialize_channel(db, wid)
-            self.store.create_message_adapter(db, "editor", wid, "card_editor")
+            self.store.create_message_adapter(db, "editor", wid, "card_author")
         return self.get(wid)
 
     def list(self, cid):
@@ -449,9 +480,9 @@ class Conversations:
             workspace = self.check(db, wid, revision, idle=False)
             if len(workspace["cards"]) != 1:
                 raise Conflict("旧接口只支持单卡草稿；请从制卡入口创建对话并明确引用")
-            db.execute("INSERT INTO card_editor_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,'',?,?,?,?)", (new_id,
+            db.execute("INSERT INTO card_author_conversations(id,revision,title,payload,created,updated,next_ref) VALUES (?,0,'',?,?,?,?)", (new_id,
                 dump({"cards": workspace["cards"], "state": {}}), now, now, workspace["next_ref"]))
-            db.execute("UPDATE card_editor_conversations SET channel_origin=?,model_selection=? WHERE id=?",
+            db.execute("UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
                        (workspace["channel_origin"], dump(workspace["model_selection"]), new_id))
             self.store.copy_message_adapter(db, "editor", wid, new_id)
         return self.get(new_id)

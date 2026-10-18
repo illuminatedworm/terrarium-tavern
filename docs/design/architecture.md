@@ -1,13 +1,13 @@
 # 应用架构与职责
 
-应用由两种游玩模式、参谋 agent 和角色卡编辑 agent 组成，共享模型传输、检索和存储能力。各运行时分别管理工作上下文与写入范围，设计说明见 [Full Agent](full-agent.md)、[参谋 agent](advisor.md)和[角色卡编辑 agent](card-editor.md)。
+应用由两种游玩模式、参谋 agent 和制卡 agent 组成，共享模型传输、检索和存储能力。各运行时分别管理工作上下文与写入范围，设计说明见 [Full Agent](full-agent.md)、[参谋 agent](advisor.md)和[制卡 agent](card-author.md)。
 
 ```mermaid
 flowchart TD
     UI[Vue 界面] --> API[FastAPI 与模式路由]
     API --> HALF[Half Agent Runtime]
     API --> FULL[Full Agent Runtime]
-    API --> EDIT[角色卡编辑 agent]
+    API --> EDIT[制卡 agent]
     API --> ADVISOR[参谋 agent]
     HALF --> WRITER[Writer 正文]
     HALF --> TRACKER[Tracker 维护]
@@ -23,7 +23,7 @@ flowchart TD
 |---|---|---|
 | Writer | 演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；常规正文一次生成，零工具，不调度 Tracker 或提交状态 |
 | Tracker | 分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
-| 角色卡编辑 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_editor.py](../../src/tavern/character/card_editor.py)；用户审阅后保存书架卡片 |
+| 制卡 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_author.py](../../src/tavern/character/card_author.py)；用户审阅后保存书架卡片 |
 | 参谋 agent | 查阅故事、咨询与联网；按明确要求更新本轮偏好 | [advisor/runtime.py](../../src/tavern/advisor/runtime.py)；使用独立咨询记录和偏好草稿 |
 | Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
 | Half Agent Runtime | 回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
@@ -51,9 +51,9 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 ## 设置与恢复
 
-设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和角色卡编辑 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
+设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和制卡 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
 
-数据库为 schema 5；schema 1–4 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
+数据库为 schema 6；schema 1–5 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
 
 剧情快照持续保留，恢复和回复版本切换使用对应快照。详细诊断可以清理，但剧情、分支及恢复所需记录不作为旧日志删除。存储策略见[安装与维护](../guides/maintenance.md#清理与资源保留)。
 

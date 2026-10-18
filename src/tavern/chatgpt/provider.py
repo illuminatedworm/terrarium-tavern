@@ -78,7 +78,7 @@ class ChatGPTProvider(ModelTransport):
             body["prompt_cache_key"] = self.request_context.session_id
         extra = kwargs.get("extra_body") or {}
         choice = extra.get("tool_choice", "auto")
-        self._cloud_search = bool(kwargs.get("_web_search") and kwargs.get("_web_role") in {"advisor", "card_editor"}
+        self._cloud_search = bool(kwargs.get("_web_search") and kwargs.get("_web_role") in {"advisor", "card_author"}
                                   and kwargs.get("_web_role") == getattr(self, "operation_purpose", None)
                                   and choice in ("auto", "required") and threshold is None
                                   and not kwargs.get("_maintenance_instructions"))

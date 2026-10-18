@@ -25,7 +25,7 @@
 | Full Agent | `test_full_agent.py`、`test_full_agent_tools.py`、`test_full_agent_alignment.py`；浏览器 `browser_full_agent` |
 | 工具事件与流式显示 | `test_full_agent_activity.py`、`agentActivity.test.ts`、`turnStream.test.ts`；浏览器 `browser_full_agent_streaming` |
 | 检索与上下文 | `test_hybrid_retrieval.py`、`test_conversation_lore.py`、`test_tokens.py` |
-| 制卡、脚本与变量 | `test_card_authoring.py`、`test_card_editor.py`、`test_runtime.py`、`test_script_permissions.py`、`test_mvu_compatibility.py`；浏览器 `browser_card_editor`、`browser_mvu_panel`、`browser_mvu_formats` |
+| 制卡、脚本与变量 | `test_card_authoring.py`、`test_card_author.py`、`test_runtime.py`、`test_script_permissions.py`、`test_mvu_compatibility.py`；浏览器 `browser_card_author`、`browser_mvu_panel`、`browser_mvu_formats` |
 | 缓存和模型协议 | `test_unified_cache.py`、`test_cache_follow.py`、`test_sent_cache_breakpoints.py`、`test_model_api_modes.py`、`test_genai_transport.py`；Gemini 设置浏览器 `browser_genai` |
 | 历史阅读 | `storyHistory.test.ts`；浏览器 `browser_history_navigation`、`browser_history_rendering` |
 | 存储、备份和发行 | `test_backup.py`、`test_session_fork.py`、`test_repository_hygiene.py`、`test_release_quality.py` |
@@ -129,8 +129,8 @@ ZIP、清单和校验值输出到 `releases/`。[verify_release.py](../../tools/
 
 测试截图、日志、评估结果和私人回放放在受忽略的本地目录。公开文档图片放在 `docs/images/`。许可文件和发行未决事项见[许可维护](licensing.md)。
 
-## 角色卡编辑 agent 真实模型评测
+## 制卡 agent 真实模型评测
 
-`tools/evaluate_card_editor.py` 使用现有模型配置并消耗模型额度，运行前需明确授权。默认在 `.cache/card-editor-evaluation/` 建立隔离数据；`--cases core` 和 `--cases remaining` 分别选择核心及其余场景。
+`tools/evaluate_card_author.py` 使用现有模型配置并消耗模型额度，运行前需明确授权。默认在 `.cache/card-author-evaluation/` 建立隔离数据；`--cases core` 和 `--cases remaining` 分别选择核心及其余场景。
 
 同一输出目录的运行共用 `budget.json`，累计最多 60 次实际 HTTP 请求，达到上限后停止。记录包含调用、用量、耗时和产物；创作结果按已确认方案人工审阅。

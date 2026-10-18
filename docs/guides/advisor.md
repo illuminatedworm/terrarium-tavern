@@ -52,7 +52,7 @@ Half Agent 和 Full Agent 都可从右侧栏的“参谋”打开参谋 agent，
 
 ## 外部资料与数据保存
 
-在“设置 → 通用 → 联网服务”配置与角色卡编辑 agent 共用的服务、顺序、密钥和超时。默认顺序为 Exa MCP、Tavily、已配置的 SearXNG、DuckDuckGo。Exa 和 Tavily 支持免 key 接入或自有 API Key，额度及计费以服务商实际规则为准。应用只回显密钥配置状态，默认导出排除密钥。
+在“设置 → 通用 → 联网服务”配置与制卡 agent 共用的服务、顺序、密钥和超时。默认顺序为 Exa MCP、Tavily、已配置的 SearXNG、DuckDuckGo。Exa 和 Tavily 支持免 key 接入或自有 API Key，额度及计费以服务商实际规则为准。应用只回显密钥配置状态，默认导出排除密钥。
 
 参谋 agent 的“联网方式”可选关闭、自动或本地实现。自动模式下，ChatGPT 官方渠道优先使用云端搜索，普通 API 使用共享本地服务；本地实现由应用发起互联网请求。搜索故障可按策略换用本地服务，账号或额度问题需处理对应连接。
 

@@ -10,7 +10,7 @@ from tavern.core.models import SessionCreate
 from tavern.search.retrieval_config import ModelProfile, Provider
 from tavern.storage.store import dump, uid
 from tests.backend.test_advisor import ask, setup
-from tests.backend.test_card_editor import ToolLLM
+from tests.backend.test_card_author import ToolLLM
 
 
 class Cloud(ScriptedLLM):

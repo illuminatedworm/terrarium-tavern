@@ -8,13 +8,13 @@ import {
   type EditorCard,
   type EditorConversation,
   type EditorPersona,
-} from '../../lib/cardEditor';
+} from '../../lib/cardAuthor';
 import type { CardReferenceOption } from '../../lib/cardReferences';
 import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
 import { editorCacheRate, type EditorContextStats } from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
-import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardEditorSkills';
+import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
 import { eventCursor } from '../../lib/turnStream';
 import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
@@ -46,6 +46,11 @@ const workspace = ref<EditorConversation | null>(null);
 const personaLibrary = ref<EditorPersona[]>([]);
 const personaAttachments = computed(() => workspace.value?.state.persona_attachments || {});
 const pendingFiles = computed(() => (workspace.value?.files || []).filter((file) => !file.message_ref));
+const portraitFiles = computed(() =>
+  (workspace.value?.files || []).filter((file) =>
+    ['.png', '.jpg', '.jpeg', '.webp'].includes(file.extension),
+  ),
+);
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
 const selectedProfile = computed(() => ({
@@ -116,7 +121,7 @@ let stream: EventSource | undefined;
 let modalTrigger: HTMLElement | null = null;
 let statsTimer: ReturnType<typeof setTimeout> | undefined;
 let statsVersion = 0;
-const base = `/card-editor/conversations/${props.conversationId}`;
+const base = `/card-author/conversations/${props.conversationId}`;
 const active = computed(() => workspace.value?.runs.find((r) => ['queued', 'running'].includes(r.status)));
 const locked = computed(() => busy.value || !!active.value || !!workspace.value?.pending);
 const items = computed(() =>
@@ -285,9 +290,15 @@ function observe(id: string) {
     if (
       event.kind === 'tool_finished' &&
       event.payload.status === 'completed' &&
-      ['patch_draft', 'set_opening', 'create_draft', 'revert_draft', 'configure_card'].includes(
-        event.payload.tool,
-      )
+      [
+        'patch_draft',
+        'set_text_field',
+        'set_opening',
+        'set_portrait',
+        'create_draft',
+        'revert_draft',
+        'configure_card',
+      ].includes(event.payload.tool)
     ) {
       void refresh().catch((e: Error) => {
         if (alive && connection === stream) error.value = `草稿预览更新失败：${e.message}`;
@@ -508,6 +519,21 @@ async function action(kind: string) {
     await refresh();
   });
 }
+async function setPortrait(select: HTMLSelectElement | null) {
+  if (!workspace.value || !current.value || locked.value) return;
+  const fileRef = select ? select.value : null;
+  if (select) select.value = '';
+  if (select && !fileRef) return;
+  const ref = current.value.ref;
+  await guard(async () => {
+    await api(
+      base + `/drafts/${ref}/portrait`,
+      { expected_revision: workspace.value!.revision, file_ref: fileRef },
+      'PUT',
+    );
+    await refresh();
+  });
+}
 async function saveForm(document: any) {
   const ref = current.value!.ref;
   const draftKey = `tavern-card-draft-${formCard.value!.id}`;
@@ -587,13 +613,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section ref="shell" class="card-workspace" aria-label="角色卡编辑 agent" :inert="!!modal">
+  <section ref="shell" class="card-workspace" aria-label="制卡 agent" :inert="!!modal">
     <div class="cw-body">
       <div class="cw-dialogue" :inert="inspectorOpen && narrow">
         <header class="cw-header">
           <span class="cw-agent-mark" aria-hidden="true"><CardWorkspaceIcon name="pen" /></span>
           <div class="cw-heading">
-            <h1>角色卡编辑 agent</h1>
+            <h1>制卡 agent</h1>
             <p :title="conversationTitle">{{ conversationTitle }}</p>
           </div>
           <div class="cw-toolbar">
@@ -822,6 +848,7 @@ onBeforeUnmount(() => {
               v-if="tab === 'preview'"
               :key="current.ref"
               :card="current"
+              :conversation-id="conversationId"
               :status="draftStatus"
               :disabled="locked || pendingView"
               @edit="openModal('form')"
@@ -841,6 +868,35 @@ onBeforeUnmount(() => {
                   <option value="full_agent">Full Agent</option>
                 </select></label
               >
+              <label
+                >头像<select
+                  value=""
+                  :disabled="
+                    locked || pendingView || current.source.container === 'charx' || !portraitFiles.length
+                  "
+                  @change="setPortrait($event.target as HTMLSelectElement)"
+                >
+                  <option value="">
+                    {{
+                      current.source.container === 'charx'
+                        ? 'CHARX 卡暂不支持更换头像'
+                        : portraitFiles.length
+                          ? '选择图片附件作为头像…'
+                          : '先在对话中引用图片'
+                    }}
+                  </option>
+                  <option v-for="file in portraitFiles" :key="file.ref" :value="file.ref">
+                    {{ file.name }}
+                  </option>
+                </select></label
+              >
+              <button
+                v-if="current.source.container === 'png'"
+                :disabled="locked || pendingView"
+                @click="setPortrait(null)"
+              >
+                移除头像
+              </button>
               <button class="cw-edit-form" :disabled="locked || pendingView" @click="openModal('form')">
                 <CardWorkspaceIcon name="file" />打开表单编辑
               </button>

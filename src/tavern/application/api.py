@@ -35,8 +35,8 @@ from tavern.storage.store import Conflict, Store, dump
 def create_app(data_dir=None):
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
     service = ModeRuntime(store)
-    from tavern.character.card_editor import CardEditorService
-    editor = CardEditorService(store)
+    from tavern.character.card_author import CardAuthorService
+    editor = CardAuthorService(store)
     from tavern.advisor.runtime import AdvisorService
     advisor = AdvisorService(store, service.full.retrieval)
 
@@ -79,7 +79,7 @@ def create_app(data_dir=None):
     @app.exception_handler(ChatGPTError)
     async def chatgpt_error(request, error):
         return JSONResponse(error.public(), status_code=400)
-    from tavern.character.card_editor_api import register_editor_routes
+    from tavern.character.card_author_api import register_editor_routes
     register_editor_routes(app, editor)
     from tavern.application.context_api import register_context_routes
     from tavern.full_agent.api import register_full_agent_routes
@@ -206,7 +206,7 @@ def create_app(data_dir=None):
         return service.local_models.job("rebuild", rebuild)
 
     @app.post("/api/settings/probe")
-    async def probe(role: Literal["foreground", "background", "card_editor", "full_agent", "advisor"] = "foreground",
+    async def probe(role: Literal["foreground", "background", "card_author", "full_agent", "advisor"] = "foreground",
                     channel: Literal["standard", "chatgpt"] | None = None):
         from tavern.scripting.agent import make_provider
 

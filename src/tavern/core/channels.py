@@ -21,4 +21,4 @@ def require_channel(settings, channel):
 
 def profile_key(role, channel):
     key = "model" if role == "full_agent" else role
-    return "official_" + key if channel == "chatgpt" and role != "card_editor" else key
+    return "official_" + key if channel == "chatgpt" and role != "card_author" else key

@@ -1,11 +1,11 @@
-"""Independent Card Editor service and durable, explicitly resumed operations."""
+"""Independent Card Author service and durable, explicitly resumed operations."""
 import asyncio
 import json
 import time
 
 import httpx
 
-from tavern.character.card_editor_store import EditorStore
+from tavern.character.card_author_store import EditorStore
 from tavern.character.editor_config import SYSTEM as SYSTEM
 from tavern.character.editor_run import EditorRun
 from tavern.character.editor_runtime_config import editor_runtime_config
@@ -13,7 +13,7 @@ from tavern.core.provider import make_provider, require_model_connection
 from tavern.storage.store import Conflict, dump, uid
 
 
-class CardEditorService:
+class CardAuthorService:
     def __init__(self, store):
         self.store, self.edits = store, EditorStore(store)
         self.tasks = {}
@@ -35,7 +35,7 @@ class CardEditorService:
             workspace = self.edits.check(db, wid, request.expected_revision, idle=False)
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("当前已有运行中的编辑任务")
-            pending = db.execute("SELECT run,payload FROM card_editor_progress WHERE workspace=?", (wid,)).fetchone()
+            pending = db.execute("SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
             if request.resume_run_id:
                 if not pending or pending[0] != request.resume_run_id:
                     raise Conflict("只能继续当前对话最新的未完成进度")
@@ -62,7 +62,7 @@ class CardEditorService:
                     self.edits.write(db, workspace, increment=False)
             db.execute("INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",
                        (rid, wid, request.operation_id, dump(payload), now))
-            db.execute("UPDATE card_editor_conversations SET updated=? WHERE id=?", (time.time(), wid))
+            db.execute("UPDATE card_author_conversations SET updated=? WHERE id=?", (time.time(), wid))
         # A queued task can be stopped before its coroutine runs. Persist its
         # baseline now so shutdown/immediate cancellation remains resumable.
         try:

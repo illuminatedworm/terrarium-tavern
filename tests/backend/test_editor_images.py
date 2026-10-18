@@ -11,17 +11,17 @@ from httpx import ASGITransport, AsyncClient
 from PIL import Image
 
 from tavern.application.api import create_app
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_attachments import attach_file, attachment_path, detach_file
 from tavern.character.editor_images import IMAGE_REFS, image_metadata, materialize_images
 from tavern.character.editor_tools import EditorTools
-from tavern.core.models import CardEditorRequest
+from tavern.core.models import CardAuthorRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store
+from tests.backend.test_card_author import ToolLLM
+from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
-from tests.backend.test_card_editor_alignment import Editor
 from tests.backend.test_editor_reference_prefix import execute
 from tests.backend.test_half_agent_alignment import blocks
 from tests.backend.test_image_protocols import assert_images, response
@@ -38,7 +38,7 @@ def image_bytes(format="PNG", *, animated=False, size=(24, 16)):
 @pytest.mark.parametrize("extension,format,mime", [(".png", "PNG", "image/png"), (".jpg", "JPEG", "image/jpeg"),
                                                  (".jpeg", "JPEG", "image/jpeg"), (".webp", "WEBP", "image/webp")])
 def test_original_bytes_metadata_and_pending_removal(tmp_path, extension, format, mime):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     data = image_bytes(format)
     workspace = attach_file(editor.edits, wid, 0, "../参考" + extension.upper(), data)
@@ -56,7 +56,7 @@ def test_original_bytes_metadata_and_pending_removal(tmp_path, extension, format
     ("moving.png", image_bytes(animated=True), "动图"),
 ])
 def test_invalid_image_upload_is_atomic(tmp_path, filename, data, error):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     with pytest.raises(ValueError, match=error):
         attach_file(editor.edits, wid, 0, filename, data)
@@ -75,7 +75,7 @@ async def test_preview_stats_and_upload_size_are_truthful(tmp_path, monkeypatch)
     app = create_app(tmp_path)
     editor = app.state.editor
     wid = editor.edits.create_conversation()["id"]
-    base = f"/api/card-editor/conversations/{wid}"
+    base = f"/api/card-author/conversations/{wid}"
     data = image_bytes()
     encoded = base64.b64encode(data).decode()
     try:
@@ -136,13 +136,13 @@ async def test_images_on_wire_survive_tools_restart_rollover_and_history_read(tm
         # Restart, then change model: active user images rebuild from their
         # attachment ownership, not an old provider's encoded request.
         await editor.service.close()
-        editor.service = CardEditorService(Store(tmp_path))
+        editor.service = CardAuthorService(Store(tmp_path))
         edits = editor.service.edits
         settings = editor.service.store.settings_document()
-        settings.shared.card_editor.model = "second-image-model"
+        settings.shared.card_author.model = "second-image-model"
         editor.service.store.save_settings(settings)
         with editor.service.store.connection() as db:
-            db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+            db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                        (json.dumps({"provider_id": "default", "model": "second-image-model"}), wid))
         await execute(editor, [blocks(api, "重启后继续")], "继续讨论")
         assert json.loads(editor.requests[-1].content)["model"] == "second-image-model"
@@ -162,10 +162,10 @@ async def test_images_on_wire_survive_tools_restart_rollover_and_history_read(tm
         assert sum(len(m.get(IMAGE_REFS, [])) for m in edits.context(wid)["messages"]) == 2
 
         settings = editor.service.store.settings_document()
-        settings.shared.card_editor.model = "third-image-model"
+        settings.shared.card_author.model = "third-image-model"
         editor.service.store.save_settings(settings)
         with editor.service.store.connection() as db:
-            db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+            db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                        (json.dumps({"provider_id": "default", "model": "third-image-model"}), wid))
         await execute(editor, [blocks(api, "切换模型后继续核对原图")])
         assert json.loads(editor.requests[-1].content)["model"] == "third-image-model"
@@ -184,13 +184,13 @@ async def test_images_on_wire_survive_tools_restart_rollover_and_history_read(tm
 
 
 async def test_cancel_missing_corrupt_and_resume_do_not_drop_or_rebind_images(tmp_path):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     data = image_bytes()
     workspace = attach_file(editor.edits, wid, 0, "参考.png", data)
     file = workspace["files"][0]
     editor.provider_factory = lambda: ToolLLM([])
-    request = CardEditorRequest(text="读图", expected_revision=workspace["revision"], operation_id="first")
+    request = CardAuthorRequest(text="读图", expected_revision=workspace["revision"], operation_id="first")
     first = editor.submit(wid, request)
     assert editor.submit(wid, request)["id"] == first["id"]
     await editor.cancel(first["id"])
@@ -218,8 +218,41 @@ async def test_cancel_missing_corrupt_and_resume_do_not_drop_or_rebind_images(tm
         await editor.close()
 
 
+async def test_attached_image_becomes_png_portrait_of_saved_card(tmp_path):
+    store = Store(tmp_path)
+    editor = CardAuthorService(store)
+    wid = editor.edits.create_conversation()["id"]
+    attach_file(editor.edits, wid, 0, "封面.jpg", image_bytes("JPEG"))
+    provider = ToolLLM([
+        ("create_draft", {"name": "雾港", "confirmation_ref": "H1", "direct_instruction": True,
+                          "fields": {"description": "港口小镇", "first_mes": "雾笛响起。"}}),
+        ("set_portrait", {"card_ref": "C2", "file_ref": "F1"}),
+    ])
+    try:
+        result = await run(editor, wid, provider, "直接做一张雾港的卡，用这张图当头像")
+        assert result["status"] == "completed", result["error"]
+        workspace = editor.edits.conversation(wid)
+        source = workspace["cards"][0]["source"]
+        assert source["container"] == "png"
+        async with AsyncClient(transport=ASGITransport(app=create_app(tmp_path)), base_url="http://testserver") as client:
+            served = await client.get(f"/api/card-author/conversations/{wid}/portraits/{source['original']}")
+            assert served.headers["content-type"] == "image/png"
+            assert (await client.get(f"/api/card-author/conversations/{wid}/portraits/{'0' * 64}")).status_code == 404
+            removed = editor.edits.set_portrait(wid, "C2", None, workspace["revision"])
+            assert removed["cards"][0]["source"]["container"] == "json"
+            restored = editor.edits.undo_card(wid, "C2", removed["revision"])
+            saved = editor.edits.save_card(wid, "C2", restored["revision"], "create", "portrait-save")
+            assert saved["container"] == "png"
+            exported = await client.get(f"/api/cards/{saved['id']}/export")
+        with Image.open(BytesIO(exported.content)) as image:
+            assert image.format == "PNG"
+        assert store.import_card(exported.content, "雾港.png")["document"]["data"]["first_mes"] == "雾笛响起。"
+    finally:
+        await editor.close()
+
+
 async def test_reading_image_as_text_returns_guidance_and_preserves_original(tmp_path):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     workspace = attach_file(editor.edits, wid, 0, "参考.png", image_bytes())
     file = copy.deepcopy(workspace["files"][0])
@@ -250,10 +283,10 @@ async def test_provider_rejection_preserves_images_for_explicit_retry(tmp_path, 
     async def factory(cfg, capture):
         return ModelTransport(cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
 
-    monkeypatch.setattr("tavern.character.card_editor.make_provider", factory)
+    monkeypatch.setattr("tavern.character.card_author.make_provider", factory)
     workspace = attach_file(editor.service.edits, wid, editor.workspace["revision"], "参考.png", data)
     try:
-        first = editor.service.submit(wid, CardEditorRequest(text="读图", expected_revision=workspace["revision"], operation_id="first"))
+        first = editor.service.submit(wid, CardAuthorRequest(text="读图", expected_revision=workspace["revision"], operation_id="first"))
         await editor.service.tasks[first["id"]]
         failed = editor.service.edits.run(first["id"])
         assert failed["status"] == "error" and "确认所选模型支持图片输入" in failed["error"]
@@ -261,7 +294,7 @@ async def test_provider_rejection_preserves_images_for_explicit_retry(tmp_path, 
         assert_images(requests[0], "responses", expected)
         reject = False
         workspace = editor.service.edits.conversation(wid)
-        resumed = editor.service.submit(wid, CardEditorRequest(text="", expected_revision=workspace["revision"],
+        resumed = editor.service.submit(wid, CardAuthorRequest(text="", expected_revision=workspace["revision"],
                                                              operation_id="retry", resume_run_id=first["id"]))
         await editor.service.tasks[resumed["id"]]
         assert editor.service.edits.run(resumed["id"])["status"] == "completed"
@@ -290,7 +323,7 @@ async def test_switching_model_does_not_revive_unrecalled_archived_images(tmp_pa
     wid = editor.workspace["id"]
     try:
         with editor.store.connection() as db:
-            db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+            db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                        (json.dumps({"provider_id": "default", "model": "another-model"}), wid))
         await execute(editor, [blocks("responses", "继续新窗口")])
         body = json.loads(editor.requests[-1].content)
@@ -318,7 +351,7 @@ async def test_interrupted_history_batch_restores_images_after_all_tool_results(
                      "arguments": json.dumps({"path": document})})
     editor.plans.append([batch])
     workspace = editor.service.edits.conversation(wid)
-    first = editor.service.submit(wid, CardEditorRequest(text="回看旧图和资料", expected_revision=workspace["revision"], operation_id="batch"))
+    first = editor.service.submit(wid, CardAuthorRequest(text="回看旧图和资料", expected_revision=workspace["revision"], operation_id="batch"))
     try:
         await asyncio.wait_for(waiting.wait(), timeout=10)
         await editor.service.cancel(first["id"])
@@ -328,7 +361,7 @@ async def test_interrupted_history_batch_restores_images_after_all_tool_results(
         monkeypatch.setattr(EditorTools, "read_text_file", read_document)
         editor.plans.append([blocks("responses", "已恢复图片和资料")])
         workspace = editor.service.edits.conversation(wid)
-        resumed = editor.service.submit(wid, CardEditorRequest(text="", expected_revision=workspace["revision"],
+        resumed = editor.service.submit(wid, CardAuthorRequest(text="", expected_revision=workspace["revision"],
                                                               operation_id="batch-resume", resume_run_id=first["id"]))
         await editor.service.tasks[resumed["id"]]
         assert editor.service.edits.run(resumed["id"])["status"] == "completed"

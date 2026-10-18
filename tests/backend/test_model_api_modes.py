@@ -35,7 +35,7 @@ def test_nullable_sampling_and_per_connection_mode():
 
 @pytest.mark.parametrize("role,temperature,mode", [
     ("foreground", 0.3, "runtime"), ("background", None, "cloud"),
-    ("card_editor", 0.6, "cloud"), ("full_agent", 0.1, "runtime"),
+    ("card_author", 0.6, "cloud"), ("full_agent", 0.1, "runtime"),
 ])
 @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
 async def test_all_roles_send_their_own_model_parameters(role, temperature, mode, api_mode):
@@ -44,7 +44,7 @@ async def test_all_roles_send_their_own_model_parameters(role, temperature, mode
                "value": {"mode": "explicit"}, "request": {"prompt_cache_key": name,
                "prompt_cache_options": {"mode": "explicit"}}})
         for name, temp, control in [("foreground", 0.3, "runtime"), ("background", None, "cloud"),
-                                   ("card_editor", 0.6, "cloud"), ("full_agent", 0.1, "runtime")]}
+                                   ("card_author", 0.6, "cloud"), ("full_agent", 0.1, "runtime")]}
     settings = Settings(providers=[Provider(id="default", api_key="test", use_proxy=False)], **profiles)
     config = migrate_settings(settings.model_dump()).runtime().for_role(role)
     provider = await make_provider(config)

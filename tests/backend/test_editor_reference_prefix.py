@@ -4,18 +4,18 @@ import json
 
 import pytest
 
-from tavern.character.card_editor import CardEditorService
-from tavern.core.models import CardEditorRequest, PersonaEdit
+from tavern.character.card_author import CardAuthorService
+from tavern.core.models import CardAuthorRequest, PersonaEdit
 from tavern.storage.store import Store
-from tests.backend.test_card_editor import import_fixture
-from tests.backend.test_card_editor_alignment import Editor
+from tests.backend.test_card_author import import_fixture
+from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_half_agent_alignment import blocks
 
 
 async def execute(editor, plan, text="继续"):
     editor.plans.append(plan)
     workspace = editor.service.edits.conversation(editor.workspace["id"])
-    result = editor.service.submit(workspace["id"], CardEditorRequest(
+    result = editor.service.submit(workspace["id"], CardAuthorRequest(
         text=text, expected_revision=workspace["revision"], operation_id=str(len(workspace["runs"]))), legacy=False)
     await editor.service.tasks[result["id"]]
     result = editor.service.edits.run(result["id"])
@@ -89,7 +89,7 @@ async def test_same_length_manual_edit_preserves_prefix_and_unaffected_read_evid
         document["description"] = replacement
         editor.service.edits.update_card(wid, "C1", document, workspace["revision"])
         await editor.service.close()
-        editor.service = CardEditorService(Store(tmp_path))
+        editor.service = CardAuthorService(Store(tmp_path))
         start = len(editor.requests)
         result = await execute(editor, [
             editor.tool(2, "set_text_field", {"card_ref": "C1", "path": "/description", "text": "不能直接覆盖", "comment": "检查旧读取"}),

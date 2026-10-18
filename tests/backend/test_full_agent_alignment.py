@@ -180,7 +180,7 @@ def game(tmp_path, api="anthropic"):
     document.full_agent.model.api_mode = api
     document.half_agent.foreground.api_mode = api
     document.half_agent.background.api_mode = api
-    document.shared.card_editor.api_mode = api
+    document.shared.card_author.api_mode = api
     document.shared.providers[0].api_key = "local-audit-secret"
     document.shared.providers[0].base_url = "https://fixture.test"
     document.shared.network.api_proxy = False
@@ -644,7 +644,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             doc.full_agent.model.api_mode = api
             doc.half_agent.foreground.api_mode = api
             doc.half_agent.background.api_mode = api
-            doc.shared.card_editor.api_mode = api
+            doc.shared.card_author.api_mode = api
             doc.full_agent.model.model = model
             store.save_settings(doc)
             pending = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex,

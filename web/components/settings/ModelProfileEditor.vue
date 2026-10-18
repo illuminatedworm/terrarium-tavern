@@ -40,7 +40,7 @@ const { details: apiReasoning, note: reasoningNote } = useApiReasoning(
 );
 const editorChannel = ref<Channel>(providerChannel(provider.value));
 const visibleProviders = computed(() =>
-  props.role === 'card_editor' ? channelProviders(props.providers, editorChannel.value) : props.providers,
+  props.role === 'card_author' ? channelProviders(props.providers, editorChannel.value) : props.providers,
 );
 const providerOptions = computed(() =>
   visibleProviders.value.map((item) => ({ value: item.id, label: item.name })),
@@ -84,8 +84,8 @@ const errorPrefix = computed(() =>
     ? `full_agent.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
     : props.role === 'advisor'
       ? `shared.advisor.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
-      : props.role === 'card_editor'
-        ? 'shared.card_editor.'
+      : props.role === 'card_author'
+        ? 'shared.card_author.'
         : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
 );
 const common = computed<SettingField[]>(() => [
@@ -180,7 +180,7 @@ async function action(check: boolean) {
 <template>
   <section class="profile-editor" :aria-label="label">
     <ChannelSwitch
-      v-if="role === 'card_editor'"
+      v-if="role === 'card_author'"
       :model-value="editorChannel"
       @update:model-value="switchEditorChannel"
     />

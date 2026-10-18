@@ -1,24 +1,24 @@
-# 角色卡编辑 agent 独立创作工作区
+# 制卡 agent 独立创作工作区
 
-角色卡编辑 agent 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-editor.md)，工具详见[协议](../reference/card-editor-tools.md)。
+制卡 agent 有独立对话、资料引用和草稿，不读取游玩会话、记忆或变量。操作见[使用指南](../guides/card-author.md)，工具详见[协议](../reference/card-author-tools.md)。
 
-联网工具与参谋 agent 复用 `web/` 模块，以 `shared.card_editor_config.web.mode` 独立授权，服务和密钥使用 `shared.web`。本地搜索限量来源和摘要，网页按字符分页并标记上游截断，续读可指定原提取服务，见[联网协议](../reference/web-tools.md)。运行、工具目录和上下文预览按同一模式生成；云端搜索只用于主请求，强制 `new_context` 时不启用。服务降级、来源链接和请求重启事件属于持久的用户可见活动，日志合并不得跨 `response_restarted` 合并文本。网页资料不扩大草稿、persona 或保存权限。
+联网工具与参谋 agent 复用 `web/` 模块，以 `shared.card_author_config.web.mode` 独立授权，服务和密钥使用 `shared.web`。本地搜索限量来源和摘要，网页按字符分页并标记上游截断，续读可指定原提取服务，见[联网协议](../reference/web-tools.md)。运行、工具目录和上下文预览按同一模式生成；云端搜索只用于主请求，强制 `new_context` 时不启用。服务降级、来源链接和请求重启事件属于持久的用户可见活动，日志合并不得跨 `response_restarted` 合并文本。网页资料不扩大草稿、persona 或保存权限。
 
 用户明确要求时还可通过四个用户角色工具列出、读取、新增和修改 persona 名称及介绍。普通制卡不自动加载用户角色库。工具声明和系统策略限定明确意图，request_ref 必须指向本任务最新用户消息；助手提议和旧授权不能替代当前要求。
 
 ## 数据所有权
 
-`shared.card_editor_config.system_prompt` 是角色卡编辑 agent 主提示词的唯一配置来源，默认值为内置规则；新配置和恢复默认使用当前版本，已有保存内容不随默认文本更新而被覆盖。设置 API 的提示词目录、预览、任务开始和换窗均读取该字段，允许明确保存空文本，不用隐式默认值补回。任务内使用配置快照；下一次发送或续接时，提示词变化使上下文策略指纹失效，保留待提交草稿与已配对工具结果，并重新建立读取证据。旧设置增加该字段前备份，设置导入导出携带完整自定义文本。
+`shared.card_author_config.system_prompt` 是制卡 agent 主提示词的唯一配置来源，默认值为内置规则；新配置和恢复默认使用当前版本，已有保存内容不随默认文本更新而被覆盖。设置 API 的提示词目录、预览、任务开始和换窗均读取该字段，允许明确保存空文本，不用隐式默认值补回。任务内使用配置快照；下一次发送或续接时，提示词变化使上下文策略指纹失效，保留待提交草稿与已配对工具结果，并重新建立读取证据。旧设置增加该字段前备份，设置导入导出携带完整自定义文本。
 
-`card_editor_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
+`card_author_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
 
-`card_editor_messages` 保存完整用户输入与最终回复，以会话内 H 编号引用；`card_editor_traces` 保存完整工具交换。`card_edit_contexts` 保存当前请求前缀、可逆编号映射和窗口状态。它们独立于可清理的动作诊断。
+`card_author_messages` 保存完整用户输入与最终回复，以会话内 H 编号引用；`card_author_traces` 保存完整工具交换。`card_edit_contexts` 保存当前请求前缀、可逆编号映射和窗口状态。它们独立于可清理的动作诊断。
 
 当前上下文还保存按卡片和字段组织的完整读取版本证据，由程序计算并核对，不传给模型。正常新回合与重启沿用证据，换窗或上下文重建清空；历史版本读取不授予当前草稿写入资格。子字段独立核对，因此无关字段变化不会使仍有效的读取全部失效。未提交进度中的上下文也保存同一证据，失败补丁不改变文档或证据。
 
 角色卡与用户角色引用，无论开始前还是中途加入，都使用同一有状态消息机制：首次生成当前状态，后续只有有效值改变时才在请求尾部追加新版本。引用增删、手工修改草稿不再重建模型上下文或更换窗口身份，旧消息、工具交换和原生响应保持原样。草稿比较值包含程序内部的文档及字段指纹，能识别等长正文修改；出站只包含最新概览和新增/移除引用、变更字段路径，不能携带这些指纹。手工修改仅使内容不再匹配的读取证据失效，未变化字段继续可用。引用移除用最新列表和移除提示表达，不删除历史已发送快照。旧比较账本可原地补齐，不强制重建前缀；思考强度、系统规则、模型/协议等原有不兼容重建条件保持不变。
 
-`card_editor_progress` 保存未提交卡片集合、轮前快照、待执行调用及结果、读取记录、完整上下文和换窗进度。每个调用的修改与结果一起持久化；正式草稿只在完整最终回复和结构校验之后共同提交。
+`card_author_progress` 保存未提交卡片集合、轮前快照、待执行调用及结果、读取记录、完整上下文和换窗进度。每个调用的修改与结果一起持久化；正式草稿只在完整最终回复和结构校验之后共同提交。
 
 用户角色 P 引用到存储身份的映射保存在会话 state，读版本和待保存修改保存在 progress。未授权任务不自动查询 persona 表。用户角色新增/修改与编辑任务完成在同一事务中提交，复用 Store.save_persona 的版本检查；卡片仍仅提交独立草稿。中断不会产生部分用户角色写入，续接保留读版本与草稿，换窗后修改须重新读取。用户撤销时仅清除待保存修改，原 persona 与已有故事快照不受影响。
 
@@ -28,13 +28,15 @@
 
 停止、传输失败、重启或额度耗尽保留进度。用户显式继续开启新的有界批次，默认 24 次模型请求，换窗不重置。丢弃进度不修改完成版本。运行或待续进度期间拒绝人工草稿修改、保存和引用刷新，使用会话 revision 校验。
 
+头像与书架卡使用同一来源：草稿 `source.container` 为 `png` 时，`source.original` 指向头像图片 blob，保存时写入卡片的 `original/container`，不新增字段或扩展。`set_portrait` 与手工接口只接受本对话的图片附件，JPEG/WebP 转为 PNG；移除后容器为 JSON。手工更换记录撤销版本，Agent 更换随运行提交，`revert_draft` 一并恢复。头像接口只返回当前、待续或可撤销草稿引用的图片；被替换的旧头像 blob 不在运行中删除，以便丢弃进度后恢复。
+
 单卡保存另检查其原卡 base_revision，成功后更新该卡基准，不更换 C 引用。覆盖、首次创建和另存分别处理；保存 operation_id 幂等。撤销新记录同时恢复文档与保存基准，避免撤销重新载入后获得覆盖新版原卡的权限。历史旧撤销记录保留可用的原文。
 
 ## 请求编译与工具边界
 
 浏览器文件选择器通过 `/files` 上传参考副本，文件元数据保存在对话 payload 的 `files`，内容存于 `blobs/editor-files/` 并随完整备份恢复。引用使用单调 F 编号，模型只看到文件名、类型、字节数和短编号；读取工具的 `path` 可接收 F 编号，由 Runtime 按当前对话解析实际路径。上传及移除检查会话版本和运行/待续互斥；上传失败清除未提交内容。待发送文件的 `message_ref` 为空；提交事务将其绑定到本条 H 消息，幂等重试不重复绑定，取消/续接保留原归属。UI 输入区只列待发送附件，历史消息展示已发送附件。附件元数据只随所属用户消息编译，不生成常驻文件 system 帧；换窗、历史检索和回读仍可恢复所属附件，下一条用户消息不会重新提交旧附件。未发送副本可移除，已发送副本保留至对话删除。旧常驻引用根据实际文件读取事件关联的用户消息回填归属，缺乏证据的不猜测；首次迁移前备份数据库。原有外部资料的分页与大小限制保持不变。
 
-外部本地资料通过 `read_text_file` 和 `read_document` 有界读取。文本按完整行分页，Office 在独立且可终止的进程内用 MarkItDown 转成 Markdown 后按字符分页；文件、解压量及转换时长均有上限，结果不另建持久缓存。工具目录、预览、运行和活动记录共用声明；每页结果完整持久化并送往模型，续接跳过已配对调用。外部资料不建立当前草稿读取证据。具体默认值和限制见[工具协议](../reference/card-editor-tools.md#外部文件读取)。
+外部本地资料通过 `read_text_file` 和 `read_document` 有界读取。文本按完整行分页，Office 在独立且可终止的进程内用 MarkItDown 转成 Markdown 后按字符分页；文件、解压量及转换时长均有上限，结果不另建持久缓存。工具目录、预览、运行和活动记录共用声明；每页结果完整持久化并送往模型，续接跳过已配对调用。外部资料不建立当前草稿读取证据。具体默认值和限制见[工具协议](../reference/card-author-tools.md#外部文件读取)。
 
 PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另含经 Pillow 校验的 `mime_type`、`width`、`height`。验证完整解码、扩展名与实际格式一致，并拒绝动画和解码像素超限。图片内容仍只存于附件文件；持久上下文保存 `_editor_image_refs`，在模型调用前从当前对话已发送附件加载原字节。模型输入中的文字经过原有投影，图片不经过文字替换。图片跟随所属消息与换窗边界，`read_history` 回读时在整批工具结果后追加尚未处于上下文中的原图，待恢复引用与工具结果一起保存，取消续接不重复读取已完成工具。切换模型或规则重建上下文时保留当前窗口明确回读的图片，已退出且未回读的历史不会被当作新输入重新加入。图片缺失、损坏或服务商拒绝时保留进度，不静默丢图。
 
@@ -68,10 +70,10 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 
 ## API 与迁移
 
-主入口 `/api/card-editor/conversations` 提供列表、创建、读取、改名与删除；其下 references、drafts、runs、progress、tools、preview 分别处理引用、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
+主入口 `/api/card-author/conversations` 提供列表、创建、读取、改名与删除；其下 references、drafts、runs、progress、tools、preview 分别处理引用、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
 
 旧 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层；多卡操作必须明确目标。旧 new-context 只复制完成的单卡草稿，不复制旧聊天或未提交修改。
 
-打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，随后与参谋数据表初始化一同升级到 schema 4，再继续升级到当前 schema 5。回退旧程序使用升级前备份。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
+打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，随后与参谋数据表初始化一同升级到 schema 4，再继续升级到 schema 5；schema 6 原地把 `card_editor_*` 表改名为 `card_author_*`，见[设置存储](../reference/settings-api.md#数据库与设置迁移)。回退旧程序使用升级前备份。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
 
-界面：[CardWorkspace.vue](../../web/components/character/CardWorkspace.vue)。运行和上下文：[editor_run.py](../../src/tavern/character/editor_run.py)、[editor_context.py](../../src/tavern/character/editor_context.py)。回归：[test_card_authoring.py](../../tests/backend/test_card_authoring.py)、[test_card_editor_alignment.py](../../tests/backend/test_card_editor_alignment.py)、[浏览器验收](../../tests/browser/browser_card_authoring.py)。真实模型评测显式运行 tools/evaluate_card_editor.py，使用隔离数据与累计 60 请求计数，报告仅保存到忽略目录。
+界面：[CardWorkspace.vue](../../web/components/character/CardWorkspace.vue)。运行和上下文：[editor_run.py](../../src/tavern/character/editor_run.py)、[editor_context.py](../../src/tavern/character/editor_context.py)。回归：[test_card_authoring.py](../../tests/backend/test_card_authoring.py)、[test_card_author_alignment.py](../../tests/backend/test_card_author_alignment.py)、[浏览器验收](../../tests/browser/browser_card_authoring.py)。真实模型评测显式运行 tools/evaluate_card_author.py，使用隔离数据与累计 60 请求计数，报告仅保存到忽略目录。

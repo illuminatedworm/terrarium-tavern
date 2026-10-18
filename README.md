@@ -41,7 +41,7 @@
 <p align="center">
   <img src="docs/images/card-authoring.jpg" alt="Terrarium Tavern 制卡对话界面：引用林间角色卡，准备制卡要求，并在右侧预览当前草稿" width="100%">
 </p>
-<p align="center"><sub>角色卡编辑 agent 的制卡工作区：引用角色资料、准备需求与预览草稿（待发送）</sub></p>
+<p align="center"><sub>制卡 agent 的制卡工作区：引用角色资料、准备需求与预览草稿（待发送）</sub></p>
 </details>
 
 ---
@@ -77,7 +77,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ### 透明的生成过程
 
-预览上下文中的剧情、设定与记忆，在工作记录中查看检索和整理过程。参谋 agent 协助查阅剧情与资料，角色卡编辑 agent 协助修改草稿和适配卡片。
+预览上下文中的剧情、设定与记忆，在工作记录中查看检索和整理过程。参谋 agent 协助查阅剧情与资料，制卡 agent 协助修改草稿和适配卡片。
 
 </td>
 </tr>
@@ -166,7 +166,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 | 方面 | 现状 |
 |:--|:--|
-| **角色卡编辑 agent** | 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。修改结果需人工审阅，尤其是初始化、脚本与世界书用途的调整。 |
+| **制卡 agent** | 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。修改结果需人工审阅，尤其是初始化、脚本与世界书用途的调整。 |
 | **角色卡兼容范围** | 当前适配了 SillyTavern 的部分格式与接口。扩展、远程脚本和复杂 MVU 卡片需逐卡确认，详见[兼容范围](docs/guides/compatibility.md)。 |
 | **长篇叙事质量** | 开发者个人游玩初步确认中篇体验较好。模型选择、系统提示词和各项机制参数都会显著影响体验。 |
 | **记忆系统对模型的要求** | 记忆整理涉及复杂判断和格式化输出。测试中 GPT-5.6-Luna 故障与错误率较高，正常运行至少需要 GPT-5.6-Terra 或相近能力的模型。 |
@@ -180,7 +180,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | 使用指南 | 设计与开发 |
 |:--|:--|
 | [设置指南](docs/guides/settings.md) | [应用架构](docs/design/architecture.md) |
-| [角色卡编辑](docs/guides/card-editor.md) | [项目目录](docs/development/structure.md) |
+| [制卡与角色卡编辑](docs/guides/card-author.md) | [项目目录](docs/development/structure.md) |
 | [阅读、编辑与分支](docs/guides/story-history.md) | [开发、测试与发行](docs/development/validation.md) |
 | [参谋 agent](docs/guides/advisor.md) | [回合工作流](docs/design/agent-workflow.md) |
 | [世界书检索](docs/guides/retrieval.md) | [上下文生命周期](docs/design/context-lifecycle.md) |

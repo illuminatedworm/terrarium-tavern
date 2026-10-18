@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cardMentionQuery, cardReferenceOptions } from '../../web/lib/cardReferences';
-import type { EditorCard } from '../../web/lib/cardEditor';
+import type { EditorCard } from '../../web/lib/cardAuthor';
 
 describe('card reference selection at the caret', () => {
   it('recognizes Chinese names without consuming surrounding prose', () => {

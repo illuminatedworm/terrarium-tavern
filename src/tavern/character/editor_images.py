@@ -106,3 +106,35 @@ def materialize_images(messages: list[dict], store, wid: str, files: list[dict])
                 item["runtime_content"] = copy.deepcopy(content)
         result.append(item)
     return result
+
+
+def portrait_png(store, wid: str, file: dict) -> str:
+    """Store an attached image as a card portrait blob.
+
+    Portraits use the standard PNG card container, so JPEG/WebP pixels are re-encoded
+    as PNG once; export later embeds the card JSON into this image.
+    """
+    from tavern.character.editor_attachments import attachment_path
+
+    if file["extension"] not in IMAGE_FORMATS:
+        raise ValueError("头像只能使用本对话中的 PNG、JPEG 或静态 WebP 图片附件。")
+    try:
+        data = attachment_path(store, wid, file).read_bytes()
+    except OSError:
+        raise ValueError(f"图片附件 {file['ref']} 无法读取，请恢复附件文件后重试。") from None
+    image_metadata(file["extension"], data)
+    if file["extension"] != ".png":
+        buffer = BytesIO()
+        with Image.open(BytesIO(data)) as image:
+            (image if image.mode in ("RGB", "RGBA", "L", "LA", "P") else image.convert("RGBA")).save(buffer, "PNG")
+        data = buffer.getvalue()
+    return store.blob(data)
+
+
+def apply_portrait(item: dict, digest: str | None) -> None:
+    """A draft portrait lives in its container source, exactly as saved library cards do."""
+    source = item.get("source", {})
+    if source.get("container", "json") == "charx":
+        raise ValueError("CHARX 卡的头像来自卡内资源声明，暂不支持在制卡对话中更换。")
+    item["source"] = {**source, "container": "png" if digest else "json", "original": digest}
+    item["kind"] = "draft"

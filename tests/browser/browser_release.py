@@ -108,7 +108,7 @@ async def main():
             await page.locator('.card-side-item').first.click()
             for tab in await page.locator('.editor-tabs button').all():
                 await tab.click()
-                await assert_viewport(page, label + ":card-editor")
+                await assert_viewport(page, label + ":card-author")
             if width // zoom < 760:
                 await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
             await page.get_by_role("tab", name="会话", exact=True).click()

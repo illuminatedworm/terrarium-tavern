@@ -382,7 +382,7 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
     settings.full_agent.model.api_mode = api
     settings.half_agent.foreground.api_mode = api
     settings.half_agent.background.api_mode = api
-    settings.shared.card_editor.api_mode = api
+    settings.shared.card_author.api_mode = api
     settings.shared.providers[0].api_key = "fixture-secret"
     settings.shared.providers[0].base_url = "https://fixture.test"
     settings.shared.network.api_proxy = False
@@ -505,7 +505,7 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
     settings.full_agent.model.api_mode = api
     settings.half_agent.foreground.api_mode = api
     settings.half_agent.background.api_mode = api
-    settings.shared.card_editor.api_mode = api
+    settings.shared.card_author.api_mode = api
     settings.shared.providers[0].base_url = "https://fixture.test"
     settings.shared.providers[0].api_key = cfg.api_key
     settings.shared.network.api_proxy = False

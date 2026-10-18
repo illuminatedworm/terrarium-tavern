@@ -4,14 +4,15 @@ import json
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from fastapi import File, Form, UploadFile
+from fastapi import File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_sandbox import test_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
-from tavern.core.models import CardEditorModelOptions, CardEditorRequest
+from tavern.core.models import CardAuthorModelOptions, CardAuthorRequest
 from tavern.core.tokens import counting_info
 
 
@@ -52,17 +53,21 @@ class Save(Revision):
     operation_id: str = Field(min_length=1, max_length=100)
 
 
+class PortraitChoice(Revision):
+    file_ref: str | None = Field(pattern=r"^F[1-9]\d*$")
+
+
 class Probe(Revision):
     index: int = Field(default=0, ge=0)
     samples: list[str] = Field(default_factory=list, max_length=10)
 
 
-class Preview(CardEditorModelOptions, Body):
+class Preview(CardAuthorModelOptions, Body):
     text: str = ""
 
 
 def register_conversation_routes(app, editor):
-    base = "/api/card-editor/conversations"
+    base = "/api/card-author/conversations"
 
     @app.get(base)
     async def list_conversations():
@@ -131,6 +136,17 @@ def register_conversation_routes(app, editor):
     async def save(wid: str, ref: str, payload: Save):
         return editor.edits.save_card(wid, ref, payload.expected_revision, payload.mode, payload.operation_id)
 
+    @app.put(base + "/{wid}/drafts/{ref}/portrait")
+    async def set_portrait(wid: str, ref: str, payload: PortraitChoice):
+        return editor.edits.set_portrait(wid, ref, payload.file_ref, payload.expected_revision)
+
+    @app.get(base + "/{wid}/portraits/{digest}")
+    async def portrait(wid: str, digest: str):
+        path = editor.edits.portrait(wid, digest)
+        if not path.is_file():
+            raise HTTPException(404, "头像文件不存在")
+        return FileResponse(path, media_type="image/png")
+
     @app.post(base + "/{wid}/drafts/{ref}/undo")
     async def undo(wid: str, ref: str, payload: Revision):
         return editor.edits.undo_card(wid, ref, payload.expected_revision)
@@ -147,7 +163,7 @@ def register_conversation_routes(app, editor):
         return await test_card(editor.store, item, payload.index, payload.samples)
 
     @app.post(base + "/{wid}/runs")
-    async def run(wid: str, payload: CardEditorRequest):
+    async def run(wid: str, payload: CardAuthorRequest):
         return editor.submit(wid, payload, legacy=False)
 
     @app.delete(base + "/{wid}/progress")
@@ -160,7 +176,7 @@ def register_conversation_routes(app, editor):
         from tavern.web.cloud import WebSession
         cfg = editor_runtime_config(editor.store, wid, {})
         progress = editor.edits.progress(wid)
-        return WebSession(cfg.card_editor_config.web.mode, cfg, "card_editor",
+        return WebSession(cfg.card_author_config.web.mode, cfg, "card_author",
                           failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
 
     @app.get(base + "/{wid}/context")
@@ -184,7 +200,7 @@ def register_conversation_routes(app, editor):
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
             persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {}, request={}, reads={})
         from tavern.web.cloud import WebSession
-        owner.definitions = WebSession(owner.cfg.card_editor_config.web.mode, owner.cfg, "card_editor",
+        owner.definitions = WebSession(owner.cfg.card_author_config.web.mode, owner.cfg, "card_author",
                                        failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
         owner.context = EditorContext(copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner)
         owner.tools = EditorTools(owner)

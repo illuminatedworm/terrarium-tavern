@@ -6,7 +6,7 @@ import {
   type CardReferenceOption,
   type LibraryReference,
 } from '../lib/cardReferences';
-import type { EditorCard, EditorPersona } from '../lib/cardEditor';
+import type { EditorCard, EditorPersona } from '../lib/cardAuthor';
 
 export function useCardReferencePicker(config: {
   input: Ref<string>;

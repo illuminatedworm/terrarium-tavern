@@ -5,14 +5,14 @@ import copy
 import pytest
 
 from tavern.application.service import RoleplayRuntime
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
 from tavern.conversation.context import compile_context
 from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
 
 
 def fixture():
@@ -30,7 +30,7 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
     store = Store(tmp_path)
     original = fixture()
     card = store.import_card(dump(original).encode(), "fixture.json")
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     service = RoleplayRuntime(store)
     wid = editor.edits.create(card["id"])["id"]
     try:

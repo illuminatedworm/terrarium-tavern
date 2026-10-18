@@ -895,7 +895,7 @@ async function load() {
       api('/sessions'),
       api('/settings'),
       api('/card-edits'),
-      api('/card-editor/conversations'),
+      api('/card-author/conversations'),
     ]);
 }
 async function afterDataImport(result: {
@@ -1290,7 +1290,7 @@ async function openOrphanDraft(id: string) {
   openCardAgent(id);
 }
 async function refreshCardConversations() {
-  cardConversations.value = await api('/card-editor/conversations');
+  cardConversations.value = await api('/card-author/conversations');
 }
 function openCardAgent(id: string) {
   abandonStoryLoad();
@@ -1304,7 +1304,7 @@ function openCardAgent(id: string) {
 }
 async function newCardConversation() {
   await guarded(async () => {
-    const value = await api('/card-editor/conversations', {});
+    const value = await api('/card-author/conversations', {});
     openCardAgent(value.id);
   });
 }
@@ -1347,7 +1347,7 @@ async function deleteCardConversation(item: any) {
   deletingCardConversationId.value = item.id;
   try {
     await guarded(async () => {
-      await api(`/card-editor/conversations/${item.id}`, { expected_revision: item.revision }, 'DELETE');
+      await api(`/card-author/conversations/${item.id}`, { expected_revision: item.revision }, 'DELETE');
       await cardConversationDeleted(item.id);
     });
   } finally {
@@ -2402,7 +2402,7 @@ useTimedError(error);
         :key="editorConversationId"
         :conversation-id="editorConversationId"
         :library="cards"
-        :model-profile="settings.shared.card_editor"
+        :model-profile="settings.shared.card_author"
         :providers="settings.shared.providers"
         :send-shortcut="settings.shared.send_shortcut"
         @changed="refreshCardConversations"
@@ -2412,10 +2412,10 @@ useTimedError(error);
       <section v-else-if="pageMode === 'editor'" class="library home" aria-label="制卡对话入口">
         <div class="home-hero">
           <div class="home-emblem" aria-hidden="true"><Icon name="quill" :size="30" :stroke="1.4" /></div>
-          <div class="eyebrow">Card Editor</div>
+          <div class="eyebrow">Card Author</div>
           <h1>开始制卡</h1>
           <p class="intro">
-            与角色卡编辑 agent
+            与制卡 agent
             一起整理设定、世界书与开场。它只修改独立草稿，保存前由你审阅。从左侧选择已有对话，或新建一个制卡对话。
           </p>
           <div class="home-actions">

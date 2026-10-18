@@ -1,1 +1,1 @@
-"""Shared public-web access for Advisor and Card Editor only."""
+"""Shared public-web access for Advisor and Card Author only."""

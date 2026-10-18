@@ -28,7 +28,7 @@ describe('channel origin', () => {
     expect(profileKey('foreground', 'chatgpt')).toBe('official_foreground');
     expect(profileKey('background', 'chatgpt')).toBe('official_background');
     expect(profileKey('full_agent', 'standard')).toBe('model');
-    expect(profileKey('card_editor', 'chatgpt')).toBe('card_editor');
+    expect(profileKey('card_author', 'chatgpt')).toBe('card_author');
   });
   it('does not copy a model or capabilities across channels', () => {
     const base = {

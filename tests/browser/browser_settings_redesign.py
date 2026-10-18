@@ -213,7 +213,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     current = await read()
                     assert current['half_agent']['background']['model'] == 'isolated-background'
                     assert current['full_agent']['model'] == before['full_agent']['model']
-                    assert current['shared']['card_editor'] == before['shared']['card_editor']
+                    assert current['shared']['card_author'] == before['shared']['card_author']
                     await page.screenshot(path=str(output/'half-agent-desktop.png'))
                     # Undo on one page does not roll back changes on another page.
                     await select('full agent 检索与世界书')

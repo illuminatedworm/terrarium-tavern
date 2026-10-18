@@ -40,7 +40,7 @@
 
 ## Office 文档解析
 
-角色卡编辑 agent 使用 [Microsoft MarkItDown](https://github.com/microsoft/markitdown)（MIT）提供的 DOCX/XLSX 转换器。所选格式依赖包括 Mammoth（BSD-2-Clause）、lxml（BSD-3-Clause）、pandas（BSD-3-Clause）和 openpyxl（MIT），其余传递依赖沿用各自许可证，版本以 `uv.lock` 为准。
+制卡 agent 使用 [Microsoft MarkItDown](https://github.com/microsoft/markitdown)（MIT）提供的 DOCX/XLSX 转换器。所选格式依赖包括 Mammoth（BSD-2-Clause）、lxml（BSD-3-Clause）、pandas（BSD-3-Clause）和 openpyxl（MIT），其余传递依赖沿用各自许可证，版本以 `uv.lock` 为准。
 
 ## Google GenAI SDK
 

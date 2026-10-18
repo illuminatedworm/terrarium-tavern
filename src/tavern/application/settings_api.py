@@ -50,8 +50,8 @@ def prompt_catalog():
     from tavern.character.editor_config import SYSTEM as EDITOR_SYSTEM
     result.append({"scope": "shared", "path": "advisor.system_prompt", "label": "参谋 agent 系统提示词",
                    "description": "参谋 agent 的咨询方式与项目资料说明；实际写入权限由 Runtime 控制。", "default": SYSTEM})
-    result.append({"scope": "shared", "path": "card_editor_config.system_prompt", "label": "角色卡编辑 agent 系统提示词",
-                   "description": "角色卡编辑 agent 的创作方式与工作规则；保存后从下一次发送或继续生效，工具权限仍由 Runtime 控制。",
+    result.append({"scope": "shared", "path": "card_author_config.system_prompt", "label": "制卡 agent 系统提示词",
+                   "description": "制卡 agent 的创作方式与工作规则；保存后从下一次发送或继续生效，工具权限仍由 Runtime 控制。",
                    "default": EDITOR_SYSTEM})
     for scope in ("full_agent", "half_agent"):
         defaults = getattr(SettingsDocument(), scope).model_dump()
@@ -88,7 +88,7 @@ def page_catalog():
             result.append({"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths})
     for key, label, paths in [("providers", "提供商", ["providers"]),
                               ("advisor", "参谋 agent", ["advisor"]),
-                              ("editor", "角色卡编辑 agent", ["card_editor", "card_editor_config"]),
+                              ("editor", "制卡 agent", ["card_author", "card_author_config"]),
                               ("preference_presets", "常用偏好", ["preference_presets"]),
                               ("web", "联网服务", ["web"]),
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
@@ -311,7 +311,7 @@ def save_probe(store, role, result, captured):
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))
         return
     scope, key = {"full_agent": ("full_agent", "model"), "foreground": ("half_agent", "foreground"),
-                  "background": ("half_agent", "background"), "card_editor": ("shared", "card_editor")}[role]
+                  "background": ("half_agent", "background"), "card_author": ("shared", "card_author")}[role]
     with store.connection() as db:
         db.execute("BEGIN IMMEDIATE")
         doc = SettingsDocument.model_validate_json(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])

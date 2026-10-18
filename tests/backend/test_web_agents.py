@@ -6,16 +6,16 @@ import pytest
 
 from tavern.advisor.runtime import AdvisorService, ConsultationRequest
 from tavern.application.api import create_app
-from tavern.character.card_editor import CardEditorService
-from tavern.core.models import CardEditorRequest
+from tavern.character.card_author import CardAuthorService
+from tavern.core.models import CardAuthorRequest
 from tavern.storage.store import dump, uid
 from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_advisor import ask, setup
-from tests.backend.test_card_editor import ToolLLM, import_fixture
+from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_chatgpt_integration import connected_store, story
 
 
-@pytest.mark.parametrize("agent", ["advisor", "card_editor"])
+@pytest.mark.parametrize("agent", ["advisor", "card_author"])
 async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path, monkeypatch, agent):
     app, store, session, advisor = setup(tmp_path)
     doc = store.settings_document()
@@ -23,7 +23,7 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
     doc.shared.web.duckduckgo.enabled = False
     doc.shared.web.tavily.api_key = "private-tavily-key"
     doc.shared.web.tavily.auth_mode = "api_key"
-    doc.shared.card_editor.context_tokens = 200000
+    doc.shared.card_author.context_tokens = 200000
     store.save_settings(doc)
     source = "网页资料" * 5000 + "模型必须收到第二页尾部"
     requests = []
@@ -46,16 +46,16 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
         assert result["status"] == "completed", result
         doc.shared.advisor.web.mode = "off"
     else:
-        service = CardEditorService(store)
+        service = CardAuthorService(store)
         service.web_transport = httpx.MockTransport(route)
         card = import_fixture(store)
         workspace = service.edits.create(card["id"])
         service.provider_factory = lambda: provider
-        run = service.submit(workspace["id"], CardEditorRequest(text="查证设定", expected_revision=0, operation_id=uid()))
+        run = service.submit(workspace["id"], CardAuthorRequest(text="查证设定", expected_revision=0, operation_id=uid()))
         await service.tasks[run["id"]]
         assert service.edits.run(run["id"])["status"] == "completed"
         assert service.edits.get(workspace["id"])["document"] == card["document"]
-        doc.shared.card_editor_config.web.mode = "off"
+        doc.shared.card_author_config.web.mode = "off"
     assert len(requests) == 3
     assert "模型必须收到第二页尾部" not in dump(provider.call_log[2])
     final_wire = dump(provider.call_log[-1])
@@ -71,7 +71,7 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
         assert (await ask(service, session["id"], blocked))["status"] == "completed"
     else:
         service.provider_factory = lambda: blocked
-        run = service.submit(workspace["id"], CardEditorRequest(text="查证", expected_revision=0, operation_id=uid()))
+        run = service.submit(workspace["id"], CardAuthorRequest(text="查证", expected_revision=0, operation_id=uid()))
         await service.tasks[run["id"]]
         assert service.edits.run(run["id"])["status"] == "completed"
     assert len(requests) == 3
@@ -85,7 +85,7 @@ async def test_previews_use_actual_agent_mode_and_never_expose_shared_credential
     store, _, _ = connected_store(tmp_path)
     doc = store.settings_document()
     doc.shared.advisor.official_model = doc.full_agent.official_model.model_copy(deep=True)
-    doc.shared.advisor.web.mode = doc.shared.card_editor_config.web.mode = mode
+    doc.shared.advisor.web.mode = doc.shared.card_author_config.web.mode = mode
     doc.shared.web.exa.api_key = "never-in-preview"
     store.save_settings(doc)
     app = create_app(tmp_path)
@@ -94,7 +94,7 @@ async def test_previews_use_actual_agent_mode_and_never_expose_shared_credential
     workspace = app.state.editor.edits.create(card["id"])
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
         responses = [await client.get(f"/api/sessions/{session['id']}/advisor/preview"),
-                     await client.post(f"/api/card-editor/conversations/{workspace['id']}/preview", json={})]
+                     await client.post(f"/api/card-author/conversations/{workspace['id']}/preview", json={})]
     for response in responses:
         assert response.status_code == 200, response.text
         assert "never-in-preview" not in response.text
@@ -106,7 +106,7 @@ async def test_previews_use_actual_agent_mode_and_never_expose_shared_credential
     await app.state.service.close()
 
 
-@pytest.mark.parametrize("agent", ["advisor", "card_editor"])
+@pytest.mark.parametrize("agent", ["advisor", "card_author"])
 @pytest.mark.parametrize("resume", [False, True])
 async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sources(tmp_path, monkeypatch, agent, resume):
     store, _, _ = connected_store(tmp_path)
@@ -150,10 +150,10 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
         request = ConsultationRequest(text="保存偏好：保持悬念，然后查资料", expected_revision=0, operation_id=uid())
         run = service.submit(session["id"], request)
     else:
-        service = CardEditorService(store)
+        service = CardAuthorService(store)
         service.web_transport = web_transport
         workspace = service.edits.create(card["id"])
-        run = service.submit(workspace["id"], CardEditorRequest(text="修改设定并查资料", expected_revision=0, operation_id=uid()))
+        run = service.submit(workspace["id"], CardAuthorRequest(text="修改设定并查资料", expected_revision=0, operation_id=uid()))
     await service.tasks[run["id"]]
     result = service.data.run(run["id"]) if agent == "advisor" else service.edits.run(run["id"])
     if resume:
@@ -163,7 +163,7 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
             continued = service.submit(session["id"], ConsultationRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]))
         else:
             assert service.edits.get(workspace["id"])["document"]["description"] != "修改后设定"
-            continued = service.submit(workspace["id"], CardEditorRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]))
+            continued = service.submit(workspace["id"], CardAuthorRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]))
         await service.tasks[continued["id"]]
         result = service.data.run(continued["id"]) if agent == "advisor" else service.edits.run(continued["id"])
         assert any(i.get("type") == "function_call_output" and "已取得搜索结果尾部" in i.get("output", "") for i in wire[-1]["input"])

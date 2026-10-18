@@ -362,14 +362,14 @@ def test_streams_require_completion_and_preserve_usage(api):
 def test_settings_migration_backs_up_old_settings_once(tmp_path):
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
-    for scope, key in (("full_agent", "model"), ("half_agent", "foreground"), ("half_agent", "background"), ("shared", "card_editor")):
+    for scope, key in (("full_agent", "model"), ("half_agent", "foreground"), ("half_agent", "background"), ("shared", "card_author")):
         raw[scope][key].pop("cache")
         raw[scope][key].update(prompt_cache_mode="no_write", prompt_cache_key="retained-key", prompt_cache_retention="24h")
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     migrated = Store(tmp_path).settings_document()
     assert migrated.full_agent.model.cache.mode == migrated.half_agent.foreground.cache.mode == "runtime"
-    assert migrated.half_agent.background.cache.mode == migrated.shared.card_editor.cache.mode == "cloud"
+    assert migrated.half_agent.background.cache.mode == migrated.shared.card_author.cache.mode == "cloud"
     assert migrated.full_agent.model.cache.request == {"prompt_cache_key": "retained-key", "prompt_cache_retention": "24h"}
     backups = list(tmp_path.glob("settings-before-cache-*.sqlite3"))
     assert len(backups) == 1
@@ -399,7 +399,7 @@ def test_partial_json_profiles_keep_story_defaults_without_forcing_background():
                                 half_agent={"foreground": {"model": "new-writer"},
                                             "background": {"model": "new-background"}})
     assert settings.full_agent.model.cache.mode == settings.half_agent.foreground.cache.mode == "runtime"
-    assert settings.half_agent.background.cache.mode == settings.shared.card_editor.cache.mode == "cloud"
+    assert settings.half_agent.background.cache.mode == settings.shared.card_author.cache.mode == "cloud"
 
 
 @pytest.mark.parametrize("mode", ["full_agent", "half_agent"])

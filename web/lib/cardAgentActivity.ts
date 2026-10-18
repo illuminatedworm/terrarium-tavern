@@ -31,6 +31,7 @@ const labels: Record<string, string> = {
   validate_draft: '验证草稿',
   read_skill: '读取适配 skill',
   create_draft: '创建草稿',
+  set_portrait: '设置头像',
   configure_card: '记录目标模式',
   revert_draft: '撤销本轮卡片修改',
   test_draft: '本地运行验证',

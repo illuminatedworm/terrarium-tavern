@@ -9,7 +9,7 @@ from tavern.application.api import create_app
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.search.retrieval_config import ModelProfile, Provider
-from tests.backend.test_card_editor import ToolLLM
+from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_full_agent import Model, ScriptHost
 
 
@@ -21,7 +21,7 @@ def configured_app(path):
     doc.shared.providers += [Provider(id="second", name="Second", base_url="https://second.test", api_key="fixture-second"),
                              Provider(id="official", name="Official", auth_mode="chatgpt_subscription"),
                              Provider(id="official-two", name="Official two", auth_mode="chatgpt_subscription")]
-    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_editor):
+    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_author):
         profile.model = "configured"
     doc.full_agent.official_model = ModelProfile(provider_id="official", model="official-model")
     doc.half_agent.official_foreground = doc.full_agent.official_model.model_copy(deep=True)
@@ -39,14 +39,14 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
     app, card = configured_app(tmp_path)
     store, service, editor = app.state.store, app.state.service, app.state.editor
     settings = store.settings_document()
-    for profile in (settings.full_agent.model, settings.half_agent.foreground, settings.shared.card_editor):
+    for profile in (settings.full_agent.model, settings.half_agent.foreground, settings.shared.card_author):
         profile.api_mode, profile.api_path = "responses", "v2"
     store.save_settings(settings)
     configured = store.settings_document().model_dump()
     conversation = (editor.edits.create_conversation() if mode == "editor" else
                     store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode)))
     cid = conversation["id"]
-    base = f"/api/card-editor/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
+    base = f"/api/card-author/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
     selection = {"provider_id": "second", "model": "chosen"}
     configs, messages, half_models = [], [], []
 
@@ -69,7 +69,7 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
         half_models.append(model)
         return model
 
-    target = {"editor": "tavern.character.card_editor.make_provider", "full_agent": "tavern.full_agent.agent.make_provider",
+    target = {"editor": "tavern.character.card_author.make_provider", "full_agent": "tavern.full_agent.agent.make_provider",
               "half_agent": "tavern.scripting.agent.make_provider"}[mode]
     monkeypatch.setattr(target, make)
     service.full.runtime = ScriptHost()
@@ -80,7 +80,7 @@ async def test_selection_persists_and_actual_run_uses_connection(tmp_path, monke
             assert response.json()["model_selection"] == selection
             assert response.json()["channel_origin"] == "standard"
             if mode == "editor":
-                assert (await api.get("/api/card-editor/conversations")).json()[0]["channel_origin"] == "standard"
+                assert (await api.get("/api/card-author/conversations")).json()[0]["channel_origin"] == "standard"
             assert response.json()["revision"] == 0
             rejected = await api.put(base + "/model", json={"expected_revision": 0, "selection": {**selection, "provider_id": "official"}})
             assert rejected.status_code == 400 and "渠道" in rejected.text
@@ -131,13 +131,13 @@ async def test_editor_legacy_classification_and_official_provider_boundary(tmp_p
     workspace = editor.edits.create_conversation()
     wid = workspace["id"]
     with store.connection() as db:
-        db.execute("UPDATE card_editor_conversations SET channel_origin=NULL,model_selection='{}' WHERE id=?", (wid,))
-    base = f"/api/card-editor/conversations/{wid}"
+        db.execute("UPDATE card_author_conversations SET channel_origin=NULL,model_selection='{}' WHERE id=?", (wid,))
+    base = f"/api/card-author/conversations/{wid}"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         assert (await api.post(base + "/stats", json={})).status_code == 400
         result = await api.put(base + "/channel-origin", json={"expected_revision": 0, "channel_origin": "chatgpt"})
         assert result.status_code == 200
-        assert (await api.get("/api/card-editor/conversations")).json()[0]["channel_origin"] == "chatgpt"
+        assert (await api.get("/api/card-author/conversations")).json()[0]["channel_origin"] == "chatgpt"
         result = await api.put(base + "/channel-origin", json={"expected_revision": 0, "channel_origin": "standard"})
         assert result.status_code == 409
         for provider in ("official", "official-two"):
@@ -158,7 +158,7 @@ async def test_selection_is_locked_while_work_runs(tmp_path, mode):
     conversation = (editor.edits.create_conversation() if mode == "editor" else
                     store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode)))
     cid = conversation["id"]
-    base = f"/api/card-editor/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
+    base = f"/api/card-author/conversations/{cid}" if mode == "editor" else f"/api/sessions/{cid}"
     with store.connection() as db:
         if mode == "editor":
             db.execute("INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES ('run',?,'test','{}','running',0)", (cid,))

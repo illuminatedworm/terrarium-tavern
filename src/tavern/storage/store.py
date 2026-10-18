@@ -13,7 +13,7 @@ from pathlib import Path
 from tavern.character.cards import normalize, parse_card
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.models import ContextRecipe, TurnRequest
-from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
+from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings, rename_card_author
 from tavern.full_agent.recovery import resume_progress
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
 from tavern.storage.turn_retry import can_retry, retry_head
@@ -41,14 +41,20 @@ class Store(MessageAdapters):
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2", "3", "4", "5"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1–5")
+                if version is None or version[0] not in {"1", "2", "3", "4", "5", "6"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1–6")
                 if version[0] in {"1", "2", "3"}:
                     with closing(sqlite3.connect(root / f"before-advisor-v4-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
-                if "system_prompt" not in raw.get("shared", {}).get("card_editor_config", {}):
+                # Older checks below read the renamed keys; the stored raw document stays untouched.
+                keys = copy.deepcopy(raw)
+                rename_card_author(keys)
+                if version[0] in {"1", "2", "3", "4", "5"}:
+                    with closing(sqlite3.connect(root / f"before-card-author-v6-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
+                if "system_prompt" not in keys.get("shared", {}).get("card_author_config", {}):
                     with closing(sqlite3.connect(root / f"settings-before-editor-prompt-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 if "mode" not in raw.get("shared", {}).get("advisor", {}).get("web", {"mode": "auto"}):
@@ -70,11 +76,11 @@ class Store(MessageAdapters):
                     backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
-                elif raw.get("version") != 2:
+                elif raw.get("version") not in {2, 3}:
                     raise ValueError("设置版本与数据库版本不一致")
-                elif any("cache" not in raw.get(scope, {}).get(key, {}) for scope, key in
+                elif any("cache" not in keys.get(scope, {}).get(key, {}) for scope, key in
                          (("full_agent", "model"), ("half_agent", "foreground"),
-                          ("half_agent", "background"), ("shared", "card_editor"))):
+                          ("half_agent", "background"), ("shared", "card_author"))):
                     backup_path = root / f"settings-before-cache-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
@@ -184,14 +190,29 @@ class Store(MessageAdapters):
                 owner TEXT NOT NULL, scope TEXT NOT NULL, identity TEXT NOT NULL,
                 prefix TEXT NOT NULL, value TEXT NOT NULL,
                 PRIMARY KEY(owner, scope, identity, prefix))""")
-        from tavern.character.card_editor_store import initialize_editor_tables
+        with self.connection() as db:
+            # Schema 6 renamed Card Editor storage to Card Author. Renaming in place keeps
+            # rows, triggers and conversation identities; stored lane names follow.
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            for suffix in ("conversations", "progress", "messages", "traces"):
+                if f"card_editor_{suffix}" in tables:
+                    db.execute(f"ALTER TABLE card_editor_{suffix} RENAME TO card_author_{suffix}")
+            db.execute("UPDATE sent_cache_breakpoints SET scope='card_author' WHERE scope='card_editor'")
+            if "message_adapter_configs" in tables:
+                for row in db.execute("SELECT owner_id,config FROM message_adapter_configs WHERE owner_kind='editor'").fetchall():
+                    config = json.loads(row["config"])
+                    if "card_editor" in config:
+                        config["card_author"] = config.pop("card_editor")
+                        db.execute("UPDATE message_adapter_configs SET config=? WHERE owner_kind='editor' AND owner_id=?",
+                                   (json.dumps(config, ensure_ascii=False), row["owner_id"]))
+        from tavern.character.card_author_store import initialize_editor_tables
         initialize_editor_tables(self)
         from tavern.advisor.storage import initialize as initialize_advisor
         initialize_advisor(self)
         self.initialize_message_adapters()
         with self.connection() as db:
-            # Schema 5 adds sessions.update_variables; earlier stamps only advance older formats.
-            db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
+            # Schema 6 renames Card Editor tables and settings keys to Card Author.
+            db.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
 
     @contextmanager
     def connection(self):
@@ -235,7 +256,7 @@ class Store(MessageAdapters):
     def recover(self):
         with self.connection() as db:
             db.execute("UPDATE advisor_runs SET status='error',error='应用已重启，可继续或丢弃咨询' WHERE status IN ('queued','running')")
-        from tavern.character.card_editor_store import recover_editor_runs
+        from tavern.character.card_author_store import recover_editor_runs
         recover_editor_runs(self)
         with self.connection() as db:
             rows = db.execute("SELECT id FROM turns WHERE status IN ('queued','running')").fetchall()

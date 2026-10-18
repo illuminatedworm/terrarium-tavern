@@ -27,7 +27,7 @@
 
 数字参数在 schema 中说明单位、默认值或必填条件、合法范围及端点包含关系。外部文本按从 1 开始的物理行号读取，Office 转换结果及网页按从 0 开始的 Unicode 字符偏移读取；越过末尾的返回方式由对应协议定义。
 
-具体参数见[联网工具协议](../reference/web-tools.md)和[外部文件读取](../reference/card-editor-tools.md#外部文件读取)。
+具体参数见[联网工具协议](../reference/web-tools.md)和[外部文件读取](../reference/card-author-tools.md#外部文件读取)。
 
 ## 内部容量约束与展示分页
 

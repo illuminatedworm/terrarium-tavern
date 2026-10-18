@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from tavern.character.editor_config import CardEditorConfig
+from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
 from tavern.core.message_adapter import MessageAdapterConfig, infer_type, type_definition
 from tavern.core.prompts import (
@@ -109,9 +109,9 @@ class Settings(BaseModel):
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
-    card_editor: ModelProfile | None = None
+    card_author: ModelProfile | None = None
     advisor: ModelProfile | None = None
-    card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
+    card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     full_agent: ModelProfile | None = None
     full_agent_config: FullAgentConfig = Field(default_factory=FullAgentConfig)
@@ -128,13 +128,13 @@ class Settings(BaseModel):
     def for_role(self, role="foreground"):
         if role == "full_agent" and self._full_runtime is not None:
             return self._full_runtime.model_copy(deep=True)
-        profile = (self.background if role == "card_editor" and self.card_editor is None else
+        profile = (self.background if role == "card_author" and self.card_author is None else
                    self.foreground if role == "full_agent" and self.full_agent is None else getattr(self, role))
         if profile is None:
             return self.model_copy(deep=True)
         provider = next((p for p in self.providers if p.id == profile.provider_id), None)
         if provider is None and not profile.provider_id and not profile.model:
-            return self.model_copy(deep=True, update={"model": "", "api_key": "", "channel_origin": None if role == "card_editor" else self.channel_origin})
+            return self.model_copy(deep=True, update={"model": "", "api_key": "", "channel_origin": None if role == "card_author" else self.channel_origin})
         if provider is None:
             raise ValueError("所选模型引用了不存在的提供商")
         result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id"}),
@@ -149,7 +149,7 @@ class Settings(BaseModel):
             result._auth_generation = (self._auth_generations[provider.chatgpt_account_id]
                 if provider.chatgpt_account_id in self._auth_generations else
                 self._chatgpt.generation(provider.chatgpt_account_id) if self._chatgpt else "")
-        if role == "card_editor":
+        if role == "card_author":
             result.channel_origin = None
         result._adapter_lane = "full_agent" if self.runtime_mode == "full_agent" and role in ("foreground", "background") else role
         return result
@@ -228,7 +228,7 @@ class Settings(BaseModel):
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
-        for profile in (self.foreground, self.background, self.card_editor, self.full_agent):
+        for profile in (self.foreground, self.background, self.card_author, self.full_agent):
             if profile and (profile.provider_id or profile.model) and profile.provider_id not in {p.id for p in self.providers}:
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
@@ -312,12 +312,12 @@ class ContentEdit(BaseModel):
     operation_id: str | None = Field(default=None, max_length=100)
 
 
-class CardEditorCreate(BaseModel):
+class CardAuthorCreate(BaseModel):
     document: dict[str, Any] | None = None
     expected_revision: int = Field(ge=0)
 
 
-class CardEditorModelOptions(BaseModel):
+class CardAuthorModelOptions(BaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=200)
     reasoning_effort: ReasoningEffort | None = None
 
@@ -329,7 +329,7 @@ class CardEditorModelOptions(BaseModel):
         return value.strip() if value is not None else None
 
 
-class CardEditorRequest(CardEditorModelOptions):
+class CardAuthorRequest(CardAuthorModelOptions):
     text: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int = Field(ge=0)
@@ -337,11 +337,11 @@ class CardEditorRequest(CardEditorModelOptions):
     resume_run_id: str | None = None
 
 
-class CardEditorRevision(BaseModel):
+class CardAuthorRevision(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
-class CardEditorSave(CardEditorRevision):
+class CardAuthorSave(CardAuthorRevision):
     mode: Literal["overwrite", "copy"]
     operation_id: str = Field(min_length=1, max_length=100)
 

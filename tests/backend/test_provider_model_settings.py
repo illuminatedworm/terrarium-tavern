@@ -21,13 +21,13 @@ def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, pat
     raw = SettingsDocument().model_dump()
     raw["shared"]["providers"][0].update(base_url=f"https://fixture.test/{path}", api_mode=mode)
     for scope, name in (("full_agent", "model"), ("half_agent", "foreground"),
-                        ("half_agent", "background"), ("shared", "card_editor")):
+                        ("half_agent", "background"), ("shared", "card_author")):
         raw[scope][name].pop("api_mode")
         raw[scope][name].pop("api_path")
     migrated = migrate_settings(raw)
     assert migrated.shared.providers[0].base_url == "https://fixture.test"
     assert "api_mode" not in migrated.shared.providers[0].model_dump()
-    for role in ("full_agent", "foreground", "background", "card_editor"):
+    for role in ("full_agent", "foreground", "background", "card_author"):
         cfg = migrated.runtime().for_role(role)
         assert cfg.api_mode == mode
         assert cfg.api_path == expected
@@ -47,7 +47,7 @@ def test_flat_legacy_config_and_explicit_profile_overrides():
     assert doc.half_agent.foreground.api_mode == "responses"
     assert doc.half_agent.foreground.api_path == "v2"
     assert doc.half_agent.background.api_mode == "gemini"
-    assert doc.shared.card_editor.api_mode == "gemini"
+    assert doc.shared.card_author.api_mode == "gemini"
 
 
 @pytest.mark.parametrize("mode,path,suffix", [
@@ -142,7 +142,7 @@ async def test_catalogs_are_provider_isolated_and_shared_across_openai_protocols
     app = create_app(tmp_path)
     doc = app.state.store.settings_document()
     doc.shared.providers = [Provider(id=name, name=name, api_key="same-key") for name in ("one", "two")]
-    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_editor):
+    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_author):
         profile.provider_id = "one"
     app.state.store.save_settings(doc)
     real_client = httpx.AsyncClient

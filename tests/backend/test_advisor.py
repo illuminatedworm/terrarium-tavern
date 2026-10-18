@@ -9,7 +9,7 @@ from tavern.advisor.runtime import ConsultationRequest, OptionsRequest
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.storage.store import dump, uid
-from tests.backend.test_card_editor import ToolLLM, import_fixture
+from tests.backend.test_card_author import ToolLLM, import_fixture
 
 
 def setup(tmp_path, mode="full_agent"):

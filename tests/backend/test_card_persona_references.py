@@ -4,11 +4,11 @@ import copy
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.core.models import PersonaEdit
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
 
 
 async def test_persona_reference_enters_actual_messages_without_storage_metadata(tmp_path):
@@ -16,7 +16,7 @@ async def test_persona_reference_enters_actual_messages_without_storage_metadata
     description = '完整用户角色介绍。' * 1000 + '保留全文末尾'
     persona = store.save_persona(None, PersonaEdit(name='读者', description=description))
     store.save_persona(None, PersonaEdit(name='未选择的私有角色', description='不要泄漏的介绍'))
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     try:
         wid = editor.edits.create_conversation()['id']
         current = editor.edits.attach_persona(wid, persona['id'], 0, persona['version'])
@@ -55,8 +55,8 @@ async def test_persona_reference_api_versions_and_pending_lock(tmp_path):
     persona = app.state.store.save_persona(None, PersonaEdit(name='玩家', description='原始介绍'))
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
-            workspace = (await client.post('/api/card-editor/conversations', json={})).json()
-            base = '/api/card-editor/conversations/' + workspace['id']
+            workspace = (await client.post('/api/card-author/conversations', json={})).json()
+            base = '/api/card-author/conversations/' + workspace['id']
             payload = {'persona_id': persona['id'], 'expected_revision': 0, 'expected_persona_version': persona['version']}
             assert (await client.post(base + '/persona-references', json={**payload, 'expected_persona_version': 999})).status_code == 409
             response = await client.post(base + '/persona-references', json=payload)

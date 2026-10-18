@@ -137,7 +137,7 @@ def export_package(store, selection):
                 elif table == "cards":
                     if db.execute("SELECT 1 FROM card_edit_runs r JOIN card_edits e ON r.workspace=e.id "
                                   "WHERE e.card=? AND r.status IN ('queued','running')", (identity,)).fetchone():
-                        raise Conflict("请等待角色卡编辑 agent 任务完成后导出")
+                        raise Conflict("请等待制卡 agent 任务完成后导出")
                     package[table].append(pin(decoded(table, row)))
                 else:
                     if db.execute("SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
@@ -393,7 +393,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                         getattr(incoming.shared.web, name).api_key = getattr(current.shared.web, name).api_key
                 incoming.revisions = {scope: revision + 1 for scope, revision in current.revisions.items()}
                 for profile in (incoming.full_agent.model, incoming.half_agent.foreground,
-                                incoming.half_agent.background, incoming.shared.card_editor):
+                                incoming.half_agent.background, incoming.shared.card_author):
                     profile.capability, profile.capability_key = "unknown", ""
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (incoming.model_dump_json(),))
                 result.update(settings_restored=True, browser_preferences=browser_preferences(package["settings"].get("browser", {})))

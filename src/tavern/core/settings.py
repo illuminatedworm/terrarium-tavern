@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.advisor.config import SYSTEM as ADVISOR_PROMPT
 from tavern.advisor.config import AdvisorConfig
-from tavern.character.editor_config import CardEditorConfig
+from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
@@ -158,8 +158,8 @@ class SharedSettings(StrictSettings):
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
-    card_editor: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
-    card_editor_config: CardEditorConfig = Field(default_factory=CardEditorConfig)
+    card_author: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
     advisor: AdvisorConfig = Field(default_factory=AdvisorConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
@@ -178,7 +178,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[2] = 2
+    version: Literal[3] = 3
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -187,7 +187,7 @@ class SettingsDocument(StrictSettings):
     def profiles(self):
         for scope, keys in (("full_agent", ("model", "official_model")),
                             ("half_agent", ("foreground", "background", "official_foreground", "official_background")),
-                            ("shared", ("card_editor",))):
+                            ("shared", ("card_author",))):
             for key in keys:
                 profile = getattr(getattr(self, scope), key)
                 if profile is not None:
@@ -272,11 +272,11 @@ def migrate_model_connections(raw):
     originals = {p["id"]: deepcopy(p) for p in providers}
     changed = set()
     profiles = (("full_agent", "model"), ("half_agent", "foreground"),
-                ("half_agent", "background"), ("shared", "card_editor")) if scoped else (
-                (None, "foreground"), (None, "background"), (None, "full_agent"), (None, "card_editor"))
+                ("half_agent", "background"), ("shared", "card_author")) if scoped else (
+                (None, "foreground"), (None, "background"), (None, "full_agent"), (None, "card_author"))
     for scope, name in profiles:
         owner = raw.setdefault(scope, {}) if scope else raw
-        if not scoped and name in ("full_agent", "card_editor") and owner.get(name) is None:
+        if not scoped and name in ("full_agent", "card_author") and owner.get(name) is None:
             continue
         profile = owner.setdefault(name, {})
         provider = originals.get(profile.get("provider_id", "default"), {})
@@ -323,11 +323,26 @@ def migrate_tracker_settings(agent):
     return changed
 
 
+def rename_card_author(raw):
+    """Settings v3 renamed the Card Editor keys to Card Author; values move verbatim."""
+    owner = raw.setdefault("shared", {}) if "version" in raw else raw
+    for old, new in (("card_editor", "card_author"), ("card_editor_config", "card_author_config")):
+        if old in owner:
+            owner[new] = owner.pop(old)
+    if raw.get("version") == 2:
+        raw["version"] = 3
+        return True
+    return False
+
+
 def migrate_settings(raw: dict) -> SettingsDocument:
     raw = deepcopy(raw)
+    renamed = rename_card_author(raw)
     connection_changes = migrate_model_connections(raw)
     if "version" in raw:
         changed_scopes = connection_changes
+        if renamed:
+            changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):
             changed_scopes.add("shared")
         providers = {p["id"]: p for p in raw.get("shared", {}).get("providers", [])}
@@ -373,7 +388,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             advisor["system_prompt"] = ADVISOR_PROMPT
             changed_scopes.add("shared")
         for scope, key in (("full_agent", "model"), ("half_agent", "foreground"),
-                           ("half_agent", "background"), ("shared", "card_editor")):
+                           ("half_agent", "background"), ("shared", "card_author")):
             profile = raw.setdefault(scope, {}).setdefault(key, {})
             if "cache" not in profile:
                 changed_scopes.add(scope)
@@ -404,15 +419,15 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     full = {**common, "local_runtime": deepcopy(local), "model": (old.full_agent or old.foreground).model_dump(),
             "tools": old.full_agent_config.model_dump(), "system_prompt": old.full_agent_system_prompt}
     shared = {key: deepcopy(values[key]) for key in SharedSettings.model_fields if key in values and key != "advisor"}
-    shared["card_editor"] = (old.card_editor or old.background).model_dump()
+    shared["card_author"] = (old.card_author or old.background).model_dump()
     shared["local_models"] = {key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields}
     result = SettingsDocument(full_agent=full, half_agent=half, shared=shared).model_dump()
     for scope, key, profile in (("full_agent", "model", old.full_agent or old.foreground),
                                 ("half_agent", "foreground", old.foreground),
                                 ("half_agent", "background", old.background),
-                                ("shared", "card_editor", old.card_editor or old.background)):
+                                ("shared", "card_author", old.card_author or old.background)):
         original = (raw.get("full_agent") or raw.get("foreground", {}) if scope == "full_agent" else
-                    raw.get("card_editor") or raw.get("background", {}) if key == "card_editor" else
+                    raw.get("card_author") or raw.get("background", {}) if key == "card_author" else
                     raw.get(key, {}))
         if "cache" not in original:
             result[scope][key].pop("cache", None)

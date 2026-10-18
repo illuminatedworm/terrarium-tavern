@@ -40,19 +40,19 @@ def register_model_selection_routes(app, store, editor):
             db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (edit.selection.model_dump_json(), sid))
         return store.session(sid)
 
-    @app.put("/api/card-editor/conversations/{wid}/model")
+    @app.put("/api/card-author/conversations/{wid}/model")
     def select_editor(wid: str, edit: SelectionEdit):
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = editor.edits.check(db, wid, edit.expected_revision, idle=False)
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("请先等待或停止当前编辑任务")
-            select_runtime(store.settings(), "card_editor", edit.selection.model_dump(), workspace["channel_origin"])
-            db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+            select_runtime(store.settings(), "card_author", edit.selection.model_dump(), workspace["channel_origin"])
+            db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                        (edit.selection.model_dump_json(), wid))
         return editor.edits.conversation(wid)
 
-    @app.put("/api/card-editor/conversations/{wid}/channel-origin")
+    @app.put("/api/card-author/conversations/{wid}/channel-origin")
     def classify_editor(wid: str, edit: ChannelEdit):
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -61,6 +61,6 @@ def register_model_selection_routes(app, store, editor):
                 raise Conflict("渠道归属已经确定，不能跨渠道修改")
             if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
                 raise Conflict("请先等待或停止当前编辑任务")
-            db.execute("UPDATE card_editor_conversations SET channel_origin=?,model_selection=? WHERE id=?",
+            db.execute("UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
                        (edit.channel_origin, dump({}), wid))
         return editor.edits.conversation(wid)

@@ -32,7 +32,7 @@ def messages():
         {"role": "assistant", "content": "读取资料", "tool_calls": [
             {"id": "call1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "call1", "content": '{"result":"完整资料尾部"}'},
-    ], "card_editor")
+    ], "card_author")
 
 
 def response(api, stream):
@@ -81,7 +81,7 @@ def assert_images(body, api, expected=IMAGES):
 async def test_real_wire_preserves_images_and_tool_history(api, mode):
     cfg = Settings(api_mode=api, model="fixture", api_key="fixture-key", base_url="https://fixture.test",
                    use_proxy=False, model_request_mode=mode, cache={"mode": "cloud"})
-    cfg._adapter_lane = "card_editor"
+    cfg._adapter_lane = "card_author"
     wire = []
 
     def route(request):
@@ -112,7 +112,7 @@ async def test_subscription_has_its_own_image_wire_and_retains_namespace(tmp_pat
     account_id, account = seed_account(accounts)
     cfg = configuration(accounts, account_id, account)
     cfg.model_request_mode = mode
-    cfg._adapter_lane = "card_editor"
+    cfg._adapter_lane = "card_author"
     requests = []
 
     def route(request):

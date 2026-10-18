@@ -67,11 +67,11 @@ def test_unconfigured_independent_editor_does_not_break_story_settings():
     from tavern.search.retrieval_config import ModelProfile
 
     config = SettingsDocument()
-    config.shared.card_editor = ModelProfile(provider_id="", model="")
+    config.shared.card_author = ModelProfile(provider_id="", model="")
     config = SettingsDocument.model_validate(config.model_dump())
     runtime_settings = config.runtime()
     assert runtime_settings.for_role("foreground").channel_origin == "standard"
-    editor = runtime_settings.for_role("card_editor")
+    editor = runtime_settings.for_role("card_author")
     assert editor.model == "" and editor.channel_origin is None
     with pytest.raises(ValueError, match="模型名称"):
         require_model_connection(editor)

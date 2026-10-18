@@ -4,10 +4,10 @@ from fastapi import Query, Request
 from fastapi.responses import StreamingResponse
 
 from tavern.core.models import (
-    CardEditorCreate,
-    CardEditorRequest,
-    CardEditorRevision,
-    CardEditorSave,
+    CardAuthorCreate,
+    CardAuthorRequest,
+    CardAuthorRevision,
+    CardAuthorSave,
     ContentEdit,
 )
 from tavern.storage.store import dump
@@ -21,7 +21,7 @@ def register_editor_routes(app, editor):
         with editor.store.connection() as db:
             return [dict(row) for row in db.execute("""SELECT w.id,w.created,
                 json_extract(a.value,'$.card') AS card, json_extract(a.value,'$.source.name') AS name
-                FROM card_editor_conversations w JOIN json_each(w.payload,'$.cards') a
+                FROM card_author_conversations w JOIN json_each(w.payload,'$.cards') a
                 LEFT JOIN cards c ON c.id=json_extract(a.value,'$.card')
                 WHERE json_array_length(w.payload,'$.cards')=1
                     AND json_extract(a.value,'$.card') IS NOT NULL AND c.id IS NULL ORDER BY w.created DESC""")]
@@ -31,7 +31,7 @@ def register_editor_routes(app, editor):
         return editor.edits.list(cid)
 
     @app.post("/api/cards/{cid}/edits")
-    async def create(cid: str, payload: CardEditorCreate):
+    async def create(cid: str, payload: CardAuthorCreate):
         return editor.edits.create(cid, payload.document, payload.expected_revision)
 
     @app.get("/api/card-edits/{wid}")
@@ -39,7 +39,7 @@ def register_editor_routes(app, editor):
         return editor.edits.get(wid)
 
     @app.post("/api/card-edits/{wid}/new-context")
-    async def new_context(wid: str, payload: CardEditorRevision):
+    async def new_context(wid: str, payload: CardAuthorRevision):
         return editor.edits.new_context(wid, payload.expected_revision)
 
     @app.put("/api/card-edits/{wid}")
@@ -49,24 +49,24 @@ def register_editor_routes(app, editor):
         return editor.edits.update(wid, payload.document, payload.expected_revision)
 
     @app.delete("/api/card-edits/{wid}")
-    async def discard(wid: str, payload: CardEditorRevision):
+    async def discard(wid: str, payload: CardAuthorRevision):
         editor.edits.delete(wid, payload.expected_revision)
         return {"deleted": True}
 
     @app.post("/api/card-edits/{wid}/undo")
-    async def undo(wid: str, payload: CardEditorRevision):
+    async def undo(wid: str, payload: CardAuthorRevision):
         return editor.edits.undo(wid, payload.expected_revision)
 
     @app.post("/api/card-edits/{wid}/reload")
-    async def reload(wid: str, payload: CardEditorRevision):
+    async def reload(wid: str, payload: CardAuthorRevision):
         return editor.edits.reload(wid, payload.expected_revision)
 
     @app.post("/api/card-edits/{wid}/save")
-    async def save(wid: str, payload: CardEditorSave):
+    async def save(wid: str, payload: CardAuthorSave):
         return editor.edits.save(wid, payload.expected_revision, payload.mode, payload.operation_id)
 
     @app.post("/api/card-edits/{wid}/runs")
-    async def submit(wid: str, payload: CardEditorRequest):
+    async def submit(wid: str, payload: CardAuthorRequest):
         return editor.submit(wid, payload)
 
     @app.get("/api/card-edit-runs/{rid}")

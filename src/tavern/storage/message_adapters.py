@@ -19,10 +19,10 @@ class MessageAdapters:
                 config TEXT NOT NULL, PRIMARY KEY(owner_kind,owner_id))""")
             db.executescript("""CREATE TRIGGER IF NOT EXISTS adapter_story_delete AFTER DELETE ON sessions BEGIN
                 DELETE FROM message_adapter_configs WHERE owner_kind='story' AND owner_id=OLD.id; END;
-                CREATE TRIGGER IF NOT EXISTS adapter_editor_delete AFTER DELETE ON card_editor_conversations BEGIN
+                CREATE TRIGGER IF NOT EXISTS adapter_editor_delete AFTER DELETE ON card_author_conversations BEGIN
                 DELETE FROM message_adapter_configs WHERE owner_kind='editor' AND owner_id=OLD.id; END;""")
             owners = [("story", r["id"], r["agent_mode"]) for r in db.execute("SELECT id,agent_mode FROM sessions")]
-            owners += [("editor", r["id"], "card_editor") for r in db.execute("SELECT id FROM card_editor_conversations")]
+            owners += [("editor", r["id"], "card_author") for r in db.execute("SELECT id FROM card_author_conversations")]
             for kind, owner, mode in owners:
                 self.create_message_adapter(db, kind, owner, mode)
             for row in db.execute("SELECT owner_kind,owner_id,config FROM message_adapter_configs").fetchall():
@@ -36,7 +36,7 @@ class MessageAdapters:
 
     def create_message_adapter(self, db, kind, owner, mode):
         document = self.settings_document()
-        profiles = ({"card_editor": document.shared.card_editor} if kind == "editor" else
+        profiles = ({"card_author": document.shared.card_author} if kind == "editor" else
                     {"full_agent": document.full_agent.model} if mode == "full_agent" else
                     {"foreground": document.half_agent.foreground, "background": document.half_agent.background})
         config = {lane: profile.message_adapter.model_dump() for lane, profile in profiles.items()}
@@ -47,7 +47,7 @@ class MessageAdapters:
         if kind not in ("story", "editor"):
             raise ValueError("未知消息适配设置范围")
         with self.connection() as db:
-            table = "sessions" if kind == "story" else "card_editor_conversations"
+            table = "sessions" if kind == "story" else "card_author_conversations"
             row = db.execute(f"SELECT * FROM {table} WHERE id=?", (owner,)).fetchone()
             if row is None:
                 raise KeyError("对话不存在")
@@ -62,8 +62,8 @@ class MessageAdapters:
             config = json.loads(saved["config"])
         document = self.settings_document()
         profiles = {"foreground": document.half_agent.foreground, "background": document.half_agent.background,
-                    "full_agent": document.full_agent.model, "card_editor": document.shared.card_editor}
-        labels = {"foreground": "正文生成", "background": "Tracker", "full_agent": "Full Agent", "card_editor": "角色卡编辑 agent"}
+                    "full_agent": document.full_agent.model, "card_author": document.shared.card_author}
+        labels = {"foreground": "正文生成", "background": "Tracker", "full_agent": "Full Agent", "card_author": "制卡 agent"}
         return {"config": config, "revision": saved["revision"], "lanes": [
             {"id": lane, "label": labels[lane], "api_mode": profiles[lane].api_mode,
              "types": catalog(lane, list(dict.fromkeys((extra if lane == "foreground" else []) +

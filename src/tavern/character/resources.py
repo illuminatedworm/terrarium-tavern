@@ -22,7 +22,7 @@ def prune_card_assets(store, card, manifest):
         for survivor in survivors:
             survivor["resources"] = json.loads(survivor["resources"])
         survivors.extend(json.loads(row[0]) for row in db.execute("SELECT card_data FROM sessions WHERE card_data IS NOT NULL"))
-        for table in ("card_editor_conversations", "card_editor_progress"):
+        for table in ("card_author_conversations", "card_author_progress"):
             for row in db.execute(f"SELECT payload FROM {table}"):
                 value = json.loads(row[0])
                 survivors.extend(c.get("source", {}) for c in value.get("cards", value.get("working", {}).get("cards", [])))

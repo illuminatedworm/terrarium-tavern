@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import StoryProse from '../story/StoryProse.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
-import type { EditorFile } from '../../lib/cardEditor';
+import type { EditorFile } from '../../lib/cardAuthor';
 defineProps<{
   text: string;
   role?: string;
@@ -20,7 +20,7 @@ defineProps<{
     </span>
     <div class="cw-message-body">
       <div class="cw-message-meta">
-        <strong>{{ role === 'user' ? '你' : '角色卡编辑 agent' }}</strong>
+        <strong>{{ role === 'user' ? '你' : '制卡 agent' }}</strong>
         <small v-if="status" :class="{ 'cw-working': status === 'streaming' }">{{
           status === 'streaming' ? '处理中' : status === 'interrupted' ? '未完成' : '中间回复'
         }}</small>

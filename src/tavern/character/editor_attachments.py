@@ -1,4 +1,4 @@
-"""Browser-selected reference files, owned by one Card Editor conversation."""
+"""Browser-selected reference files, owned by one Card Author conversation."""
 import hashlib
 import json
 import re
@@ -50,7 +50,7 @@ def attach_file(edits, wid, revision, filename, data):
                 path = target
                 stream.write(data)
             files.append(item)
-            db.execute("UPDATE card_editor_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+            db.execute("UPDATE card_author_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
             edits.write(db, workspace)
     except BaseException:
         if path:
@@ -104,7 +104,7 @@ def migrate_message_attachments(store):
     """Recover old used files from recorded tool calls; never guess an owner."""
     changes = []
     with store.connection() as db:
-        for row in db.execute("SELECT id,payload FROM card_editor_conversations"):
+        for row in db.execute("SELECT id,payload FROM card_author_conversations"):
             payload = json.loads(row["payload"])
             legacy = [f for f in payload.get("files", []) if "message_ref" not in f]
             if not legacy:
@@ -129,4 +129,4 @@ def migrate_message_attachments(store):
     if changes:
         store.backup(store.root / f"before-file-messages-{uuid.uuid4().hex[:12]}.sqlite3")
         with store.connection() as db:
-            db.executemany("UPDATE card_editor_conversations SET payload=? WHERE id=? AND payload=?", changes)
+            db.executemany("UPDATE card_author_conversations SET payload=? WHERE id=? AND payload=?", changes)

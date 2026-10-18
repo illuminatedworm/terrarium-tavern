@@ -8,7 +8,7 @@
 
 1. 按[安装、备份与维护](guides/maintenance.md)准备环境，再按[设置指南](guides/settings.md)配置提供商和模型。
 2. 选择游玩模式：Half Agent 的参数见[历史窗口与记忆](guides/history-maintenance-settings.md)，Full Agent 的操作见[使用指南](guides/full-agent.md)。
-3. 导入或[编辑角色卡](guides/card-editor.md)，结合[兼容矩阵](guides/compatibility.md)检查脚本和扩展。
+3. 导入或[编辑角色卡](guides/card-author.md)，结合[兼容矩阵](guides/compatibility.md)检查脚本和扩展。
 
 | 任务 | 文档 |
 |---|---|
@@ -31,8 +31,8 @@
 | Half Agent 分类记忆与来源协议 | [记忆一致性](design/memory-consistency.md) |
 | Full Agent 窗口、笔记与恢复 | [Full Agent 架构](design/full-agent.md) |
 | 独立参谋 agent 上下文、工具与偏好提交 | [参谋 agent 设计](design/advisor.md) |
-| 编辑草稿、连续上下文与保存 | [角色卡编辑 agent 设计](design/card-editor.md) |
-| 制卡工具、引用与续接接口 | [角色卡编辑 agent 工具协议](reference/card-editor-tools.md) |
+| 编辑草稿、连续上下文与保存 | [制卡 agent 设计](design/card-author.md) |
+| 制卡工具、引用与续接接口 | [制卡 agent 工具协议](reference/card-author-tools.md) |
 | 外部搜索限量、网页分页与来源完整性 | [联网工具协议](reference/web-tools.md) |
 | 缓存断点、传输记录和对象生命周期 | [缓存控制](design/cache-control.md) |
 | 跟进间隔和目标位置的成本取舍 | [缓存成本模型](design/cache-cost.md) |

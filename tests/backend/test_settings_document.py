@@ -118,7 +118,7 @@ def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
     store = Store(tmp_path)
     doc = store.settings_document()
     assert doc.full_agent.model.model == doc.half_agent.foreground.model == "writer-before"
-    assert doc.shared.card_editor.model == "background-before"
+    assert doc.shared.card_author.model == "background-before"
     assert doc.full_agent.local_runtime.instruction_prompt == doc.half_agent.local_runtime.instruction_prompt == "custom-local"
     assert doc.shared.providers[0].api_key == "migration-secret"
     assert doc.full_agent.system_prompt == "custom-full"
@@ -216,7 +216,7 @@ async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_
         assert app.state.store.settings("full_agent").model == "other-window"
 
 
-def test_modes_inherit_their_own_policy_and_card_editor_stays_independent(tmp_path):
+def test_modes_inherit_their_own_policy_and_card_author_stays_independent(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
@@ -227,7 +227,7 @@ def test_modes_inherit_their_own_policy_and_card_editor_stays_independent(tmp_pa
     store.save_settings(doc)
     assert store.session(full["id"])["policy_effective"] == "review"
     assert store.session(half["id"])["policy_effective"] == "automatic"
-    assert store.settings().for_role("card_editor").model != "changed-background"
+    assert store.settings().for_role("card_author").model != "changed-background"
 
 
 def test_unsupported_version_is_rejected_without_touching_database(tmp_path):

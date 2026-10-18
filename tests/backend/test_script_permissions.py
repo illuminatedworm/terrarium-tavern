@@ -6,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.character.card_editor_store import EditorStore
+from tavern.character.card_author_store import EditorStore
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, dump
 

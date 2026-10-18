@@ -11,14 +11,14 @@ from openpyxl import Workbook
 from pydantic import ValidationError
 
 from tavern.character import editor_files
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_files import convert_document, read_document, read_text_file
 from tavern.character.editor_tools import DocumentFile, EditorTools, TextFile
 from tavern.core.model_view import ModelView
 from tavern.storage.store import Store
+from tests.backend.test_card_author import ToolLLM, import_fixture
+from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM, import_fixture
-from tests.backend.test_card_editor_alignment import Editor
 from tests.backend.test_half_agent_alignment import blocks
 
 
@@ -337,7 +337,7 @@ async def test_resume_uses_saved_page_without_rereading_changed_file(tmp_path):
     path = tmp_path / "参考.txt"
     path.write_text("首次读取的内容", encoding="utf-8")
     store = Store(tmp_path / "data")
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     workspace = editor.edits.create(import_fixture(store)["id"])
 
     class Failure(ToolLLM):
@@ -352,7 +352,7 @@ async def test_resume_uses_saved_page_without_rereading_changed_file(tmp_path):
         assert failed["status"] == "error"
         path.write_text("源文件已改变", encoding="utf-8")
         await editor.close()
-        editor = CardEditorService(Store(tmp_path / "data"))
+        editor = CardAuthorService(Store(tmp_path / "data"))
         provider = ToolLLM([])
         result = await run(editor, workspace["id"], provider, "", resume=failed["id"])
         assert result["status"] == "completed"

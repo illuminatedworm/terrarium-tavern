@@ -4,16 +4,16 @@ import copy
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tests.backend.test_card_editor import ToolLLM
+from tests.backend.test_card_author import ToolLLM
 
 
 async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     store, editor = app.state.store, app.state.editor
     settings = store.settings_document()
-    settings.shared.card_editor.model = 'configured-model'
-    settings.shared.card_editor.reasoning_effort = 'low'
-    settings.shared.card_editor.context_tokens = 131072
+    settings.shared.card_author.model = 'configured-model'
+    settings.shared.card_author.reasoning_effort = 'low'
+    settings.shared.card_author.context_tokens = 131072
     store.save_settings(settings)
     configured = store.settings_document().model_dump()
     connections, executions = [], []
@@ -38,13 +38,13 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
         executions.append((cfg.model, cfg.reasoning_effort))
         return provider
 
-    monkeypatch.setattr('tavern.character.card_editor.require_model_connection', check_connection)
-    monkeypatch.setattr('tavern.character.card_editor.make_provider', make)
+    monkeypatch.setattr('tavern.character.card_author.require_model_connection', check_connection)
+    monkeypatch.setattr('tavern.character.card_author.make_provider', make)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
-            created = (await client.post('/api/card-editor/conversations', json={})).json()
+            created = (await client.post('/api/card-author/conversations', json={})).json()
             wid = created['id']
-            base = '/api/card-editor/conversations/' + wid
+            base = '/api/card-author/conversations/' + wid
             options = {'model': 'selected-model', 'reasoning_effort': 'high'}
             stats = (await client.post(base + '/stats', json={**options, 'text': '查看资料'})).json()
             preview = (await client.post(base + '/preview', json={**options, 'text': '查看资料'})).json()

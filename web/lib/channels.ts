@@ -7,7 +7,7 @@ export const providerChannel = (provider?: Provider): Channel =>
 export const channelProviders = (providers: Provider[], channel: Channel) =>
   providers.filter((provider) => providerChannel(provider) === channel);
 export const profileKey = (role: string, channel: Channel) =>
-  (channel === 'chatgpt' && role !== 'card_editor' ? 'official_' : '') +
+  (channel === 'chatgpt' && role !== 'card_author' ? 'official_' : '') +
   (role === 'full_agent' ? 'model' : role);
 export function blankChannelProfile(
   base: ModelProfile,

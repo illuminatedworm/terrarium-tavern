@@ -22,7 +22,7 @@ def signature(working):
 
 class EditorContext:
     def refresh_tool_policy(self):
-        self.policy = fingerprint([self.owner.cfg.card_editor_config.system_prompt, self.owner.definitions,
+        self.policy = fingerprint([self.owner.cfg.card_author_config.system_prompt, self.owner.definitions,
                                    self.owner.cfg.reasoning_effort, self.owner.cfg.reasoning_format,
                                    self.owner.environment, "message-attachments-v1"])
 
@@ -30,7 +30,7 @@ class EditorContext:
         # Use the operation snapshot verbatim, including an explicitly empty
         # prompt. The default is only for old settings missing this field.
         return {"role": "system", "message_type": "root_system", "runtime_phase": "header",
-                "content": self.owner.cfg.card_editor_config.system_prompt, "_cache_static": True}
+                "content": self.owner.cfg.card_author_config.system_prompt, "_cache_static": True}
 
     def header(self):
         return [self.system_message(), *([environment_message(self.owner.environment)] if self.owner.environment else [])]
@@ -177,15 +177,15 @@ class EditorContext:
             self.update("adapt", False, "本轮无额外适配要求：")
         tokens = self.tokens()
         self.must_rollover = tokens >= owner.cfg.context_tokens
-        if tokens >= owner.cfg.context_tokens * owner.cfg.card_editor_config.pressure_ratio:
+        if tokens >= owner.cfg.context_tokens * owner.cfg.card_author_config.pressure_ratio:
             self.update("pressure", {"tokens": tokens, "limit": owner.cfg.context_tokens, "forced": self.must_rollover},
                         "上下文压力（含工具）；forced=true 时只能单独调用 new_context，完成后继续：")
         elif self.frames.get("pressure"):
             self.update("pressure", None, "此前窗口压力提醒已解除：")
-        return runtime_messages(self.messages, "card_editor")
+        return runtime_messages(self.messages, "card_author")
 
     def tokens(self):
-        return request_tokens(adapt_messages(runtime_messages(self.messages, "card_editor"), self.owner.cfg)[0], self.owner.cfg, self.owner.definitions) + sum(
+        return request_tokens(adapt_messages(runtime_messages(self.messages, "card_author"), self.owner.cfg)[0], self.owner.cfg, self.owner.definitions) + sum(
             count_text(json.dumps({k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m}), self.owner.cfg)
             for m in self.messages if not m.get("_native_response") and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
 

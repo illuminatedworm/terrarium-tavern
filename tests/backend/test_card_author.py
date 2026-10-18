@@ -12,12 +12,12 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from PIL import Image, PngImagePlugin
 
 from tavern.application.service import RoleplayRuntime
-from tavern.character.card_editor import CardEditorService
-from tavern.character.card_editor_store import EditorStore
+from tavern.character.card_author import CardAuthorService
+from tavern.character.card_author_store import EditorStore
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import export_card, parse_card
 from tavern.conversation.context import compile_context
-from tavern.core.models import CardEditorRequest, SessionCreate, Settings
+from tavern.core.models import CardAuthorRequest, SessionCreate, Settings
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Conflict, Store
 
@@ -113,7 +113,7 @@ def test_copy_export_resources_and_session_isolation(tmp_path, container):
 async def test_editor_tools_save_undo_and_recovery(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)
-    service = CardEditorService(store)
+    service = CardAuthorService(store)
     workspace = service.edits.create(card["id"])
     provider = ToolLLM([
         ("read_skill", {}),
@@ -122,7 +122,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         ("validate_draft", {}),
     ])
     service.provider_factory = lambda: provider
-    req = CardEditorRequest(text="适配并修改描述", operation_id="one", expected_revision=0, adapt=True)
+    req = CardAuthorRequest(text="适配并修改描述", operation_id="one", expected_revision=0, adapt=True)
     try:
         run = service.submit(workspace["id"], req)
         assert service.submit(workspace["id"], req)["id"] == run["id"]
@@ -144,7 +144,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
         assert "terrarium" not in current["document"]["extensions"]
         names = {tool.name for batch in provider.schemas for tool in (batch or [])}
         assert names == {"overview", "read_field", "search_entries", "patch_draft", "set_text_field", "set_opening", "validate_draft", "read_skill",
-                         "create_draft", "configure_card", "revert_draft", "test_draft", "write_handoff", "new_context", "search_history", "read_history",
+                         "create_draft", "set_portrait", "configure_card", "revert_draft", "test_draft", "write_handoff", "new_context", "search_history", "read_history",
                              "list_personas", "read_persona", "create_persona", "update_persona", "web_search", "read_webpage",
                              "read_text_file", "read_document"}
         saved = service.edits.save(current["id"], current["revision"], "copy", "copy-once")
@@ -200,7 +200,7 @@ async def test_mvu_routing_and_opening_initialization(tmp_path):
 async def test_cancel_rolls_back_partial_tools(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)
-    service = CardEditorService(store)
+    service = CardAuthorService(store)
     ws = service.edits.create(card["id"])
     started = asyncio.Event()
     class Waiting(ToolLLM):
@@ -214,7 +214,7 @@ async def test_cancel_rolls_back_partial_tools(tmp_path):
         "operations": [{"op": "replace", "path": "/description", "value": "未完成"}], "comment": "临时",
     })])
     try:
-        run = service.submit(ws["id"], CardEditorRequest(text="修改", operation_id="cancel", expected_revision=0))
+        run = service.submit(ws["id"], CardAuthorRequest(text="修改", operation_id="cancel", expected_revision=0))
         await asyncio.wait_for(started.wait(), 10)
         await service.cancel(run["id"])
         assert service.edits.get(ws["id"])["document"] == card["document"]
@@ -313,14 +313,14 @@ async def test_editor_model_configuration_and_secret_redaction(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://testserver') as client:
             payload = {'providers': [{'id': 'default', 'api_key': 'private-key'}],
-                       'card_editor': {'provider_id': 'default', 'model': 'editor', 'reply_tokens': 4096}}
+                       'card_author': {'provider_id': 'default', 'model': 'editor', 'reply_tokens': 4096}}
             result = await client.patch('/api/settings/shared', json={'expected_revision':0, 'changes':payload})
             assert result.status_code == 200, result.text
             assert 'private-key' not in result.text
-            assert app.state.store.settings().for_role('card_editor').model == 'editor'
-            result = await client.patch('/api/settings/shared', json={'expected_revision':1, 'changes':{'card_editor':None}})
+            assert app.state.store.settings().for_role('card_author').model == 'editor'
+            result = await client.patch('/api/settings/shared', json={'expected_revision':1, 'changes':{'card_author':None}})
             assert result.status_code == 400
-            assert app.state.store.settings().for_role('card_editor').model == 'editor'
+            assert app.state.store.settings().for_role('card_author').model == 'editor'
 
     finally:
         await app.state.service.close()
@@ -336,7 +336,7 @@ async def test_twelve_call_limit_and_full_event_replay(tmp_path):
     provider = ToolLLM([('overview', {})] * 11)
     editor.provider_factory = lambda: provider
     try:
-        run = editor.submit(ws['id'], CardEditorRequest(text='检查资料', expected_revision=0, operation_id='limit'))
+        run = editor.submit(ws['id'], CardAuthorRequest(text='检查资料', expected_revision=0, operation_id='limit'))
         await editor.tasks[run['id']]
         final = editor.edits.run(run['id'])
         assert final['status'] == 'completed', final['error']
@@ -365,11 +365,11 @@ async def test_twelve_call_limit_and_full_event_replay(tmp_path):
 async def test_failed_tool_action_is_recorded_without_a_draft_change(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     ws = editor.edits.create(card['id'])
     editor.provider_factory = lambda: ToolLLM([('read_field', {'path': '/missing'})])
     try:
-        run = editor.submit(ws['id'], CardEditorRequest(text='读取字段', expected_revision=0, operation_id='failed-tool'))
+        run = editor.submit(ws['id'], CardAuthorRequest(text='读取字段', expected_revision=0, operation_id='failed-tool'))
         await editor.tasks[run['id']]
         page = editor.edits.activity(run['id'])
         starts = [event for event in page['events'] if event['kind'] == 'tool_started']
@@ -388,13 +388,13 @@ async def test_failed_tool_action_is_recorded_without_a_draft_change(tmp_path):
 async def test_multiple_contexts_keep_drafts_and_model_history_independent(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     first = editor.edits.create(card['id'])
     editor.provider_factory = lambda: ToolLLM([('patch_draft', {
         'operations': [{'op': 'replace', 'path': '/description', 'value': '只属于第一份草稿'}], 'comment': '修改',
     })])
     try:
-        run = editor.submit(first['id'], CardEditorRequest(
+        run = editor.submit(first['id'], CardAuthorRequest(
             text='OLD_CONTEXT_MARKER_9381', expected_revision=0, operation_id='old'))
         await editor.tasks[run['id']]
         first = editor.edits.get(first['id'])
@@ -409,7 +409,7 @@ async def test_multiple_contexts_keep_drafts_and_model_history_independent(tmp_p
         provider = ScriptedLLM(['独立上下文的答复'])
         editor.provider_factory = lambda: provider
         for context in (carried, fresh):
-            run = editor.submit(context['id'], CardEditorRequest(text='新上下文问题', expected_revision=0, operation_id='new'))
+            run = editor.submit(context['id'], CardAuthorRequest(text='新上下文问题', expected_revision=0, operation_id='new'))
             await editor.tasks[run['id']]
             assert editor.edits.run(run['id'])['status'] == 'completed'
         assert 'OLD_CONTEXT_MARKER_9381' not in json.dumps(provider.call_log)
@@ -427,7 +427,7 @@ async def test_multiple_contexts_keep_drafts_and_model_history_independent(tmp_p
 async def test_new_context_does_not_cancel_running_source(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     source = editor.edits.create(card['id'])
     started, release = asyncio.Event(), asyncio.Event()
     class Waiting(ScriptedLLM):
@@ -438,7 +438,7 @@ async def test_new_context_does_not_cancel_running_source(tmp_path):
                 yield part
     editor.provider_factory = lambda: Waiting(['原对话继续完成'])
     try:
-        run = editor.submit(source['id'], CardEditorRequest(text='继续工作', expected_revision=0, operation_id='running'))
+        run = editor.submit(source['id'], CardAuthorRequest(text='继续工作', expected_revision=0, operation_id='running'))
         await asyncio.wait_for(started.wait(), 10)
         new = editor.edits.new_context(source['id'], 0)
         assert new['runs'] == []

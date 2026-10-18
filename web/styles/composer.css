@@ -1,4 +1,4 @@
-/* Conversation composer frame shared by the story, Card Editor and Advisor: the same
+/* Conversation composer frame shared by the story, Card Author and Advisor: the same
    writing area, frosted material and action geometry. The story composer floats in
    its own glass card (story.css) and turns this frame transparent inside it. */
 .conversation-compose-frame {

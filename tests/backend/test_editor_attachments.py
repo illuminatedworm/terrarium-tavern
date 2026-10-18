@@ -5,13 +5,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_attachments import attachment_path
-from tavern.core.models import CardEditorRequest
+from tavern.core.models import CardAuthorRequest
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store
+from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM, import_fixture
 from tests.backend.test_editor_files import make_docx
 
 
@@ -21,7 +21,7 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
     wid = editor.edits.create_conversation()["id"]
     try:
         async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
-            endpoint = f"/api/card-editor/conversations/{wid}/files"
+            endpoint = f"/api/card-author/conversations/{wid}/files"
             response = await client.post(endpoint, data={"expected_revision": 0}, files={"file": ("../../资料.md", "世界设定\n完整尾部".encode())})
             assert response.status_code == 200, response.text
             workspace = response.json()
@@ -83,14 +83,14 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
 
 async def test_submit_atomicity_cancel_resume_and_legacy_migration(tmp_path):
     from tavern.character.editor_attachments import attach_file
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     workspace = attach_file(editor.edits, wid, 0, "PS.txt", b"fixture")
     editor.provider_factory = lambda: ToolLLM([])
     with pytest.raises(ValueError, match="请输入"):
-        editor.submit(wid, CardEditorRequest(text="", expected_revision=workspace["revision"], operation_id="invalid"))
+        editor.submit(wid, CardAuthorRequest(text="", expected_revision=workspace["revision"], operation_id="invalid"))
     assert editor.edits.conversation(wid)["files"][0]["message_ref"] is None
-    request = CardEditorRequest(text="读取附件", expected_revision=workspace["revision"], operation_id="first")
+    request = CardAuthorRequest(text="读取附件", expected_revision=workspace["revision"], operation_id="first")
     first = editor.submit(wid, request)
     assert editor.submit(wid, request)["id"] == first["id"]
     await editor.cancel(first["id"])
@@ -104,7 +104,7 @@ async def test_submit_atomicity_cancel_resume_and_legacy_migration(tmp_path):
         workspace = editor.edits.load(db, wid)
         original_ref = workspace["files"][0].pop("message_ref")
         editor.edits.write(db, workspace, increment=False)
-    reopened = CardEditorService(Store(tmp_path))
+    reopened = CardAuthorService(Store(tmp_path))
     try:
         migrated = reopened.edits.conversation(wid)
         assert migrated["files"][0]["message_ref"] == original_ref
@@ -123,7 +123,7 @@ async def test_rejected_uploads_leave_no_files(tmp_path, monkeypatch):
     wid = editor.edits.create_conversation()["id"]
     try:
         async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
-            endpoint = f"/api/card-editor/conversations/{wid}/files"
+            endpoint = f"/api/card-author/conversations/{wid}/files"
             for filename, revision in [("x.exe", 0), ("x.txt", 9)]:
                 response = await client.post(endpoint, data={"expected_revision": revision}, files={"file": (filename, b"abc")})
                 assert response.status_code in (400, 409), response.text

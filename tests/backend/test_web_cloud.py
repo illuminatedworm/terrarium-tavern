@@ -22,7 +22,7 @@ def search_result():
     return payload
 
 
-@pytest.mark.parametrize("role", ["advisor", "card_editor"])
+@pytest.mark.parametrize("role", ["advisor", "card_author"])
 async def test_cloud_search_wire_citations_and_lossless_continuation(tmp_path, role):
     accounts = IdentityFixture().service(tmp_path)
     aid, account = seed_account(accounts)
@@ -71,8 +71,8 @@ async def test_local_off_and_maintenance_requests_never_enable_hosted_search(tmp
         return sse(completed())
     accounts.http_transport = httpx.MockTransport(route)
     provider = await make_provider(cfg)
-    provider.operation_purpose = "card_editor"
-    web = WebSession(mode, cfg, "card_editor")
+    provider.operation_purpose = "card_author"
+    web = WebSession(mode, cfg, "card_author")
     try:
         async for _ in web.chat(provider, [{"role": "user", "content": "test"}], tool_definitions(), extra_body={"tool_choice": choice}):
             pass
@@ -99,8 +99,8 @@ async def test_cloud_search_failure_retries_only_current_request_and_discards_pa
         return sse(completed("", [("web_search", {"query": "官方说明"})]))
     accounts.http_transport = httpx.MockTransport(route)
     provider = await make_provider(cfg)
-    provider.operation_purpose = "card_editor"
-    web = WebSession("auto", cfg, "card_editor", lambda k, p: events.append((k, p)))
+    provider.operation_purpose = "card_author"
+    web = WebSession("auto", cfg, "card_author", lambda k, p: events.append((k, p)))
     messages = [{"role": "user", "content": "查证"},
                 {"role": "assistant", "content": "", "tool_calls": [{"id": "prior-write", "function": {"name": "set_text_field", "arguments": "{}"}}]},
                 {"role": "tool", "tool_call_id": "prior-write", "content": "草稿已暂存"}]

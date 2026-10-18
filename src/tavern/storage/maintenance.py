@@ -21,7 +21,7 @@ def _files(root: Path):
 
 def _debug_protected(db, turns):
     protected = {turn["id"] for turn in turns if turn["protected"]}
-    protected.update(r[0] for r in db.execute("SELECT run FROM card_editor_progress"))
+    protected.update(r[0] for r in db.execute("SELECT run FROM card_author_progress"))
     protected.update(r[0] for r in db.execute(
         "SELECT id FROM advisor_runs WHERE progress IS NOT NULL OR status IN ('queued','running')"))
     return protected
@@ -129,7 +129,7 @@ def cleanup(store, *, vacuum=False):
         if db.execute("SELECT 1 FROM advisor_runs WHERE status IN ('queued','running')").fetchone():
             raise Conflict("请先结束参谋 agent 咨询，再清理存储")
         if db.execute("SELECT 1 FROM card_edit_runs WHERE status IN ('queued','running')").fetchone():
-            raise Conflict("请先结束角色卡编辑 agent 任务，再清理存储")
+            raise Conflict("请先结束制卡 agent 任务，再清理存储")
         if db.execute("SELECT 1 FROM turns WHERE status IN ('queued','running','awaiting_review')").fetchone():
             raise Conflict("请先结束运行或待审核回合，再清理存储")
         if db.execute("SELECT 1 FROM context_operations WHERE status IN ('queued','running')").fetchone():
@@ -172,8 +172,8 @@ def cleanup(store, *, vacuum=False):
         editor_events = db.execute(f"""SELECT e.seq,length(CAST(e.payload AS BLOB)) AS bytes,r.created,
             NOT EXISTS(SELECT 1 FROM json_each(w.payload,'$.cards') a
                 WHERE json_extract(a.value,'$.card') IS NULL OR json_extract(a.value,'$.document') != json_extract(a.value,'$.base_document'))
-                AND NOT EXISTS(SELECT 1 FROM card_editor_progress p WHERE p.workspace=w.id) AS saved FROM card_edit_events e
-            JOIN card_edit_runs r ON r.id=e.run JOIN card_editor_conversations w ON w.id=r.workspace
+                AND NOT EXISTS(SELECT 1 FROM card_author_progress p WHERE p.workspace=w.id) AS saved FROM card_edit_events e
+            JOIN card_edit_runs r ON r.id=e.run JOIN card_author_conversations w ON w.id=r.workspace
             WHERE e.kind NOT IN ({placeholders}) ORDER BY e.seq""", PUBLIC_KINDS).fetchall()
         total = sum(e["bytes"] for e in editor_events)
         for event in editor_events:

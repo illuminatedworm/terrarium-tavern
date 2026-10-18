@@ -38,7 +38,7 @@ import Icon from '../common/Icon.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
-import CardEditorSettings from './CardEditorSettings.vue';
+import CardAuthorSettings from './CardAuthorSettings.vue';
 import WebSettings from './WebSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
@@ -111,9 +111,9 @@ const prompt = computed(() => prompts.value.find((p) => p.path === promptPath.va
 const advisorPrompt = computed(() =>
   draft.value?.prompt_definitions.find((p) => p.scope === 'shared' && p.path === 'advisor.system_prompt'),
 );
-const cardEditorPrompt = computed(() =>
+const cardAuthorPrompt = computed(() =>
   draft.value?.prompt_definitions.find(
-    (p) => p.scope === 'shared' && p.path === 'card_editor_config.system_prompt',
+    (p) => p.scope === 'shared' && p.path === 'card_author_config.system_prompt',
   ),
 );
 const status = computed(() =>
@@ -609,10 +609,10 @@ onMounted(async () => {
               恢复默认文本
             </button>
           </AdvisorSettings>
-          <CardEditorSettings
+          <CardAuthorSettings
             v-else-if="page.key === 'editor'"
-            :value="draft.shared.card_editor_config"
-            :profile="draft.shared.card_editor"
+            :value="draft.shared.card_author_config"
+            :profile="draft.shared.card_author"
             :providers="draft.shared.providers"
             :services="draft.shared.web"
             :effort-options="effortOptions"
@@ -621,22 +621,22 @@ onMounted(async () => {
             @services="navigate('shared.web')"
           >
             <SavedText
-              :model-value="editor.textValue('shared', 'card_editor_config.system_prompt')"
-              :saved-value="saved!.shared.card_editor_config.system_prompt"
-              label="角色卡编辑 agent 系统提示词"
+              :model-value="editor.textValue('shared', 'card_author_config.system_prompt')"
+              :saved-value="saved!.shared.card_author_config.system_prompt"
+              label="制卡 agent 系统提示词"
               :guard="guard"
-              :saving="textBusy === 'shared.card_editor_config.system_prompt'"
-              :error="textErrors['shared.card_editor_config.system_prompt']"
-              @update:model-value="editor.editText('shared', 'card_editor_config.system_prompt', $event)"
-              @save="editor.saveText('shared', 'card_editor_config.system_prompt')"
+              :saving="textBusy === 'shared.card_author_config.system_prompt'"
+              :error="textErrors['shared.card_author_config.system_prompt']"
+              @update:model-value="editor.editText('shared', 'card_author_config.system_prompt', $event)"
+              @save="editor.saveText('shared', 'card_author_config.system_prompt')"
             />
             <button
-              v-if="cardEditorPrompt"
-              @click="editor.editText('shared', 'card_editor_config.system_prompt', cardEditorPrompt.default)"
+              v-if="cardAuthorPrompt"
+              @click="editor.editText('shared', 'card_author_config.system_prompt', cardAuthorPrompt.default)"
             >
               恢复默认文本
             </button>
-          </CardEditorSettings>
+          </CardAuthorSettings>
           <WebSettings v-else-if="page.key === 'web'" :value="draft.shared.web" />
           <LocalResourceSettings
             v-else-if="page.key === 'local'"

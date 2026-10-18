@@ -17,7 +17,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `full_agent/` | Full Agent 模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
 | `advisor/` | 两种模式共用的参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
 | `chatgpt/` | ChatGPT 账号授权、凭据存储、模型目录和订阅通道传输 |
-| `web/` | 参谋 agent 与角色卡编辑 agent 共用的联网服务、分页和来源记录 |
+| `web/` | 参谋 agent 与制卡 agent 共用的联网服务、分页和来源记录 |
 | `search/` | 召回、准入、文本解析、本地模型进程和索引 |
 | `storage/` | SQLite、事务、分支、备份与存储清理 |
 | `scripting/` | 共享模型传输、原生回复、隔离脚本、依赖和 MVU 处理 |
@@ -44,7 +44,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | Full Agent 工具或换窗 | [架构](../design/full-agent.md)、[工具协议](../reference/full-agent-tools.md) | 强制换窗、进度恢复和工具权限 |
 | 模型协议或缓存 | [接入参考](../reference/model-api.md)、[缓存设计](../design/cache-control.md) | 最终 HTTP 序列化、原生回复和 usage |
 | 设置字段 | [设置 API](../reference/settings-api.md) | 默认值、迁移、范围修订和前端保存合并 |
-| 卡片编辑 | [工作区设计](../design/card-editor.md) | 草稿版本、资源引用和模型视图恢复 |
+| 卡片编辑 | [工作区设计](../design/card-author.md) | 草稿版本、资源引用和模型视图恢复 |
 | 检索或上下文 | [检索](../guides/retrieval.md)、[上下文](../design/context-lifecycle.md) | 准入、窗口计数和预览一致性 |
 
 测试集中在 `tests/`，命令及选择方式见[验证与发行](validation.md)。

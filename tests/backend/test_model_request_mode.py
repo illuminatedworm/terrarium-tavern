@@ -196,7 +196,7 @@ async def test_selection_persists_projects_to_all_roles_and_undo_restores_defaul
         for mode in ("full_agent", "half_agent"):
             runtime = doc.runtime(mode)
             assert runtime.model_request_mode == "stream"
-            for role in ("foreground", "background", "card_editor", "full_agent"):
+            for role in ("foreground", "background", "card_author", "full_agent"):
                 assert runtime.for_role(role).model_request_mode == "stream"
         undone = await client.post(f"/api/settings/edit-sessions/{session['id']}/undo", json={
             "page": "shared.network", "expected_revision": changed.json()["revisions"]["shared"]})
@@ -267,7 +267,7 @@ async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_
         assert changed.status_code == 200, changed.text
         for mode in ("full_agent", "half_agent"):
             runtime = store.settings(mode)
-            for role in ("foreground", "background", "card_editor", "full_agent"):
+            for role in ("foreground", "background", "card_author", "full_agent"):
                 assert runtime.for_role(role).debug_failed_requests
                 assert runtime.for_role(role)._data_root == tmp_path
         cfg = config(debug_failed_requests=True, log_max_mib=1)

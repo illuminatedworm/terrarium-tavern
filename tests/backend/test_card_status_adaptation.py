@@ -9,7 +9,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from pydantic import ValidationError
 
 from tavern.application.service import RoleplayRuntime
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import Skill, tool_definitions
@@ -18,8 +18,8 @@ from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
 
 TEMPLATE = '<details><summary>状态栏</summary><div>TIME: {{getvar::Time}} MONEY: {{getvar::Money}}</div></details>'
 OPENING = '旅客放下行李。\n<details><summary>状态栏</summary><div>TIME: 08:20 MONEY: 12</div></details>'
@@ -119,7 +119,7 @@ async def test_skill_is_whitelisted_and_full_resource_reaches_editor_model(tmp_p
     with pytest.raises(ValidationError):
         Skill(resource="../editor_config.py")
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     provider = ToolLLM([("read_skill", {"resource": resource})])
     try:
@@ -140,7 +140,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
     original["character_book"]["entries"][0]["id"] = opaque_id
     original["alternate_greetings"] = [OPENING.replace("08:20", "19:40").replace("12", "35")]
     source = store.import_card(dump(original).encode(), "fixture.json")
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     wid = workspace["id"]
     model = ToolLLM([

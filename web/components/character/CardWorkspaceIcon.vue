@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Icon from '../common/Icon.vue';
-// The Card Editor's historical icon names map onto the shared icon family.
+// The Card Author's historical icon names map onto the shared icon family.
 const names = {
   pen: 'pencil',
   plus: 'plus',

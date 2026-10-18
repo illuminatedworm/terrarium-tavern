@@ -5,10 +5,10 @@ import json
 import pytest
 from kohakuterrarium.testing.llm import ScriptedLLM
 
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.conversation.context import compile_context, macros
 from tavern.core.model_view import ModelView, state_for_model
-from tavern.core.models import CardEditorRequest, ContextRecipe, SessionCreate, Settings
+from tavern.core.models import CardAuthorRequest, ContextRecipe, SessionCreate, Settings
 from tavern.core.tokens import count_text
 from tavern.memories.memory_evidence import evidence_pool
 from tavern.memories.memory_records import Record
@@ -181,11 +181,11 @@ async def test_authorized_tools_only_return_short_refs_and_program_fills_sources
 
 
 async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_parent_edit(tmp_path):
-    from tests.backend.test_card_editor import ToolLLM
+    from tests.backend.test_card_author import ToolLLM
     doc = document()
     store = Store(tmp_path)
     card = store.import_card(json.dumps(doc).encode(), "card.json")
-    service = CardEditorService(store)
+    service = CardAuthorService(store)
     workspace = service.edits.create(card["id"])
     class Editor(ToolLLM):
         async def chat(self, messages, **kwargs):
@@ -203,7 +203,7 @@ async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_pare
     provider = Editor([("read_field", {"path": ""}), ("patch_draft", {}), ("validate_draft", {})])
     service.provider_factory = lambda: provider
     try:
-        run = service.submit(workspace["id"], CardEditorRequest(text="更新描述", operation_id="one", expected_revision=0))
+        run = service.submit(workspace["id"], CardAuthorRequest(text="更新描述", operation_id="one", expected_revision=0))
         await service.tasks[run["id"]]
         final = service.edits.run(run["id"])
         assert final["status"] == "completed", final["error"]
@@ -215,11 +215,11 @@ async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_pare
 
 
 async def test_opening_tool_restores_handles_in_complete_inline_text(tmp_path):
-    from tests.backend.test_card_editor import ToolLLM
+    from tests.backend.test_card_author import ToolLLM
     doc = {"name": "艾琳", "first_mes": "遗物编号：" + ID}
     store = Store(tmp_path)
     card = store.import_card(json.dumps(doc).encode(), "card.json")
-    service = CardEditorService(store)
+    service = CardAuthorService(store)
     workspace = service.edits.create(card["id"])
     class Editor(ToolLLM):
         async def chat(self, messages, **kwargs):
@@ -233,7 +233,7 @@ async def test_opening_tool_restores_handles_in_complete_inline_text(tmp_path):
     provider = Editor([("read_field", {"path": "/first_mes"}), ("set_opening", {})])
     service.provider_factory = lambda: provider
     try:
-        run = service.submit(workspace["id"], CardEditorRequest(text="保留编号并初始化", operation_id="one", expected_revision=0))
+        run = service.submit(workspace["id"], CardAuthorRequest(text="保留编号并初始化", operation_id="one", expected_revision=0))
         await service.tasks[run["id"]]
         final = service.edits.run(run["id"])
         assert final["status"] == "completed", final["error"]

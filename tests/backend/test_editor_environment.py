@@ -9,14 +9,14 @@ from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.character import editor_environment as environment
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.core.message_adapter import APIS, default_rule
-from tavern.core.models import CardEditorRequest
+from tavern.core.models import CardAuthorRequest
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM
+from tests.backend.test_card_author_alignment import Editor
+from tests.backend.test_card_author_prompt import strings
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
-from tests.backend.test_card_editor_alignment import Editor
-from tests.backend.test_card_editor_prompt import strings
 from tests.backend.test_half_agent_alignment import blocks
 
 SNAPSHOT = {"system": "Windows 11", "local_time": "2026-10-15 19:30:45", "utc_offset": "UTC+8"}
@@ -52,7 +52,7 @@ def test_local_seconds_and_numeric_offset(minutes, offset, monkeypatch):
     assert environment.capture_environment(0) == {
         "system": "Example OS", "local_time": "2026-10-15 19:30:45", "utc_offset": offset}
     for api in APIS:
-        assert default_rule("editor_environment", api, "card_editor") == {"role": "system", "wrap": False}
+        assert default_rule("editor_environment", api, "card_author") == {"role": "system", "wrap": False}
 
 
 async def test_preview_does_not_freeze_and_first_submit_survives_restart_rebuild_and_rollover(tmp_path, monkeypatch):
@@ -63,7 +63,7 @@ async def test_preview_does_not_freeze_and_first_submit_survives_restart_rebuild
     monkeypatch.setattr("tavern.character.editor_storage.capture_environment", lambda timestamp=None: copy.deepcopy(SNAPSHOT))
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-            preview = (await client.post(f"/api/card-editor/conversations/{wid}/preview", json={"text": "讨论"})).json()
+            preview = (await client.post(f"/api/card-author/conversations/{wid}/preview", json={"text": "讨论"})).json()
             assert preview["messages"][1]["role"] == "system"
             assert SNAPSHOT["local_time"] in preview["messages"][1]["content"]
             assert "environment" not in editor.edits.conversation(wid)
@@ -82,12 +82,12 @@ async def test_preview_does_not_freeze_and_first_submit_survives_restart_rebuild
             def unexpected_capture(timestamp=None):
                 pytest.fail("A saved conversation must never recapture its environment")
             monkeypatch.setattr("tavern.character.editor_storage.capture_environment", unexpected_capture)
-            preview = (await client.post(f"/api/card-editor/conversations/{wid}/preview", json={})).json()
+            preview = (await client.post(f"/api/card-author/conversations/{wid}/preview", json={})).json()
             assert preview["messages"][1]["content"] == content
-            reopened = CardEditorService(Store(tmp_path))
+            reopened = CardAuthorService(Store(tmp_path))
             try:
                 settings = reopened.store.settings_document()
-                settings.shared.card_editor_config.system_prompt = "新的系统规则"
+                settings.shared.card_author_config.system_prompt = "新的系统规则"
                 reopened.store.save_settings(settings)
                 second = ToolLLM([])
                 assert (await run(reopened, wid, second))["status"] == "completed"
@@ -102,12 +102,12 @@ async def test_preview_does_not_freeze_and_first_submit_survives_restart_rebuild
 
 
 async def test_immediate_cancel_resume_and_discard_do_not_reset_first_submit(tmp_path, monkeypatch):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     workspace = editor.edits.create_conversation()
     wid = workspace["id"]
     editor.provider_factory = lambda: ToolLLM([])
     monkeypatch.setattr("tavern.character.editor_storage.capture_environment", lambda timestamp=None: copy.deepcopy(SNAPSHOT))
-    first = editor.submit(wid, CardEditorRequest(text="开始", operation_id="first", expected_revision=workspace["revision"]), legacy=False)
+    first = editor.submit(wid, CardAuthorRequest(text="开始", operation_id="first", expected_revision=workspace["revision"]), legacy=False)
     await editor.cancel(first["id"])
     assert editor.edits.conversation(wid)["environment"] == SNAPSHOT
     monkeypatch.setattr("tavern.character.editor_storage.capture_environment", lambda timestamp=None: pytest.fail("must not recapture"))
@@ -115,7 +115,7 @@ async def test_immediate_cancel_resume_and_discard_do_not_reset_first_submit(tmp
     assert (await run(editor, wid, resumed, "", resume=first["id"]))["status"] == "completed"
     assert resumed.call_log[0][1]["content"] == environment.environment_message(SNAPSHOT)["content"]
     workspace = editor.edits.conversation(wid)
-    next_run = editor.submit(wid, CardEditorRequest(text="继续", operation_id="second", expected_revision=workspace["revision"]), legacy=False)
+    next_run = editor.submit(wid, CardAuthorRequest(text="继续", operation_id="second", expected_revision=workspace["revision"]), legacy=False)
     await editor.cancel(next_run["id"])
     editor.edits.discard(wid, editor.edits.conversation(wid)["revision"])
     assert editor.edits.conversation(wid)["environment"] == SNAPSHOT
@@ -133,10 +133,10 @@ async def test_environment_reaches_final_transport_after_rules_before_references
             body = json.loads(request.content)
             serialized = list(strings(body))
             assert serialized.count(content) == 1
-            assert serialized.index(editor.store.settings_document().shared.card_editor_config.system_prompt) < serialized.index(content)
+            assert serialized.index(editor.store.settings_document().shared.card_author_config.system_prompt) < serialized.index(content)
             if api == "anthropic":
                 system_texts = [part["text"] for part in body["system"]]
-                prompt = editor.store.settings_document().shared.card_editor_config.system_prompt
+                prompt = editor.store.settings_document().shared.card_author_config.system_prompt
                 assert system_texts.index(content) == system_texts.index(prompt) + 1
             else:
                 assert body["input"][1]["role"] == "system"
@@ -146,14 +146,14 @@ async def test_environment_reaches_final_transport_after_rules_before_references
 
 
 async def test_existing_conversation_recovers_first_request_time_without_rewriting_history(tmp_path):
-    editor = CardEditorService(Store(tmp_path))
+    editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     first = await run(editor, wid, ToolLLM([]))
     with editor.store.connection() as db:
         workspace = editor.edits.load(db, wid)
         original = workspace.pop("environment")
         # Reproduce an older saved conversation without an environment field.
-        db.execute("UPDATE card_editor_conversations SET payload=? WHERE id=?",
+        db.execute("UPDATE card_author_conversations SET payload=? WHERE id=?",
                    (dump({"cards": workspace["cards"], "state": workspace["state"]}), wid))
     provider = ToolLLM([])
     assert (await run(editor, wid, provider))["status"] == "completed"

@@ -14,7 +14,7 @@ from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Conflict, Store, dump, uid
 from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
 from tests.backend.test_advisor import Failure, ask, setup
-from tests.backend.test_card_editor import ToolLLM
+from tests.backend.test_card_author import ToolLLM
 
 
 def test_independent_models_but_immutable_channel(tmp_path):

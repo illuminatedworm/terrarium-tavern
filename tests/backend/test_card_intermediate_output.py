@@ -4,12 +4,12 @@ import json
 import httpx
 import pytest
 
-from tavern.character.card_editor import CardEditorService
-from tavern.core.models import CardEditorRequest
+from tavern.character.card_author import CardAuthorService
+from tavern.core.models import CardAuthorRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Store
-from tests.backend.test_card_editor_alignment import Editor
+from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_half_agent_alignment import blocks
 
 
@@ -43,7 +43,7 @@ async def test_native_intermediate_prose_remains_public_after_restart_cleanup(tm
         with editor.store.connection() as db:
             db.execute("UPDATE card_edit_runs SET created=0 WHERE id=?", (run["id"],))
         cleanup(editor.store)
-        restored = CardEditorService(Store(tmp_path))
+        restored = CardAuthorService(Store(tmp_path))
         assert public_events(restored.edits, run["id"]) == events
         assert restored.edits.context(editor.workspace["id"]) == context
         assert restored.edits.get(editor.workspace["id"])["document"] == editor.workspace["document"]
@@ -72,10 +72,10 @@ async def test_chat_completions_stream_pagination_and_compaction_preserve_whole_
                                   headers={"content-type": "text/event-stream"})
         return ModelTransport(cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
 
-    monkeypatch.setattr("tavern.character.card_editor.make_provider", factory)
+    monkeypatch.setattr("tavern.character.card_author.make_provider", factory)
     try:
         ws = editor.workspace
-        run = editor.service.submit(ws["id"], CardEditorRequest(text="检查资料", operation_id="ordinary", expected_revision=0))
+        run = editor.service.submit(ws["id"], CardAuthorRequest(text="检查资料", operation_id="ordinary", expected_revision=0))
         await editor.service.tasks[run["id"]]
         assert editor.service.edits.run(run["id"])["status"] == "completed"
         assert editor.service.edits.activity(run["id"])["has_more"]

@@ -28,7 +28,7 @@ async def viewport_ok(page, label):
 async def settings_page(page, page_id):
     group, key = page_id.split(".")
     groups = {"shared": "通用", "full_agent": "full agent", "half_agent": "half agent"}
-    labels = {"providers": "提供商", "model": "模型与生成", "editor": "角色卡编辑 agent"}
+    labels = {"providers": "提供商", "model": "模型与生成", "editor": "制卡 agent"}
     dialog = page.get_by_role("dialog", name="设置", exact=True)
     if not await dialog.is_visible():
         settings = page.get_by_role("button", name="设置", exact=True)
@@ -108,7 +108,7 @@ async def main():
                 current = app.state.store.settings_document()
                 assert current.full_agent.model == before.full_agent.model
                 assert current.half_agent == before.half_agent
-                assert current.shared.card_editor == before.shared.card_editor
+                assert current.shared.card_author == before.shared.card_author
                 checks.append("new registration, protected callback, welcome, unchanged Agent choices")
 
                 await provider.get_by_role("button", name="重新登录此账号", exact=True).click()

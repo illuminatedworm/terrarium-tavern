@@ -3,16 +3,16 @@ import json
 
 import pytest
 
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.core.models import PersonaEdit, SessionCreate
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM, import_fixture
 
 
 def result_values(editor, rid):
     with editor.store.connection() as db:
-        trace = json.loads(db.execute("SELECT payload FROM card_editor_traces WHERE run=?", (rid,)).fetchone()[0])
+        trace = json.loads(db.execute("SELECT payload FROM card_author_traces WHERE run=?", (rid,)).fetchone()[0])
     return [json.loads(m["content"]) for m in trace if m["role"] == "tool"]
 
 
@@ -30,7 +30,7 @@ class ObservedModel(ToolLLM):
 async def test_ordinary_authoring_does_not_load_persona_library(tmp_path, monkeypatch):
     store = Store(tmp_path)
     store.save_persona(None, PersonaEdit(name="PRIVATE_PERSONA_NAME", description="PRIVATE_PERSONA_INTRO"))
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     def forbidden(*args):
         raise AssertionError("Ordinary authoring must not query the persona library")
@@ -50,7 +50,7 @@ async def test_ordinary_authoring_does_not_load_persona_library(tmp_path, monkey
 @pytest.mark.parametrize("request_ref", [None, "H99", "C1"])
 async def test_persona_tools_reject_missing_old_assistant_and_unknown_request_refs(tmp_path, request_ref):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     try:
         await run(editor, wid, ToolLLM([]), "先讨论用户角色")
@@ -68,9 +68,9 @@ async def test_persona_tools_reject_missing_old_assistant_and_unknown_request_re
 async def test_creation_is_staged_and_long_persona_text_is_preserved(tmp_path):
     store = Store(tmp_path)
     settings = store.settings_document()
-    settings.shared.card_editor.context_tokens = 262144
+    settings.shared.card_author.context_tokens = 262144
     store.save_settings(settings)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     text = "航海经历与 {{user}} 的约定。" * 1500 + "PERSONA_END"
     def before(_):
@@ -118,7 +118,7 @@ async def test_creation_is_staged_and_long_persona_text_is_preserved(tmp_path):
 async def test_update_requires_current_read_and_preserves_a_concurrent_edit(tmp_path):
     store = Store(tmp_path)
     saved = store.save_persona(None, PersonaEdit(name="Traveler", description="Original introduction"))
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     def before(index):
         if index == 3:
@@ -145,7 +145,7 @@ async def test_update_requires_current_read_and_preserves_a_concurrent_edit(tmp_
 
 async def test_persona_changes_survive_rollover_failure_and_reopen_without_duplicates(tmp_path):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     def before(index):
         if index == 5:
@@ -168,7 +168,7 @@ async def test_persona_changes_survive_rollover_failure_and_reopen_without_dupli
     finally:
         await editor.close()
     reopened = Store(tmp_path)
-    editor = CardEditorService(reopened)
+    editor = CardAuthorService(reopened)
     try:
         model = ToolLLM([])
         result = await run(editor, wid, model, "", resume=failed["id"])
@@ -183,7 +183,7 @@ async def test_persona_changes_survive_rollover_failure_and_reopen_without_dupli
 async def test_conflicting_commit_is_atomic_and_can_merge_after_resume(tmp_path):
     store = Store(tmp_path)
     saved = store.save_persona(None, PersonaEdit(name="Existing", description="Original"))
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     def before(index):
         if index == 4:
@@ -215,7 +215,7 @@ async def test_conflicting_commit_is_atomic_and_can_merge_after_resume(tmp_path)
 
 async def test_steering_can_revoke_pending_creation_and_old_request_is_not_reused(tmp_path):
     store = Store(tmp_path)
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     wid = editor.edits.create_conversation()["id"]
     def before(index):
         if index == 1:

@@ -41,11 +41,11 @@ class EditorRun:
         self.pending_calls = copy.deepcopy(progress.get("pending_calls") if progress else None)
         saved = copy.deepcopy(progress["context"] if progress else self.edits.context(self.wid))
         self.rolled = bool(progress and progress.get("rolled"))
-        self.web_session = WebSession(self.cfg.card_editor_config.web.mode, self.cfg, "card_editor", self.event,
+        self.web_session = WebSession(self.cfg.card_author_config.web.mode, self.cfg, "card_author", self.event,
                                       failed=bool(progress and progress.get("web_fallback")))
         self.definitions = self.web_session.definitions(tool_definitions())
         self.web = WebTools(self.cfg.web, self.cfg.network, service.web_transport,
-                            mode=self.cfg.card_editor_config.web.mode, event=self.event)
+                            mode=self.cfg.card_author_config.web.mode, event=self.event)
         # Steering must close an old batch before a new user message reaches the
         # provider. Never execute a stale proposed mutation after changed intent.
         if progress and self.request.get("text", "").strip() and self.pending_calls:
@@ -61,7 +61,7 @@ class EditorRun:
         self.tools = EditorTools(self)
         self.calls = 0
         self.request_context = ProviderRequestContext(self.wid, rid, self.context.epoch, self.store.device_id(),
-            sent_breakpoints=self.store.cache_breakpoint_history(self.wid, "card_editor"))
+            sent_breakpoints=self.store.cache_breakpoint_history(self.wid, "card_author"))
         self.request_context.diagnostics = {"rebuild_reason": self.context.reason}
         self.cfg.cache_scope, self.cfg.cache_window = self.wid, self.context.epoch
 
@@ -88,7 +88,7 @@ class EditorRun:
         # turn's completed reads/results on a later resume.
         self.context.refresh_tool_policy()
         self.save()
-        if self.calls >= (12 if self.legacy else self.cfg.card_editor_config.max_steps):
+        if self.calls >= (12 if self.legacy else self.cfg.card_author_config.max_steps):
             raise ValueError("本次模型调用额度已用完，可继续使用本地搜索")
         self.calls += 1
         self.event("model_call", {"call": self.calls, "model": self.cfg.model, "search_fallback": True})
@@ -191,21 +191,21 @@ class EditorRun:
             self.context.seen.append(history_ref)
             self.context.update("final_ref", history_ref, "上条最终回复的历史引用：")
             db.execute("INSERT OR REPLACE INTO card_edit_contexts VALUES (?,?)", (self.wid, dump(self.context.saved())))
-            db.execute("INSERT OR REPLACE INTO card_editor_traces VALUES (?,?)", (self.rid, dump(self.archived_trace())))
-            db.execute("DELETE FROM card_editor_progress WHERE workspace=?", (self.wid,))
+            db.execute("INSERT OR REPLACE INTO card_author_traces VALUES (?,?)", (self.rid, dump(self.archived_trace())))
+            db.execute("DELETE FROM card_author_progress WHERE workspace=?", (self.wid,))
             db.execute("UPDATE card_edit_runs SET status='completed',response=? WHERE id=?", (response, self.rid))
         reports = [{"card_ref": c["ref"], **validation_report(c["document"])} for c in self.working["cards"]]
         self.event("completed", {"validation": reports[0] if len(reports) == 1 else reports,
                                  "usage": self.usage(provider), "calls": self.calls})
 
     async def run(self, provider):
-        configure_operation(provider, self.request_context, self.event, "card_editor")
+        configure_operation(provider, self.request_context, self.event, "card_author")
         self.event("started", {})
         if self.context.reason:
             self.event("context_baseline", self.request_context.audit())
         self.save()
         await self.execute_pending()
-        maximum = 12 if self.legacy else self.cfg.card_editor_config.max_steps
+        maximum = 12 if self.legacy else self.cfg.card_author_config.max_steps
         for _ in range(maximum):
             if self.calls >= maximum:
                 break

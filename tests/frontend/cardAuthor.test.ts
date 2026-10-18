@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { editorTimeline, type EditorMessage, type EditorRun } from '../../web/lib/cardEditor';
-import { appendSkillRequest, editorSkillPresets } from '../../web/lib/cardEditorSkills';
+import { editorTimeline, type EditorMessage, type EditorRun } from '../../web/lib/cardAuthor';
+import { appendSkillRequest, editorSkillPresets } from '../../web/lib/cardAuthorSkills';
 import { previewCardData, previewLore } from '../../web/lib/cardPreview';
 
 const run = (id: string, status = 'completed'): EditorRun => ({

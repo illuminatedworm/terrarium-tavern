@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from tavern.character.card_editor import CardEditorService
+from tavern.character.card_author import CardAuthorService
 from tavern.character.card_workflow import validation_report
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.storage.store import Store, dump
+from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
-from tests.backend.test_card_editor import ToolLLM
 
 GUIDE = Path(__file__).parents[2] / "src/tavern/skills/adapt-card-to-tavern/references/regex-display.md"
 
@@ -33,7 +33,7 @@ async def test_published_recipe_is_available_written_and_tested_through_editor_t
     original = document()
     original["extensions"]["regex_scripts"] = []
     source = store.import_card(dump(original).encode(), "fixture.json")
-    editor = CardEditorService(store)
+    editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     rule, probe = recipe()
     provider = ToolLLM([

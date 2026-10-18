@@ -22,7 +22,7 @@ def test_legacy_web_settings_migrate_once_with_backup_and_preserve_off(tmp_path)
     doc = reopened.settings_document()
     assert doc.shared.web.order == ["exa", "tavily", "searxng", "duckduckgo"]
     assert doc.shared.web.searxng.endpoint == "http://127.0.0.1:9001" and doc.shared.web.timeout_seconds == 47
-    assert doc.shared.advisor.web.mode == "off" and doc.shared.card_editor_config.web.mode == "auto"
+    assert doc.shared.advisor.web.mode == "off" and doc.shared.card_author_config.web.mode == "auto"
     assert migrate_settings(doc.model_dump()) == doc
     files = list(tmp_path.glob("settings-before-web-*.sqlite3"))
     assert len(files) == 1
@@ -63,7 +63,7 @@ async def test_web_key_redaction_preservation_explicit_clear_and_undo(tmp_path):
         assert "private-search-key" not in response.text
         assert store.settings_document().shared.web.exa.api_key == "private-search-key"
         pages = {p["id"]: p for p in response.json()["pages"]}
-        assert "card_editor_config" in pages["shared.editor"]["paths"]
+        assert "card_author_config" in pages["shared.editor"]["paths"]
 
 
 @pytest.mark.parametrize("include", [False, True])

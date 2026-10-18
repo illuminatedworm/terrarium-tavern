@@ -14,7 +14,7 @@ class AdapterUpdate(BaseModel):
 def register_message_adapter_routes(app, store):
     @app.get("/api/message-adapter/types")
     async def adapter_types(lane: str = "foreground"):
-        if lane not in ("foreground", "background", "full_agent", "card_editor", "advisor"):
+        if lane not in ("foreground", "background", "full_agent", "card_author", "advisor"):
             raise ValueError("未知模型调用链")
         recipe = recipe_types(store.settings_document().half_agent.context_recipe.model_dump())
         extra = [b["message_type"] for b in recipe["blocks"] if b.get("message_type")] if lane == "foreground" else []
@@ -28,10 +28,10 @@ def register_message_adapter_routes(app, store):
     async def save_story_adapter(sid: str, update: AdapterUpdate):
         return store.save_message_adapter("story", sid, update.expected_adapter_revision, update.config)
 
-    @app.get("/api/card-editor/conversations/{wid}/message-adapter")
+    @app.get("/api/card-author/conversations/{wid}/message-adapter")
     async def editor_adapter(wid: str):
         return store.message_adapter_settings("editor", wid)
 
-    @app.put("/api/card-editor/conversations/{wid}/message-adapter")
+    @app.put("/api/card-author/conversations/{wid}/message-adapter")
     async def save_editor_adapter(wid: str, update: AdapterUpdate):
         return store.save_message_adapter("editor", wid, update.expected_adapter_revision, update.config)

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { CardEditorConfig, ModelProfile, Provider, WebSettings } from '../../lib/settingsDocument';
+import type { CardAuthorConfig, ModelProfile, Provider, WebSettings } from '../../lib/settingsDocument';
 import ModelProfileEditor from './ModelProfileEditor.vue';
 import WebModeSettings from './WebModeSettings.vue';
 defineProps<{
-  value: CardEditorConfig;
+  value: CardAuthorConfig;
   profile: ModelProfile;
   providers: Provider[];
   services: WebSettings;
@@ -13,12 +13,12 @@ defineProps<{
 defineEmits<{ checked: []; services: [] }>();
 </script>
 <template>
-  <div class="agent-settings card-editor-settings">
+  <div class="agent-settings card-author-settings">
     <ModelProfileEditor
       :profile="profile"
       :providers="providers"
-      role="card_editor"
-      label="角色卡编辑 agent 模型"
+      role="card_author"
+      label="制卡 agent 模型"
       :effort-options="effortOptions"
       :flush="flush"
       @checked="$emit('checked')"
@@ -48,7 +48,7 @@ defineEmits<{ checked: []; services: [] }>();
     </fieldset>
     <WebModeSettings :value="value.web" :services="services" @services="$emit('services')" />
     <fieldset>
-      <legend>角色卡编辑 agent 系统提示词</legend>
+      <legend>制卡 agent 系统提示词</legend>
       <p class="muted">保存后从下一次发送或继续生效，工具权限与草稿审核仍由程序控制。</p>
       <slot />
     </fieldset>

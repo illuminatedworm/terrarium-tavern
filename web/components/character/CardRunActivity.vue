@@ -9,7 +9,7 @@ import {
   type EditorEvent,
 } from '../../lib/cardAgentActivity';
 import { activityText, type AgentActivity } from '../../lib/agentActivity';
-import type { EditorRun } from '../../lib/cardEditor';
+import type { EditorRun } from '../../lib/cardAuthor';
 import AgentActivityItem from '../story/AgentActivityItem.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardMessage from './CardMessage.vue';

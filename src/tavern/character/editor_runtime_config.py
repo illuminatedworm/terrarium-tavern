@@ -7,10 +7,10 @@ from tavern.core.model_selection import select_runtime
 
 def editor_runtime_config(store, wid, options):
     with store.connection() as db:
-        row = db.execute("SELECT channel_origin,model_selection FROM card_editor_conversations WHERE id=?", (wid,)).fetchone()
+        row = db.execute("SELECT channel_origin,model_selection FROM card_author_conversations WHERE id=?", (wid,)).fetchone()
     if row is None:
         raise KeyError("制卡对话不存在")
-    cfg = select_runtime(store.settings(), "card_editor", json.loads(row["model_selection"]), row["channel_origin"])
+    cfg = select_runtime(store.settings(), "card_author", json.loads(row["model_selection"]), row["channel_origin"])
     for key in ("model", "reasoning_effort"):
         if options.get(key) is not None:
             setattr(cfg, key, options[key])

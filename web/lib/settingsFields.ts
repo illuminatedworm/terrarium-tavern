@@ -5,7 +5,7 @@ export const shortcutFields: SettingField[] = [
     path: 'send_shortcut',
     label: '输入时发送和换行',
     options: sendShortcutOptions,
-    help: '用于剧情、参谋 agent 和角色卡编辑 agent 的输入框，保存后立即生效；Ctrl+Enter 方案在 macOS 上也接受 Command+Enter。放大编辑和历史编辑保留各自的快捷键。',
+    help: '用于剧情、参谋 agent 和制卡 agent 的输入框，保存后立即生效；Ctrl+Enter 方案在 macOS 上也接受 Command+Enter。放大编辑和历史编辑保留各自的快捷键。',
   },
 ];
 export const debugFields: SettingField[] = [

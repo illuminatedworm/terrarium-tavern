@@ -1,6 +1,6 @@
 # 模型输入的文本完整性原则
 
-本原则约束 Writer、Tracker、Full Agent、Card Editor、Advisor、MVU 分析及其工具续答处理的**角色卡和项目内部数据**。“读取原文一次返回全文”不是对所有信息来源的统一要求。
+本原则约束 Writer、Tracker、Full Agent、Card Author、Advisor、MVU 分析及其工具续答处理的**角色卡和项目内部数据**。“读取原文一次返回全文”不是对所有信息来源的统一要求。
 
 ## 适用范围
 

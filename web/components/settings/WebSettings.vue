@@ -12,7 +12,7 @@ function move(index: number, delta: number) {
 <template>
   <div class="web-settings">
     <p class="muted">
-      参谋 agent 与角色卡编辑 agent 共用这些服务和密钥，联网方式在各自设置中选择。其他 Agent 不使用这些工具。
+      参谋 agent 与制卡 agent 共用这些服务和密钥，联网方式在各自设置中选择。其他 Agent 不使用这些工具。
     </p>
     <fieldset v-for="(name, index) in value.order" :key="name">
       <legend>

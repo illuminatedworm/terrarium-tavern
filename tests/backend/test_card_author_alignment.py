@@ -6,13 +6,13 @@ from uuid import UUID
 import httpx
 import pytest
 
-from tavern.character.card_editor import CardEditorService
-from tavern.core.models import CardEditorRequest
+from tavern.character.card_author import CardAuthorService
+from tavern.core.models import CardAuthorRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.backup import backup, restore
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Store
-from tests.backend.test_card_editor import ToolLLM, import_fixture
+from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_full_agent_alignment import reply
 from tests.backend.test_half_agent_alignment import blocks, sse
 
@@ -24,14 +24,14 @@ class Editor:
         settings.full_agent.model.api_mode = api
         settings.half_agent.foreground.api_mode = api
         settings.half_agent.background.api_mode = api
-        settings.shared.card_editor.api_mode = api
+        settings.shared.card_author.api_mode = api
         settings.shared.providers[0].api_key = "editor-test-secret"
         settings.shared.providers[0].base_url = "https://fixture.test"
         settings.shared.network.api_proxy = False
-        settings.shared.card_editor.model = "editor-model"
-        settings.shared.card_editor.cache.mode = mode
+        settings.shared.card_author.model = "editor-model"
+        settings.shared.card_author.cache.mode = mode
         self.store.save_settings(settings)
-        self.service = CardEditorService(self.store)
+        self.service = CardAuthorService(self.store)
         self.workspace = self.service.edits.create(import_fixture(self.store)["id"])
         self.requests, self.plans = [], []
         self.api = api
@@ -47,12 +47,12 @@ class Editor:
             return ModelTransport(cfg, cfg.api_key, capture,
                                   http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
 
-        monkeypatch.setattr("tavern.character.card_editor.make_provider", factory)
+        monkeypatch.setattr("tavern.character.card_author.make_provider", factory)
 
     async def run(self, plan, text="编辑草稿"):
         self.plans.append(plan)
         ws = self.service.edits.conversation(self.workspace["id"])
-        run = self.service.submit(ws["id"], CardEditorRequest(
+        run = self.service.submit(ws["id"], CardAuthorRequest(
             text=text, expected_revision=ws["revision"], operation_id=str(len(ws["runs"]))))
         await self.service.tasks[run["id"]]
         result = self.service.edits.run(run["id"])
@@ -79,7 +79,7 @@ async def test_text_tool_native_schema_and_cross_turn_read_evidence(tmp_path, mo
     async def execute(plan):
         editor.plans.append(plan)
         ws = editor.service.edits.get(editor.workspace["id"])
-        result = editor.service.submit(ws["id"], CardEditorRequest(
+        result = editor.service.submit(ws["id"], CardAuthorRequest(
             text="修改世界书正文", expected_revision=ws["revision"], operation_id=str(len(ws["runs"]))), legacy=False)
         await editor.service.tasks[result["id"]]
         result = editor.service.edits.run(result["id"])
@@ -144,13 +144,13 @@ async def test_editor_argument_failure_guides_repair_and_survives_native_replay(
         assert card["document"]["first_mes"] == '他说："**你好**"。'
         assert card["base_document"]["first_mes"] == "开场一"
         with editor.store.connection() as db:
-            trace = json.loads(db.execute("SELECT payload FROM card_editor_traces WHERE run=?", (run["id"],)).fetchone()[0])
+            trace = json.loads(db.execute("SELECT payload FROM card_author_traces WHERE run=?", (run["id"],)).fetchone()[0])
         returned = [m for m in trace if m["role"] == "tool"]
         assert returned[0]["_tool_error"] is True
         assert "_tool_error" not in returned[1]
         # Stored context must preserve the same result on a subsequent run.
         await editor.service.close()
-        editor.service = CardEditorService(Store(tmp_path))
+        editor.service = CardAuthorService(Store(tmp_path))
         await editor.run([blocks(api, "后续回复")])
         assert results(editor.wire(editor.requests[-1]))[0] == failed
     finally:
@@ -198,7 +198,7 @@ async def test_editor_native_prefix_identity_and_committed_replay(tmp_path, monk
                    for e in events if e["kind"] == "provider_request")
         # A new service instance resumes the committed prefix, without reviving turn routing.
         await editor.service.close()
-        editor.service = CardEditorService(Store(tmp_path))
+        editor.service = CardAuthorService(Store(tmp_path))
         await editor.run([blocks(api, "第二轮完成")])
         resumed = editor.wire(editor.requests[-1])
         assert resumed[:len(wires[-1])] == wires[-1]
@@ -229,18 +229,18 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
         if change in {"model", "credential"}:
             settings = editor.store.settings_document()
             if change == "model":
-                settings.shared.card_editor.model = "new-model"
+                settings.shared.card_author.model = "new-model"
             else:
                 settings.shared.providers[0].api_key = "different-editor-secret"
             editor.store.save_settings(settings)
             if change == "model":
                 # Composer model selections belong to the conversation, not the global default.
                 with editor.store.connection() as db:
-                    db.execute("UPDATE card_editor_conversations SET model_selection=? WHERE id=?",
+                    db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
                                (json.dumps({"provider_id": "default", "model": "new-model"}), editor.workspace["id"]))
         elif change == "reasoning":
             settings = editor.store.settings_document()
-            settings.shared.card_editor.reasoning_effort = "high"
+            settings.shared.card_author.reasoning_effort = "high"
             editor.store.save_settings(settings)
             expected = "context_sources_changed"
         elif change == "draft":
@@ -299,13 +299,13 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
 
 async def test_editor_context_commits_atomically_and_survives_cleanup_backup(tmp_path):
     store = Store(tmp_path / "source")
-    service = CardEditorService(store)
+    service = CardAuthorService(store)
     ws = service.edits.create(import_fixture(store)["id"])
 
     async def run(provider, text):
         service.provider_factory = lambda: provider
         current = service.edits.get(ws["id"])
-        result = service.submit(ws["id"], CardEditorRequest(
+        result = service.submit(ws["id"], CardAuthorRequest(
             text=text, operation_id=text, expected_revision=current["revision"]))
         await service.tasks[result["id"]]
         return service.edits.run(result["id"])
@@ -331,7 +331,7 @@ async def test_editor_context_commits_atomically_and_survives_cleanup_backup(tmp
         cleanup(store)
         assert service.edits.context(ws["id"]) == saved
         backup(store, tmp_path / "backup.zip")
-        restored = CardEditorService(restore(tmp_path / "backup.zip", tmp_path / "restored"))
+        restored = CardAuthorService(restore(tmp_path / "backup.zip", tmp_path / "restored"))
         assert restored.edits.context(ws["id"]) == saved
         restored.edits.discard(ws["id"], 0)
         restored.edits.delete(ws["id"], 1)

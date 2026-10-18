@@ -1,4 +1,4 @@
-"""One typed catalog for Card Editor execution, provider schemas and previews."""
+"""One typed catalog for Card Author execution, provider schemas and previews."""
 import asyncio
 import copy
 import json
@@ -81,8 +81,22 @@ class TextField(Card):
     comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
 
 
+class DraftFields(Arguments):
+    description: str | None = Field(default=None, description="Core character/world setting.")
+    personality: str | None = Field(default=None, description="Personality and behavior.")
+    scenario: str | None = Field(default=None, description="Current interaction background.")
+    first_mes: str | None = Field(default=None, description="Default opening the user sees first.")
+    alternate_greetings: list[str] | None = Field(default=None, max_length=50, description="Independent alternative openings, each complete.")
+    mes_example: str | None = Field(default=None, description="Style examples, not past events.")
+    system_prompt: str | None = Field(default=None, description="Card-level authoring requirement, only when truly needed.")
+    post_history_instructions: str | None = Field(default=None, description="Post-history requirement, only when truly needed.")
+    creator_notes: str | None = Field(default=None, description="Notes for human readers; not runtime setting.")
+    tags: list[str] | None = Field(default=None, max_length=50, description="Category tags.")
+
+
 class Create(Arguments):
     name: str = Field(min_length=1, description="Name of the new card or explicitly requested variant.")
+    fields: DraftFields | None = Field(default=None, description="Optional complete initial text for top-level V2 fields, including literal macros such as {{char}}/{{user}}. Omitted fields stay empty, or keep the source value for a variant. Add worldbook entries afterwards with patch_draft.")
     source_ref: str | None = Field(default=None, description="Optional attached C handle to copy as a new variant. To edit an existing card, use patch_draft on its existing handle instead.")
     proposal_ref: str | None = Field(default=None, description="H reference of the full assistant proposal approved by the user. Runtime preserves the original text.")
     confirmation_ref: str = Field(description="H reference of the actual user confirmation, direct creation request, or mechanical copy request.")
@@ -92,6 +106,10 @@ class Create(Arguments):
 class Configure(Card):
     target_mode: Literal["half_agent", "full_agent"] = Field(description="Optional user-selected compatibility target, needed only when specific script capabilities affect the design. Ordinary authoring and MVU rules work in both modes without this selection.")
     confirmation_ref: str = Field(description="H reference of the user's runtime choice; original text is retained with the card.")
+
+
+class Portrait(Card):
+    file_ref: str | None = Field(pattern=r"^F[1-9]\d*$", description="Image attachment ref (PNG, JPEG or static WebP) from this conversation to use as the card portrait; null removes the portrait.")
 
 
 class Revert(Card):
@@ -143,7 +161,8 @@ SPECS = {
     "overview": (Overview, "Inspect attached cards or the structure of one card. Returns current C handles, data root, field purposes/types/sizes, and worldbook paths. No library search."),
     "read_field": (Read, "Read a complete current field, entry, extension, script or whole card. A read makes that subtree available for edits; source is never paginated or truncated."),
     "search_entries": (Search, "Locate worldbook entries by literal words. Previews are only navigation; read_field returns full entries before editing."),
-    "create_draft": (Create, "Create a new unsaved V2 card or explicitly requested variant after a proposal is approved, or an explicit direct/mechanical-copy request. This does not save to the library. Returns a new C handle and full initial document."),
+    "create_draft": (Create, "Create a new unsaved V2 card or explicitly requested variant after a proposal is approved, or an explicit direct/mechanical-copy request. Pass the main text in fields to build a card from scratch in one call. This does not save to the library. Returns a new C handle and validation; the full document is returned only when copying a source or creating without fields."),
+    "set_portrait": (Portrait, "Set or remove a card portrait from an image the user attached in this conversation, only when the user wants that image as the card's avatar/cover. Runtime stores it as a standard PNG card image; card text is unchanged. CHARX cards are not supported."),
     "configure_card": (Configure, "Record an optional user-confirmed compatibility target when requested or when specific script capabilities affect the design. Not required for ordinary authoring or MVU rules. Does not migrate content by itself."),
     "patch_draft": (Patch, "Apply a batch to the specified current draft; a reference is promoted without changing its C handle. Read affected values first. Paths start at the document root (/data/... for wrapped cards). Write display regex to extensions.regex_scripts, with findRegex, replaceString, placement:[2], markdownOnly:true, promptOnly:false; read references/regex-display.md for the full contract. New lore entries omit IDs; hidden fields are preserved by Runtime. A failed batch changes nothing."),
     "revert_draft": (Revert, "Undo this task's uncommitted changes to one card after the user changes direction. Runtime restores the complete round-start card; a card newly created in this task is removed. Other cards and the library are unchanged. Use this instead of mechanically reconstructing the old document."),
@@ -213,6 +232,7 @@ class EditorTools(PersonaTools):
             data = normalize(document)
             prefix = "/data" if document.get("spec") else ""
             row = {"ref": item["ref"], "name": data.get("name"), "kind": item["kind"], "target_mode": item.get("target_mode"),
+                   "portrait": item.get("source", {}).get("container") == "png",
                    "root": prefix, "format": document.get("spec", "legacy"), "fields": [
                        {"path": self.view.pointer(prefix + "/" + key.replace("~", "~0").replace("/", "~1")),
                         "type": type(value).__name__, "purpose": FIELD_PURPOSES.get(key, "保留的扩展字段"),
@@ -310,7 +330,11 @@ class EditorTools(PersonaTools):
             raise ValueError("确认必须晚于方案")
         source = self.card(args.source_ref) if args.source_ref else None
         document = copy.deepcopy(source["document"]) if source else blank_card(args.name)
-        (document["data"] if document.get("spec") else document)["name"] = self.view.restore(args.name)
+        data = document["data"] if document.get("spec") else document
+        data["name"] = self.view.restore(args.name)
+        if args.fields:
+            data.update(self.view.restore(args.fields.model_dump(exclude_none=True)))
+            validate_document(document)
         ref = self.owner.edits.reserve_ref(self.owner.wid)
         item = {"ref": ref, "card": None, "kind": "draft", "source": copy.deepcopy(source["source"]) if source else {},
                 "base_revision": None, "base_document": blank_card(args.name), "document": document,
@@ -319,7 +343,24 @@ class EditorTools(PersonaTools):
                          + f"用户要求/确认原文（{confirmation['ref']}）：\n{confirmation['content']}"}
         self.owner.working["cards"].append(item)
         remember(self.owner.reads, ref, document, "")
-        return {"card_ref": ref, "document": self.view.expose(document), "saved_to_library": False}
+        self.owner.event("draft_change", {"card_ref": ref, "reason": "创建草稿"})
+        # Text the model just wrote is already in its context; echo the document only
+        # when it contains content the model has not seen (a copied source) or is blank.
+        shown = {"document": self.view.expose(document)} if source or not args.fields else {}
+        return {"card_ref": ref, **shown, "saved_to_library": False, **report(document)}
+
+    async def set_portrait(self, args):
+        from tavern.character.editor_images import apply_portrait, portrait_png
+        item = self.card(args.card_ref)
+        digest = None
+        if args.file_ref:
+            file = next((f for f in self.owner.files if f["ref"] == args.file_ref), None)
+            if file is None:
+                raise ValueError("文件引用不存在或已移除，请查看当前文件列表。")
+            digest = await asyncio.to_thread(portrait_png, self.owner.store, self.owner.wid, file)
+        apply_portrait(item, digest)
+        self.owner.event("draft_change", {"card_ref": args.card_ref, "reason": "设置头像" if digest else "移除头像"})
+        return {"card_ref": args.card_ref, "portrait": bool(digest), "saved_to_library": False}
 
     async def configure_card(self, args):
         message = self.source_message(args.confirmation_ref, "user")
@@ -422,7 +463,7 @@ class EditorTools(PersonaTools):
         return {"resource": args.resource, "text": (root / folder / args.resource).read_text(encoding="utf-8")}
 
     async def write_handoff(self, args):
-        if not args.content.strip() or count_text(args.content, self.owner.cfg) > self.owner.cfg.card_editor_config.handoff_tokens:
+        if not args.content.strip() or count_text(args.content, self.owner.cfg) > self.owner.cfg.card_author_config.handoff_tokens:
             raise ValueError("handoff 必须非空且不超过配置 token 上限")
         self.owner.working["state"]["handoff"] = self.view.restore(args.content)
         return {"accepted": True, "content": args.content}
@@ -443,7 +484,7 @@ class EditorTools(PersonaTools):
     async def read_history(self, args):
         message = self.source_message(args.ref)
         with self.owner.store.connection() as db:
-            trace = db.execute("SELECT payload FROM card_editor_traces WHERE run=?", (message["run"],)).fetchone()
+            trace = db.execute("SELECT payload FROM card_author_traces WHERE run=?", (message["run"],)).fetchone()
         # Native reasoning and protocol IDs are not business history. Tool pairing
         # is represented by names/arguments/results, with opaque identities projected.
         exchanges = []

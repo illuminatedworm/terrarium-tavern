@@ -55,7 +55,7 @@ export interface WebSettings {
   duckduckgo: { enabled: boolean };
   timeout_seconds: number;
 }
-export interface CardEditorConfig {
+export interface CardAuthorConfig {
   system_prompt: string;
   max_steps: number;
   pressure_ratio: number;
@@ -77,7 +77,7 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 2;
+  version: 3;
   full_agent: SettingsObject & {
     model: ModelProfile;
     official_model: ModelProfile | null;
@@ -92,8 +92,8 @@ export interface SettingsDocument {
   };
   shared: SettingsObject & {
     providers: Provider[];
-    card_editor: ModelProfile;
-    card_editor_config: CardEditorConfig;
+    card_author: ModelProfile;
+    card_author_config: CardAuthorConfig;
     web: WebSettings;
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;

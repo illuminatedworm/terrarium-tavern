@@ -1,4 +1,4 @@
-import { cardName, type EditorCard, type EditorPersona } from './cardEditor';
+import { cardName, type EditorCard, type EditorPersona } from './cardAuthor';
 
 export interface LibraryReference {
   id: string;
