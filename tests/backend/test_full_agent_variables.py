@@ -132,13 +132,12 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
         await service.close()
 
 
-@pytest.mark.parametrize("target", ["tracker_mvu"])
-async def test_full_agent_cannot_edit_variable_rules_or_initialization(tmp_path, target):
+async def test_full_agent_cannot_edit_variable_rules_or_initialization(tmp_path):
     store, service, session = game(tmp_path)
     try:
         model = Model(("read_character", {"ref": "character_book"}),
             ("revise_content", {"operations": [{"op": "add_lore", "entry": {
-                "title": "Rule change", "content": "RULE_NEW", "extensions": {"terrarium": {"audience": target}}}}],
+                "title": "Rule change", "content": "RULE_NEW", "extensions": {"terrarium": {"audience": "tracker_mvu"}}}}],
                 "comment": "Forbidden runtime configuration"}),
             ("read_state", {}), empty_patch(), "Narrative")
         result, session = await turn(service, session, model, update_variables=True, allow_content_edit=True)
