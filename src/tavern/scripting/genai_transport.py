@@ -17,7 +17,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 from tavern.core.cache_policy import endpoint
-from tavern.scripting.sse import stream_events
+from tavern.scripting.sse import stream_error, stream_events
 
 
 @dataclass
@@ -42,7 +42,7 @@ class _ObservedEvents(httpx.AsyncByteStream):
             if isinstance(event, dict) and ("error" in event or event.get("type") == "error"):
                 # Relay errors may omit Google's numeric code, which the SDK
                 # requires. Reject all error events before typed SDK parsing.
-                raise ValueError("Gemini 流返回错误，本回合未提交")
+                raise ValueError(stream_error("Gemini 流返回错误", event))
             self.operation.raw_event = event
             yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
 

@@ -59,7 +59,10 @@ class EditorRun:
             self.pending_calls = None
         self.context = EditorContext(saved, self)
         self.tools = EditorTools(self)
+        # `calls` is this run's budget; `requests` numbers every attempt of the
+        # unfinished round, so an explicit continue does not restart at 1.
         self.calls = 0
+        self.requests = progress.get("requests", 0) if progress else 0
         self.request_context = ProviderRequestContext(self.wid, rid, self.context.epoch, self.store.device_id(),
             sent_breakpoints=self.store.cache_breakpoint_history(self.wid, "card_author"))
         self.request_context.diagnostics = {"rebuild_reason": self.context.reason}
@@ -79,7 +82,7 @@ class EditorRun:
         self.edits.save_progress(self.wid, self.rid, {"working": self.working, "base": self.base,
             "current_refs": self.current_refs, "context": self.context.saved(), "trace": self.trace,
             "pending_calls": self.pending_calls, "persona_reads": self.persona_reads,
-            "persona_changes": self.persona_changes, "calls": self.calls, "rolled": self.rolled,
+            "persona_changes": self.persona_changes, "calls": self.calls, "requests": self.requests, "rolled": self.rolled,
             "web_fallback": self.web_session.failed})
 
     def web_fallback(self):
@@ -91,7 +94,8 @@ class EditorRun:
         if self.calls >= (12 if self.legacy else self.cfg.card_author_config.max_steps):
             raise ValueError("本次模型调用额度已用完，可继续使用本地搜索")
         self.calls += 1
-        self.event("model_call", {"call": self.calls, "model": self.cfg.model, "search_fallback": True})
+        self.requests += 1
+        self.event("model_call", {"call": self.requests, "model": self.cfg.model, "search_fallback": True})
 
     def response(self, provider, text, calls):
         message = {"role": "assistant", "content": text}
@@ -213,12 +217,13 @@ class EditorRun:
             if self.calls >= maximum:
                 break
             self.calls += 1
+            self.requests += 1
             messages = self.context.prepare()
             if self.context.must_rollover:
                 self.event("context_warning", {"message": "编辑上下文达到窗口上限，要求换窗；原文仍完整保留"})
             self.save()
             tokens = self.context.tokens()
-            self.event("model_call", {"call": self.calls, "model": self.cfg.model})
+            self.event("model_call", {"call": self.requests, "model": self.cfg.model})
             self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
                                          "model": self.cfg.model, **self.context.image_stats()})
             text = ""

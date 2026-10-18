@@ -83,12 +83,16 @@ class EditorContext:
             # Already-archived messages must not be mistaken for new input by
             # the append pass below, especially when they carry large images.
             self.seen = [message["ref"] for message in history]
-            # Keep an interrupted tool batch portable on model/policy rebuild.
+            # Keep this unfinished round's tool exchanges (since its last
+            # successful rollover) portable on model/policy rebuild, so a
+            # continue with another provider does not redo completed work.
             # Completed old exchanges remain available through read_history.
-            if owner.pending_calls:
-                assistant = copy.deepcopy(owner.pending_calls["assistant"])
-                self.messages.append(portable(assistant))
-                self.messages.extend(copy.deepcopy(owner.pending_calls.get("results", [])))
+            rollovers = {call["id"] for m in owner.trace for call in m.get("tool_calls", [])
+                         if call["function"]["name"] == "new_context"}
+            start = max((i + 1 for i, m in enumerate(owner.trace)
+                         if m.get("tool_call_id") in rollovers and not m.get("_tool_error")), default=0)
+            for message in owner.trace[start:]:
+                self.messages.append(portable(message) if message["role"] == "assistant" else copy.deepcopy(message))
         for message in history:
             if message["ref"] not in self.seen:
                 self.add_history(message)

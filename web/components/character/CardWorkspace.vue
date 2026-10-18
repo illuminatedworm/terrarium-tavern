@@ -158,7 +158,6 @@ const referencePicker = reactive(
     choose: chooseReference,
   }),
 );
-const lastError = computed(() => workspace.value?.runs.at(-1)?.error);
 const formCard = computed(
   () =>
     current.value && {
@@ -678,22 +677,6 @@ onBeforeUnmount(() => {
             <button :disabled="busy" @click="classifyChannel('chatgpt')">ChatGPT 官方</button>
           </div>
         </div>
-        <div v-if="workspace?.pending && !active" class="cw-pending" role="status">
-          <strong>本轮尚未完成，进度已保留</strong>
-          <p v-if="lastError">{{ lastError }}</p>
-          <div class="cw-toolbar">
-            <button
-              :disabled="busy"
-              @click="
-                pendingView = true;
-                inspectorOpen = true;
-              "
-            >
-              查看未完成修改
-            </button>
-            <button :disabled="busy" @click="openModal('discard')">丢弃本轮</button>
-          </div>
-        </div>
         <form class="cw-composer" @submit.prevent="send(!!workspace?.pending)">
           <div ref="composerFrame" class="cw-composer-frame conversation-compose-frame">
             <CardReferencePicker
@@ -783,6 +766,16 @@ onBeforeUnmount(() => {
                 @select="selectModel"
                 :disabled="busy || !!active"
               />
+              <button
+                v-if="workspace?.pending && !active"
+                class="cw-quiet cw-discard"
+                type="button"
+                :disabled="busy"
+                title="恢复本轮开始前的草稿，保留聊天记录"
+                @click="openModal('discard')"
+              >
+                丢弃本轮
+              </button>
               <button v-if="active" class="cw-stop" type="button" :disabled="busy" @click="stop">
                 <span aria-hidden="true" />停止
               </button>

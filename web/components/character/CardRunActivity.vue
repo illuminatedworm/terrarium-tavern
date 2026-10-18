@@ -37,6 +37,8 @@ const blocks = computed(() => {
   const result = editorActivityBlocks(mergeEditorEvents(saved.value, props.events || []), props.run.status);
   return result.length ? result : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
 });
+// The run outcome belongs to its latest step; earlier blocks already finished.
+const blockStatus = (id: string) => (id === blocks.value.at(-1)?.id ? props.run.status : 'completed');
 const tools = (actions: EditorAction[]) => actions.filter((step) => !step.id.startsWith('model-'));
 const requests = (actions: EditorAction[]) => actions.filter((step) => step.id.startsWith('model-'));
 
@@ -103,8 +105,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="cw-run-sequence" :data-run-id="run.id" aria-label="本回合工具与过程">
     <p v-if="loading" class="run-note" role="status">正在读取过程记录…</p>
-    <p v-if="error" class="run-error" role="alert">{{ error }} <button @click="load">重试</button></p>
-    <p v-if="run.error" class="run-error" role="alert">{{ run.error }}</p>
+    <p v-if="error" class="run-failure" role="alert">{{ error }} <button @click="load">重试</button></p>
     <template v-for="block in blocks" :key="block.id">
       <CardMessage
         v-if="block.kind === 'assistant'"
@@ -120,7 +121,7 @@ onBeforeUnmount(() => {
       <details
         v-else
         class="cw-run"
-        :class="`run-${run.status}`"
+        :class="`run-${blockStatus(block.id)}`"
         :open="opened[block.id] ?? live"
         @toggle="toggleBlock(block.id, $event)"
       >
@@ -130,7 +131,7 @@ onBeforeUnmount(() => {
             {{ tools(block.actions).length }} 项工具与联网活动
           </span>
           <span class="cw-run-status" :aria-live="live ? 'polite' : undefined">{{
-            actionStatus(run.status)
+            actionStatus(blockStatus(block.id))
           }}</span>
         </summary>
         <div class="cw-run-body">
@@ -162,6 +163,7 @@ onBeforeUnmount(() => {
       </details>
     </template>
     <WebSources :sources="sources" />
+    <p v-if="run.error" class="run-failure" role="alert">{{ run.error }}</p>
   </div>
 </template>
 
@@ -241,13 +243,18 @@ onBeforeUnmount(() => {
   font-size: 12px;
   margin: 10px 0 0;
 }
-.run-error {
+.run-failure {
+  /* Sit under the failed step it explains, apart from the next attempt. */
+  margin: -10px 0 20px 52px;
   color: var(--warning);
+  font: 12px/1.6 var(--font-ui);
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 @media (max-width: 620px) {
   .cw-run,
-  .cw-request-only {
+  .cw-request-only,
+  .run-failure {
     margin-left: 0;
   }
 }

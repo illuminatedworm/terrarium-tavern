@@ -213,6 +213,14 @@
 .cw-send {
   flex-direction: row-reverse;
 }
+.cw-discard {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.cw-discard + .cw-send {
+  margin-left: 0;
+}
 .cw-stop {
   border-color: var(--danger-edge);
   background: var(--danger-surface);
@@ -262,10 +270,6 @@
 .cw-pending strong {
   color: var(--warning);
   font-weight: 500;
-}
-.cw-pending p {
-  margin: 6px 0;
-  overflow-wrap: anywhere;
 }
 .cw-pending .cw-toolbar {
   margin-top: 10px;

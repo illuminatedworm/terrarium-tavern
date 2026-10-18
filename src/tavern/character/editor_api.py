@@ -198,6 +198,7 @@ def register_conversation_routes(app, editor):
             working=copy.deepcopy(working), cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
             definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
+            trace=copy.deepcopy(progress.get("trace", [])) if progress else [],
             persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {}, request={}, reads={})
         from tavern.web.cloud import WebSession
         owner.definitions = WebSession(owner.cfg.card_author_config.web.mode, owner.cfg, "card_author",

@@ -252,9 +252,20 @@ async def test_pending_progress_backup_resume_and_discard(tmp_path):
         backup(store, tmp_path / "backup.zip")
         recovered = CardAuthorService(restore(tmp_path / "backup.zip", tmp_path / "restore"))
         try:
-            result = await run(recovered, workspace["id"], ToolLLM([]), "", resume=failed["id"])
+            # Continuing with another model rebuilds the context but keeps this
+            # round's completed tool exchanges and request numbering.
+            with recovered.store.connection() as db:
+                db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
+                           (json.dumps({"provider_id": "default", "model": "new-model"}), workspace["id"]))
+            provider = ToolLLM([])
+            result = await run(recovered, workspace["id"], provider, "", resume=failed["id"])
             assert result["status"] == "completed"
             assert recovered.edits.get(workspace["id"])["document"]["description"] == "保留的进度"
+            events = recovered.edits.events(result["id"])
+            assert next(e["payload"]["rebuild_reason"] for e in events if e["kind"] == "context_baseline") == "provider_or_model_changed"
+            assert [e["payload"]["call"] for e in events if e["kind"] == "model_call"] == [4]
+            sent = json.dumps(provider.call_log[0], ensure_ascii=False)
+            assert "call-0" in sent and "call-1" in sent
         finally:
             await recovered.close()
         editor.edits.discard(workspace["id"], 0)

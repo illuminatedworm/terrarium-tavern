@@ -113,7 +113,9 @@ class CardAuthorService:
                 db.execute("UPDATE card_edit_runs SET status='cancelled',error='已停止，未提交进度保留，可继续或丢弃' WHERE id=?", (rid,))
             self.edits.event(rid, "cancelled", {})
         except Exception as error:
-            detail = str(error)
+            # Transport timeouts/disconnects can stringify to "", which would
+            # leave the failed run without any visible reason.
+            detail = str(error) or f"运行中断（{type(error).__name__}），本轮进度已保留"
             if (isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (400, 413, 415, 422)
                     and owner and owner.context.image_stats()["image_count"]):
                 detail += "\n请求包含图片，请确认所选模型支持图片输入，并符合服务商的尺寸与请求大小限制。原图与本轮进度已保留。"

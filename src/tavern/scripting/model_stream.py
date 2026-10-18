@@ -3,6 +3,7 @@ import copy
 import json
 
 from tavern.scripting.responses_stream import ResponsesOutput
+from tavern.scripting.sse import stream_error
 
 
 class StreamState:
@@ -17,7 +18,7 @@ class StreamState:
         if not isinstance(event, dict):
             raise ValueError("模型流事件格式无效，本回合未提交")
         if "error" in event or event.get("type") == "error":
-            raise ValueError("模型流返回错误，本回合未提交")
+            raise ValueError(stream_error("模型流返回错误", event))
         if self.done:
             # Chat Completions/Gemini can report usage after the terminal chunk.
             # Content or tool fragments after completion must never become story.
@@ -91,10 +92,10 @@ class StreamState:
             elif kind == "message_stop":
                 self.done = True
             elif kind == "error":
-                raise ValueError("Anthropic 流返回错误")
+                raise ValueError(stream_error("Anthropic 流返回错误", event))
             return ""
         if event.get("error"):
-            raise ValueError("Gemini 流返回错误")
+            raise ValueError(stream_error("Gemini 流返回错误", event))
         if event.get("usageMetadata"):
             self.result["usageMetadata"] = event["usageMetadata"]
         self.result["modelVersion"] = event.get("modelVersion", self.result.get("modelVersion"))
