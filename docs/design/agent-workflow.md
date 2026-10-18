@@ -15,7 +15,7 @@ Half Agent 的回合由 Runtime 统一编排；Full Agent 的执行与续接见[
 7. `patch_state` 暂存相对于 stat_data 的 JSON Patch，无变化也提交空数组；一次成功提交后不重复接受。最终仅一次 MVU 处理及消息回调链应用补丁，Writer 正文不作为变量命令解析。同步 Tracker 世界书修改，并逐字段合并脚本修改，保留原条目容器及未知字段。
 8. 回调与最终正文变换后绑定本轮记忆来源，校验覆盖，原子提交，或按“审核后保存”策略等待用户接受整轮草稿。必要任务失败整轮不提交；纯周期后台失败丢弃整个后台任务的修改，保留旧记忆、覆盖和失败提示，正文仍可保存。
 
-Tracker 使用专属上下文和 `tracker_system_prompt`，不复用 Writer 的系统提示、配方、写作偏好或故事正文输出约束。角色资料与剧情是数据，工具说明规定操作协议。本轮变量任务才注入全部启用的 tracker_mvu 规则；其规则在任务开始时固定，后置修改从后续任务起生效。runtime_init 条目仍只供初始化，不进入 Writer。
+Tracker 使用专属上下文和 `tracker_system_prompt`，不复用 Writer 的系统提示、配方、写作偏好或故事正文输出约束。角色资料与剧情是数据，工具说明规定操作协议。本轮变量任务才注入全部启用的 tracker_mvu 规则，以及关闭但标题含 `[InitVar]` 的 tracker_mvu 条目；其规则在任务开始时固定，后置修改从后续任务起生效。runtime_init 条目仍只供初始化，不进入 Writer。
 
 Tracker 的 `patch_state` 和 `revise_content` 参数为 `operations` 与 `comment`。`comment` 是必填的简短操作备注，1–2000 字符；旧调用记录保留原字段。
 

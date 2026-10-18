@@ -12,14 +12,16 @@ export function previewLore(document: Record<string, any>) {
     const effective = { ...entry, ...entry.extensions };
     const audience = effective.terrarium?.audience || 'writer';
     const enabled = effective.enabled ?? !effective.disable;
-    const initializationOnly =
-      !enabled && audience !== 'tracker_mvu' && /\[initvar\]/i.test(effective.comment || '');
+    let stateLabel = enabled ? '' : '未启用';
+    if (!enabled && /\[initvar\]/i.test(effective.comment || '')) {
+      stateLabel = audience === 'tracker_mvu' ? '初始化与变量规则' : '仅初始化';
+    }
     return {
       key,
       title: effective.comment || effective.name || `条目 ${index + 1}`,
       content: String(effective.content || ''),
       enabled,
-      stateLabel: enabled ? '' : initializationOnly ? '仅初始化' : '未启用',
+      stateLabel,
       trigger: effective.constant ? '常驻' : '条件触发',
       audience,
       purpose: audiences[audience] || audience,

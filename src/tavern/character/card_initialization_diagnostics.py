@@ -2,7 +2,7 @@
 
 import re
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import normalize
 
 INIT = re.compile(r"<initvar\b", re.I)
 INIT_END = re.compile(r"</initvar\s*>", re.I)
@@ -12,9 +12,6 @@ UPDATE = re.compile(r"<(?:UpdateVariable|JSONPatch)\b|_\.(?:set|add|insert|delet
 def initialization_warnings(document):
     data = normalize(document)
     warnings = []
-    for index, entry in enumerate(lore_entries(document)):
-        if "[initvar]" in str(entry.get("comment", "")).lower() and entry.get("terrarium", {}).get("audience") == "tracker_mvu":
-            warnings.append(f"世界书第 {index + 1} 条：[InitVar] 被标记为 tracker_mvu，内置初始化会忽略它；核对初始化数据与更新规则的归属，不要删除原数据")
     for index, text in enumerate([data.get("first_mes", ""), *data.get("alternate_greetings", [])]):
         location = "first_mes" if index == 0 else f"alternate_greetings[{index - 1}]"
         updates = re.sub(r"<initvar\b[^>]*>[\s\S]*?</initvar\s*>", "", text, flags=re.I)

@@ -148,6 +148,13 @@ def lore_entries(document, audience=None):
     return result
 
 
+def variable_rule_entries(document):
+    # InitVar may carry legacy [value, description] rules. Its disabled switch
+    # must not hide those rules once the author explicitly selects Tracker.
+    return [entry for entry in lore_entries(document, "tracker_mvu")
+            if entry["enabled"] or "[initvar]" in entry.get("comment", "").lower()]
+
+
 def append_lorebook(current, imported):
     """Append losslessly, preserving the destination's settings and entry container."""
     if not isinstance(imported, dict) or not isinstance(imported.get("entries"), (dict, list)):

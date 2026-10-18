@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { apply, commands, initialize } from '../../compat/mvu';
+import { previewLore } from '../../web/lib/cardPreview';
 describe('MVU transaction semantics', () => {
   const emit = async () => {};
   it('replaces worldbook defaults with the selected opening and preserves subsequent progress', async () => {
@@ -24,24 +25,43 @@ describe('MVU transaction semantics', () => {
     expect(reopened.stat_data).toEqual(first.stat_data);
     expect(reopened.schema.properties).not.toHaveProperty('extra');
   });
-  it('reads disabled InitVar entries while excluding ordinary lore and Tracker rules', async () => {
-    const data = await initialize(
-      [
-        { id: 'off', comment: '[INITVAR]初始化', enabled: false, content: 'hp: 100' },
-        { id: 'legacy-off', comment: '[initvar]', disable: true, content: 'mp: 50' },
-        { id: 'story', comment: '普通设定', enabled: false, content: 'extra: true' },
-        {
-          id: 'rule',
-          comment: '[initvar]',
-          extensions: { terrarium: { audience: 'tracker_mvu' } },
-          content: 'secret: true',
-        },
-      ],
-      {},
-      emit,
-    );
-    expect(data.stat_data).toEqual({ hp: 100, mp: 50 });
-    expect(Object.keys(data.initialized_lorebooks)).toEqual(['card:off', 'card:legacy-off']);
+  it('reads disabled InitVar entries regardless of audience and previews their effective use', async () => {
+    const entries = [
+      {
+        id: 'off',
+        comment: '[INITVAR]初始化',
+        enabled: false,
+        content: 'hp: 100',
+        terrarium: { audience: 'tracker_mvu' },
+      },
+      { id: 'legacy-off', comment: '[initvar]', disable: true, content: 'mp: 50' },
+      { id: 'story', comment: '普通设定', enabled: false, content: 'extra: true' },
+      {
+        id: 'rule',
+        comment: '[initvar]',
+        enabled: false,
+        extensions: { terrarium: { audience: 'tracker_mvu' } },
+        content: 'tracked: [8, "按到账更新"]',
+      },
+      {
+        id: 'ordinary-rule',
+        content: '仅为规则，不是 YAML 对象',
+        extensions: { terrarium: { audience: 'tracker_mvu' } },
+      },
+    ];
+    const before = JSON.stringify(entries);
+    const data = await initialize(entries, {}, emit);
+    expect(data.stat_data).toEqual({ hp: 100, mp: 50, tracked: [8, '按到账更新'] });
+    expect(Object.keys(data.initialized_lorebooks)).toEqual(['card:off', 'card:legacy-off', 'card:rule']);
+    expect(previewLore({ character_book: { entries } }).map((entry) => entry.stateLabel)).toEqual([
+      '初始化与变量规则',
+      '仅初始化',
+      '未启用',
+      '初始化与变量规则',
+      '',
+    ]);
+    expect((await initialize(entries, data, emit)).stat_data).toEqual(data.stat_data);
+    expect(JSON.stringify(entries)).toBe(before);
   });
   it('combines same-worldbook fragments with later arrays replacing earlier arrays', async () => {
     const data = await initialize(

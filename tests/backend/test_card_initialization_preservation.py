@@ -75,14 +75,12 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
 
 
 @pytest.mark.parametrize("problem,warning", [
-    ("wrong_audience", "tracker_mvu"), ("unclosed", "标签未成对"),
+    ("unclosed", "标签未成对"),
     ("legacy_update", "不会自动执行"),
 ])
 def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
     doc = fixture()
-    if problem == "wrong_audience":
-        doc["character_book"]["entries"][0]["extensions"] = {"terrarium": {"audience": "tracker_mvu"}}
-    elif problem == "unclosed":
+    if problem == "unclosed":
         doc["first_mes"] = doc["first_mes"].replace("</initvar>", "")
     elif problem == "legacy_update":
         doc["first_mes"] = "开场。<UpdateVariable>_.set('hp', 8);</UpdateVariable>"

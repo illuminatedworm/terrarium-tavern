@@ -60,8 +60,8 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 - 运行必需的设定写在会注入的字段或世界书中；`creator_notes` 和未知扩展不会交给游玩模型。
 - 保留无关字段、作者意图、未知扩展和字面宏（`{{char}}`、`{{user}}` 等不替换成具体名字）。
 - 世界书条目用途写在 `extensions.terrarium.audience`：`writer`（默认，叙事设定）、`tracker_mvu`（变量含义、更新条件和约束）、`runtime_init`（初始化数据，只供程序）。
-- 两种游玩模式（Half Agent / Full Agent）共用同一份卡片，制卡无需先选模式：授权变量任务完整提供全部启用的 `tracker_mvu` 条目，模型用 `patch_state` 提交相对于 `stat_data` 的 JSON Patch，无变化提交 `[]`。游玩模型的正文只写叙事，卡片不要求它输出变量块或状态栏。
-- 初值只来自世界书 `[InitVar]`/`runtime_init` 条目和开场原文中的 `<initvar>`，不在扩展字段或其他位置建立初值副本或覆盖记录。
+- 两种游玩模式（Half Agent / Full Agent）共用同一份卡片，制卡无需先选模式：授权变量任务完整提供全部启用的 `tracker_mvu` 条目，以及关闭但标题含 `[InitVar]` 的 `tracker_mvu` 条目，模型用 `patch_state` 提交相对于 `stat_data` 的 JSON Patch，无变化提交 `[]`。游玩模型的正文只写叙事，卡片不要求它输出变量块或状态栏。
+- 初值只来自世界书 `[InitVar]`/`runtime_init` 条目和开场原文中的 `<initvar>`，不在扩展字段或其他位置建立初值副本或覆盖记录。`[InitVar]` 不区分大小写，不受条目启停或用途限制；含变量说明与更新依据时可以标记 `tracker_mvu`，关闭后仍参与初始化并向变量任务提供完整正文。未带标记的 `runtime_init` 条目须启用。
 - 目标模式是可选的兼容性记录，以概览为准。只有方案依赖模式差异时才询问，用 `configure_card` 保存用户选择，已有选择沿用。
 
 ## 验证

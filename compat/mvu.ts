@@ -121,8 +121,9 @@ export async function initialize(entries: any[], old: Data, emit: (name: string,
   data.stat_data ||= {};
   data.initialized_lorebooks ||= {};
   let changed = false;
-  // MVU reads InitVar entries even when their prompt injection is disabled.
-  entries = entries.filter(e => (e.terrarium?.audience ?? e.extensions?.terrarium?.audience) !== 'tracker_mvu' && /\[initvar\]/i.test(e.comment || ''));
+  // The InitVar marker controls initialization; injection switches and audiences
+  // only control prompt delivery, so Tracker-marked defaults remain readable.
+  entries = entries.filter(e => /\[initvar\]/i.test(e.comment || ''));
   const opening = Array.from(greeting.matchAll(/<initvar\b[^>]*>([\s\S]*?)<\/initvar\s*>/gi));
   const openingInitialized = _.has(data.initialized_lorebooks, 'card:opening:0');
   if (opening.length || openingInitialized) {

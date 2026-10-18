@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import normalize, variable_rule_entries
 from tavern.conversation.context import macros
 from tavern.conversation.variable_rules import wrap_mvu_rules
 from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
@@ -23,12 +23,11 @@ async def analyze_variables(store, tid, settings, history, state, user_text, nar
                             *, document=None, persona="用户", request_context=None, scopes=None):
     cfg = settings.for_role("background") if hasattr(settings, "for_role") else settings
     rules = []
-    for entry in lore_entries(document or {"name": ""}, "tracker_mvu"):
-        if entry["enabled"]:
-            content = macros(entry.get("content", ""), normalize(document), persona, state, scopes)
-            rules.append({"id": entry["id"], "content": content,
-                          "version": hashlib.sha256(json.dumps(entry, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
-                          "tokens": count_text(content, cfg)})
+    for entry in variable_rule_entries(document or {"name": ""}):
+        content = macros(entry.get("content", ""), normalize(document), persona, state, scopes)
+        rules.append({"id": entry["id"], "content": content,
+                      "version": hashlib.sha256(json.dumps(entry, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+                      "tokens": count_text(content, cfg)})
     messages = [
         {"role": "system", "message_type": "root_system", "content": SYSTEM_PROMPT},
         *([{"role": "system", "message_type": "variable_mvu_rules", "content": wrap_mvu_rules("本轮 MVU 规则（输出仍须遵循 JSON Patch 数组协议）：\n" +

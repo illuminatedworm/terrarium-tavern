@@ -2,7 +2,7 @@
 
 import re
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import lore_entries, normalize, variable_rule_entries
 
 MACRO = re.compile(r"\{\{\s*get(?:global)?var::([^{}]+)}}", re.I)
 HTML = re.compile(r"<(?:details|div|span|table|section|style|script|html|status)\b", re.I)
@@ -27,7 +27,6 @@ def repeats_display(text):
 def status_display_warnings(document):
     data = normalize(document)
     entries = lore_entries(document)
-    active = [e for e in entries if e.get("enabled", True)]
     openings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
     fields = [(key, data.get(key, ""), None) for key in (
         "system_prompt", "description", "personality", "scenario", "mes_example", "post_history_instructions")]
@@ -42,12 +41,10 @@ def status_display_warnings(document):
         "[initvar]" in str(e.get("comment") or "").lower()
         or (e.get("enabled", True) and e.get("terrarium", {}).get("audience") == "runtime_init")
         for e in entries if e.get("content", "").strip()
-        and e.get("terrarium", {}).get("audience") != "tracker_mvu"
     )
     initialized = [base_init or bool(INIT.search(text))
                    for text in openings]
-    rules = any(e.get("terrarium", {}).get("audience") == "tracker_mvu"
-                and e.get("content", "").strip() for e in active)
+    rules = any(e.get("content", "").strip() for e in variable_rule_entries(document))
     warnings, candidates = [], []
     for location, text, opening in fields:
         macros = MACRO.findall(text)
@@ -75,5 +72,5 @@ def status_display_warnings(document):
         if missing:
             warnings.append("、".join(missing) + "：未发现覆盖相关开场的声明式初始化来源；如依赖脚本需完整读取并运行验证，不能凭展示值认定变量已初始化")
         if not rules:
-            warnings.append("状态展示未发现启用且非空的 tracker_mvu 更新规则；请确认是否需要持续追踪，静态说明不必创建变量")
+            warnings.append("状态展示未发现有效且非空的 tracker_mvu 更新规则；请确认是否需要持续追踪，静态说明不必创建变量")
     return warnings

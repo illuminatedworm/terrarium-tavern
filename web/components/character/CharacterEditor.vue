@@ -637,7 +637,11 @@ useTimedError(error);
                   {{ item.entry.comment || item.entry.name || '条目 ' + (item.index + 1) }}
                   <small>{{ audiences[entryAudience(item.entry)] }}</small>
                   <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
-                  <span v-if="/\[initvar\]/i.test(item.entry.comment || '')" class="mvu-entry-label">
+                  <span
+                    v-if="/\[initvar\]/i.test(item.entry.comment || '')"
+                    class="mvu-entry-label"
+                    title="[InitVar] 无论启停与用途均参与初始化；标记 tracker_mvu 后也向变量任务提供完整正文。"
+                  >
                     已识别 MVU 条目
                   </span>
                 </summary>
