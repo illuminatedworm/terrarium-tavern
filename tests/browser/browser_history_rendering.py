@@ -99,7 +99,7 @@ async def main():
                         await rail.press('End')
                         await last.get_by_role('button', name='取消', exact=True).click()
                         if width == 1440:
-                            await page.get_by_role('button', name='场景', exact=True).click()
+                            await page.get_by_role('tab', name='场景', exact=True).click()
                             await page.locator('.memory-group > summary').click()
                             await page.locator('.memory-record details > summary').click()
                             await page.get_by_role('button', name='定位原文', exact=True).click()

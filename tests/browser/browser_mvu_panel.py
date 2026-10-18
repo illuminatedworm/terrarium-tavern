@@ -97,7 +97,7 @@ async def main():
                         await page.locator('.story').wait_for()
                         if await page.get_by_role('button', name='展开右侧栏', exact=True).is_visible():
                             await page.get_by_role('button', name='展开右侧栏', exact=True).click()
-                        await page.get_by_role('button', name='MVU 变量', exact=True).click()
+                        await expect(page.get_by_role('tab', name='MVU 变量', exact=True)).to_have_attribute('aria-selected', 'true')
                         sidebar = page.locator('section[aria-label="MVU 变量"]')
                         await expect(sidebar.get_by_role('status')).to_contain_text('面板已暂停')
                         await expect(sidebar.locator('iframe')).to_have_count(0)
@@ -127,7 +127,7 @@ async def main():
                             await page.reload()
                             await expect(frame.locator('#hp')).to_have_text('73')
                         await page.screenshot(path=str(output / f'panel-{width}.png'))
-                        await page.get_by_role('button', name='场景', exact=True).click()
+                        await page.get_by_role('tab', name='场景', exact=True).click()
                         await page.get_by_role('button', name='编辑对话世界书', exact=True).click()
                         badge = page.locator('[data-lore-id="initial"] .mvu-entry-label')
                         await expect(badge).to_have_text('已识别 MVU 条目')

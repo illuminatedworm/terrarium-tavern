@@ -87,9 +87,9 @@ async def main():
                     await rail.focus()
                     await rail.press('Home')
                     await expect(page.locator(f'[data-message-id="{messages[0]["id"]}"]')).to_be_visible()
-                    if not await page.get_by_role('button', name='缓存', exact=True).is_visible():
+                    if not await page.get_by_role('tab', name='缓存', exact=True).is_visible():
                         await page.get_by_role('button', name='展开右侧栏', exact=True).click()
-                    await page.get_by_role('button', name='缓存', exact=True).click()
+                    await page.get_by_role('tab', name='缓存', exact=True).click()
                     panel = page.get_by_role('region', name='缓存断点控制')
                     await panel.get_by_label('每新增几轮跟进').fill('3')
                     await panel.get_by_label('倒数第几个 AI 回复').fill('2')
@@ -170,13 +170,11 @@ async def main():
                             await dialog.get_by_role('button', name='关闭', exact=True).click()
                             if control_mode == 'cloud':
                                 await expect(page.locator('.cache-breakpoint-dot')).to_have_count(0)
-                                await page.get_by_role('button', name='展开右侧栏', exact=True).click()
-                                await page.get_by_role('button', name='缓存', exact=True).click()
+                                await page.get_by_role('tab', name='缓存', exact=True).click()
                                 await expect(panel).to_be_visible()
                                 await expect(panel.get_by_label('每新增几轮跟进')).to_have_count(0)
-                                await expect(page.get_by_role('button', name='缓存', exact=True)).to_have_attribute('aria-current', 'page')
+                                await expect(page.get_by_role('tab', name='缓存', exact=True)).to_have_attribute('aria-selected', 'true')
                             else:
-                                await page.get_by_role('button', name='缓存', exact=True).click()
                                 await expect(panel.get_by_label('每新增几轮跟进')).to_have_value('3')
                                 await expect(panel.get_by_label('倒数第几个 AI 回复')).to_have_value('2')
                         await rail.focus()

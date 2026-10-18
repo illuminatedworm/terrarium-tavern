@@ -1,6 +1,5 @@
-.right-sidebar.advisor-active:not(.collapsed) {
+.right-sidebar.advisor-active .inspector-panel {
   overflow: hidden;
-  padding: 0;
 }
 .advisor-panel {
   container: advisor / inline-size;
@@ -68,20 +67,6 @@
 }
 .advisor-panel button {
   font: 13px/1.4 var(--font-ui);
-}
-.advisor-icon-button {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 5px;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-}
-.advisor-icon-button svg {
-  width: 23px;
-  height: 23px;
 }
 .advisor-connection {
   display: flex;

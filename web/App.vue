@@ -498,10 +498,17 @@ const inspectorPages = computed(() =>
     { id: 'options', label: '会话设置', icon: 'sliders' },
   ].filter((page) => !!page),
 );
+// Mirrors the left rail: clicking the open page collapses, any other page opens there.
 function openInspector(id: string) {
+  if (inspectorTab.value === id && !layout.value.rightCollapsed) return void toggleRightSidebar();
   inspectorTab.value = id;
-  layout.value.rightCollapsed = false;
+  if (layout.value.rightCollapsed) void toggleRightSidebar();
 }
+// Once opened, the advisor chat stays mounted for this story so a running reply
+// survives switching to another inspector page.
+watch([inspectorTab, () => session.value?.id], ([tab, id]) => {
+  if (tab === 'advisor' && id) advisorSeen.value = id;
+});
 let optionsNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 function clearOptionsNotice() {
   clearTimeout(optionsNoticeTimer);
@@ -556,6 +563,7 @@ watch(
 const leftSidebarClose = ref<HTMLButtonElement | null>(null);
 const mobileSidebarButton = ref<HTMLButtonElement | null>(null);
 const rightSidebarToggle = ref<HTMLButtonElement | null>(null);
+const rightSidebarOpen = ref<HTMLButtonElement | null>(null);
 function syncMobileSidebar(event: MediaQueryListEvent) {
   mobileSidebar.value = event.matches;
 }
@@ -569,14 +577,15 @@ async function toggleLeftSidebar() {
   await nextTick();
   (layout.value.leftCollapsed ? mobileSidebarButton.value : leftSidebarClose.value)?.focus();
 }
-function toggleRightSidebar() {
+async function toggleRightSidebar() {
   if (layout.value.rightCollapsed && rightOverlay.value) layout.value.leftCollapsed = true;
   layout.value.rightCollapsed = !layout.value.rightCollapsed;
-}
-async function closeRightSidebar() {
-  layout.value.rightCollapsed = true;
+  if (!rightOverlay.value) return;
   await nextTick();
-  rightSidebarToggle.value?.focus();
+  (layout.value.rightCollapsed ? rightSidebarOpen.value : rightSidebarToggle.value)?.focus();
+}
+function closeRightSidebar() {
+  if (!layout.value.rightCollapsed) void toggleRightSidebar();
 }
 const readingStyle = computed(() => ({
   '--story-font-size': layout.value.fontSize + 'px',
@@ -3052,147 +3061,179 @@ useTimedError(error);
         @keydown.right.prevent="resizeRightBy(-20)"
       ></div>
       <button
-        ref="rightSidebarToggle"
-        v-show="layout.rightCollapsed || inspectorTab !== 'advisor'"
-        class="sidebar-collapse"
+        v-if="rightOverlay && layout.rightCollapsed"
+        ref="rightSidebarOpen"
+        class="right-sidebar-open"
+        title="展开右侧栏"
+        aria-label="展开右侧栏"
+        aria-expanded="false"
+        aria-controls="inspector-panel"
         @click="toggleRightSidebar"
-        :aria-label="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
-        :aria-expanded="!layout.rightCollapsed"
-        :title="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
       >
-        <Icon
-          :name="layout.rightCollapsed ? 'sidebar-right' : rightOverlay ? 'close' : 'chevron-right'"
-          :size="layout.rightCollapsed ? 19 : 15"
-        />
+        <Icon name="sidebar-right" :size="19" />
       </button>
-      <nav v-if="layout.rightCollapsed && !rightOverlay" class="inspector-strip" aria-label="右侧栏页面">
-        <button
-          v-for="page in inspectorPages"
-          :key="page.id"
-          :title="page.label"
-          :aria-label="page.label"
-          @click="openInspector(page.id)"
-        >
-          <Icon :name="page.icon" :size="19" />
-        </button>
-      </nav>
-      <AdvisorPanel
-        v-if="advisorSeen === session.id || inspectorTab === 'advisor'"
-        v-show="!layout.rightCollapsed && inspectorTab === 'advisor'"
-        :key="session.id"
-        :session-id="session.id"
-        :story-revision="session.revision"
-        :settings="settings"
-        :story-rounds="storyRounds"
-        @close="
-          advisorSeen = session.id;
-          inspectorTab = 'mvu';
-          if (rightOverlay) closeRightSidebar();
-        "
-        @settings="
-          settingsInitialPage = 'shared.advisor';
-          settingsChannel = session.channel_origin;
-          panel = 'settings';
-        "
-        @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
-      />
-      <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
-        <nav class="inspector-tabs" aria-label="右侧栏页面">
+      <nav v-else class="rail inspector-rail" aria-label="右侧栏">
+        <div class="rail-sections" role="tablist" aria-label="当前对话">
           <button
             v-for="page in inspectorPages"
             :key="page.id"
+            role="tab"
+            class="rail-tab"
+            :aria-selected="inspectorTab === page.id"
+            :aria-expanded="inspectorTab === page.id && !layout.rightCollapsed"
+            aria-controls="inspector-panel"
             :class="{ active: inspectorTab === page.id }"
-            :aria-current="inspectorTab === page.id ? 'page' : undefined"
-            @click="inspectorTab = page.id"
+            @click="openInspector(page.id)"
           >
-            <Icon :name="page.icon" :size="17" />{{ page.label }}
+            <Icon :name="page.icon" :size="20" /><span>{{ page.label }}</span>
           </button>
-        </nav>
-        <CacheBreakpointPanel
-          v-if="inspectorTab === 'cache'"
-          :session="session"
-          :breakpoint-id="cacheBreakpointId"
-          :request-state="cacheRequestState"
-          :sent-label="sentCacheLabel"
-          :retention="writerCacheRetention"
-          :runtime="writerResponseCache"
-          :disabled="
-            busy ||
-            cacheBreakpointBusy ||
-            !!editingMessageId ||
-            activeTurn?.status === 'awaiting_review' ||
-            switchingVersion
-          "
-          @save="saveCacheBreakpoint"
-          @save-retention="saveCacheRetention"
-          @locate="locateCacheBreakpoint"
-        />
-        <FullAgentTools
-          v-if="isFullAgent && inspectorTab === 'tools'"
-          :key="session.id"
-          :session="session"
-          :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-          :update-variables="updateVariables"
-          :allow-content-edit="allowEdit"
-          @saved="applyFullSession"
-        />
-        <section v-show="inspectorTab === 'mvu'" aria-label="MVU 变量">
-          <h2>MVU 变量</h2>
-          <StoryMessage
-            v-if="mvuPanel"
-            :message="mvuPanel"
-            panel-only
-            expand-first-level
-            :session="session"
-            :enabled="!!sessionCard?.permission"
-            @action="frameAction"
-          />
-          <p v-else class="state-empty">此角色卡没有独立状态面板，可展开查看变量。</p>
+        </div>
+        <div class="rail-bottom">
           <button
-            v-if="mvuPanel && !sessionCard?.permission"
-            :disabled="
-              busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
-            "
-            @click="setSessionScriptPermission(true)"
+            ref="rightSidebarToggle"
+            class="rail-button sidebar-collapse"
+            :title="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
+            :aria-label="layout.rightCollapsed ? '展开右侧栏' : '折叠右侧栏'"
+            :aria-expanded="!layout.rightCollapsed"
+            aria-controls="inspector-panel"
+            @click="toggleRightSidebar"
           >
-            启用此对话的脚本
+            <Icon name="sidebar-right" :size="19" />
           </button>
-          <details :key="session.id">
-            <summary>查看 MVU 变量</summary>
-            <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
-          </details>
-        </section>
-        <section v-show="inspectorTab === 'scene'" class="scene-memory" aria-label="场景">
-          <div class="scene-heading">
-            <h2>场景</h2>
-            <button :disabled="busy || activeTurn?.status === 'awaiting_review'" @click="editSessionLore">
-              编辑对话世界书
-            </button>
-          </div>
-          <FullAgentNotes
-            v-if="isFullAgent"
+        </div>
+      </nav>
+      <div v-show="!layout.rightCollapsed" id="inspector-panel" class="inspector-panel">
+        <AdvisorPanel
+          v-if="advisorSeen === session.id || inspectorTab === 'advisor'"
+          v-show="inspectorTab === 'advisor'"
+          :key="session.id"
+          :session-id="session.id"
+          :story-revision="session.revision"
+          :settings="settings"
+          :story-rounds="storyRounds"
+          @settings="
+            settingsInitialPage = 'shared.advisor';
+            settingsChannel = session.channel_origin;
+            panel = 'settings';
+          "
+          @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
+        />
+        <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
+          <CacheBreakpointPanel
+            v-if="inspectorTab === 'cache'"
+            :session="session"
+            :breakpoint-id="cacheBreakpointId"
+            :request-state="cacheRequestState"
+            :sent-label="sentCacheLabel"
+            :retention="writerCacheRetention"
+            :runtime="writerResponseCache"
+            :disabled="
+              busy ||
+              cacheBreakpointBusy ||
+              !!editingMessageId ||
+              activeTurn?.status === 'awaiting_review' ||
+              switchingVersion
+            "
+            @save="saveCacheBreakpoint"
+            @save-retention="saveCacheRetention"
+            @locate="locateCacheBreakpoint"
+          />
+          <FullAgentTools
+            v-if="isFullAgent && inspectorTab === 'tools'"
             :key="session.id"
             :session="session"
             :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+            :update-variables="updateVariables"
+            :allow-content-edit="allowEdit"
             @saved="applyFullSession"
           />
-          <template v-else>
-            <ContextStrategyControls
+          <section v-show="inspectorTab === 'mvu'" aria-label="MVU 变量">
+            <h2>MVU 变量</h2>
+            <StoryMessage
+              v-if="mvuPanel"
+              :message="mvuPanel"
+              panel-only
+              expand-first-level
               :session="session"
-              :disabled="
-                busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-              "
+              :enabled="!!sessionCard?.permission"
+              @action="frameAction"
             />
-            <p class="inspector-note">
-              这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
-              保存。记忆随剧情进度保存，继承进度时会带入新对话。
-            </p>
-            <p v-if="sceneUpdating" class="scene-update-status" role="status">
-              {{ '正在根据当前对话重新生成记忆…' }}
-            </p>
-            <div class="scene-section-heading">
-              <h3>记忆</h3>
-              <button
+            <p v-else class="state-empty">此角色卡没有独立状态面板，可展开查看变量。</p>
+            <button
+              v-if="mvuPanel && !sessionCard?.permission"
+              :disabled="
+                busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
+              "
+              @click="setSessionScriptPermission(true)"
+            >
+              启用此对话的脚本
+            </button>
+            <details :key="session.id">
+              <summary>查看 MVU 变量</summary>
+              <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
+            </details>
+          </section>
+          <section v-show="inspectorTab === 'scene'" class="scene-memory" aria-label="场景">
+            <div class="scene-heading">
+              <h2>场景</h2>
+              <button :disabled="busy || activeTurn?.status === 'awaiting_review'" @click="editSessionLore">
+                编辑对话世界书
+              </button>
+            </div>
+            <FullAgentNotes
+              v-if="isFullAgent"
+              :key="session.id"
+              :session="session"
+              :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+              @saved="applyFullSession"
+            />
+            <template v-else>
+              <ContextStrategyControls
+                :session="session"
+                :disabled="
+                  busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
+                "
+              />
+              <p class="inspector-note">
+                这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
+                保存。记忆随剧情进度保存，继承进度时会带入新对话。
+              </p>
+              <p v-if="sceneUpdating" class="scene-update-status" role="status">
+                {{ '正在根据当前对话重新生成记忆…' }}
+              </p>
+              <div class="scene-section-heading">
+                <h3>记忆</h3>
+                <button
+                  :disabled="
+                    busy ||
+                    contextBusy ||
+                    !!sceneSubmitting ||
+                    !!editingMessageId ||
+                    activeTurn?.status === 'awaiting_review'
+                  "
+                  :aria-busy="sceneUpdating === 'memory'"
+                  @click="refreshScene('memory')"
+                  aria-label="重新生成记忆"
+                >
+                  <span
+                    v-if="sceneUpdating === 'memory'"
+                    class="scene-update-spinner"
+                    aria-hidden="true"
+                  ></span
+                  >{{ sceneUpdating === 'memory' ? '更新中…' : '↻ 重新生成' }}
+                </button>
+              </div>
+              <SceneNotes
+                :key="`${session.id}:memory`"
+                kind="memory"
+                :snapshot="session.snapshot"
+                :memory-view="session.memory_view"
+                :progress="memoryProgress"
+                @change="saveMemoryRecord"
+                @cancel="stop"
+                :messages="session.messages"
+                :persona="session.persona"
+                :character="archiveCharacter"
                 :disabled="
                   busy ||
                   contextBusy ||
@@ -3200,104 +3241,79 @@ useTimedError(error);
                   !!editingMessageId ||
                   activeTurn?.status === 'awaiting_review'
                 "
-                :aria-busy="sceneUpdating === 'memory'"
-                @click="refreshScene('memory')"
-                aria-label="重新生成记忆"
-              >
-                <span v-if="sceneUpdating === 'memory'" class="scene-update-spinner" aria-hidden="true"></span
-                >{{ sceneUpdating === 'memory' ? '更新中…' : '↻ 重新生成' }}
-              </button>
+                :saving="sceneSaving === 'memory'"
+                @locate="locateSource"
+              />
+            </template>
+          </section>
+          <section v-show="inspectorTab === 'options'" class="inspector-options" aria-label="会话设置">
+            <button @click="panel = 'message-adapter'">消息适配</button>
+            <div class="inspector-options-heading">
+              <h2>会话设置</h2>
+              <div class="inspector-save">
+                <span v-if="optionsNotice" role="status">{{ optionsNotice }}</span>
+                <button class="primary" @click="saveOptions">保存</button>
+              </div>
             </div>
-            <SceneNotes
-              :key="`${session.id}:memory`"
-              kind="memory"
-              :snapshot="session.snapshot"
-              :memory-view="session.memory_view"
-              :progress="memoryProgress"
-              @change="saveMemoryRecord"
-              @cancel="stop"
-              :messages="session.messages"
-              :persona="session.persona"
-              :character="archiveCharacter"
-              :disabled="
-                busy ||
-                contextBusy ||
-                !!sceneSubmitting ||
-                !!editingMessageId ||
-                activeTurn?.status === 'awaiting_review'
-              "
-              :saving="sceneSaving === 'memory'"
-              @locate="locateSource"
-            />
-          </template>
-        </section>
-        <section v-show="inspectorTab === 'options'" class="inspector-options" aria-label="会话设置">
-          <button @click="panel = 'message-adapter'">消息适配</button>
-          <div class="inspector-options-heading">
-            <h2>会话设置</h2>
-            <div class="inspector-save">
-              <span v-if="optionsNotice" role="status">{{ optionsNotice }}</span>
-              <button class="primary" @click="saveOptions">保存</button>
-            </div>
-          </div>
-          <label class="check">
-            <input
-              type="checkbox"
-              :checked="!!sessionCard?.permission"
-              :disabled="
-                busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
-              "
-              @change="setSessionScriptPermission(($event.target as HTMLInputElement).checked)"
-            />启用此对话的角色卡脚本
-          </label>
-          <label>你的身份<input v-model="session.persona" /></label
-          ><label
-            >用户完整描述<ExpandableTextarea
-              v-model="session.persona_data.description"
-              label="用户完整描述"
-              placeholder="外貌、背景、性格、能力与边界" /></label
-          ><label
-            >本轮偏好（可选）<ExpandableTextarea
+            <label class="check">
+              <input
+                type="checkbox"
+                :checked="!!sessionCard?.permission"
+                :disabled="
+                  busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
+                "
+                @change="setSessionScriptPermission(($event.target as HTMLInputElement).checked)"
+              />启用此对话的角色卡脚本
+            </label>
+            <label>你的身份<input v-model="session.persona" /></label
+            ><label
+              >用户完整描述<ExpandableTextarea
+                v-model="session.persona_data.description"
+                label="用户完整描述"
+                placeholder="外貌、背景、性格、能力与边界" /></label
+            ><label
+              >本轮偏好（可选）<ExpandableTextarea
+                v-model="session.turn_preference"
+                label="本轮偏好"
+                :prefix="activeSettings.preference_prompt || ''"
+                placeholder="例如：多用对话推进，节奏放缓，给我留下行动空间。"
+              />
+            </label>
+            <PreferencePresetPicker
+              :key="session.id"
               v-model="session.turn_preference"
-              label="本轮偏好"
-              :prefix="activeSettings.preference_prompt || ''"
-              placeholder="例如：多用对话推进，节奏放缓，给我留下行动空间。"
+              :revision="session.revision"
+              :presets="settings.shared?.preference_presets || []"
+              @saved="settings = $event"
+              @manage="managePreferencePresets"
             />
-          </label>
-          <PreferencePresetPicker
-            :key="session.id"
-            v-model="session.turn_preference"
-            :revision="session.revision"
-            :presets="settings.shared?.preference_presets || []"
-            @saved="settings = $event"
-            @manage="managePreferencePresets"
-          />
-          <p class="inspector-note">仅补充当前对话的系统提示，保存后持续生效；清空可取消。</p>
-          <PolicySelect v-model="session.policy" :inherited-policy="activeSettings.policy" compact />
-          <p class="inspector-note">
-            世界书注入：{{
-              session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
-            }}（随剧情进度继承）。
-          </p>
-          <p v-if="isFullAgent" class="inspector-note">
-            Full Agent 使用独立的工作窗口与交接笔记。模式在创建会话时确定。
-          </p>
-          <template v-else>
-            <h3>上下文结构编排</h3>
-            <p class="inspector-note">仅影响当前对话，随剧情进度继承。</p>
-            <button
-              :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-              @click="panel = 'recipe'"
-            >
-              编辑上下文配方</button
-            ><button
-              :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-              @click="resetRecipe"
-            >
-              恢复当前全局编排
-            </button>
-          </template>
-        </section>
+            <p class="inspector-note">仅补充当前对话的系统提示，保存后持续生效；清空可取消。</p>
+            <PolicySelect v-model="session.policy" :inherited-policy="activeSettings.policy" compact />
+            <p class="inspector-note">
+              世界书注入：{{
+                session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
+              }}（随剧情进度继承）。
+            </p>
+            <p v-if="isFullAgent" class="inspector-note">
+              Full Agent 使用独立的工作窗口与交接笔记。模式在创建会话时确定。
+            </p>
+            <template v-else>
+              <h3>上下文结构编排</h3>
+              <p class="inspector-note">仅影响当前对话，随剧情进度继承。</p>
+              <button
+                :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
+                @click="panel = 'recipe'"
+              >
+                编辑上下文配方</button
+              ><button
+                :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
+                @click="resetRecipe"
+              >
+                恢复当前全局编排
+              </button>
+            </template>
+          </section>
+        </div>
       </div>
     </aside>
 

@@ -442,14 +442,14 @@ main {
 }
 
 /* ---------- Right: inspector ---------- */
+/* Mirrors the left sidebar: the page rail stays on the outer edge and the panel
+   opens beside it. DOM keeps the rail first for focus order; row-reverse puts it right. */
 .right-sidebar {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row-reverse;
   flex: none;
-  width: var(--right-sidebar-width, 380px);
   min-height: 0;
-  padding: 0;
   border-radius: var(--radius-xl);
   background: var(--glass-sheen), var(--glass-pane);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -458,8 +458,30 @@ main {
     var(--glass-highlight),
     inset 0 0 0 1px var(--glass-edge);
 }
-.right-sidebar.collapsed {
-  width: 56px;
+.inspector-rail {
+  border-right: 0;
+  border-left: 1px solid var(--border-subtle);
+}
+.right-sidebar.collapsed .inspector-rail {
+  border-left-color: transparent;
+}
+.inspector-rail .rail-sections {
+  margin-top: 0;
+}
+.inspector-rail .rail-tab span {
+  white-space: nowrap;
+}
+.inspector-rail .rail-tab.active::before {
+  left: auto;
+  right: -8px;
+  border-radius: 3px 0 0 3px;
+}
+.inspector-panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--right-sidebar-width, 380px);
+  min-width: 0;
+  min-height: 0;
 }
 .right-sidebar-resizer {
   position: absolute;
@@ -497,69 +519,6 @@ main {
   cursor: col-resize !important;
   user-select: none !important;
 }
-.right-sidebar > .sidebar-collapse {
-  position: absolute;
-  z-index: 12;
-  top: 16px;
-  left: -14px;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--glass-edge-strong);
-  border-radius: 50%;
-  background: var(--glass-float);
-  box-shadow: var(--shadow-soft);
-  color: var(--text-secondary);
-}
-.right-sidebar > .sidebar-collapse:hover:not(:disabled) {
-  background: var(--surface-active);
-  color: var(--text-primary);
-}
-.right-sidebar.collapsed > .sidebar-collapse {
-  position: static;
-  margin: 14px auto 6px;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-.right-sidebar.collapsed > .sidebar-collapse:hover:not(:disabled) {
-  background: var(--hover-wash);
-}
-/* Collapsed on desktop: a strip of page icons, each opening the inspector there. */
-.inspector-strip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 0;
-}
-.inspector-strip::before {
-  content: '';
-  width: 22px;
-  height: 1px;
-  margin-bottom: 6px;
-  background: var(--border-subtle);
-}
-.inspector-strip button {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-muted);
-}
-.inspector-strip button:hover:not(:disabled) {
-  background: var(--hover-wash);
-  color: var(--text-primary);
-}
 .inspector-content {
   display: flex;
   flex-direction: column;
@@ -567,66 +526,8 @@ main {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0 18px 18px;
+  padding: 18px;
   scrollbar-gutter: stable;
-}
-/* Sticky: inspector content scrolls beneath, so the row carries its own frost.
-   The pane is the backdrop root here, so this blurs only the inspector content. */
-.inspector-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  display: flex;
-  flex: none;
-  gap: 2px;
-  margin: 0 -18px 18px;
-  padding: 10px 14px 0 18px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: rgb(var(--glass-rgb) / 0.82);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  backdrop-filter: blur(16px) saturate(140%);
-}
-:root.no-glass .inspector-tabs {
-  background: var(--surface-sidebar);
-}
-.inspector-tabs button {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  min-width: 0;
-  padding: 6px 2px 9px;
-  border: 0;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-2xs);
-  white-space: nowrap;
-}
-.inspector-tabs button:hover:not(:disabled) {
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-primary);
-}
-.inspector-tabs button.active,
-.inspector-tabs button.active:hover {
-  color: var(--text-primary);
-}
-.inspector-tabs button.active .icon {
-  color: var(--accent-hover);
-}
-.inspector-tabs button.active::after {
-  content: '';
-  position: absolute;
-  left: 18%;
-  right: 18%;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-  box-shadow: 0 0 12px var(--accent-glow);
 }
 .inspector-content > section > h2,
 .scene-heading h2,
@@ -740,9 +641,10 @@ main {
   margin-top: 8px;
   font-size: var(--fs-sm);
 }
+/* Negative top cancels the scroller's padding so the frosted row sits flush. */
 .inspector-options-heading {
   position: sticky;
-  top: 73px;
+  top: -18px;
   z-index: 2;
   margin: 4px 0 14px;
   padding: 8px 0 10px;
@@ -801,7 +703,7 @@ main {
   }
 }
 @media (min-width: 761px) and (max-width: 1200px) {
-  .right-sidebar:not(.collapsed) {
+  .inspector-panel {
     width: min(var(--right-sidebar-width, 380px), 35vw);
   }
 }
@@ -831,12 +733,13 @@ main {
     margin-bottom: 8px;
   }
 }
-/* The inspector becomes a drawer over the story. */
+/* The inspector becomes a drawer over the story, keeping its rail; a floating
+   button reopens it. */
 @media (max-width: 760px) {
   .right-sidebar-scrim {
     display: block;
     position: fixed;
-    inset: 0 min(380px, calc(100vw - 24px)) 0 0;
+    inset: 0 min(420px, calc(100vw - 24px)) 0 0;
     z-index: 13;
     width: auto;
     height: 100%;
@@ -853,8 +756,7 @@ main {
     bottom: 0;
     right: 0;
     z-index: 14;
-    width: min(380px, calc(100vw - 24px));
-    padding-top: 52px;
+    width: min(420px, calc(100vw - 24px));
     border-radius: var(--radius-xl) 0 0 var(--radius-xl);
     background: var(--glass-sheen), var(--glass-float);
     box-shadow: var(--shadow-float);
@@ -862,13 +764,9 @@ main {
   .right-sidebar-resizer {
     display: none;
   }
-  .right-sidebar:not(.collapsed) > .sidebar-collapse {
-    top: 12px;
-    right: 12px;
-    left: auto;
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-md);
+  .inspector-panel {
+    flex: 1;
+    width: auto;
   }
   .right-sidebar:not(.collapsed) .inspector-content {
     scrollbar-gutter: auto;
@@ -878,26 +776,27 @@ main {
     right: 10px;
     bottom: auto;
     width: auto;
-    padding: 0;
     border-radius: var(--radius-md);
     background: none;
     box-shadow: none;
   }
-  .right-sidebar.collapsed > .sidebar-collapse {
-    margin: 0;
+  .right-sidebar-open {
+    display: grid;
+    place-items: center;
     width: 40px;
     height: 40px;
+    padding: 0;
     border: 1px solid var(--glass-edge-strong);
+    border-radius: var(--radius-md);
     background: var(--glass-chip);
     -webkit-backdrop-filter: var(--glass-blur);
     backdrop-filter: var(--glass-blur);
     box-shadow: var(--shadow-soft);
+    color: var(--text-secondary);
   }
-  .inspector-strip {
-    display: none;
-  }
-  .inspector-options-heading {
-    top: 69px;
+  .right-sidebar-open:hover:not(:disabled) {
+    background: var(--surface-active);
+    color: var(--text-primary);
   }
 }
 /* The navigation becomes a drawer; a floating button reopens it. */
@@ -935,6 +834,9 @@ main {
   }
   .rail {
     width: 64px;
+  }
+  .inspector-rail .rail-tab.active::before {
+    right: -6px;
   }
   .sidebar-scrim {
     display: block;

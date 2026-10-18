@@ -20,7 +20,7 @@ const props = defineProps<{
   /** Round of each story message, for the context preview. */
   storyRounds?: number[];
 }>();
-const emit = defineEmits<{ close: []; settings: []; preferenceSaved: [] }>();
+const emit = defineEmits<{ settings: []; preferenceSaved: [] }>();
 const {
   state,
   error,
@@ -174,9 +174,6 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
       <div class="advisor-heading-actions">
         <button :disabled="running || loading || !state" @click="confirmClear = !confirmClear">
           清空对话
-        </button>
-        <button class="advisor-icon-button" aria-label="关闭参谋 agent" @click="emit('close')">
-          <AdvisorIcon name="close" />
         </button>
       </div>
     </header>

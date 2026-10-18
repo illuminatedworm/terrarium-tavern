@@ -151,9 +151,10 @@ async def main():
                     assert "UTF-8 字节" not in await modal.inner_text()
                 await assert_viewport(page, label + ":" + title)
                 await modal.get_by_role("button", name="关闭", exact=True).click()
-            if width // zoom < 760:
+            # Clicking the open rail page collapses the inspector, so only expand it.
+            if await page.get_by_role("button", name="展开右侧栏", exact=True).is_visible():
                 await page.get_by_role("button", name="展开右侧栏", exact=True).click()
-            await page.get_by_role("button", name="MVU 变量", exact=True).click()
+            assert await page.get_by_role("tab", name="MVU 变量", exact=True).get_attribute("aria-selected") == "true"
             assert await page.locator('section[aria-label="MVU 变量"] > details').get_attribute("open") is None
             await assert_viewport(page, label + ":mvu")
             if width // zoom < 760:
