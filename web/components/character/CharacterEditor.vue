@@ -8,7 +8,7 @@ import FieldHelp from '../common/FieldHelp.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
-import { appendLoreBook } from '../../lib/loreBook';
+import { appendLoreBook, loreFlagHelp, loreFlagValue, setLoreFlag } from '../../lib/loreBook';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { positionPopover } from '../../lib/anchoredPopover';
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
@@ -686,9 +686,29 @@ useTimedError(error);
                     ><label class="check"
                       ><input type="checkbox" v-model="loreDialog.entry.constant" />常驻条目</label
                     ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.caseSensitive" />区分大小写</label
+                      ><input
+                        type="checkbox"
+                        :checked="loreFlagValue(loreDialog.entry, 'caseSensitive')"
+                        @change="
+                          setLoreFlag(
+                            loreDialog.entry,
+                            'caseSensitive',
+                            ($event.target as HTMLInputElement).checked,
+                          )
+                        " />区分大小写<FieldHelp
+                        :tooltip="loreFlagHelp(loreDialog.entry, 'caseSensitive')" /></label
                     ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.matchWholeWords" />全词匹配</label
+                      ><input
+                        type="checkbox"
+                        :checked="loreFlagValue(loreDialog.entry, 'matchWholeWords')"
+                        @change="
+                          setLoreFlag(
+                            loreDialog.entry,
+                            'matchWholeWords',
+                            ($event.target as HTMLInputElement).checked,
+                          )
+                        " />全词匹配<FieldHelp
+                        :tooltip="loreFlagHelp(loreDialog.entry, 'matchWholeWords')" /></label
                     ><label class="check"
                       ><input type="checkbox" v-model="loreDialog.entry.use_regex" />正则触发</label
                     >
@@ -769,12 +789,29 @@ useTimedError(error);
                     <label class="check"
                       ><input type="checkbox" v-model="loreDialog.entry.useProbability" />使用概率</label
                     ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.preventRecursion" />阻止递归</label
+                      ><input
+                        type="checkbox"
+                        :checked="loreFlagValue(loreDialog.entry, 'preventRecursion')"
+                        @change="
+                          setLoreFlag(
+                            loreDialog.entry,
+                            'preventRecursion',
+                            ($event.target as HTMLInputElement).checked,
+                          )
+                        " />阻止递归<FieldHelp
+                        :tooltip="loreFlagHelp(loreDialog.entry, 'preventRecursion')" /></label
                     ><label class="check"
                       ><input
                         type="checkbox"
-                        v-model="loreDialog.entry.excludeRecursion"
-                      />不参与递归扫描</label
+                        :checked="loreFlagValue(loreDialog.entry, 'excludeRecursion')"
+                        @change="
+                          setLoreFlag(
+                            loreDialog.entry,
+                            'excludeRecursion',
+                            ($event.target as HTMLInputElement).checked,
+                          )
+                        " />不参与递归扫描<FieldHelp
+                        :tooltip="loreFlagHelp(loreDialog.entry, 'excludeRecursion')" /></label
                     ><label class="check"
                       ><input type="checkbox" v-model="loreDialog.entry.group_override" />覆盖同组条目</label
                     >

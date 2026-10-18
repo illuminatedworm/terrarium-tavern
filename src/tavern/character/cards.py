@@ -1,4 +1,4 @@
-"""Lossless card containers. Normalize a view; never normalize away the source."""
+"""Lossless card storage; exports canonicalize supported worldbook flag names."""
 
 import base64
 import copy
@@ -13,6 +13,12 @@ from uuid import uuid4
 
 MAX_BYTES = 32 * 1024 * 1024
 PNG = b"\x89PNG\r\n\x1a\n"
+_LORE_FLAG_ALIASES = {
+    "matchWholeWords": "match_whole_words",
+    "excludeRecursion": "exclude_recursion",
+    "preventRecursion": "prevent_recursion",
+    "caseSensitive": "case_sensitive",
+}
 
 
 def png_chunks(blob):
@@ -111,6 +117,15 @@ def normalize(document):
     return copy.deepcopy(data)
 
 
+def _lore_flag_values(fields):
+    # Keep existing camelCase precedence, including explicit false/null values.
+    return {
+        field: fields[field] if field in fields else fields[alias]
+        for field, alias in _LORE_FLAG_ALIASES.items()
+        if field in fields or alias in fields
+    }
+
+
 def lore_entries(document, audience=None):
     book = normalize(document).get("character_book", {}) or {}
     entries = book.get("entries", [])
@@ -121,6 +136,9 @@ def lore_entries(document, audience=None):
         if not isinstance(original, dict) or not isinstance(original.get("extensions", {}), dict):
             raise ValueError("世界书条目及其扩展必须为对象")
         e = {**original, **original.get("extensions", {})}
+        # ST exports these flags as snake_case extensions. Resolve only the view;
+        # the editor and exporter use the same precedence without rewriting storage.
+        e.update(_lore_flag_values(e))
         e["id"] = str(e.get("id", e.get("uid", index)))
         e["keys"] = [str(key).strip() for key in e.get("keys", e.get("key", []))]
         e["secondary_keys"] = [str(key).strip() for key in e.get("secondary_keys", e.get("keysecondary", []))]
@@ -214,8 +232,25 @@ def diagnose(document):
     }
 
 
+def _card_for_export(document):
+    result = copy.deepcopy(document)
+    data = result.get("data", result) if result.get("spec") else result
+    entries = (data.get("character_book") or {}).get("entries", [])
+    for entry in entries.values() if isinstance(entries, dict) else entries:
+        flags = _lore_flag_values({**entry, **entry.get("extensions", {})})
+        for field, value in flags.items():
+            alias = _LORE_FLAG_ALIASES[field]
+            # Preserve the effective value while removing every alternate location.
+            entry.pop(field, None)
+            entry.pop(alias, None)
+            extensions = entry.setdefault("extensions", {})
+            extensions.pop(field, None)
+            extensions[alias] = value
+    return result
+
+
 def export_card(document, container, original, resources):
-    encoded = json.dumps(document, ensure_ascii=False, indent=2).encode()
+    encoded = json.dumps(_card_for_export(document), ensure_ascii=False, indent=2).encode()
     if container == "json":
         return encoded, "application/json", "json"
     if container == "charx":

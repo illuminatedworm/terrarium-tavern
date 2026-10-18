@@ -23,6 +23,10 @@ Full Agent 在每轮首次模型请求前自动检索，也可通过 `recall_lor
 
 递归默认一层，以本轮直接准入且允许递归的条目为起点，沿原查询的相关性继续筛选。常驻条目、旧冻结条目和已拒绝候选保持原处理结果；编译器使用最终准入清单。
 
+角色卡与独立世界书的全词匹配、排除递归、阻止递归和大小写开关同时支持 camelCase（`matchWholeWords`、`excludeRecursion`、`preventRecursion`、`caseSensitive`）及 SillyTavern 导出的 snake_case（`match_whole_words`、`exclude_recursion`、`prevent_recursion`、`case_sensitive`），可位于条目顶层或 `extensions`。已有 camelCase 字段优先，同一拼写以 `extensions` 为先；明确的 `false` 或 `null` 不会被另一拼写覆盖，`null` 按默认关闭处理。读取不改写原始 JSON，也无需重新导入已有卡片。编辑器开关旁的说明展示生效字段与同义字段冲突；操作开关会写回并同步已有同义字段，没有字段时写入标准 snake_case 扩展。
+
+导出角色卡时，这四个开关按相同优先级取当前生效值，统一写入 `extensions` 下的 snake_case 字段，并删除顶层及扩展中的其余同义字段。JSON、PNG、CHARX 一致适用；未配置的开关不补默认值，导出不修改本地已保存原稿。
+
 每次默认最多新增五条，选中正文完整注入，没有单条字符或 token 截断。超长内容会提示。条目证据、命中词、递归来源与可用分数保存在快照中。
 
 ## 滚动与冷却

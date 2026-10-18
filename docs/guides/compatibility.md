@@ -4,7 +4,7 @@
 
 | 能力 | 实现与边界 |
 |---|---|
-| V1/V2/V3 JSON | 保留原对象与未知字段；编辑后原格式导出 |
+| V1/V2/V3 JSON | 保留原对象与未知字段；按原容器格式导出，四个世界书开关按下述规则统一字段名 |
 | PNG | chara / ccv3 tEXt，优先 V3；CRC 检查，保留其他 PNG chunks |
 | CHARX | card.json 与内嵌资源，路径/大小限制，资源保真导出 |
 | 世界书 | 内嵌、独立 JSON；保守关键词准入、辅助逻辑、常驻、概率、受原始查询约束的递归、深度、滚动注入及离开请求后概率冷却（旧持续字段保留但不执行） |
@@ -24,6 +24,8 @@
 | generate / generateRaw | Half Agent 支持当前模型、文本、取消、流式通知、覆盖和有序内容块；使用本项目模型配置 |
 | 外部模块 | 下载和哈希缓存，离线 esbuild 打包静态可解析的浏览器模块 |
 | 中途 system | 所有端点原位发送；能力检查仅诊断，不支持时显示实际错误 |
+
+角色卡导出（JSON、PNG、CHARX）会把世界书的 `matchWholeWords`、`excludeRecursion`、`preventRecursion`、`caseSensitive` 统一为 `extensions` 下的 `match_whole_words`、`exclude_recursion`、`prevent_recursion`、`case_sensitive`，清除顶层及扩展中的重复同义字段。值沿用[运行时读取优先级](retrieval.md#候选如何进入上下文)，包括明确的 `false`／`null`；缺失字段不补默认值，本地已保存原稿和其他字段不变。读取仍兼容两种拼写。
 
 ## 脚本权限
 

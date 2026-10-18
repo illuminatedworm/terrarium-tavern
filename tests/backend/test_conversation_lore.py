@@ -452,15 +452,55 @@ def test_short_latin_codes_require_author_opt_in_and_word_boundaries():
     assert matches("AI", "AI 扮演", {})
 
 
-def test_recursion_flags_are_respected_at_configured_depth():
-    doc = {"name": "角色", "character_book": {"entries": [
-        {"id": "a", "keys": ["灯塔"], "content": "海港", "preventRecursion": True},
-        {"id": "b", "keys": ["海港"], "content": "远山"},
-        {"id": "c", "keys": ["海港"], "content": "终点", "excludeRecursion": True},
-    ]}}
-    assert [e["id"] for e in compile(doc, [], {"state": {}})["lore"]] == ["a"]
-    doc["character_book"]["entries"][0]["preventRecursion"] = False
-    assert [e["id"] for e in compile(doc, [], {"state": {}})["lore"]] == ["a"]
+def test_exported_lore_flags_preserve_matching_recursion_and_source():
+    from tavern.character.cards import export_card, lore_entries, parse_card
+    from tavern.conversation.context import activate_lore, matches
+    from tavern.search.lore_admission import recursive_candidates
+
+    original = {"spec": "chara_card_v3", "spec_version": "3.0", "data": {
+        "name": "角色", "character_book": {"entries": [
+            {"id": "a", "keys": ["LIGHT", "B"], "content": "海港：灯塔完整设定", "extensions": {
+                "match_whole_words": True, "case_sensitive": True, "prevent_recursion": True}},
+            {"id": "b", "keys": ["海港"], "content": "远山完整设定"},
+            {"id": "c", "keys": ["海港"], "content": "排除递归的完整设定",
+             "extensions": {"exclude_recursion": True}},
+        ]}}}
+    raw = json.dumps(original).encode()
+    doc, kind, assets, _ = parse_card(raw, "card.json")
+    entries = lore_entries(doc)
+    assert entries[0]["matchWholeWords"] is True
+    assert matches("B", "B", {**entries[0], "use_regex": True})
+    assert not matches("B", "BLEACH", {**entries[0], "use_regex": True})
+    assert not matches("LIGHT", "LIGHTING", entries[0])
+    assert not matches("LIGHT", "light", entries[0])
+    assert compile(doc, [], {"state": {}}, text="LIGHTING")["lore"] == []
+    assert compile(doc, [], {"state": {}}, text="light")["lore"] == []
+    assert recursive_candidates(entries, ["a"], {"a"}, 1) == {}
+    selected, _, _ = activate_lore(doc, [], "LIGHT", {}, "seed", recursion_depth=1)
+    assert [e["id"] for e in selected] == ["a"]
+    out = compile(doc, [], {"state": {}}, text="LIGHT")
+    assert any(m["content"] == "<lorebook>\n海港：灯塔完整设定\n</lorebook>" for m in out["messages"])
+    assert doc == original
+    assert json.loads(export_card(doc, kind, raw, assets)[0]) == original
+
+    # Existing explicit camelCase values must keep precedence over exported aliases.
+    source = doc["data"]["character_book"]["entries"][0]
+    source["preventRecursion"] = False
+    entries = lore_entries(doc)
+    assert entries[0]["preventRecursion"] is False
+    assert recursive_candidates(entries, ["a"], {"a"}, 1) == {
+        "b": {"recursive_parents": ["a"], "recursion_depth": 1}}
+    selected, _, _ = activate_lore(doc, [], "LIGHT", {}, "seed", recursion_depth=1)
+    assert [e["id"] for e in selected] == ["a", "b"]
+    out = compile(doc, [], {"state": {}}, text="LIGHT",
+                  retrieval={"ids": ["a", "b"], "query": "LIGHT", "diagnostics": []})
+    assert any(m["content"] == "<lorebook>\n远山完整设定\n</lorebook>" for m in out["messages"])
+    assert all("排除递归的完整设定" not in m["content"] for m in out["messages"])
+    assert [e["id"] for e in compile(doc, [], {"state": {}}, text="海港")["lore"]] == ["b", "c"]
+    source["matchWholeWords"] = False
+    source["caseSensitive"] = None
+    assert matches("LIGHT", "lighting", lore_entries(doc)[0])
+    assert source["extensions"] == original["data"]["character_book"]["entries"][0]["extensions"]
 
 
 @pytest.mark.parametrize("values", [
