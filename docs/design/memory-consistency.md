@@ -77,7 +77,7 @@ Runtime 每次发送和整理时按原文来源执行准出：自动生成的当
 
 ## 手工修改与接口
 
-数据库采用 schema 4，`memory_document` 的格式版本为 1，两者独立演进。读取存档使用已有记忆及来源记录；数据库升级见[设置持久化与 API](../reference/settings-api.md#数据库与设置迁移)。
+数据库采用 schema 5，`memory_document` 的格式版本为 1，两者独立演进。读取存档使用已有记忆及来源记录；数据库升级见[设置持久化与 API](../reference/settings-api.md#数据库与设置迁移)。
 
 - `PUT /api/sessions/{sid}/memory/records`：`expected_revision`、`action`（add/edit/delete）、已有条目 `id`，以及 `content/category/kind`。增删改受会话版本与运行互斥保护；手工添加/修改不会自动被覆盖。删除保留紧凑屏蔽标记，防止相同条目/原文被重新加入。Tracker 再次提出被屏蔽内容时只忽略该操作及其依赖，不阻断本批其他有效修改和覆盖水位；工作记录显示忽略原因。其他关键来源错误仍使整批失败。
 - `GET /api/sessions/{sid}/memory/rebuild-estimate`：只读估算基础批次数和额外复核上限，不能保证实际费用。

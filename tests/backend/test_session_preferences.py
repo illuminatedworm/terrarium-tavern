@@ -58,7 +58,11 @@ def test_variable_preference_migration_backs_up_existing_stories(story):
     store, session = story
     with store.connection() as db:
         db.execute('ALTER TABLE sessions DROP COLUMN update_variables')
-    reopened = Store(store.root).session(session['id'])
+        db.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+    reopened_store = Store(store.root)
+    reopened = reopened_store.session(session['id'])
+    with reopened_store.connection() as db:
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == '5'
     assert reopened['update_variables'] is False
     assert reopened['snapshot'] == session['snapshot']
     backups = list(store.root.glob('before-variable-preference-*.sqlite3'))

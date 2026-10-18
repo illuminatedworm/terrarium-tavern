@@ -53,7 +53,7 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和角色卡编辑 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
 
-数据库为 schema 4；schema 1–3 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
+数据库为 schema 5；schema 1–4 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
 
 剧情快照持续保留，恢复和回复版本切换使用对应快照。详细诊断可以清理，但剧情、分支及恢复所需记录不作为旧日志删除。存储策略见[安装与维护](../guides/maintenance.md#清理与资源保留)。
 

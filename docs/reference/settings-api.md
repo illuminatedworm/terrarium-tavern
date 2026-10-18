@@ -39,7 +39,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
-`PUT /api/sessions/{sid}/options` 接受 `expected_revision` 及需修改的会话字段，省略的字段保持原值。`update_variables` 是对话级布尔偏好，默认 `false`，由输入框勾选时立即保存，分支和个人数据包保留；回合请求仍显式传入当轮的 `update_variables`。旧数据库首次升级前自动生成 `before-variable-preference-*.sqlite3` 备份，再添加偏好列，不从历史回合推断用户选择。
+`PUT /api/sessions/{sid}/options` 接受 `expected_revision` 及需修改的会话字段，省略的字段保持原值。`update_variables` 是对话级布尔偏好，默认 `false`，由输入框勾选时立即保存，分支和个人数据包保留；回合请求仍显式传入当轮的 `update_variables`。偏好列由 schema 5 引入，schema 4 数据库升级前自动生成 `before-variable-preference-*.sqlite3` 备份，不从历史回合推断用户选择。
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围中的模型能力检查失效，因此一次响应可能包含多个范围的新修订号。客户端应合并响应中的实际值，不能只递增提交范围的本地计数。
 
@@ -142,9 +142,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-当前数据库为 **schema 4**，设置文档为 **version 2**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
+当前数据库为 **schema 5**，设置文档为 **version 2**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-存储层接受 schema 1–4，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+存储层接受 schema 1–5，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
 
 迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的角色卡编辑 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 

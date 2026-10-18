@@ -29,7 +29,7 @@ def initialize(store):
                 kind TEXT NOT NULL, payload TEXT NOT NULL, created REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS advisor_events_run ON advisor_events(run,seq);
         """)
-        db.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+        db.execute("UPDATE meta SET value='4' WHERE key='schema_version' AND value IN ('1','2','3')")
 
 
 def fork(db, source, target, message_ids):

@@ -41,9 +41,9 @@ class Store(MessageAdapters):
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2", "3", "4"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1、2、3 或 4")
-                if version[0] != "4":
+                if version is None or version[0] not in {"1", "2", "3", "4", "5"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1–5")
+                if version[0] in {"1", "2", "3"}:
                     with closing(sqlite3.connect(root / f"before-advisor-v4-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
@@ -58,7 +58,7 @@ class Store(MessageAdapters):
                     backup_path = root / f"before-plot-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
-                if "update_variables" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
+                if version[0] == "4":
                     with closing(sqlite3.connect(root / f"before-variable-preference-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 if version[0] in {"1", "2"}:
@@ -189,6 +189,9 @@ class Store(MessageAdapters):
         from tavern.advisor.storage import initialize as initialize_advisor
         initialize_advisor(self)
         self.initialize_message_adapters()
+        with self.connection() as db:
+            # Schema 5 adds sessions.update_variables; earlier stamps only advance older formats.
+            db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
 
     @contextmanager
     def connection(self):
