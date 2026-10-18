@@ -6,7 +6,7 @@ import time
 
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.editor_context import EditorContext
-from tavern.character.editor_images import materialize_images
+from tavern.character.editor_images import materialize_images, portrait_digest
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.core.message_adapter import provider_messages
@@ -182,7 +182,10 @@ class EditorRun:
                 self.context.update("persona_changes", [], "待保存的用户角色已全部保存到用户角色库：")
             for item in self.working["cards"]:
                 previous = next((c for c in workspace["cards"] if c["ref"] == item["ref"]), None)
-                if previous and previous["document"] != item["document"]:
+                # Portrait edits live in the container source, outside the card JSON,
+                # but must be undone as the same complete round as text edits.
+                if previous and (previous["document"] != item["document"]
+                                 or portrait_digest(previous["source"]) != portrait_digest(item["source"])):
                     self.edits.version(db, self.wid, previous, self.request["text"])
             changed = workspace["cards"] != self.working["cards"] or workspace["state"] != self.working["state"]
             workspace.update(self.working)

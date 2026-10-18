@@ -1,4 +1,4 @@
-"""Schema 3 conversation storage; pending progress never replaces committed cards."""
+"""Card Author conversation storage; pending progress never replaces committed cards."""
 import copy
 import json
 import time
@@ -151,20 +151,25 @@ class Conversations:
         return f"H{seq}"
 
     def conversation(self, wid):
+        from tavern.character.editor_images import portrait_digest
         with self.store.connection() as db:
             result = self.load(db, wid)
             result.pop("payload", None)
-            for item in result["cards"]:
-                source = db.execute("SELECT revision FROM cards WHERE id=?", (item["card"],)).fetchone()
-                item.update(source_exists=bool(source), source_changed=bool(source and source[0] != item["base_revision"]),
-                            validation=validation_report(item["document"]),
-                            can_undo=bool(db.execute("SELECT 1 FROM card_edit_versions WHERE workspace=? AND ref=?", (wid, item["ref"])).fetchone()))
             result["messages"] = self.messages(wid, db)
             result["runs"] = [{**dict(r), "request": json.loads(r["request"])} for r in db.execute("SELECT * FROM card_edit_runs WHERE workspace=? ORDER BY created,rowid", (wid,))]
             pending = db.execute("SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
             value = json.loads(pending[1]) if pending else None
             result["pending"] = {"run": pending[0], "cards": value["working"]["cards"],
                                  "state": value["working"]["state"], "calls": value.get("calls", 0)} if pending else None
+            # Compare against the library on read, including pending drafts. This
+            # UI metadata never becomes a second persisted portrait source.
+            for item in result["cards"] + (result["pending"]["cards"] if pending else []):
+                source = db.execute("SELECT revision,container,original FROM cards WHERE id=?", (item["card"],)).fetchone()
+                item.update(source_exists=bool(source), source_changed=bool(source and source["revision"] != item["base_revision"]),
+                            portrait_changed=portrait_digest(item["source"]) != portrait_digest(dict(source) if source else {}))
+            for item in result["cards"]:
+                item.update(validation=validation_report(item["document"]),
+                            can_undo=bool(db.execute("SELECT 1 FROM card_edit_versions WHERE workspace=? AND ref=?", (wid, item["ref"])).fetchone()))
         return result
 
     def title(self, wid, title, revision):

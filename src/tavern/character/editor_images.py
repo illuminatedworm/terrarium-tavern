@@ -131,6 +131,11 @@ def portrait_png(store, wid: str, file: dict) -> str:
     return store.blob(data)
 
 
+def portrait_digest(source: dict) -> str | None:
+    """JSON originals are document blobs, not portraits; CHARX images cannot be edited here."""
+    return source.get("original") if source.get("container") == "png" else None
+
+
 def apply_portrait(item: dict, digest: str | None) -> None:
     """A draft portrait lives in its container source, exactly as saved library cards do."""
     source = item.get("source", {})

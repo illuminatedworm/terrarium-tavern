@@ -1,3 +1,5 @@
+import { compare } from 'fast-json-patch';
+
 export interface EditorCard {
   ref: string;
   card: string | null;
@@ -10,6 +12,7 @@ export interface EditorCard {
   brief: string;
   source_exists?: boolean;
   source_changed?: boolean;
+  portrait_changed?: boolean;
   can_undo?: boolean;
   validation?: { valid: boolean; errors: string[]; warnings: string[] };
 }
@@ -94,4 +97,19 @@ export function editorTimeline(messages: EditorMessage[], runs: EditorRun[]): Ed
 }
 export function cardName(card: EditorCard) {
   return (card.document.spec ? card.document.data : card.document)?.name || '未命名角色';
+}
+
+export function draftReview(card: EditorCard | undefined, pending = false) {
+  const changes = card ? compare(card.base_document, card.document) : [];
+  const count = changes.length + Number(!!card?.portrait_changed);
+  const status = pending
+    ? '本轮未完成版本'
+    : count
+      ? '独立草稿 · 有未保存修改'
+      : card?.kind === 'reference'
+        ? '引用快照 · 尚未修改'
+        : card?.card
+          ? '与已保存版本一致'
+          : '独立草稿 · 尚未保存';
+  return { changes, count, status };
 }

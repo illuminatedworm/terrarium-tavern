@@ -2,11 +2,11 @@
 
 设置按范围保存，并通过修订号处理并发修改。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档仍为版本 2。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`，设置文档为版本 3。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档仍为版本 2；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 3；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -153,7 +153,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - 旧记忆与设定维护提示词中的自定义原则按用途合并到 `tracker_system_prompt`；默认提示词由程序更新。
 - 旧提供商中的协议和路径迁移到引用它的模型；模型独立保存接入方式。
 - 已保存应用提示词中的“玩家”和英文 `player` 规范为“用户”；角色卡、用户角色名称和剧情原文不参与替换。实际发生变化的范围才增加修订号。
-- 缺少缓存模式的配置在迁移前保存数据库备份，正文使用本地控制，后台和角色编辑使用云端策略；已有会话的手动断点及跟进参数保留。
+- 缺少缓存模式的配置在迁移前保存数据库备份，正文使用本地控制，Tracker 和制卡 agent 使用云端策略；已有会话的手动断点及跟进参数保留。
 
 迁移重复执行不覆盖已迁移的配置。升级操作与恢复步骤见[安装与维护](../guides/maintenance.md#备份升级与回退)。
 

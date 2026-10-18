@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { editorTimeline, type EditorMessage, type EditorRun } from '../../web/lib/cardAuthor';
+import {
+  draftReview,
+  editorTimeline,
+  type EditorCard,
+  type EditorMessage,
+  type EditorRun,
+} from '../../web/lib/cardAuthor';
 import { appendSkillRequest, editorSkillPresets } from '../../web/lib/cardAuthorSkills';
 import { previewCardData, previewLore } from '../../web/lib/cardPreview';
 
@@ -83,6 +89,33 @@ describe('built-in skill requests', () => {
 });
 
 describe('current draft reading preview', () => {
+  it('keeps portrait-only changes visible through save, removal and undo', () => {
+    const card: EditorCard = {
+      ref: 'C1',
+      card: 'saved-card',
+      kind: 'draft',
+      document: { name: '雾港' },
+      base_document: { name: '雾港' },
+      source: { container: 'json' },
+      base_revision: 0,
+      target_mode: null,
+      brief: '',
+      portrait_changed: false,
+    };
+    expect(draftReview(card)).toMatchObject({ count: 0, status: '与已保存版本一致' });
+    card.source = { container: 'png', original: 'portrait' };
+    card.portrait_changed = true;
+    expect(draftReview(card)).toEqual({ changes: [], count: 1, status: '独立草稿 · 有未保存修改' });
+    expect(draftReview(card, true)).toMatchObject({ count: 1, status: '本轮未完成版本' });
+    card.portrait_changed = false; // Saved portrait becomes the library baseline.
+    expect(draftReview(card)).toMatchObject({ count: 0, status: '与已保存版本一致' });
+    const saved = structuredClone(card);
+    card.source = { container: 'json', original: null };
+    card.portrait_changed = true;
+    expect(draftReview(card)).toEqual({ changes: [], count: 1, status: '独立草稿 · 有未保存修改' });
+    expect(draftReview(saved)).toMatchObject({ count: 0, status: '与已保存版本一致' });
+  });
+
   it('uses the current wrapped document and preserves complete object-style worldbook entries', () => {
     const entry = {
       comment: '灯塔',

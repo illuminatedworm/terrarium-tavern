@@ -234,6 +234,7 @@ async def test_attached_image_becomes_png_portrait_of_saved_card(tmp_path):
         workspace = editor.edits.conversation(wid)
         source = workspace["cards"][0]["source"]
         assert source["container"] == "png"
+        assert workspace["cards"][0]["portrait_changed"]
         async with AsyncClient(transport=ASGITransport(app=create_app(tmp_path)), base_url="http://testserver") as client:
             served = await client.get(f"/api/card-author/conversations/{wid}/portraits/{source['original']}")
             assert served.headers["content-type"] == "image/png"
@@ -243,10 +244,27 @@ async def test_attached_image_becomes_png_portrait_of_saved_card(tmp_path):
             restored = editor.edits.undo_card(wid, "C2", removed["revision"])
             saved = editor.edits.save_card(wid, "C2", restored["revision"], "create", "portrait-save")
             assert saved["container"] == "png"
+            assert not editor.edits.conversation(wid)["cards"][0]["portrait_changed"]
             exported = await client.get(f"/api/cards/{saved['id']}/export")
         with Image.open(BytesIO(exported.content)) as image:
             assert image.format == "PNG"
         assert store.import_card(exported.content, "雾港.png")["document"]["data"]["first_mes"] == "雾笛响起。"
+
+        # A portrait-only agent turn must add its own undo step instead of undoing
+        # an earlier text edit. The library stays unchanged until explicit save.
+        workspace = editor.edits.conversation(wid)
+        document = copy.deepcopy(workspace["cards"][0]["document"])
+        document["data"]["description"] = "保留之前的人物设定修改"
+        editor.edits.update_card(wid, "C2", document, workspace["revision"])
+        result = await run(editor, wid, ToolLLM([("set_portrait", {"card_ref": "C2", "file_ref": None})]), "只移除头像")
+        assert result["status"] == "completed", result["error"]
+        workspace = editor.edits.conversation(wid)
+        assert workspace["cards"][0]["portrait_changed"] and workspace["cards"][0]["can_undo"]
+        assert store.card(saved["id"])["original"] == source["original"]
+        restored = editor.edits.undo_card(wid, "C2", workspace["revision"])
+        assert restored["cards"][0]["document"] == document
+        assert restored["cards"][0]["source"]["original"] == source["original"]
+        assert not restored["cards"][0]["portrait_changed"]
     finally:
         await editor.close()
 

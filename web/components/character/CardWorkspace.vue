@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { compare } from 'fast-json-patch';
 import { api } from '../../lib/api';
 import {
   cardName,
+  draftReview,
   editorTimeline,
   type EditorCard,
   type EditorConversation,
@@ -130,9 +130,9 @@ const items = computed(() =>
     : workspace.value?.cards || [],
 );
 const current = computed(() => items.value.find((c) => c.ref === selected.value) || items.value[0]);
-const changes = computed(() =>
-  current.value ? compare(current.value.base_document, current.value.document) : [],
-);
+const review = computed(() => draftReview(current.value, pendingView.value));
+const changes = computed(() => review.value.changes);
+const changeCount = computed(() => review.value.count);
 const timeline = computed(() => editorTimeline(workspace.value?.messages || [], workspace.value?.runs || []));
 const conversationTitle = computed(
   () =>
@@ -140,17 +140,7 @@ const conversationTitle = computed(
     workspace.value?.messages.find((message) => message.role === 'user')?.content.split('\n')[0] ||
     '新的制卡对话',
 );
-const draftStatus = computed(() =>
-  pendingView.value
-    ? '本轮未完成版本'
-    : current.value?.kind === 'reference'
-      ? '引用快照 · 尚未修改'
-      : changes.value.length
-        ? '独立草稿 · 有未保存修改'
-        : current.value?.card
-          ? '与已保存版本一致'
-          : '独立草稿 · 尚未保存',
-);
+const draftStatus = computed(() => review.value.status);
 const referencePicker = reactive(
   useCardReferencePicker({
     input,
@@ -192,7 +182,11 @@ watch(items, (value) => {
 // selected card has no pending edit, follow the first card that does.
 function pendingChanged(card: EditorCard) {
   const committed = workspace.value?.cards.find((c) => c.ref === card.ref);
-  return JSON.stringify(card.document) !== JSON.stringify(committed?.document);
+  const portrait = (item?: EditorCard) => (item?.source.container === 'png' ? item.source.original : null);
+  return (
+    JSON.stringify(card.document) !== JSON.stringify(committed?.document) ||
+    portrait(card) !== portrait(committed)
+  );
 }
 watch([pendingView, () => workspace.value?.pending?.cards], () => {
   const pending = pendingView.value ? workspace.value?.pending?.cards : undefined;
@@ -840,7 +834,7 @@ onBeforeUnmount(() => {
               :aria-pressed="tab === t.id"
               @click="tab = t.id"
             >
-              {{ t.name }}<span v-if="t.id === 'changes'" class="cw-tab-count">{{ changes.length }}</span>
+              {{ t.name }}<span v-if="t.id === 'changes'" class="cw-tab-count">{{ changeCount }}</span>
             </button>
           </nav>
           <div class="cw-inspector-scroll">
@@ -922,7 +916,10 @@ onBeforeUnmount(() => {
                 </button>
                 <button :disabled="locked || pendingView" @click="openModal('remove')">移除引用/草稿</button>
               </div>
-              <p v-if="!changes.length" class="muted">与保存基准相同。</p>
+              <p v-if="!changeCount" class="muted">与保存基准相同。</p>
+              <p v-if="current.portrait_changed" class="cw-notice">
+                {{ current.card ? '头像与书架已保存版本不同。' : '新卡头像尚未保存到书架。' }}
+              </p>
               <details v-for="(change, index) in changes" :key="index">
                 <summary>{{ change.op }} {{ change.path }}</summary>
                 <pre>{{ JSON.stringify(change, null, 2) }}</pre>
