@@ -130,6 +130,10 @@
   height: 64px;
   border-radius: 12px;
 }
+.recent-grid .recent-card.kemini .character-portrait {
+  outline: 2px solid rgb(var(--experiment-rgb) / 0.8);
+  outline-offset: 2px;
+}
 .recent-card > span {
   min-width: 0;
 }
@@ -734,6 +738,10 @@
   width: 92px;
   height: 120px;
   border-radius: 18px;
+}
+.story-setup.kemini .character-heading .portrait-detail {
+  outline: 2px solid rgb(var(--experiment-rgb) / 0.8);
+  outline-offset: 3px;
 }
 .story-setup .character-heading h1 {
   margin: 0 0 6px;

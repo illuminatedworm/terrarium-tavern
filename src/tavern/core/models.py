@@ -248,6 +248,7 @@ class SessionCreate(BaseModel):
     card_id: str
     agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
     channel_origin: Literal["standard", "chatgpt"] | None = None
+    kemini: bool = False
     greeting: int = 0
     persona: str = "用户"
     policy: Policy | None = None

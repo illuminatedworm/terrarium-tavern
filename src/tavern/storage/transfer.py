@@ -263,6 +263,9 @@ def validate_package(store, package, blobs):
                 ModelSelection.model_validate(session["model_selection"]).profile(ModelProfile())
             if session.get("channel_origin") not in (None, "standard", "chatgpt"):
                 raise ValueError("对话渠道无效")
+            kemini = session.get("kemini", 0)
+            if type(kemini) not in (bool, int) or kemini not in (0, 1) or kemini and session.get("channel_origin") != "standard":
+                raise ValueError("Kemini 实验对话标记无效")
             if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
                 raise ValueError("上下文模式无效")
             if session.get("context_strategy") == "openai_compact" and session.get("channel_origin") != "chatgpt":

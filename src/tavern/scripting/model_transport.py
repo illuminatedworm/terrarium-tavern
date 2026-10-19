@@ -657,7 +657,7 @@ class ModelTransport(BaseLLMProvider):
         tools = self._begin_kemini(tools, kwargs)
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
-        state = StreamState(self.settings.api_mode, kemini_transport=bool(self._kemini and self._kemini.transport))
+        state = StreamState(self.settings.api_mode)
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, True, kwargs)) as events:
                 async for event in events:

@@ -25,7 +25,6 @@ const props = defineProps<{
   effortOptions: Array<{ value: string; label: string }>;
   flush: () => Promise<unknown>;
   channel?: Channel;
-  keminiEnabled?: boolean;
 }>();
 const emit = defineEmits<{ checked: [] }>();
 const busy = ref(false);
@@ -302,7 +301,6 @@ async function action(check: boolean) {
         :model-value="profile.message_adapter"
         :api-mode="subscription ? 'responses' : profile.api_mode"
         :lane="role"
-        :kemini-enabled="keminiEnabled"
         @update:model-value="profile.message_adapter = $event"
       />
     </details>

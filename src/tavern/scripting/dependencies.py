@@ -6,7 +6,6 @@ import hashlib
 import ipaddress
 import json
 import re
-import socket
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +17,7 @@ from PIL import Image
 
 from tavern.character.cards import card_scripts, diagnose
 from tavern.scripting.image_resources import TEMPLATE, declared_image, rewrite_markup
+from tavern.web.transport import PublicHTTPTransport, public_addresses
 
 IMPORTS = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(?\s*|\bexport\s+[^;]*?\bfrom\s*)["']([^"']+)["']""")
 CSS_URLS = re.compile(r"""url\(\s*(?:["']([^"']*)["']|([^\s)]*))\s*\)|@import\s+["']([^"']+)["']""", re.I)
@@ -30,7 +30,11 @@ def css_urls(source):
             yield url
 
 
+PRIVATE_NETWORK = "卡片不能访问本地或私有网络资源"
+
+
 async def validate_remote(url):
+    """Static URL checks; direct connections resolve once in PublicHTTPTransport."""
     parsed = urlparse(url)
     if (
         parsed.scheme != "https"
@@ -40,15 +44,22 @@ async def validate_remote(url):
         or parsed.port not in (None, 443)
     ):
         raise ValueError("卡片远程资源仅允许公开 HTTPS 地址")
-    addresses = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, 443, type=socket.SOCK_STREAM)
-    if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
-        raise ValueError("卡片不能访问本地或私有网络资源")
+    try:
+        literal = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        return
+    if not literal.is_global:
+        raise ValueError(PRIVATE_NETWORK)
 
 
-async def download_resource(client, url):
+async def download_resource(client, url, *, proxied=False):
     current = url
     for _ in range(5):
         await validate_remote(current)
+        if proxied:
+            # The configured proxy chooses the final address; this local lookup
+            # is the best available pre-check and cannot pin that connection.
+            await public_addresses(urlparse(current).hostname, 443, PRIVATE_NETWORK)
         async with client.stream("GET", current) as response:
             if response.is_redirect:
                 current = urljoin(current, response.headers["location"])
@@ -76,6 +87,9 @@ class Dependencies:
         self.image_tasks = {}
         self.image_waiters = {}
         self.image_slots = asyncio.Semaphore(4)
+        # Images reuse keep-alive connections per proxy setting; resolve() keeps
+        # its one-shot client. Closed with this runtime.
+        self.image_clients = {}
 
     async def close(self):
         for task in self.image_tasks.values():
@@ -85,23 +99,31 @@ class Dependencies:
         self.image_waiters.clear()
         self.images.clear()
         self.image_bytes = 0
+        clients, self.image_clients = list(self.image_clients.values()), {}
+        await asyncio.gather(*(client.aclose() for client in clients))
 
-    def client(self):
+    def proxy(self):
         config = self.store.settings()
-        return httpx.AsyncClient(
-            proxy=(config.network.proxy or None) if config.network.resources_proxy else None,
-            trust_env=False, timeout=30, follow_redirects=False,
-        )
+        return (config.network.proxy or None) if config.network.resources_proxy else None
 
-    async def image(self, card, url):
-        if not card["permission"]:
-            raise ValueError("请先启用此卡脚本权限")
+    def client(self, proxy=None):
+        # Direct connections use the checked addresses themselves (no DNS rebinding window).
+        options = {"proxy": proxy} if proxy else {"transport": PublicHTTPTransport(PRIVATE_NETWORK)}
+        return httpx.AsyncClient(**options, trust_env=False, timeout=30, follow_redirects=False)
+
+    def declarations(self, card):
         declarations = diagnose(card["document"])["external_dependencies"]
-        manifest = self.read(card)
-        for resource in manifest["resources"].values():
+        for resource in self.read(card)["resources"].values():
             if "text/css" in resource["content_type"]:
                 css = (self.store.root / "blobs" / resource["hash"]).read_text(encoding="utf-8")
                 declarations.extend(urljoin(resource["url"], child) for child in css_urls(css))
+        return declarations
+
+    async def image(self, card, url, declarations=None):
+        if not card["permission"]:
+            raise ValueError("请先启用此卡脚本权限")
+        if declarations is None:
+            declarations = self.declarations(card)
         if len(url) > 8192 or not declared_image(url, declarations):
             raise ValueError("图片地址不属于此卡声明的资源、模板或目录")
         if url in self.images:
@@ -133,8 +155,10 @@ class Dependencies:
             if resource:
                 raw = (self.store.root / "blobs" / resource["hash"]).read_bytes()
             else:
-                async with self.client() as client:
-                    raw, _, _ = await download_resource(client, url)
+                proxy = self.proxy()
+                if proxy not in self.image_clients:
+                    self.image_clients[proxy] = self.client(proxy)
+                raw, _, _ = await download_resource(self.image_clients[proxy], url, proxied=bool(proxy))
             # Never return arbitrary HTML/JavaScript through the image bridge.
             try:
                 if b"<svg" in raw[:1024]:
@@ -166,14 +190,26 @@ class Dependencies:
         rewrite_markup(html, collect, images_only=True)
         if len(urls) > 128:
             raise ValueError("单个内容块最多加载 128 张远程图片")
-        loaded = {}
+        declarations = self.declarations(card)
         total = 0
-        for url in urls:
-            raw, mime = await self.image(card, url)
+
+        async def load(url):
+            nonlocal total
+            raw, mime = await self.image(card, url, declarations)
             total += len(raw)
             if total > 32 * 1024 * 1024:
                 raise ValueError("单个内容块的远程图片原始数据超过 32 MiB")
-            loaded[url] = f'data:{mime};base64,{base64.b64encode(raw).decode()}'
+            return url, f'data:{mime};base64,{base64.b64encode(raw).decode()}'
+
+        # Load concurrently within image_slots; the first failure cancels the
+        # rest (image() keeps a download alive only while another request waits).
+        tasks = [asyncio.create_task(load(url)) for url in urls]
+        try:
+            loaded = dict(await asyncio.gather(*tasks))
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         html = rewrite_markup(html, lambda url: loaded.get(url, url), images_only=True)
         return self.markup(card, html)
 
@@ -197,7 +233,8 @@ class Dependencies:
         if not card["permission"]:
             raise ValueError("请先启用此卡脚本权限")
         manifest = self.read(card)
-        async with self.client() as client:
+        proxy = self.proxy()
+        async with self.client(proxy) as client:
 
             visited = set()
 
@@ -228,7 +265,7 @@ class Dependencies:
                         "provided_by": "pinned MVU runtime",
                     }
                     return
-                raw, content_type, current = await download_resource(client, url)
+                raw, content_type, current = await download_resource(client, url, proxied=bool(proxy))
                 digest = self.store.blob(raw)
                 manifest["resources"][url] = {"hash": digest, "url": current, "content_type": content_type}
                 if "text/css" in content_type or urlparse(current).path.endswith(".css"):

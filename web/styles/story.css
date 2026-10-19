@@ -36,6 +36,10 @@
   height: 36px;
   border-radius: 11px;
 }
+.story-heading.kemini .story-title .character-portrait {
+  outline: 2px solid rgb(var(--experiment-rgb) / 0.8);
+  outline-offset: 2px;
+}
 .story-title > div {
   min-width: 0;
 }

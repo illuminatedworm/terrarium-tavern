@@ -3,7 +3,6 @@ import SettingsFields from './SettingsFields.vue';
 import SavedText from './SavedText.vue';
 import { keminiFields, keminiTextFields } from '../../lib/settingsFields';
 import type { SettingsObject } from '../../lib/settingsDocument';
-import { keminiCompatibilityNotice } from '../../lib/kemini';
 defineProps<{
   value: SettingsObject;
   saved: SettingsObject;
@@ -20,10 +19,11 @@ defineProps<{
   <h4>Kemini 式实验功能</h4>
   <SettingsFields :value="value" :fields="keminiFields" layout="rows" />
   <p class="muted">
-    适用于两种剧情模式及现有全部接口，从下一次生成生效。主开关联动正文参数传输、创作身份与显式自检、小说填充；普通免责声明仅在主开关开启时可用。
+    开启后，新建对话时可在普通 API 渠道勾选 Kemini
+    实验对话；只有这类对话受影响，其头像带有梅紫色描边。对话创建后不能与普通对话互相转换，ChatGPT
+    官方渠道不能开启。关闭此项后已有 Kemini 实验对话暂停生成，普通对话不受影响。文本修改从下一次生成生效。
     此功能不改变实际工具权限和模型思考档位，不保证服务商接受或改变审核结果。
   </p>
-  <p v-if="value.kemini.enabled" class="muted" role="status">{{ keminiCompatibilityNotice }}</p>
   <p class="muted">
     头部固定为：小说填充 → CLEAR → 创作身份与文风 →
     资料起始。四条均在所有应用消息之前，不参与配方、世界书或脚本的深度计算，应用规则不能插入其中。

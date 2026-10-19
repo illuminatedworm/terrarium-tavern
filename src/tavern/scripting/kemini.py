@@ -133,18 +133,15 @@ class KeminiReply:
                 elif event.get("type") == "content_block_delta":
                     carried += self._arguments(event["index"], "", (event.get("delta") or {}).get("partial_json") or "")
             else:
+                # Requests never enable Vertex streamFunctionCallArguments, so
+                # Gemini delivers each functionCall with its complete args once.
                 for candidate in event.get("candidates") or []:
                     for part in candidate.get("content", {}).get("parts", []):
                         call = part.get("functionCall") or {}
-                        if call.get("name"):
-                            self.names["google"] = call["name"]
-                        if self.names.get("google") == TOOL_NAME:
-                            args = call.get("args")
-                            if isinstance(args, dict) and isinstance(args.get("content"), str):
-                                carried += args["content"]
-                            for fragment in call.get("partialArgs") or []:
-                                if fragment.get("jsonPath") == "$.content":
-                                    carried += fragment.get("stringValue", "")
+                        args = call.get("args")
+                        if (call.get("name") == TOOL_NAME and isinstance(args, dict)
+                                and isinstance(args.get("content"), str)):
+                            carried += args["content"]
             delta = self.parser.feed(carried)
         self.emitted += delta
         return delta

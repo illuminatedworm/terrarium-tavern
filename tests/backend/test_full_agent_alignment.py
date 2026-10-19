@@ -169,7 +169,7 @@ async def test_explicit_cache_key_wins_and_half_agent_gets_no_identity():
         await plain.close()
 
 
-def game(tmp_path, api="anthropic"):
+def game(tmp_path, api="anthropic", *, kemini=False):
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     document = store.settings_document()
@@ -184,8 +184,9 @@ def game(tmp_path, api="anthropic"):
     document.shared.providers[0].api_key = "local-audit-secret"
     document.shared.providers[0].base_url = "https://fixture.test"
     document.shared.network.api_proxy = False
+    document.shared.kemini.enabled = kemini
     store.save_settings(document)
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent", kemini=kemini))
     return store, runtime(store), session
 
 
@@ -285,6 +286,50 @@ async def test_turn_requirements_replay_in_place_and_append_revocations():
         assert "此前的待重写回复参考已失效" in json.dumps(after, ensure_ascii=False)
     finally:
         await provider.close()
+
+
+async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
+    from tavern.core.kemini import TURN_SOURCES, control_text
+    from tavern.full_agent.state import new_state
+
+    settings = config("responses", "cloud")
+    settings.kemini.enabled = True
+    settings.kemini.filler_text = "固定填充"
+    settings.kemini.acknowledgement = "当前确认"
+    settings.kemini.thinking_prompt = "当前自检"
+    settings.kemini.transport_prompt = "当前传输"
+    session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
+    snapshot = {"state": {}, "full_agent": new_state()}
+    document = {"name": "fixture"}
+    tools = [{"type": "function", "function": {"name": "read_state", "description": "读取状态",
+              "parameters": {"type": "object", "properties": {}}}}]
+    first = compile_window(document, session, [], snapshot, "first", settings, tools, input_id="u1")
+    legacy = [{"role": role, "source": source, "content": "旧提示不可回放：" + source,
+               "_runtime_context": {"epoch": first["context_ledger"]["epoch"], "value": ["u1", "旧值"]}}
+              for role, source in zip(("assistant", "user"), TURN_SOURCES, strict=True)]
+    exchange = [{"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
+                 "function": {"name": "read_state", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"}]
+    history = [{"id": "u1", "role": "user", "raw": "first"},
+               {"id": "a1", "role": "assistant", "raw": "完整剧情尾部"}]
+    trace = [{"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
+             for m in [*first["context_additions"], *legacy, *exchange]]
+    saved = copy.deepcopy(trace)
+    second = compile_window(document, session, history, snapshot, "second", settings, tools, input_id="u2", trace=trace)
+    continued = compile_window(document, session, history, snapshot, "second", settings, tools, input_id="u2",
+        trace=trace, continuation=[*second["context_additions"], *legacy])
+    for context in (first, second, continued):
+        assert [m["source"] for m in context["trace"] if m["source"] in TURN_SOURCES] == list(TURN_SOURCES)
+        assert context["messages"][-2:] == [{"role": "assistant", "content": settings.kemini.acknowledgement},
+                                            {"role": "user", "content": control_text(settings.kemini)}]
+        assert not any(m.get("source") in TURN_SOURCES for m in context["context_additions"])
+        assert "旧提示不可回放" not in json.dumps(context["messages"], ensure_ascii=False)
+    assert second["context_ledger"]["rebuild_reason"] is continued["context_ledger"]["rebuild_reason"] is None
+    assert [m["content"] for m in continued["messages"] if m["role"] == "tool"] == ["完整工具原文尾部"]
+    assert trace == saved
+    settings.kemini.enabled = False
+    disabled = compile_window(document, session, history, snapshot, "third", settings, tools, trace=trace)
+    assert not any(m["source"] in TURN_SOURCES for m in disabled["trace"])
 
 
 async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):

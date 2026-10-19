@@ -498,11 +498,15 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         store.delete_session(fork["id"])
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM half_agent_trace WHERE session=?", (fork["id"],)).fetchone()[0] == 0
-        # Switch the same story to experimental transport: its final native call
-        # must never return through the old opaque-replay path.
+        # The global switch only permits Kemini conversations; ordinary ones stay
+        # untouched. A Kemini final call never enters the opaque-replay path.
         settings.shared.kemini.enabled = True
         settings.shared.kemini.normal_disclaimer_enabled = True
         store.save_settings(settings)
+        ordinary = session
+        session = store.new_session(SessionCreate(card_id=card["id"], kemini=True))
+        assert store.session_settings(session).kemini.enabled
+        assert not store.session_settings(ordinary).kemini.enabled
         fail = False
         carried = "<thinking>实验辅助内容</thinking>实验正文<disclaimer>附加声明</disclaimer><tavern_retrieval>线索</tavern_retrieval>"
         if api == "anthropic":

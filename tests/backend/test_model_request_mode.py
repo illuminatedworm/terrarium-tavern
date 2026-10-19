@@ -278,7 +278,6 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
     account_id, account = seed_account(service)
     cfg = configuration(service, account_id, account)
     cfg.model_request_mode = "non_stream"
-    cfg.kemini.enabled = True
     seen = []
 
     def route(request):
@@ -287,7 +286,6 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
 
     service.http_transport = httpx.MockTransport(route)
     p = await make_provider(cfg)
-    p.operation_purpose = "narrative"
     observed = []
     p.request_observer = lambda request: observed.append(request.content)
     try:
@@ -300,8 +298,6 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
         else:
             assert "".join([chunk async for chunk in p.chat(MESSAGES)]) == "完成"
         assert seen[0]["stream"] is True
-        assert TOOL_NAME in str(seen[0]["tools"])
-        assert p.last_response_record["kemini"]["transported"] is False
         assert len(observed) == 1 and json.loads(observed[0]) == seen[0]
     finally:
         await p.close()
@@ -348,10 +344,8 @@ async def test_complete_preview_keeps_full_response_and_usage(api):
             if finish:
                 candidate["finishReason"] = finish
             return {"candidates": [candidate]}
-        wire_events = [function_chunk({"name": TOOL_NAME, "willContinue": True}),
-                       function_chunk({"partialArgs": [{"jsonPath": "$.content", "stringValue": "OK"}], "willContinue": True}),
-                       function_chunk({"partialArgs": [{"jsonPath": "$.content"}]}),
-                       function_chunk({}, "STOP"), {"usageMetadata": reply(api)["usageMetadata"]}]
+        wire_events = [function_chunk({"name": TOOL_NAME, "args": {"content": "OK"}}, "STOP"),
+                       {"usageMetadata": reply(api)["usageMetadata"]}]
     chunks = []
     async with provider(cfg, lambda _: sse(events=wire_events)) as p:
         p.operation_purpose = "narrative"

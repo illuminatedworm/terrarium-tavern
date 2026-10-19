@@ -167,7 +167,6 @@ class ChatGPTProvider(ModelTransport):
         return result
 
     async def _consume(self, messages, tools, kwargs):
-        tools = self._begin_kemini(tools, kwargs)
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         self._completed_response = None
@@ -192,16 +191,12 @@ class ChatGPTProvider(ModelTransport):
                 if state.done:
                     raise ChatGPTError("ChatGPT 完成事件之后仍有响应内容，本轮未提交", code="invalid_stream")
                 delta = state.feed(event)
-                if self._kemini:
-                    delta = self._kemini.feed(event, delta, "responses")
                 if delta:
                     yield delta
             if not state.done:
                 raise ChatGPTError("ChatGPT 连接在完成事件之前结束，本轮未提交", code="stream_incomplete",
                                    request_id=self._request_id())
             self._completed_response = self._finish(state.finish())
-            if self._kemini and not self._last_tool_calls:
-                yield self._kemini.tail(self._completed_response.content)
             if self._last_assistant_extra_fields.get("web_sources"):
                 event_sink("web_sources", {"sources": self._last_assistant_extra_fields["web_sources"]})
         except ChatGPTError as error:

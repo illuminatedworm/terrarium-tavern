@@ -403,7 +403,6 @@ onMounted(async () => {
                 v-if="scope === 'full_agent' && draft.full_agent[profileKey('full_agent', channel)]"
                 :key="'full-' + channel"
                 :profile="draft.full_agent[profileKey('full_agent', channel)]"
-                :kemini-enabled="draft.shared.kemini.enabled"
                 :providers="providersForChannel"
                 :channel="channel"
                 role="full_agent"
@@ -424,7 +423,6 @@ onMounted(async () => {
                   <ModelProfileEditor
                     v-if="draft.half_agent[profileKey(role, channel)]"
                     :profile="draft.half_agent[profileKey(role, channel)]"
-                    :kemini-enabled="draft.shared.kemini.enabled"
                     :providers="providersForChannel"
                     :channel="channel"
                     :role="role"

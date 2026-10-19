@@ -85,9 +85,8 @@ def replay(store, tid):
 
 
 async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(tmp_path):
-    store, service, session = game(tmp_path, "chat_completions")
+    store, service, session = game(tmp_path, "chat_completions", kemini=True)
     settings = store.settings_document()
-    settings.shared.kemini.enabled = True
     settings.shared.kemini.normal_disclaimer_enabled = True
     settings.shared.kemini.filler_text = "填充末尾，不得省略"
     settings.shared.kemini.transport_prompt = "自定义正文传输指令末尾"
@@ -97,7 +96,8 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
     first = WireStream(*tool_events())
     last = WireStream(*tool_events("kemini_emit_story", {
         "content": "<thinking>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"}))
-    _, sent = connect(store, service, first, last)
+    provider, sent = connect(store, service, first, last)
+    provider.settings.kemini.enabled = True  # Production providers take the Kemini conversation's settings.
     try:
         tid = submit(service, session)
         await service.tasks[tid]

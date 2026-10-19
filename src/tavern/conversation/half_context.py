@@ -4,6 +4,7 @@ import json
 
 from tavern.conversation.half_compaction import enabled, local_window_enabled
 from tavern.core.cache_policy import fingerprint
+from tavern.core.kemini import TURN_SOURCES as KEMINI_TRANSIENT
 from tavern.core.kemini import control_text, prefix_frames
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
@@ -13,7 +14,6 @@ from tavern.search.retrieval_text import split_retrieval
 
 # v4 adds per-exchange frozen lore; v3 append frames remain compatible.
 VERSION = 4
-KEMINI_TRANSIENT = {"kemini_acknowledgement", "kemini_control"}
 DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
 TRANSIENT = {"message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
@@ -123,8 +123,10 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
                           snapshot.get("context_window", {}) if local_window_enabled(settings) else {}])
     layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", "")) for b in session.get("recipe", {}).get("blocks", [])]
-    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout,
-                          prefix_frames(settings.kemini), control_text(settings.kemini)])
+    # Disabled Kemini adds nothing, so pre-feature policies, epochs and cloud
+    # checkpoints stay valid without a compatibility branch.
+    kemini = [prefix_frames(settings.kemini), control_text(settings.kemini)] if settings.kemini.enabled else []
+    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout, *kemini])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:

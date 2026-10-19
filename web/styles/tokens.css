@@ -22,6 +22,8 @@
   --glow-4-rgb: 150 118 86;
   --danger-rgb: 238 148 148;
   --warning-rgb: 230 194 136;
+  /* Kemini experiment conversations: a muted plum ring, never a text badge. */
+  --experiment-rgb: 200 150 196;
 
   /* ---- Derived colours ---- */
   --canvas: rgb(var(--canvas-rgb));

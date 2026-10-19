@@ -17,6 +17,7 @@ from tavern.core.kemini_prompts import (
 TOOL_NAME = "kemini_emit_story"
 TRANSPORT_PROMPT = TRANSPORT_TEMPLATE.replace("${toolName}", TOOL_NAME)
 PREFIX_SOURCES = ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info")
+TURN_SOURCES = ("kemini_acknowledgement", "kemini_control")
 
 
 class KeminiConfig(BaseModel):
@@ -74,13 +75,19 @@ def transport_tools(tools: list[dict] | None, config: KeminiConfig, choice: str 
             "required": ["content"]}}}]
 
 
+def turn_frames(config: KeminiConfig) -> list[dict]:
+    """Request-local requirements, never historical dialogue or durable updates."""
+    if not config.enabled:
+        return []
+    return [{"role": role, "content": text, "source": source, "message_type": source}
+            for role, text, source in (
+                ("assistant", config.acknowledgement, "kemini_acknowledgement"),
+                ("user", control_text(config), "kemini_control")) if text.strip()]
+
+
 def inject_half(messages: list[dict], config: KeminiConfig) -> list[dict]:
     if not config.enabled:
         return messages
     # All recipe/worldbook/script placement is already complete. The four
     # preamble blocks cannot count as dialogue or admit application blocks.
-    suffix = [{"role": role, "content": text, "source": source, "message_type": source}
-              for role, text, source in (
-                  ("assistant", config.acknowledgement, "kemini_acknowledgement"),
-                  ("user", control_text(config), "kemini_control")) if text.strip()]
-    return [*prefix_frames(config), *messages, *suffix]
+    return [*prefix_frames(config), *messages, *turn_frames(config)]

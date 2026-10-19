@@ -27,14 +27,14 @@ export const keminiFields: SettingField[] = [
     path: 'kemini.enabled',
     label: '启用 Kemini 式实验功能',
     type: 'checkbox',
-    help: '正文参数传输、创作提示改写与小说填充。',
+    help: '允许新建 Kemini 实验对话并继续已有的此类对话：正文参数传输、创作提示改写与小说填充仅作用于这些对话。',
   },
   {
     path: 'kemini.normal_disclaimer_enabled',
     label: '普通免责声明',
     type: 'checkbox',
     disabled: (value) => !value.kemini.enabled,
-    help: '仅实验主开关开启时生效；关闭主开关会停用并保留此项选择。启用时要求模型追加声明，并在回复下单独折叠展示。',
+    help: '仅实验主开关开启时可调整，作用于全部 Kemini 实验对话；关闭主开关会保留此项选择。启用时要求模型追加声明，并在回复下单独折叠展示。',
   },
 ];
 export const keminiTextFields: SettingField[] = [

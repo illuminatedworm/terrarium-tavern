@@ -2220,7 +2220,7 @@ useTimedError(error);
               v-for="s in sessions"
               :key="s.id"
               class="session-row"
-              :class="{ active: session?.id === s.id }"
+              :class="{ active: session?.id === s.id, kemini: s.kemini }"
             >
               <div v-if="editingSessionTitleId === s.id" class="session-title-editor">
                 <input
@@ -2506,6 +2506,7 @@ useTimedError(error);
               v-for="s in recentSessions"
               :key="s.id"
               class="recent-card"
+              :class="{ kemini: s.kemini }"
               @click="guarded(() => openSession(s.id))"
             >
               <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" size="card" />
@@ -2550,7 +2551,7 @@ useTimedError(error);
       </section>
 
       <section v-else class="story">
-        <header class="story-heading">
+        <header class="story-heading" :class="{ kemini: session.kemini }">
           <div class="story-title">
             <CharacterPortrait :src="storyPortrait" :name="name" />
             <div>
@@ -3449,7 +3450,7 @@ useTimedError(error);
             v-else-if="panel === 'message-adapter'"
             :key="session.id"
             :endpoint="`/sessions/${session.id}/message-adapter`"
-            :kemini-enabled="settings.shared?.kemini?.enabled"
+            :kemini-enabled="session.kemini"
           />
           <RecipeEditor
             v-else-if="panel === 'recipe'"

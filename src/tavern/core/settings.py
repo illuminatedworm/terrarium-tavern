@@ -243,6 +243,9 @@ class SettingsDocument(StrictSettings):
         data["runtime_mode"] = mode
         data.update(self.shared.model_dump())
         data.pop("advisor", None)  # Advisor has its own operation-local projection.
+        # shared.kemini.enabled only permits creating Kemini conversations; the
+        # experiment applies per conversation via Store.session_settings.
+        data["kemini"]["enabled"] = False
         data.update(providers=providers, channel_origin=channel)
         data["local_models"].update(agent.local_runtime.model_dump())
         data.update(full_agent=full_profile.model_dump(),

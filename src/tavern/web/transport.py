@@ -1,4 +1,7 @@
-"""Bind public-web DNS validation to the addresses used by direct connections."""
+"""Bind public-network DNS validation to the addresses used by direct connections.
+
+Shared by web tools and card resource downloads; each passes its own rejection text.
+"""
 import asyncio
 import ipaddress
 import socket
@@ -7,16 +10,21 @@ from collections.abc import Iterable
 import httpcore
 import httpx
 
+WEB_ONLY = "网页工具仅访问公共互联网地址"
 
-async def public_addresses(host: str, port: int) -> list[str]:
+
+async def public_addresses(host: str, port: int, message: str = WEB_ONLY) -> list[str]:
     rows = await asyncio.to_thread(socket.getaddrinfo, host, port, type=socket.SOCK_STREAM)
     addresses = list(dict.fromkeys(row[4][0] for row in rows))
     if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
-        raise ValueError("网页工具仅访问公共互联网地址")
+        raise ValueError(message)
     return addresses
 
 
 class PublicNetworkBackend(httpcore.AnyIOBackend):
+    def __init__(self, message: str = WEB_ONLY) -> None:
+        self.message = message
+
     async def connect_tcp(
         self, host: str, port: int, timeout: float | None = None,
         local_address: str | None = None,
@@ -24,7 +32,7 @@ class PublicNetworkBackend(httpcore.AnyIOBackend):
     ) -> httpcore.AsyncNetworkStream:
         try:
             async with asyncio.timeout(timeout):
-                addresses = await public_addresses(host, port)
+                addresses = await public_addresses(host, port, self.message)
                 for index, address in enumerate(addresses):
                     try:
                         # Pass only a validated numeric address to the socket backend.
@@ -41,10 +49,10 @@ class PublicNetworkBackend(httpcore.AnyIOBackend):
 
 
 class PublicHTTPTransport(httpx.AsyncHTTPTransport):
-    def __init__(self) -> None:
+    def __init__(self, message: str = WEB_ONLY) -> None:
         # HTTPX's adapter owns _pool and translates its streams and exceptions.
         # Supply a public HTTPcore pool API rather than patching global DNS state.
         self._pool = httpcore.AsyncConnectionPool(
             ssl_context=httpx.create_ssl_context(trust_env=False),
-            network_backend=PublicNetworkBackend(),
+            network_backend=PublicNetworkBackend(message),
         )

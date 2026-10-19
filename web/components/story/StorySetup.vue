@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Icon from '../common/Icon.vue';
 import { useTimedError } from '../../composables/useTimedError';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import StoryProse from './StoryProse.vue';
 import StoryLoading from './StoryLoading.vue';
@@ -22,6 +22,12 @@ const greeting = ref(0),
   busy = ref(false),
   error = ref('');
 const agentMode = ref('half_agent');
+// Kemini conversations are fixed at creation and exist only on the standard channel.
+const kemini = ref(false);
+const keminiAvailable = computed(() => !!(props.settings || settings.value)?.shared?.kemini?.enabled);
+watch(channel, (value) => {
+  if (value !== 'standard') kemini.value = false;
+});
 const models = computed(() => {
   const scope = (props.settings || settings.value)?.[agentMode.value];
   const prefix = channel.value === 'chatgpt' ? 'official_' : '';
@@ -59,6 +65,7 @@ async function start() {
       persona_id: personaId.value || null,
       agent_mode: agentMode.value,
       channel_origin: channel.value,
+      kemini: kemini.value,
     });
     emit('started', session);
   } catch (e: any) {
@@ -79,7 +86,7 @@ useTimedError(error);
 
 <template>
   <StoryLoading v-if="busy" creating :name="data.name" />
-  <section v-else class="editor-page story-setup">
+  <section v-else class="editor-page story-setup" :class="{ kemini }">
     <button class="quiet editor-back" @click="emit('back')">
       <Icon name="arrow-left" :size="16" />重新选择角色卡
     </button>
@@ -99,6 +106,16 @@ useTimedError(error);
         <h3>对话渠道</h3>
         <ChannelSwitch v-model="channel" label="对话渠道" />
         <p class="muted">创建后渠道固定；可在同一渠道内更换模型。</p>
+        <template v-if="keminiAvailable">
+          <label class="check"
+            ><input v-model="kemini" type="checkbox" :disabled="channel !== 'standard'" />Kemini
+            实验对话</label
+          >
+          <p class="muted">
+            仅此类对话应用 Kemini 式实验规则，头像以梅紫色描边区分；创建后不能与普通对话互相转换，ChatGPT
+            官方渠道不可用。
+          </p>
+        </template>
         <div class="story-channel-model">
           <span>当前模型</span><strong>{{ modelLabel }}</strong>
           <button class="quiet" @click="emit('settings', channel, agentMode)">

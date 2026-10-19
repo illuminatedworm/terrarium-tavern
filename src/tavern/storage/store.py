@@ -220,6 +220,9 @@ class Store(MessageAdapters):
         with self.connection() as db:
             if "auxiliary" not in {r[1] for r in db.execute("PRAGMA table_info(messages)")}:
                 db.execute("ALTER TABLE messages ADD COLUMN auxiliary TEXT NOT NULL DEFAULT '[]'")
+            # Existing conversations stay ordinary; Kemini is chosen only at creation.
+            if "kemini" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}:
+                db.execute("ALTER TABLE sessions ADD COLUMN kemini INTEGER NOT NULL DEFAULT 0")
             db.execute("UPDATE meta SET value='8' WHERE key='schema_version'")
 
     @contextmanager
@@ -367,6 +370,28 @@ class Store(MessageAdapters):
                 raise KeyError("会话不存在")
         return json.loads(row["card_data"])
 
+    def branch_message_revision(self, sid, mid):
+        """One message's card revision for image bridges, without loading every snapshot.
+
+        Returns (on_current_branch, revised_document_or_None).
+        """
+        with self.connection() as db:
+            session = db.execute("SELECT head FROM sessions WHERE id=?", (sid,)).fetchone()
+            if session is None:
+                raise KeyError("会话不存在")
+            parents = dict(db.execute("SELECT id,parent FROM messages WHERE session=?", (sid,)).fetchall())
+            cursor, seen = session["head"], set()
+            while cursor and cursor != mid:
+                if cursor not in parents or cursor in seen:
+                    raise ValueError("剧情分支无效")
+                seen.add(cursor)
+                cursor = parents[cursor]
+            if not cursor:
+                return False, None
+            revised = db.execute("SELECT json_extract(snapshot,'$.content.document') FROM messages WHERE id=?",
+                                 (mid,)).fetchone()[0]
+        return True, json.loads(revised) if revised is not None else None
+
     def card_manifest_path(self, card):
         filename = f"session-{card['session_id']}" if card.get("session_id") else card["id"]
         directory = (self.root / "dependencies").resolve()
@@ -477,7 +502,8 @@ class Store(MessageAdapters):
     def session_settings(self, session, *, require_origin=True):
         if isinstance(session, str):
             with self.connection() as db:
-                row = db.execute("SELECT agent_mode,channel_origin,context_strategy,compact_auto,model_selection FROM sessions WHERE id=?", (session,)).fetchone()
+                row = db.execute("SELECT agent_mode,channel_origin,context_strategy,compact_auto,model_selection,kemini "
+                                 "FROM sessions WHERE id=?", (session,)).fetchone()
             if row is None:
                 raise KeyError("对话不存在")
             session = dict(row)
@@ -495,6 +521,11 @@ class Store(MessageAdapters):
         if selection:
             from tavern.core.model_selection import select_runtime
             settings = select_runtime(settings, "full_agent" if session["agent_mode"] == "full_agent" else "foreground", selection, channel)
+        if session["kemini"]:
+            # A Kemini conversation's identity is fixed at creation, like its channel.
+            for config in (settings, settings._full_runtime):
+                if config is not None:
+                    config.kemini.enabled = True
         return settings
 
     @property
@@ -516,7 +547,12 @@ class Store(MessageAdapters):
             db.execute("UPDATE meta SET value=? WHERE key='settings'", (document.model_dump_json(),))
 
     def new_session(self, options):
-        channel = options.channel_origin or getattr(self.settings_document(), options.agent_mode).default_channel
+        document = self.settings_document()
+        channel = options.channel_origin or getattr(document, options.agent_mode).default_channel
+        if options.kemini and not document.shared.kemini.enabled:
+            raise ValueError("请先在全局设置 → 杂项启用 Kemini 式实验功能")
+        if options.kemini and channel != "standard":
+            raise ValueError("ChatGPT 官方渠道不能创建 Kemini 实验对话")
         card = self.card(options.card_id)
         data = normalize(card["document"])
         greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]
@@ -563,7 +599,7 @@ class Store(MessageAdapters):
                        (options.agent_mode, "conversation" if options.agent_mode == "full_agent"
                          else self.settings().lore_injection_mode, sid))
             self.create_message_adapter(db, "story", sid, options.agent_mode)
-            db.execute("UPDATE sessions SET channel_origin=? WHERE id=?", (channel, sid))
+            db.execute("UPDATE sessions SET channel_origin=?,kemini=? WHERE id=?", (channel, int(options.kemini), sid))
         return self.session(sid)
 
     def fork_session(self, sid, head, expected_revision):
@@ -659,8 +695,8 @@ class Store(MessageAdapters):
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
             db.execute("UPDATE sessions SET plot_enabled=?,update_variables=? WHERE id=?",
                        (source["plot_enabled"], source["update_variables"], new_sid))
-            db.execute("UPDATE sessions SET channel_origin=?,context_strategy=?,compact_auto=? WHERE id=?",
-                       (source["channel_origin"], source["context_strategy"], source["compact_auto"], new_sid))
+            db.execute("UPDATE sessions SET channel_origin=?,kemini=?,context_strategy=?,compact_auto=? WHERE id=?",
+                       (source["channel_origin"], source["kemini"], source["context_strategy"], source["compact_auto"], new_sid))
             db.execute("UPDATE sessions SET model_selection=? WHERE id=?", (source["model_selection"], new_sid))
             self.copy_message_adapter(db, "story", sid, new_sid)
             from tavern.advisor.storage import fork as fork_advisor
@@ -725,6 +761,7 @@ class Store(MessageAdapters):
         settings = self.session_settings(result, require_origin=False)
         result["compact_auto"] = bool(result["compact_auto"])
         result["plot_enabled"] = bool(result["plot_enabled"])
+        result["kemini"] = bool(result["kemini"])
         result["update_variables"] = bool(result["update_variables"])
         from tavern.core.update_policy import normalize_policy
         result["policy"] = normalize_policy(result["policy"])
@@ -1111,6 +1148,7 @@ class Store(MessageAdapters):
         return self.session(sid)
 
     def create_turn(self, sid, request):
+        experiment_allowed = self.settings_document().shared.kemini.enabled
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute("SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)).fetchone():
@@ -1122,9 +1160,13 @@ class Store(MessageAdapters):
                 if TurnRequest.model_validate_json(existing["request"]).model_dump() != request.model_dump():
                     raise Conflict("相同 operation_id 不能用于不同请求")
                 return existing["id"], False
-            session = db.execute("SELECT revision,agent_mode FROM sessions WHERE id=?", (sid,)).fetchone()
+            session = db.execute("SELECT revision,agent_mode,kemini FROM sessions WHERE id=?", (sid,)).fetchone()
             if not session:
                 raise KeyError("会话不存在")
+            # Kemini conversations never fall back to ordinary requests. Scene
+            # refresh runs only Tracker, which the experiment never touches.
+            if session["kemini"] and not experiment_allowed and not request.scene_refresh:
+                raise ValueError("Kemini 式实验功能已在全局设置 → 杂项关闭；重新启用后才能继续此对话")
             if session[0] != request.expected_revision:
                 raise Conflict("会话已改变，请刷新后重试")
             if db.execute(

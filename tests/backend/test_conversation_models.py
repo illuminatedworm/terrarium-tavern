@@ -9,6 +9,7 @@ from tavern.application.api import create_app
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.search.retrieval_config import ModelConnection, ModelProfile, Provider
+from tavern.storage.store import Store
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_full_agent import Model, ScriptHost
 
@@ -224,3 +225,29 @@ async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_wo
         assert len(store.session(session["id"])["messages"]) == 3
     finally:
         await service.close()
+
+
+def test_kemini_identity_is_fixed_at_creation_and_standard_only(tmp_path):
+    store = Store(tmp_path)
+    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode(), "card.json")
+    with pytest.raises(ValueError, match="请先"):
+        store.new_session(SessionCreate(card_id=card["id"], kemini=True))
+    document = store.settings_document()
+    document.shared.kemini.enabled = True
+    store.save_settings(document)
+    with pytest.raises(ValueError, match="ChatGPT"):
+        store.new_session(SessionCreate(card_id=card["id"], channel_origin="chatgpt", kemini=True))
+    ordinary = store.new_session(SessionCreate(card_id=card["id"]))
+    kemini = store.new_session(SessionCreate(card_id=card["id"], kemini=True))
+    assert kemini["kemini"] and not ordinary["kemini"] and not store.session_settings(ordinary).kemini.enabled
+    with pytest.raises(ValueError, match="无效会话字段"):
+        store.update_session(kemini["id"], kemini["revision"], kemini=False)
+    fork = store.fork_session(kemini["id"], kemini["head"], kemini["revision"])
+    assert fork["kemini"] and store.session_settings(fork).kemini.enabled
+    document = store.settings_document()
+    document.shared.kemini.enabled = False
+    store.save_settings(document)
+    # Disabling the experiment pauses Kemini conversations instead of running them as ordinary ones.
+    with pytest.raises(ValueError, match="重新启用"):
+        store.create_turn(kemini["id"], TurnRequest(text="继续", operation_id="op", expected_revision=kemini["revision"]))
+    store.create_turn(ordinary["id"], TurnRequest(text="继续", operation_id="op", expected_revision=ordinary["revision"]))

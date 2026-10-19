@@ -3,14 +3,16 @@ import json
 from copy import deepcopy
 from io import BytesIO
 
+import httpcore
 import httpx
 import pytest
 from PIL import Image
 
 from tavern.core.models import SessionCreate
-from tavern.scripting.dependencies import Dependencies
+from tavern.scripting.dependencies import PRIVATE_NETWORK, Dependencies
 from tavern.scripting.image_resources import declared_image
 from tavern.storage.store import Store
+from tavern.web.transport import PublicNetworkBackend
 
 
 async def test_dynamic_image_templates_resolve_after_expansion_and_stay_image_only(tmp_path, monkeypatch):
@@ -122,6 +124,28 @@ async def test_dynamic_image_templates_resolve_after_expansion_and_stay_image_on
     finally:
         await resolver.close()
     assert not resolver.images and not resolver.image_tasks
+
+
+async def test_public_network_connects_only_to_the_checked_address(monkeypatch):
+    # One lookup decides the connection: a second resolver answer cannot rebind it.
+    answers = {"cdn.example": [["93.184.216.34", "10.0.0.1"], ["93.184.216.34"]],
+               "rebind.example": [["93.184.216.34"], ["127.0.0.1"]]}
+    monkeypatch.setattr("tavern.web.transport.socket.getaddrinfo",
+                        lambda host, port, **_: [(None, None, None, "", (a, port)) for a in answers[host].pop()])
+    connected = []
+
+    async def connect(self, host, port, *args):
+        connected.append(host)
+        return host
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", connect)
+    network = PublicNetworkBackend(PRIVATE_NETWORK)
+    assert await network.connect_tcp("cdn.example", 443) == "93.184.216.34"
+    with pytest.raises(ValueError, match="私有"):
+        await network.connect_tcp("rebind.example", 443)
+    with pytest.raises(ValueError, match="私有"):
+        await network.connect_tcp("cdn.example", 443)  # Any private answer rejects the whole name.
+    assert connected == ["93.184.216.34"]
 
 
 async def test_offline_dependency_graph_is_pinned(tmp_path, monkeypatch):

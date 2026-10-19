@@ -38,13 +38,13 @@ def register_image_routes(app, store, dependencies):
             await asyncio.gather(operation, gone, return_exceptions=True)
 
     def source_card(sid, message_id):
-        session = store.session(sid)
-        message = next((m for m in session["messages"] if m["id"] == message_id), None)
-        if message is None:
+        # Each image request needs only branch membership and that message's
+        # revision; loading the full session view per image made galleries slow.
+        on_branch, revised = store.branch_message_revision(sid, message_id)
+        if not on_branch:
             raise HTTPException(404, "图片所属消息不在当前分支")
         card = store.session_card(sid)
-        document = (message["snapshot"].get("content") or {}).get("document", card["document"])
-        return {**card, "document": document}
+        return {**card, "document": card["document"] if revised is None else revised}
 
     @app.post("/api/sessions/{sid}/images")
     async def image(sid: str, payload: ImageRequest, request: Request):

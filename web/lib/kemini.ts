@@ -1,7 +1,7 @@
 import type { TurnEvent } from './turnStream';
 
 export const keminiCompatibilityNotice =
-  'Kemini 式实验功能已启用：剧情请求保留消息顺序，消息适配完成后，中途 system 转为 user；开头连续的 system 与工具交换保留。实际角色见上下文预览。可在全局设置 → 杂项关闭此规则。';
+  '此对话使用 Kemini 式实验规则：剧情请求保留消息顺序，消息适配完成后，中途 system 转为 user；开头连续的 system 与工具交换保留。实际角色见上下文预览。';
 
 export interface KeminiSettings {
   enabled: boolean;

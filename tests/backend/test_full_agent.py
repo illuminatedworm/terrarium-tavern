@@ -1167,7 +1167,6 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
     settings = store.settings()
     settings.full_agent.context_tokens = 16000
     settings.full_agent.reply_tokens = 12000
-    settings.kemini.enabled = True
     store.save_settings(settings)
     service = runtime(store)
     reply = "继续描写场景。" * 4000
@@ -1178,8 +1177,10 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
         assert first.requests[0]["extra_body"]["tool_choice"] == "auto"
         assert current["messages"][-1]["raw"] == reply
         assert current["snapshot"]["full_agent"]["window"]["number"] == 1
+        kemini = store.settings().for_role("full_agent")
+        kemini.kemini.enabled = True
         preview = compile_window(store.session_card(current["id"])["document"], current, current["messages"],
-            current["snapshot"], "继续", store.settings().for_role("full_agent"),
+            current["snapshot"], "继续", kemini,
             [{"type": "function", "function": {"name": "new_context", "parameters": {"type": "object"}}}])
         assert preview["rollover_required"]
         assert all(tool["function"]["name"] != "kemini_emit_story" for tool in preview["tools"])
