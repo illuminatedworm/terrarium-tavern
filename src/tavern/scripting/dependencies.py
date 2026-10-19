@@ -7,6 +7,7 @@ import ipaddress
 import json
 import re
 from collections import OrderedDict
+from contextlib import aclosing
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
@@ -178,38 +179,61 @@ class Dependencies:
                 self.image_bytes -= len(expired)
             return raw, mime
 
-    async def prepare_markup(self, card, html):
-        urls = set()
+    def remote_images(self, html):
+        """Remote image URLs of real tags in document order, so loading follows reading."""
+        urls = {}
 
         def collect(url):
             if (url.startswith("https://") and not TEMPLATE.search(url)
                     and not re.search(r"\.(?:css|js|mjs|woff2?|ttf|otf|eot)(?:[?#]|$)", url, re.I)):
-                urls.add(url)
+                urls[url] = None
             return url
 
         rewrite_markup(html, collect, images_only=True)
         if len(urls) > 128:
             raise ValueError("单个内容块最多加载 128 张远程图片")
+        return list(urls)
+
+    async def stream_images(self, card, urls):
+        """Yield (url, data URL, error) as each image finishes, started in document order.
+
+        Each image fails on its own so readers still see the rest. Exceeding the
+        block's 32 MiB budget ends the stream; closing it cancels unfinished
+        downloads (image() keeps one alive only while another request waits).
+        """
         declarations = self.declarations(card)
-        total = 0
 
         async def load(url):
-            nonlocal total
-            raw, mime = await self.image(card, url, declarations)
-            total += len(raw)
-            if total > 32 * 1024 * 1024:
-                raise ValueError("单个内容块的远程图片原始数据超过 32 MiB")
-            return url, f'data:{mime};base64,{base64.b64encode(raw).decode()}'
+            try:
+                return url, await self.image(card, url, declarations), None
+            except (ValueError, httpx.HTTPError) as error:
+                return url, None, error
 
-        # Load concurrently within image_slots; the first failure cancels the
-        # rest (image() keeps a download alive only while another request waits).
         tasks = [asyncio.create_task(load(url)) for url in urls]
+        total = 0
         try:
-            loaded = dict(await asyncio.gather(*tasks))
+            for next_image in asyncio.as_completed(tasks):
+                url, result, error = await next_image
+                if error is None:
+                    total += len(result[0])
+                    if total > 32 * 1024 * 1024:
+                        yield url, None, ValueError("单个内容块的远程图片原始数据超过 32 MiB")
+                        return
+                    result = f'data:{result[1]};base64,{base64.b64encode(result[0]).decode()}'
+                yield url, result, error
         finally:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def prepare_markup(self, card, html):
+        """Script frames mount once, so they wait for every image; prose streams instead."""
+        loaded = {}
+        async with aclosing(self.stream_images(card, self.remote_images(html))) as images:
+            async for url, data, error in images:
+                if error is not None:
+                    raise error
+                loaded[url] = data
         html = rewrite_markup(html, lambda url: loaded.get(url, url), images_only=True)
         return self.markup(card, html)
 

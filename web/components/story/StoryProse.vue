@@ -1,57 +1,93 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { streamApi } from '../../lib/api';
 import { renderStoryText } from '../../lib/storyText';
 const props = defineProps<{ text: string; breaks?: boolean; sessionId?: string; messageId?: string }>();
 const rendered = computed(() => renderStoryText(props.text, props.breaks));
 const prepared = ref('');
-const imageError = ref('');
-const loadingImages = ref(false);
+const root = ref<HTMLElement>();
+const total = ref(0),
+  loaded = ref(0),
+  failures = ref<string[]>([]);
 let request = new AbortController();
+
+// Remote images are never fetched by the reader itself. Their attributes wait in
+// data-tavern-* until the host streams each image back, in reading order.
+function imageAttributes(el: Element) {
+  const tag = el.tagName.toLowerCase();
+  return [
+    'style',
+    ...(tag === 'img' ? ['src', 'srcset'] : []),
+    ...(tag === 'source' ? ['srcset'] : []),
+    ...(tag === 'image' ? ['href', 'xlink:href'] : []),
+    ...(tag === 'video' ? ['poster'] : []),
+  ];
+}
+const pendingName = (attr: string) => 'data-tavern-' + attr.replace(':', '-');
+function holdRemote(html: string, matches: (value: string) => boolean) {
+  const template = document.createElement('template');
+  let held = false;
+  template.innerHTML = html;
+  template.content.querySelectorAll('img, source, image, video, [style]').forEach((el) => {
+    for (const attr of imageAttributes(el)) {
+      const value = el.getAttribute(attr);
+      if (value === null || !matches(value)) continue;
+      el.setAttribute(pendingName(attr), value);
+      el.removeAttribute(attr);
+      held = true;
+    }
+  });
+  return held ? template.innerHTML : html;
+}
+function reveal(urls: string[], resolved: Map<string, string>) {
+  root.value?.querySelectorAll('img, source, image, video, [style]').forEach((el) => {
+    for (const attr of imageAttributes(el)) {
+      const original = el.getAttribute(pendingName(attr));
+      if (original === null) continue;
+      const waiting = urls.filter((url) => original.includes(url));
+      if (waiting.some((url) => !resolved.has(url))) continue;
+      el.setAttribute(
+        attr,
+        waiting.reduce((value, url) => value.split(url).join(resolved.get(url)!), original),
+      );
+      el.removeAttribute(pendingName(attr));
+    }
+  });
+}
 async function prepare() {
   request.abort();
   const controller = (request = new AbortController());
-  imageError.value = '';
-  loadingImages.value = false;
+  total.value = loaded.value = 0;
+  failures.value = [];
   const html = rendered.value;
-  if (!props.sessionId || !props.messageId) {
-    prepared.value = html;
-    return;
-  }
-  const template = document.createElement('template');
-  template.innerHTML = html;
-  let remote = false;
-  template.content.querySelectorAll('img, source, image, video, [style]').forEach((el) => {
-    const attributes = ['style'];
-    if (el.tagName.toLowerCase() === 'img') attributes.push('src', 'srcset');
-    if (el.tagName.toLowerCase() === 'source') attributes.push('srcset');
-    if (el.tagName.toLowerCase() === 'image') attributes.push('href', 'xlink:href');
-    if (el.tagName.toLowerCase() === 'video') attributes.push('poster');
-    for (const attr of attributes) {
-      if (/https?:\/\//i.test(el.getAttribute(attr) || '')) {
-        el.removeAttribute(attr);
-        remote = true;
-      }
-    }
-  });
-  prepared.value = remote ? template.innerHTML : html;
-  if (!remote) return;
-  loadingImages.value = true;
+  const remote = (value: string) => /https?:\/\//i.test(value);
+  prepared.value = props.sessionId && props.messageId ? holdRemote(html, remote) : html;
+  if (prepared.value === html) return;
+  let urls: string[] = [];
+  const resolved = new Map<string, string>();
   try {
-    const result = await api(
-      `/sessions/${props.sessionId}/images/markup`,
-      {
-        html,
-        message_id: props.messageId,
-      },
-      'POST',
+    await streamApi(
+      `/sessions/${props.sessionId}/images/stream`,
+      { html, message_id: props.messageId },
       controller.signal,
+      async (line) => {
+        if (controller.signal.aborted) return;
+        if (line.html !== undefined) {
+          urls = line.urls;
+          total.value = urls.length;
+          prepared.value = holdRemote(line.html, (value) => urls.some((url) => value.includes(url)));
+          await nextTick();
+        } else if (line.error !== undefined) {
+          failures.value = [...failures.value, line.error];
+        } else {
+          resolved.set(line.url, line.data);
+          loaded.value = resolved.size;
+          reveal(urls, resolved);
+        }
+      },
     );
-    if (!controller.signal.aborted) prepared.value = result.html;
   } catch (error) {
-    if (!controller.signal.aborted) imageError.value = String(error);
-  } finally {
-    if (!controller.signal.aborted) loadingImages.value = false;
+    if (!controller.signal.aborted) failures.value = [...failures.value, String(error)];
   }
 }
 watch(
@@ -62,9 +98,11 @@ watch(
 onBeforeUnmount(() => request.abort());
 </script>
 <template>
-  <div class="prose" v-html="prepared" />
-  <p v-if="loadingImages" class="muted" role="status">正在加载图片…</p>
-  <div v-if="imageError" class="error" role="alert">
-    图片加载失败：{{ imageError }} <button @click="prepare">重试图片</button>
+  <div ref="root" class="prose" v-html="prepared" />
+  <p v-if="loaded + failures.length < total" class="muted" role="status">
+    正在加载图片 {{ loaded }}/{{ total }}
+  </p>
+  <div v-if="failures.length" class="error" role="alert">
+    {{ failures.length }} 处图片加载失败：{{ failures[0] }} <button @click="prepare">重试图片</button>
   </div>
 </template>

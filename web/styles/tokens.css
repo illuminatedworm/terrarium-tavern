@@ -27,6 +27,21 @@
 
   /* ---- Derived colours ---- */
   --canvas: rgb(var(--canvas-rgb));
+  /* Kemini experiment conversations: plum portrait, ring and glow plus a row wash. */
+  --experiment: rgb(var(--experiment-rgb));
+  --experiment-portrait: linear-gradient(
+    145deg,
+    rgb(var(--experiment-rgb) / 0.5),
+    rgb(var(--experiment-rgb) / 0.16)
+  );
+  --experiment-ring:
+    inset 0 0 0 1px rgb(255 255 255 / 0.1), 0 0 0 2px rgb(var(--experiment-rgb) / 0.95),
+    0 0 14px 1px rgb(var(--experiment-rgb) / 0.5);
+  --experiment-wash: linear-gradient(
+    90deg,
+    rgb(var(--experiment-rgb) / 0.18),
+    rgb(var(--experiment-rgb) / 0) 75%
+  );
   --surface-base: #141517;
   --surface-sidebar: #17181b;
   --surface-panel: #1c1d21;

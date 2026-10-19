@@ -612,6 +612,13 @@ summary:hover {
   max-width: 100%;
   border-radius: 8px;
 }
+/* Reserve a quiet slot while a remote image streams in; static, no animation. */
+.prose img[data-tavern-src] {
+  display: inline-block;
+  width: min(100%, 320px);
+  aspect-ratio: 4 / 3;
+  background: var(--surface-hover);
+}
 .prose .story-dialogue {
   color: var(--text-dialogue);
 }

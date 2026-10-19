@@ -82,6 +82,10 @@ async def test_dynamic_image_templates_resolve_after_expansion_and_stay_image_on
         count = len(requested)
         await resolver.image(card, root + "/scene/1.png")
         assert len(requested) == count
+        # Streaming fails per image: a missing one never hides the others.
+        streamed = [item async for item in resolver.stream_images(card, [root + "/missing.png", root + "/scene/1.png"])]
+        assert [url for url, data, _ in streamed if data and data.startswith("data:image/png")] == [root + "/scene/1.png"]
+        assert isinstance(next(error for url, _, error in streamed if url.endswith("missing.png")), httpx.HTTPStatusError)
         assert "{{getvar::art}}" in await resolver.prepare_markup(card, f'<img src="{root}/{{{{getvar::art}}}}.png">')
         for url in ["https://other.example/art.png", root + "-other/art.png", root + "/%2e%2e/private.png"]:
             with pytest.raises(ValueError, match="不属于"):

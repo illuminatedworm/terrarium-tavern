@@ -317,9 +317,14 @@ main {
   height: 38px;
   border-radius: 11px;
 }
+.session-row.kemini .session-open,
+.session-row.kemini .session-open:hover:not(:disabled) {
+  background: var(--experiment-wash);
+}
 .session-row.kemini .session-open .character-portrait {
-  outline: 2px solid rgb(var(--experiment-rgb) / 0.8);
-  outline-offset: 1px;
+  background: var(--experiment-portrait);
+  box-shadow: var(--experiment-ring);
+  color: var(--experiment);
 }
 .session-glyph {
   display: grid;
