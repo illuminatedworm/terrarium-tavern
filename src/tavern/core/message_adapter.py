@@ -32,6 +32,10 @@ class MessageType:
 
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
+    MessageType("kemini_filler", "Kemini 填充文本", role="user", scopes=("foreground", "full_agent")),
+    MessageType("kemini_identity", "Kemini 创作身份", role="user", scopes=("foreground", "full_agent")),
+    MessageType("kemini_acknowledgement", "Kemini 助手确认", role="assistant", scopes=("foreground", "full_agent")),
+    MessageType("kemini_control", "Kemini 输出要求", appendable=True, role="user", scopes=("foreground", "full_agent")),
     MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),
     MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
     MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
@@ -326,6 +330,8 @@ WIRE_FIELDS = {"role", "content", "tool_calls", "tool_call_id", "name", "reasoni
 
 def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=None):
     from tavern.core.tokens import count_text, message_tokens, request_tokens
+    if tools is None:
+        tools = context.get("tools")
     rows = context.get("runtime_trace", context["trace"])
     canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "foreground"))
     snapshot = adapter_snapshot(settings)

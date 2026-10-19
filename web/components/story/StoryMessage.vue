@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import StoryProse from './StoryProse.vue';
 import StoryFrame from './StoryFrame.vue';
+import ExperimentalRecords from './ExperimentalRecords.vue';
 import { snapshotMacros } from '../../../compat/variable-macros';
 import type { StoryContent } from '../../lib/storyPresentation';
 
@@ -67,4 +68,5 @@ function forwardAction(
     />
     <StoryProse v-else-if="content.text.trim()" :text="content.text" :breaks="message.role === 'user'" />
   </template>
+  <ExperimentalRecords v-if="!panelOnly" :parts="message.auxiliary || []" />
 </template>

@@ -1,6 +1,7 @@
 import type { CacheSettings } from './cachePolicy';
 import type { SendShortcut } from './composerShortcut';
 import type { MessageAdapterConfig } from './messageAdapter';
+import type { KeminiSettings } from './kemini';
 export type SettingsScope = 'full_agent' | 'half_agent' | 'shared';
 export type SettingsObject = Record<string, any>;
 export interface ModelConnection {
@@ -82,7 +83,8 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 4;
+  kemini_protocol: Record<string, string>;
+  version: 5;
   full_agent: SettingsObject & {
     model: ModelProfile;
     official_model: ModelProfile | null;
@@ -96,6 +98,7 @@ export interface SettingsDocument {
     default_channel: 'standard' | 'chatgpt';
   };
   shared: SettingsObject & {
+    kemini: KeminiSettings;
     providers: Provider[];
     card_author: ModelProfile;
     card_author_config: CardAuthorConfig;

@@ -94,18 +94,20 @@ def page_catalog():
                               ("local", "本地模型", ["local_models"]), ("network", "网络与代理", ["network", "model_request_mode"]),
                               ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
                               ("data_transfer", "数据导入导出", []),
-                              ("misc", "杂项", ["send_shortcut", "debug_failed_requests", "debug_full_agent_prefix"])]:
+                              ("misc", "杂项", ["send_shortcut", "debug_failed_requests", "debug_full_agent_prefix", "kemini"])]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
     return result
 
 
 def public_settings(doc):
+    from tavern.core.kemini import PROTOCOL
     from tavern.web.config import public_web
     result = doc.model_dump()
     result["shared"]["web"] = public_web(doc.shared.web)
     for provider in result["shared"]["providers"]:
         provider["has_api_key"] = bool(provider.pop("api_key"))
     result.update(pages=page_catalog(), prompt_definitions=prompt_catalog())
+    result["kemini_protocol"] = PROTOCOL
     return result
 
 

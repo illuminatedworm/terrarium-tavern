@@ -44,6 +44,8 @@ import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
+import ExperimentalRecords from './components/story/ExperimentalRecords.vue';
+import { latestAuxiliary } from './lib/kemini';
 import { defaultReadingLayout } from './lib/dataTransfer';
 import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
 import ConversationModelControls from './components/settings/ConversationModelControls.vue';
@@ -2819,6 +2821,7 @@ useTimedError(error);
                   <div class="message-body">
                     <div class="draft">
                       <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
+                      <ExperimentalRecords :parts="latestAuxiliary(trace)" />
                     </div>
                   </div>
                 </article>

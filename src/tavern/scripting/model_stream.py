@@ -2,16 +2,19 @@
 import copy
 import json
 
+from tavern.core.kemini import TOOL_NAME
 from tavern.scripting.responses_stream import ResponsesOutput
 from tavern.scripting.sse import stream_error
 
 
 class StreamState:
-    def __init__(self, api):
+    def __init__(self, api, *, kemini_transport=False):
         self.api, self.done = api, False
         self.result, self.calls, self.blocks = {}, {}, {}
         self.text, self.reasoning, self.parts = "", "", []
         self.response_output = ResponsesOutput() if api == "responses" else None
+        self.kemini_call = None
+        self.kemini_transport = kemini_transport
 
     def feed(self, event):
         api = self.api
@@ -105,6 +108,23 @@ class StreamState:
         candidate = candidates[0]
         pieces = candidate.get("content", {}).get("parts", [])
         for piece in copy.deepcopy(pieces):
+            call = piece.get("functionCall")
+            if self.kemini_transport and call is not None:
+                name = call.get("name")
+                if name == TOOL_NAME and (call.get("willContinue") or "partialArgs" in call):
+                    self.kemini_call = {"name": name, "args": {"content": ""}}
+                    if call.get("id"):
+                        self.kemini_call["id"] = call["id"]
+                    self.parts.append({"functionCall": self.kemini_call})
+                elif name:
+                    self.kemini_call = None
+                if self.kemini_call is not None and (not name or name == TOOL_NAME):
+                    for fragment in call.get("partialArgs") or []:
+                        if fragment.get("jsonPath") == "$.content":
+                            self.kemini_call["args"]["content"] += fragment.get("stringValue", "")
+                    if isinstance(call.get("args"), dict):
+                        self.kemini_call["args"] = call["args"]
+                    continue
             if set(piece) == {"thoughtSignature"} and self.parts:
                 self.parts[-1]["thoughtSignature"] = piece["thoughtSignature"]
             else:

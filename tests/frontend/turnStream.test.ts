@@ -1,7 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { eventCursor, observeTurn, requestScope, turnDraft, type TurnEvent } from '../../web/lib/turnStream';
+import { auxiliaryLabels, latestAuxiliary } from '../../web/lib/kemini';
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('keeps experimental records separate from prose and replaces them on response replay', () => {
+  const parts = [{ kind: 'thinking', text: '<script>literal record</script>' }];
+  const events: TurnEvent[] = [
+    { seq: 1, kind: 'kemini_auxiliary', payload: { items: parts } },
+    { seq: 2, kind: 'text', payload: { text: '正文' } },
+  ];
+  expect(events.reduce(turnDraft, '')).toBe('正文');
+  expect(latestAuxiliary(events)).toEqual(parts);
+  expect(auxiliaryLabels.thinking).toBe('显式思考');
+  events.push({ seq: 3, kind: 'kemini_auxiliary', payload: { items: [] } });
+  expect(latestAuxiliary(events)).toEqual([]);
+  expect(latestAuxiliary([])).toEqual([]);
+});
 
 it('does not append replayed stream events twice', () => {
   const accept = eventCursor();

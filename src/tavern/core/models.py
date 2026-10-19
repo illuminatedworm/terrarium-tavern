@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
 
 from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
+from tavern.core.kemini import KeminiConfig
 from tavern.core.message_adapter import MessageAdapterConfig, infer_type, type_definition
 from tavern.core.prompts import (
     DEFAULT_MAINTENANCE_PROMPT,
@@ -123,6 +124,7 @@ class Settings(BaseModel):
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
+    kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
 
     def for_role(self, role="foreground"):

@@ -1,4 +1,4 @@
-"""Writer's tool-free adapter; legacy maintenance calls delegate to TrackerTask."""
+"""Writer has no business tools; optional reply transport is decoded by the provider."""
 
 import copy
 import json
@@ -39,6 +39,7 @@ class TurnAgent:
         self.operation_contexts = OperationContexts(store, session["id"], tid)
         self.native_response = None
         self.clean_response = ""
+        self.auxiliary = []
         self.native_responses = {}
         self.compact_checked = False
         self.compact_calls = 0
@@ -146,6 +147,7 @@ class TurnAgent:
                     raise PluginBlockError(str(error)) from error
 
             async def post_llm_call(self, messages, response, usage, **kwargs):
+                owner.auxiliary = copy.deepcopy(getattr(provider, "last_auxiliary", []))
                 native = getattr(provider, "last_native_response", None)
                 if native:
                     owner.native_responses[native["message_sha256"]] = copy.deepcopy(native)
@@ -243,7 +245,7 @@ class TurnAgent:
 
 
 class Writer(TurnAgent):
-    """前台 Writer: one tool-free narrative call, plus retrieval text protocol.
+    """前台 Writer: one narrative call without business tools, plus retrieval text protocol.
 
     Consumes Runtime-compiled context; never schedules Tracker or commits state.
     Tracker uses a separate compiler and native tool loop.

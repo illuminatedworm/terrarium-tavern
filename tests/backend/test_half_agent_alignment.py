@@ -451,6 +451,36 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         store.delete_session(fork["id"])
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM half_agent_trace WHERE session=?", (fork["id"],)).fetchone()[0] == 0
+        # Switch the same story to experimental transport: its final native call
+        # must never return through the old opaque-replay path.
+        settings.shared.kemini.enabled = True
+        settings.shared.kemini.normal_disclaimer_enabled = True
+        store.save_settings(settings)
+        fail = False
+        carried = "<thinking>实验辅助内容</thinking>实验正文<disclaimer>附加声明</disclaimer><tavern_retrieval>线索</tavern_retrieval>"
+        if api == "anthropic":
+            parts = [{"type": "tool_use", "id": "reply_call", "name": "kemini_emit_story", "input": {"content": carried}}]
+        else:
+            parts = [{"type": "function_call", "id": "reply_item", "call_id": "reply_call", "name": "kemini_emit_story",
+                      "arguments": json.dumps({"content": carried})}]
+        experimental = service.submit(session["id"], TurnRequest(text="继续", operation_id="kemini",
+                                       expected_revision=session["revision"]))
+        await service.tasks[experimental["id"]]
+        assert store.turn(experimental["id"])["status"] == "committed", store.turn(experimental["id"])["error"]
+        session = store.session(session["id"])
+        final = session["messages"][-1]
+        assert final["raw"] == final["model"] == "实验正文"
+        assert final["auxiliary"] == [{"kind": "thinking", "text": "实验辅助内容"}, {"kind": "disclaimer", "text": "附加声明"}]
+        record = load_trace(store, session["id"], session["messages"])
+        assert "response" not in record[final["id"]]
+        cfg = store.settings().for_role("foreground")
+        preview = compile_context(store.session_card(session["id"])["document"], session, session["messages"],
+                                  session["snapshot"], "继续", cfg, "preview", replay_records=record)
+        assert "实验辅助内容" not in str(preview["messages"])
+        cloned = store.fork_session(session["id"], session["head"], session["revision"])
+        assert cloned["messages"][-1]["auxiliary"] == final["auxiliary"]
+        edited = store.edit_message(session["id"], final["id"], "用户编辑正文", session["revision"])
+        assert edited["messages"][-1]["auxiliary"] == final["auxiliary"]
     finally:
         await service.close()
 

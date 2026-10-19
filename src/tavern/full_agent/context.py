@@ -41,12 +41,15 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                    require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply="",
                    replay_all=False):
     state = full_state(snapshot)
+    from tavern.core.kemini import TOOL_NAME, control_text, prefix_frames, transport_tools
+    tools = transport_tools(tools, settings.kemini, "required" if force_rollover else "auto")
     compact = settings.context_strategy == "openai_compact"
     window = state["window"]
     card = normalize(document)
     complete_source = compact or replay_all
     visible = history if complete_source else history[window["start"]:]
     turn_instructions = {
+        "kemini_control": control_text(settings.kemini),
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit}。"
@@ -74,6 +77,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             "达到上限须单独调用 new_context 保存 handoff 并换窗，随后继续本轮。", "context_policy")
     if session.get("turn_preference"):
         add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")
+    items.extend(prefix_frames(settings.kemini))
     constants = [e for e in lore_entries(document, "writer") if e["enabled"] and e.get("constant")
                  and "[initvar]" not in e.get("comment", "").lower()]
     for entry in constants:
@@ -191,7 +195,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         update("mvu_rules", variable_rules_message(rules), value=rules)
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     for source, content in turn_instructions.items():
-        update(source, content)
+        update(source, content, value=[input_id, content] if source == "kemini_control" and content else None)
     planning = plan_value(state, session.get("plot_enabled", False), compact=compact)
     # Initial empty defaults need no frame; retained content and observed
     # versions still need explicit updates when cleared or disabled.
@@ -265,6 +269,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             tokens = updated
     elif not complete_source:
         update("context_budget", "")
+    if rollover_required:
+        # The current compilation itself can discover overflow. Match the actual
+        # forced-tool request even before the next compilation sees force_rollover.
+        tools = [tool for tool in tools if tool.get("function", tool)["name"] != TOOL_NAME]
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
     result = {"messages": messages, "trace": [{**m, "position": i, "estimated_tokens": message_tokens(m, settings)}

@@ -1,12 +1,14 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 5、数据库 schema 为 8、个人数据包格式为 2；升级前备份，旧设置和版本 1 数据包可以导入。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档为版本 4。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+`shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled`，以及 `identity_prompt`、`acknowledgement`、`thinking_prompt`、`filler_text`、`disclaimer_text`。复用共享设置 PATCH、修订检查和页面撤回；`GET /api/settings` 的 `kemini_protocol` 返回只读的程序格式约定。剧情消息的 `auxiliary` 为 `{kind: thinking|disclaimer|extra, text: string}[]`，旧消息为空列表；`kemini_auxiliary` SSE 事件的 `items` 替换当前响应辅助记录，沿用事件序号去重。
+
+参谋 agent 配置位于 `shared.advisor`，设置文档为版本 5。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 4；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 5；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -29,7 +31,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 4，由三个独立范围组成：
+数据库中的设置文档版本为 5，由三个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
@@ -106,7 +108,7 @@ Content-Type: application/json
 
 导入响应包含新 ID 数组 `personas`、`cards`、`sessions`，以及 `settings_restored`、`browser_preferences`。客户端收到结果后重新读取资源列表；恢复设置时重新建立设置编辑会话，并应用返回的浏览器偏好。
 
-ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 2，仍可读取版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
 导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及制卡 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 
@@ -148,11 +150,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-当前数据库为 **schema 7**，设置文档为 **version 4**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
+当前数据库为 **schema 8**，设置文档为 **version 5**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-存储层接受 schema 1–7，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+存储层接受 schema 1–8，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
 
-升级至 schema 7 / 设置 version 4 前生成 `before-provider-connections-v7-*.sqlite3` 备份。当前提供商的三个连接值保持原样，其他提供商的记录初始为空，不猜测旧值；对话级提供商模型记录随以后切换积累。设置导入接受旧版并使用相同迁移规则，导出保存全部提供商记录；旧程序不能直接打开新版数据库。
+当前升级至 schema 8 / 设置 version 5 前生成 `before-kemini-v8-*.sqlite3` 备份，添加消息的独立辅助记录以及默认关闭的实验设置。原有提供商连接与故事正文保持原样；此前 schema 7 / 设置 version 4 引入的按提供商连接记录继续保留。设置导入接受旧版并使用相同迁移规则；旧程序不能直接打开新版数据库。
 
 迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的制卡 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 

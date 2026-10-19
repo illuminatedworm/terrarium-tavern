@@ -22,7 +22,53 @@ export const debugFields: SettingField[] = [
     help: '保存失败的模型生成请求与已收到的原始响应，认证凭据脱敏。请求、响应各最多 8 MiB，超限或未收完整会标记。记录可能包含角色卡和剧情；关闭后已有记录仍按日志保留设置清理。',
   },
 ];
-export const miscFields: SettingField[] = [...shortcutFields, ...debugFields];
+export const keminiFields: SettingField[] = [
+  {
+    path: 'kemini.enabled',
+    label: '启用 Kemini 式实验功能',
+    type: 'checkbox',
+    help: '正文参数传输、创作提示改写与小说填充。',
+  },
+  {
+    path: 'kemini.normal_disclaimer_enabled',
+    label: '普通免责声明（独立开关）',
+    type: 'checkbox',
+    help: '要求模型追加声明，并在回复下单独折叠展示。',
+  },
+];
+export const keminiTextFields: SettingField[] = [
+  {
+    path: 'kemini.identity_prompt',
+    label: '创作身份指令',
+    help: '追加创作身份与任务要求，不替换原有角色卡或系统提示。',
+  },
+  {
+    path: 'kemini.acknowledgement',
+    label: '助手确认',
+    help: '作为预置的助手消息加入上下文，不表示模型实际做出过这条回复。',
+  },
+  {
+    path: 'kemini.thinking_prompt',
+    label: '显式自检提示',
+    help: '只控制模型显式输出的自检文本，不控制内部推理。',
+  },
+  {
+    path: 'kemini.filler_text',
+    label: '小说填充文本',
+    help: '用户自行填写；保存后随主开关完整注入。空白时该项不生效。',
+  },
+  {
+    path: 'kemini.disclaimer_text',
+    label: '普通免责声明文本',
+    help: '仅独立开关开启时使用。声明是提示文本，不是服务商的实际状态。',
+  },
+];
+export const miscFields: SettingField[] = [
+  ...shortcutFields,
+  ...debugFields,
+  ...keminiFields,
+  ...keminiTextFields,
+];
 const number = (
   path: string,
   label: string,

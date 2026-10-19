@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tavern.character.card_workflow import validate_document
 from tavern.character.cards import diagnose, normalize
+from tavern.core.kemini import AuxiliaryPart
 from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.models import ContextRecipe, PersonaEdit
 from tavern.core.settings import SettingsDocument, migrate_settings
@@ -28,7 +29,7 @@ FORMAT = "terrarium-tavern-personal-data"
 JSON_FIELDS = {
     "cards": {"resources", "document", "report"},
     "sessions": {"model_selection", "recipe", "persona_data", "card_data", "disabled_tools", "tool_result_options", "cache_breakpoint_follow"},
-    "messages": {"snapshot"},
+    "messages": {"snapshot", "auxiliary"},
     "full_agent_trace": {"payload"},
     "half_agent_trace": {"payload"},
     "message_adapter_configs": {"config"},
@@ -105,7 +106,7 @@ def hashes(card):
 def export_package(store, selection):
     if not (selection.settings or selection.personas or selection.cards or selection.sessions):
         raise ValueError("请至少选择一种数据")
-    package = {"format": FORMAT, "version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
+    package = {"format": FORMAT, "version": 2, "created_at": datetime.now(timezone.utc).isoformat(),
                "includes_api_keys": selection.settings and selection.include_api_keys,
                "settings": None, "personas": [], "cards": [], "sessions": []}
     blobs = set()
@@ -195,7 +196,7 @@ def validate_row(schema, table, row, required):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") != 1:
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -273,7 +274,14 @@ def validate_package(store, package, blobs):
             messages = bundle["messages"]
             by_id = {}
             for message in messages:
-                validate_row(schema, "messages", message, {"id", "session", "parent", "role", "raw", "model", "display", "snapshot", "created"})
+                required = {"id", "session", "parent", "role", "raw", "model", "display", "snapshot", "created"}
+                if package["version"] == 2:
+                    required.add("auxiliary")
+                validate_row(schema, "messages", message, required)
+                message.setdefault("auxiliary", [])
+                if not isinstance(message["auxiliary"], list):
+                    raise ValueError("实验辅助记录必须是列表")
+                message["auxiliary"] = [AuxiliaryPart.model_validate(part).model_dump() for part in message["auxiliary"]]
                 identity(message["id"])
                 if message["session"] != session["id"] or message["role"] not in ("assistant", "user") or not isinstance(message["snapshot"], dict):
                     raise ValueError("对话消息无效")
@@ -440,7 +448,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                         cloned["snapshot"][STATE] = copy.deepcopy(message["snapshot"][STATE])
                         remap_state(cloned["snapshot"], ids)
                     # User-authored strings are content, not identity references.
-                    for key in ("raw", "model", "display", "retrieval_query"):
+                    for key in ("raw", "model", "display", "retrieval_query", "auxiliary"):
                         if key in message:
                             cloned[key] = message[key]
                     for key in ("context_window", "memory_archive"):

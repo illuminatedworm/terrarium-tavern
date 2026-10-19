@@ -19,6 +19,7 @@ from tavern.core.cache_policy import (
     retention_request,
 )
 from tavern.core.gemini_capabilities import gemini_controls
+from tavern.core.kemini import transport_tools
 from tavern.core.message_adapter import adapt_messages, adapter_snapshot
 from tavern.core.tokens import counting_info, request_tokens
 from tavern.scripting.cloud_cache import (
@@ -30,6 +31,7 @@ from tavern.scripting.cloud_cache import (
 )
 from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
+from tavern.scripting.kemini import KeminiReply
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import attachment, prepare_messages
 from tavern.scripting.protocols import (
@@ -65,6 +67,9 @@ class ModelTransport(BaseLLMProvider):
         self.last_native_response = None
         self.last_response_record = {}
         self.response_capture = None
+        self.auxiliary_capture = None
+        self.last_auxiliary = []
+        self._kemini = None
         self.request_observer: Callable[[httpx.Request], None] | None = None
         self._response_headers = {}
         self._sent_breakpoints = SentBreakpoints()
@@ -491,7 +496,30 @@ class ModelTransport(BaseLLMProvider):
                 if error.response.status_code != 404:
                     DISABLED[self.capability_key] = fallback
 
+    def _begin_kemini(self, tools, kwargs):
+        self._kemini, self.last_auxiliary = None, []
+        config = self.settings.kemini
+        if (getattr(self, "operation_purpose", None) == "narrative" and config.active
+                and not kwargs.get("_maintenance_instructions") and not kwargs.get("_compact_threshold")):
+            choice = (kwargs.get("extra_body") or {}).get("tool_choice", "auto")
+            self._kemini = KeminiReply(config, config.enabled and choice == "auto")
+            if self.auxiliary_capture:
+                self.auxiliary_capture([])
+            return transport_tools(tools, config, choice)
+        return tools
+
     def _finish(self, payload):
+        try:
+            return self._finish_payload(payload)
+        except ValueError as error:
+            if self._kemini:
+                self.last_response_record = {"api_mode": self.settings.api_mode,
+                    "raw_response": copy.deepcopy(payload), "error": str(error)}
+                if self.response_capture:
+                    self.response_capture(copy.deepcopy(self.last_response_record))
+            raise
+
+    def _finish_payload(self, payload):
         api = self.settings.api_mode
         self._last_tool_calls, self._last_assistant_extra_fields = [], {}
         model = payload.get("model", payload.get("modelVersion")) or self.settings.model
@@ -549,15 +577,34 @@ class ModelTransport(BaseLLMProvider):
                 raise ValueError("Gemini 响应未完整结束")
         self._last_usage = normalize_usage(raw, api)
         self.usage_history.append(copy.deepcopy(self._last_usage))
+        original_text, rewritten = text, False
+        if self._kemini:
+            text, self._last_tool_calls = self._kemini.finish(text, self._last_tool_calls)
+            rewritten = self._kemini.transported or text != original_text
+            self.last_auxiliary = self._kemini.parts
+            if self.auxiliary_capture:
+                self.auxiliary_capture(copy.deepcopy(self.last_auxiliary))
+            if self._kemini.transported and finish == "tool_calls":
+                finish = "stop"
+            if rewritten:
+                # Opaque reasoning may contain the old tool/text representation.
+                # It remains diagnostic evidence, never an alternate history source.
+                self._last_assistant_extra_fields = {}
         canonical = {"role": "assistant", "content": text, "tool_calls": [
             {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}} for c in self._last_tool_calls]}
-        self.last_native_response = attachment(payload, response_origin(self.settings, self.key), canonical)
+        self.last_native_response = None if rewritten else attachment(payload, response_origin(self.settings, self.key), canonical)
         if self.last_native_response is not None and self.request_context is not None:
             self._last_assistant_extra_fields["_native_response"] = copy.deepcopy(self.last_native_response)
         self.last_response_record = {"api_mode": api, "response_id": payload.get("id"), "model": model,
             "headers": dict(self._response_headers), "raw_usage": copy.deepcopy(raw),
             "diagnostics": copy.deepcopy(payload.get("diagnostics")),
             "native": copy.deepcopy(self.last_native_response)}
+        if self._kemini:
+            self.last_response_record.update(raw_response=copy.deepcopy(payload), kemini={
+                "transported": self._kemini.transported, "auxiliary": copy.deepcopy(self.last_auxiliary),
+                "status": "函数参数传输" if self._kemini.transported else
+                          "业务工具续答" if self._last_tool_calls else
+                          "本轮未使用函数传输" if self._kemini.transport else "普通文本"})
         if self.response_capture:
             self.response_capture(copy.deepcopy(self.last_response_record))
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
@@ -581,6 +628,7 @@ class ModelTransport(BaseLLMProvider):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
         tools = kwargs.get("tools") or (kwargs.get("extra_body") or {}).get("tools")
+        tools = self._begin_kemini(tools, kwargs)
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, False, kwargs)) as events:
                 async for payload in events:
@@ -605,29 +653,38 @@ class ModelTransport(BaseLLMProvider):
     async def _consume_stream(self, messages, *, tools=None, **kwargs):
         self._completed_response = None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
+        tools = self._begin_kemini(tools, kwargs)
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
-        state = StreamState(self.settings.api_mode)
+        state = StreamState(self.settings.api_mode, kemini_transport=bool(self._kemini and self._kemini.transport))
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, True, kwargs)) as events:
                 async for event in events:
                     delta = state.feed(event)
+                    if self._kemini:
+                        delta = self._kemini.feed(event, delta, self.settings.api_mode)
                     if delta:
                         yield delta
                 result = self._finish(state.finish())
                 if result.finish_reason in ("length", "content_filter"):
                     raise ValueError("模型流未完整结束，本回合未提交")
                 self._completed_response = result
+                if self._kemini and not self._last_tool_calls:
+                    yield self._kemini.tail(result.content)
             return
         response = await self._send(messages, tools, True, kwargs)
         try:
             async for event in stream_events(response):
                 delta = state.feed(event)
+                if self._kemini:
+                    delta = self._kemini.feed(event, delta, self.settings.api_mode)
                 if delta:
                     yield delta
             result = self._finish(state.finish())
             if result.finish_reason in ("length", "content_filter"):
                 raise ValueError("模型流未完整结束，本回合未提交")
             self._completed_response = result
+            if self._kemini and not self._last_tool_calls:
+                yield self._kemini.tail(result.content)
         finally:
             await response.aclose()

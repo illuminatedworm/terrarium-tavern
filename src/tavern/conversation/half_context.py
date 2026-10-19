@@ -4,6 +4,7 @@ import json
 
 from tavern.conversation.half_compaction import enabled, local_window_enabled
 from tavern.core.cache_policy import fingerprint
+from tavern.core.kemini import control_text, prefix_frames
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.scripting.native_response import message_digest, native_items
@@ -12,11 +13,11 @@ from tavern.search.retrieval_text import split_retrieval
 
 # v4 adds per-exchange frozen lore; v3 append frames remain compatible.
 VERSION = 4
-DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference"}
-TRANSIENT = {"message_edit_notice", "regenerate_reference"}
+DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference", "kemini_control"}
+TRANSIENT = {"message_edit_notice", "regenerate_reference", "kemini_control"}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
           "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒",
-          "regenerate_reference": "待重写回复参考"}
+          "regenerate_reference": "待重写回复参考", "kemini_control": "Kemini 输出要求"}
 FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",
@@ -121,7 +122,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
                           snapshot.get("context_window", {}) if local_window_enabled(settings) else {}])
     layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", "")) for b in session.get("recipe", {}).get("blocks", [])]
-    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout])
+    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout,
+                          prefix_frames(settings.kemini), control_text(settings.kemini)])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:
