@@ -56,6 +56,7 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 
 ## 数据约定
 
+- 本项目 Runtime 兼容 SillyTavern 的卡片格式、世界书、MVU 初始化、正则和脚本接口，但变量机制不同：正文不承载也不解析变量，变量由授权任务按 `tracker_mvu` 规则局部更新。照搬 ST 做法前先读 `runtime-guide.md` 的“与 SillyTavern 的异同”。
 - 卡片结构、字段去向和世界书字段见 `card-format.md`；工具路径从完整文档根开始，以 `overview` 返回为准。
 - 运行必需的设定写在会注入的字段或世界书中；`creator_notes` 和未知扩展不会交给游玩模型。
 - 保留无关字段、作者意图、未知扩展和字面宏（`{{char}}`、`{{user}}` 等不替换成具体名字）。

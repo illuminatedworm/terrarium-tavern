@@ -24,7 +24,7 @@
 2. **写规则**：按已确认的语义写更新规则（写法见 `runtime-guide.md`）。
 3. **补初值**：先沿用有效的 `[InitVar]` 条目、各开场 `<initvar>` 及其隐藏正则。只存在于待迁移面板中的事实，补入有依据的初值：共用默认值放 `[InitVar]` 条目，开场专属的完整对象放该开场的 `<initvar>` 并配隐藏规则。
 4. **逐开场核对**：按 `references/workflow.md` 的清单检查每个开场。模板宏保留字面形式。
-5. **挂载前端**：默认保留原卡的视觉设计，把静态模板改成读取 `stat_data` 的前端，按 `references/regex-display.md` 写入 `extensions.regex_scripts`。用户明确要求只保留变量树时才省略前端；“使用项目变量面板”指挂载到 MVU 区，原前端仍保留。已删除的模板用 `read_field` 的 `saved`/`round_start` 版本或 `read_history` 完整取回。
+5. **挂载前端**：默认保留原卡的视觉设计，把静态模板改成读取 `stat_data` 的前端，按 `references/regex-display.md` 写入 `extensions.regex_scripts`。展示正则是 MVU 卡的必备要素，不因迁移而省略；“使用项目变量面板”指挂载到 MVU 区，原前端仍保留。已删除的模板用 `read_field` 的 `saved`/`round_start` 版本或 `read_history` 完整取回。
 6. **清理开场与示例**：挂载完成后，用 `set_opening` 去掉开场中的可见状态示范，保留有效数据块；清理示例中的重复展示要求，保留语言风格。
 7. 无法可靠迁移的动态脚本和有歧义的字段列为明确待办。
 
