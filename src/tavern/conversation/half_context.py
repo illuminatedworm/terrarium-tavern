@@ -18,7 +18,8 @@ DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "messag
 TRANSIENT = {"message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
           "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒",
-          "regenerate_reference": "待重写回复参考", "kemini_control": "Kemini 输出要求", "kemini_acknowledgement": "Kemini 助手确认"}
+          "regenerate_reference": "待重写回复参考", "kemini_control": "Kemini 输出要求",
+          "kemini_roleplay": "Kemini 角色扮演追加要求", "kemini_acknowledgement": "Kemini 助手确认"}
 FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",

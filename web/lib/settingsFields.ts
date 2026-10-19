@@ -56,7 +56,12 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.info_prompt',
     label: '资料起始提示',
-    help: '绝对头部第 4 条，默认包含参考资料说明和 <info>。之后才开始应用规则、角色资料等消息。',
+    help: '绝对头部第 4 条，默认包含参考资料说明和 Markdown 分隔符。之后才开始应用规则、角色资料等消息。',
+  },
+  {
+    path: 'kemini.roleplay_prompt',
+    label: '角色扮演追加要求',
+    help: '历史之后、助手确认之前，提示遵守后续创作要求。每次请求只加入当前一份，不回放旧副本。',
   },
   {
     path: 'kemini.acknowledgement',
@@ -66,7 +71,12 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.thinking_prompt',
     label: '显式自检提示',
-    help: '完整的交错思考提示，包含原预设的格式示意与要求。只控制显式输出，不控制模型内部推理。',
+    help: '交错思考的格式示意与要求。默认以 Markdown 分隔输出区域，保留用于分离辅助记录的 <thinking> 标签。只控制显式输出，不控制模型内部推理。',
+  },
+  {
+    path: 'kemini.content_prompt',
+    label: '正文约束',
+    help: '位于显式自检之后，设置正文语言、叙述人称、字数与收尾要求；默认以“用户所扮演角色”指代当前用户角色。',
   },
   {
     path: 'kemini.disclaimer_text',
@@ -76,7 +86,12 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.transport_prompt',
     label: '正文传输指令',
-    help: '位于自检与声明之后，保存文本直接发送。正文传输函数名为 kemini_emit_story，正文参数名为 content。',
+    help: '位于自检、正文约束与声明之后，末尾输出提示之前，保存文本直接发送。正文传输函数名为 kemini_emit_story，正文参数名为 content。',
+  },
+  {
+    path: 'kemini.output_prompt',
+    label: '末尾输出提示',
+    help: '最后发送，包含首次显式思考与直接开始输出的要求。默认使用 Markdown 分隔符，不使用 Interleaving 包装；不改变模型实际思考档位。',
   },
   {
     path: 'kemini.tool_description',

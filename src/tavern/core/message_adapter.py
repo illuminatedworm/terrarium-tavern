@@ -36,6 +36,7 @@ TYPES = {item.id: item for item in (
     MessageType("kemini_clear", "Kemini CLEAR", scopes=("foreground", "full_agent")),
     MessageType("kemini_identity", "Kemini 创作身份", role="user", scopes=("foreground", "full_agent")),
     MessageType("kemini_info", "Kemini 资料起始", scopes=("foreground", "full_agent")),
+    MessageType("kemini_roleplay", "Kemini 角色扮演追加要求", scopes=("foreground", "full_agent")),
     MessageType("kemini_acknowledgement", "Kemini 助手确认", role="assistant", scopes=("foreground", "full_agent")),
     MessageType("kemini_control", "Kemini 输出要求", appendable=True, role="user", scopes=("foreground", "full_agent")),
     MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),

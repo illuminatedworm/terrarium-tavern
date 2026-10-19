@@ -197,11 +197,11 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         await page.get_by_text('编辑实验提示与填充文本', exact=True).click()
                         prompts = {key: value for key, value in (await read())['shared']['kemini'].items()
                                    if isinstance(value, str)}
-                        assert len(prompts) == 10
+                        assert len(prompts) == 13
                         for key, text in prompts.items():
                             field = page.locator(f'[data-setting-path="kemini.{key}"] textarea')
                             await expect(field).to_have_value(text)
-                        for key in ('transport_prompt', 'tool_description', 'content_description'):
+                        for key in ('roleplay_prompt', 'content_prompt', 'output_prompt'):
                             field = page.locator(f'[data-setting-path="kemini.{key}"]')
                             await field.locator('textarea').fill('已保存的' + key)
                             await field.locator('.text-save').click()

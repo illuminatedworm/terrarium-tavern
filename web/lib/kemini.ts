@@ -9,8 +9,11 @@ export interface KeminiSettings {
   clear_prompt: string;
   identity_prompt: string;
   info_prompt: string;
+  roleplay_prompt: string;
   acknowledgement: string;
   thinking_prompt: string;
+  content_prompt: string;
+  output_prompt: string;
   filler_text: string;
   disclaimer_text: string;
   transport_prompt: string;

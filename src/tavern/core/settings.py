@@ -12,6 +12,7 @@ from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
 from tavern.core.kemini import KeminiConfig
+from tavern.core.kemini_prompts import LEGACY_CLEAR_PROMPT, LEGACY_INFO_PROMPT, LEGACY_THINKING_PROMPT
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -180,7 +181,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[6] = 6
+    version: Literal[7] = 7
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -361,6 +362,19 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             defaults = KeminiConfig().model_dump()
             for key in ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description"):
                 kemini.setdefault(key, defaults[key])
+            changed_scopes.add("shared")
+        if raw["version"] == 6:
+            raw["version"] = 7
+            kemini = raw.setdefault("shared", {}).setdefault("kemini", {})
+            defaults = KeminiConfig().model_dump()
+            for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
+                kemini.setdefault(key, defaults[key])
+            # Upgrade only exact old defaults in storage. Custom text, including
+            # deliberately retained tags, remains the visible source of truth.
+            for key, old in (("clear_prompt", LEGACY_CLEAR_PROMPT), ("info_prompt", LEGACY_INFO_PROMPT),
+                             ("thinking_prompt", LEGACY_THINKING_PROMPT)):
+                if kemini.get(key) == old:
+                    kemini[key] = defaults[key]
             changed_scopes.add("shared")
         if renamed:
             changed_scopes.add("shared")

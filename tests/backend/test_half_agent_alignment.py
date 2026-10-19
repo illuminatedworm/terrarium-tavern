@@ -105,7 +105,8 @@ def test_kemini_order_survives_projection_and_turn_replay():
     assert not any("insertion_depth" in row for row in rows[:4])
     expected_prefix = [{"role": "user", "content": row["content"]} for row in prefix_frames(story.cfg.kemini)]
     assert first["messages"][:4] == expected_prefix
-    assert sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+    assert sources.index("input") < sources.index("kemini_roleplay") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+    assert next(row for row in rows if row["source"] == "kemini_roleplay")["content"] == story.cfg.kemini.roleplay_prompt
     assert next(row for row in rows if row["source"] == "kemini_acknowledgement")["content"] == story.cfg.kemini.acknowledgement
     assert next(row for row in rows if row["source"] == "kemini_control")["content"] == control_text(story.cfg.kemini)
     assert all(row["role"] != "system" for row in rows)
@@ -117,6 +118,7 @@ def test_kemini_order_survives_projection_and_turn_replay():
     assert any("Kemini" in warning for warning in diagnostics)
     story.commit(first)
     second = story.compile(generate=generate)
+    assert [row["source"] for row in second["trace"]].count("kemini_roleplay") == 1
     assert [row["source"] for row in second["trace"]].count("kemini_acknowledgement") == 1
     assert [row["source"] for row in second["trace"]].count("kemini_control") == 1
     assert second["messages"][:sources.index("history")] == first["messages"][:sources.index("history")]

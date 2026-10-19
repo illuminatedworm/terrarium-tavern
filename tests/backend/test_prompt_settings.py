@@ -47,19 +47,31 @@ def test_defaults_and_custom_prompts():
     assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
     assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
-    # Prefix excerpts match the expanded ST preview; the remaining originals
-    # retain punctuation, spacing and illustrative placeholders after macro removal.
+    # Keep the source excerpts as evidence; only the requested boundary markers
+    # and references to omitted ST wrappers differ from these saved originals.
     source = json.loads((Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8"))
     kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True, filler_text="用户填充原文")
     for field in ("clear_prompt", "identity_prompt", "info_prompt", "thinking_prompt", "disclaimer_text"):
-        assert getattr(kemini, field) == re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[field], flags=re.S)
+        expected = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[field], flags=re.S)
+        if field == "clear_prompt":
+            expected = expected.replace("</clear>", "---").replace("after <Interleaving>", "after the Markdown separator")
+        elif field == "info_prompt":
+            expected = expected.replace("<info>", "---")
+        elif field == "thinking_prompt":
+            expected = (expected.replace("<Interleaving>", "---").replace("</Interleaving>", "---")
+                        .replace("<interactive_input>", "当前用户输入").replace("<char_guide>", "角色设定"))
+        assert getattr(kemini, field) == expected
     transport = source["transport_prompt"].replace("${toolName}", TOOL_NAME)
     assert kemini.transport_prompt == transport
     frames = prefix_frames(kemini)
     assert [m["source"] for m in frames] == list(PREFIX_SOURCES)
     assert [m["role"] for m in frames] == ["user", "system", "user", "system"]
-    assert [m["content"] for m in frames] == [kemini.filler_text, source["clear_prompt"], source["identity_prompt"], source["info_prompt"]]
-    assert control_text(kemini) == "\n\n".join([kemini.thinking_prompt, kemini.disclaimer_text, transport])
+    assert [m["content"] for m in frames] == [kemini.filler_text, kemini.clear_prompt, source["identity_prompt"], kemini.info_prompt]
+    assert control_text(kemini) == "\n\n".join([
+        kemini.thinking_prompt, kemini.content_prompt, kemini.disclaimer_text, transport, kemini.output_prompt])
+    assert "你会在</think>后直接以<thinking>进行首次思考" in kemini.output_prompt
+    assert kemini.output_prompt.endswith("---") and "不少于1000字" in kemini.content_prompt
+    assert not any(tag in control_text(kemini) for tag in ("<Interleaving>", "<plot_guide>", "<char_guide>", "殷仙龄"))
     declaration = transport_tools([], kemini)[0]["function"]
     assert declaration["description"] == source["tool_description"]
     assert declaration["parameters"] == {"type": "object", "properties": {"content": {
@@ -68,14 +80,51 @@ def test_defaults_and_custom_prompts():
     old = SettingsDocument().model_dump()
     old["version"] = 5
     old["shared"]["kemini"]["identity_prompt"] = "已保存的身份"
-    added = ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description")
+    added = ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description",
+             "roleplay_prompt", "content_prompt", "output_prompt")
     for field in added:
         old["shared"]["kemini"].pop(field)
     migrated = migrate_settings(old)
-    assert migrated.version == 6
+    assert migrated.version == 7
     assert migrated.shared.kemini.identity_prompt == "已保存的身份"
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
     assert migrate_settings(migrated.model_dump()) == migrated
+
+
+def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_path):
+    from tavern.storage.store import Store
+
+    store = Store(tmp_path)
+    raw = store.settings_document().model_dump()
+    raw["version"] = 6
+    fields = raw["shared"]["kemini"]
+    source = json.loads((Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8"))
+    for key in ("clear_prompt", "info_prompt", "thinking_prompt"):
+        fields[key] = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[key], flags=re.S)
+    for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
+        fields.pop(key)
+    fields.update(filler_text="用户小说全文末尾", enabled=True, normal_disclaimer_enabled=True)
+    custom = json.loads(json.dumps(raw))
+    custom["shared"]["kemini"]["clear_prompt"] += "\n用户自行保留的要求"
+    assert migrate_settings(custom).shared.kemini.clear_prompt == custom["shared"]["kemini"]["clear_prompt"]
+    fields["info_prompt"] = "用户资料分隔\n\n***"
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
+    upgraded = Store(tmp_path).settings_document()
+    assert upgraded.version == 7 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    assert upgraded.shared.kemini.clear_prompt == KeminiConfig().clear_prompt
+    assert upgraded.shared.kemini.thinking_prompt == KeminiConfig().thinking_prompt
+    for key in ("info_prompt", "filler_text", "enabled", "normal_disclaimer_enabled"):
+        assert getattr(upgraded.shared.kemini, key) == fields[key]
+    for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
+        assert getattr(upgraded.shared.kemini, key) == getattr(KeminiConfig(), key)
+    backups = list(tmp_path.glob("before-kemini-tail-v7-*.sqlite3"))
+    assert len(backups) == 1
+    import sqlite3
+    with sqlite3.connect(backups[0]) as db:
+        assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
+    assert Store(tmp_path).settings_document() == upgraded
+    assert list(tmp_path.glob("before-kemini-tail-v7-*.sqlite3")) == backups
 
 
 def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):

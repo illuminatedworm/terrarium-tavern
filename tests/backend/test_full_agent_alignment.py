@@ -295,8 +295,11 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
     settings = config("responses", "cloud")
     settings.kemini.enabled = True
     settings.kemini.filler_text = "固定填充"
+    settings.kemini.roleplay_prompt = "当前追加要求"
     settings.kemini.acknowledgement = "当前确认"
     settings.kemini.thinking_prompt = "当前自检"
+    settings.kemini.content_prompt = "当前正文约束"
+    settings.kemini.output_prompt = "当前末尾提示"
     settings.kemini.transport_prompt = "当前传输"
     session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
     snapshot = {"state": {}, "full_agent": new_state()}
@@ -306,7 +309,7 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
     first = compile_window(document, session, [], snapshot, "first", settings, tools, input_id="u1")
     legacy = [{"role": role, "source": source, "content": "旧提示不可回放：" + source,
                "_runtime_context": {"epoch": first["context_ledger"]["epoch"], "value": ["u1", "旧值"]}}
-              for role, source in zip(("assistant", "user"), TURN_SOURCES, strict=True)]
+              for role, source in zip(("system", "assistant", "user"), TURN_SOURCES, strict=True)]
     exchange = [{"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
                  "function": {"name": "read_state", "arguments": "{}"}}]},
                 {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"}]
@@ -320,8 +323,10 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
         trace=trace, continuation=[*second["context_additions"], *legacy])
     for context in (first, second, continued):
         assert [m["source"] for m in context["trace"] if m["source"] in TURN_SOURCES] == list(TURN_SOURCES)
-        assert context["messages"][-2:] == [{"role": "assistant", "content": settings.kemini.acknowledgement},
-                                            {"role": "user", "content": control_text(settings.kemini)}]
+        assert context["messages"][-3:] == [{"role": "user", "content": settings.kemini.roleplay_prompt},
+                                          {"role": "assistant", "content": settings.kemini.acknowledgement},
+                                          {"role": "user", "content": control_text(settings.kemini)}]
+        assert context["messages"][-1]["content"].endswith("当前正文约束\n\n当前传输\n\n当前末尾提示")
         assert not any(m.get("source") in TURN_SOURCES for m in context["context_additions"])
         assert "旧提示不可回放" not in json.dumps(context["messages"], ensure_ascii=False)
     assert second["context_ledger"]["rebuild_reason"] is continued["context_ledger"]["rebuild_reason"] is None

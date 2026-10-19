@@ -72,7 +72,7 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 2. 将新版源码或发行包放入新程序目录，安装依赖。
 3. 用 `-Data` 或 `--data` 指向原数据目录并启动。
 
-当前数据库格式为 **schema 8**（`v0.5.0` 标签为 schema 4），设置文档版本为 **6**。schema 8 增加随剧情保存的实验辅助记录和对话类型标记（已有对话均为普通对话），设置 version 5 增加默认关闭的 Kemini 式实验功能；升级前生成 `before-kemini-v8-*.sqlite3` 备份，保留原有连接、设置和故事正文。设置 version 6 补全 Kemini 绝对前缀与可编辑传输提示，从 version 5 升级前生成 `before-kemini-prompts-v6-*.sqlite3` 备份，仅补齐新增字段，保留已保存的文本与开关。此前按提供商保存的模型与连接记录、制卡 agent 表和设置键继续沿用。程序可打开 schema 1–8；旧格式先备份再迁移，其他版本在写入前报错。回退旧程序时，从升级前备份恢复到新的空目录。迁移规则见[设置存储](../reference/settings-api.md#数据库与设置迁移)。
+当前数据库格式为 **schema 8**（`v0.5.0` 标签为 schema 4），设置文档版本为 **7**。schema 8 增加随剧情保存的实验辅助记录和对话类型标记（已有对话均为普通对话），设置 version 5 增加默认关闭的 Kemini 式实验功能；升级前生成 `before-kemini-v8-*.sqlite3` 备份，保留原有连接、设置和故事正文。设置 version 6 补全 Kemini 绝对前缀与可编辑传输提示，从 version 5 升级前生成 `before-kemini-prompts-v6-*.sqlite3` 备份，仅补齐新增字段，保留已保存的文本与开关。设置 version 7 补齐角色扮演追加要求、正文约束和末尾输出提示，从 version 6 升级前生成 `before-kemini-tail-v7-*.sqlite3` 备份；只将完全匹配旧默认值的边界标签与 Interleaving 包装改为 Markdown 分隔符，保留小说填充、自定义文本和开关。此前按提供商保存的模型与连接记录、制卡 agent 表和设置键继续沿用。程序可打开 schema 1–8；旧格式先备份再迁移，其他版本在写入前报错。回退旧程序时，从升级前备份恢复到新的空目录。迁移规则见[设置存储](../reference/settings-api.md#数据库与设置迁移)。
 
 ## 清理与资源保留
 

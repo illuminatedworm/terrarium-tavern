@@ -49,11 +49,14 @@ class Store(MessageAdapters):
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
-                if version[0] != "8" or raw.get("version") not in (5, 6):
+                if version[0] != "8" or raw.get("version") not in (5, 6, 7):
                     with closing(sqlite3.connect(root / f"before-kemini-v8-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 elif raw.get("version") == 5:
                     with closing(sqlite3.connect(root / f"before-kemini-prompts-v6-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
+                elif raw.get("version") == 6:
+                    with closing(sqlite3.connect(root / f"before-kemini-tail-v7-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 # Older checks below read the renamed keys; the stored raw document stays untouched.
                 keys = copy.deepcopy(raw)
@@ -83,7 +86,7 @@ class Store(MessageAdapters):
                     backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
-                elif raw.get("version") not in {2, 3, 4, 5, 6}:
+                elif raw.get("version") not in {2, 3, 4, 5, 6, 7}:
                     raise ValueError("设置版本与数据库版本不一致")
                 elif any("cache" not in keys.get(scope, {}).get(key, {}) for scope, key in
                          (("full_agent", "model"), ("half_agent", "foreground"),

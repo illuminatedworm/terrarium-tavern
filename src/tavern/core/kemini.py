@@ -6,9 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from tavern.core.kemini_prompts import (
     CLEAR_PROMPT,
     CONTENT_DESCRIPTION,
+    CONTENT_PROMPT,
     DISCLAIMER_PROMPT,
     IDENTITY_PROMPT,
     INFO_PROMPT,
+    OUTPUT_PROMPT,
+    ROLEPLAY_PROMPT,
     THINKING_PROMPT,
     TOOL_DESCRIPTION,
     TRANSPORT_TEMPLATE,
@@ -17,7 +20,7 @@ from tavern.core.kemini_prompts import (
 TOOL_NAME = "kemini_emit_story"
 TRANSPORT_PROMPT = TRANSPORT_TEMPLATE.replace("${toolName}", TOOL_NAME)
 PREFIX_SOURCES = ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info")
-TURN_SOURCES = ("kemini_acknowledgement", "kemini_control")
+TURN_SOURCES = ("kemini_roleplay", "kemini_acknowledgement", "kemini_control")
 
 
 class KeminiConfig(BaseModel):
@@ -27,8 +30,11 @@ class KeminiConfig(BaseModel):
     clear_prompt: str = CLEAR_PROMPT
     identity_prompt: str = IDENTITY_PROMPT
     info_prompt: str = INFO_PROMPT
+    roleplay_prompt: str = ROLEPLAY_PROMPT
     acknowledgement: str = "明白了。我会依照本轮要求完成角色扮演创作，并遵守实际工具权限和输出协议。"
     thinking_prompt: str = THINKING_PROMPT
+    content_prompt: str = CONTENT_PROMPT
+    output_prompt: str = OUTPUT_PROMPT
     filler_text: str = ""
     disclaimer_text: str = DISCLAIMER_PROMPT
     transport_prompt: str = TRANSPORT_PROMPT
@@ -57,10 +63,12 @@ def prefix_frames(config: KeminiConfig) -> list[dict]:
 def control_text(config: KeminiConfig) -> str:
     if not config.enabled:
         return ""
-    parts = [config.thinking_prompt]
+    parts = [config.thinking_prompt, config.content_prompt]
     if config.normal_disclaimer_enabled:
         parts.append(config.disclaimer_text)
-    parts.append(config.transport_prompt)
+    # The ST script inserts transport instructions immediately before its
+    # final format block. Keep that order without depending on an XML anchor.
+    parts.extend((config.transport_prompt, config.output_prompt))
     return "\n\n".join(part for part in parts if part.strip())
 
 
@@ -81,6 +89,7 @@ def turn_frames(config: KeminiConfig) -> list[dict]:
         return []
     return [{"role": role, "content": text, "source": source, "message_type": source}
             for role, text, source in (
+                ("system", config.roleplay_prompt, "kemini_roleplay"),
                 ("assistant", config.acknowledgement, "kemini_acknowledgement"),
                 ("user", control_text(config), "kemini_control")) if text.strip()]
 
