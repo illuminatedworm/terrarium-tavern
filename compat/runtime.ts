@@ -9,6 +9,7 @@ import { replaceVariableMacros } from './variable-macros';
 import { lazyHistory, type HistorySource } from './history';
 export { frameCapabilities } from './frame-capabilities';
 export { mountFrame } from './frame-client';
+export { installImageLoader } from './image-loader';
 export { parseStoryDisplay, htmlDocuments } from './presentation';
 export { snapshotMacros } from './variable-macros';
 export function renderMarkdown(text: string) { return DOMPurify.sanitize(marked.parse(text, {async:false}) as string); }

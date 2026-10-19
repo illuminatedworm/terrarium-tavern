@@ -227,7 +227,7 @@ def diagnose(document):
         for x in ("SillyTavern.getContext", "parent.document", "parent.$", "<%", "executeSlashCommands")
         if x in text
     ]
-    urls = sorted(set(re.findall(r"https?://[^\s\"'<>\\)]+", text)))
+    urls = sorted(set(re.findall(r"https?://(?:\$<[^>]+>|[^\s\"'`<>\\)])+", text)))
     return {
         "data": "parsed",
         "display": "needs_runtime_test" if regex_scripts(document) or "<html" in text else "text",

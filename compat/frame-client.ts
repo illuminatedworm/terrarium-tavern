@@ -1,4 +1,6 @@
 /** Runs inside the opaque-origin frame. Parent messages are authenticated twice. */
+import { installImageLoader } from './image-loader';
+
 export function mountFrame(runtime: any, options: any) {
   const pending = new Map<string, any>();
   const token = options.token;
@@ -41,6 +43,10 @@ export function mountFrame(runtime: any, options: any) {
     history: takeHistory(),
     loadCore: async () => loadBlob((await host('runtime-core', {})) as Blob),
   });
+  installImageLoader(
+    async (url) => (await host('image', { url })) as string,
+    (error) => send('image-error', String(error)),
+  );
   let updates = Promise.resolve();
   addEventListener('message', (event) => {
     if (event.source !== parent || event.data?.token !== token) return;

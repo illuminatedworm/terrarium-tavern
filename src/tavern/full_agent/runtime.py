@@ -138,7 +138,7 @@ class FullAgentRuntime:
                 raise ValueError("Full Agent 的角色脚本不允许发起额外模型请求；请使用当前 Agent 的工具")
             script = await self.runtime.open(document, history, snapshot, bool(card["permission"]), host,
                 self.dependencies.scripts({**card, "document": document}),
-                lambda html: self.dependencies.markup(card, html), persona=session["persona"])
+                lambda html: self.dependencies.markup({**card, "document": document}, html), persona=session["persona"])
             mirror = copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
             snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
             rules, input_raw = regex_scripts(document), request.text
@@ -169,7 +169,7 @@ class FullAgentRuntime:
             await script.call("update", mirror)
             candidate = await script.call("transform", text, rules, 2, "display", 0)
             if card["permission"] and "<script" in candidate.lower():
-                await script.add_message_frame(self.dependencies.markup(card, candidate),
+                await script.add_message_frame(self.dependencies.markup({**card, "document": document}, candidate),
                     {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1}, host)
             processed = await script.call("process", text, [], "")
             snapshot.update(state=processed["state"], scopes=processed["scopes"])
@@ -183,7 +183,7 @@ class FullAgentRuntime:
             model = await script.call("transform", text, rules, 2, "model", 0)
             display = await script.call("transform", text, rules, 2, "display", 0)
             if card["permission"] and "<" in display:
-                display = self.dependencies.markup(card, display)
+                display = self.dependencies.markup({**card, "document": document}, display)
             output = {"id": output_id, "parent": input_id, "role": "assistant", "raw": text,
                       "model": model, "display": display, "snapshot": snapshot, "retrieval_query": agent.retrieval_query,
                       "auxiliary": agent.auxiliary}

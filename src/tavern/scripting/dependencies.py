@@ -7,12 +7,17 @@ import ipaddress
 import json
 import re
 import socket
+from collections import OrderedDict
+from io import BytesIO
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
+from xml.etree import ElementTree
 
 import httpx
+from PIL import Image
 
 from tavern.character.cards import card_scripts, diagnose
+from tavern.scripting.image_resources import TEMPLATE, declared_image, rewrite_markup
 
 IMPORTS = re.compile(r"""(?:\bfrom\s*|\bimport\s*\(?\s*|\bexport\s+[^;]*?\bfrom\s*)["']([^"']+)["']""")
 CSS_URLS = re.compile(r"""url\(\s*(?:["']([^"']*)["']|([^\s)]*))\s*\)|@import\s+["']([^"']+)["']""", re.I)
@@ -40,12 +45,137 @@ async def validate_remote(url):
         raise ValueError("卡片不能访问本地或私有网络资源")
 
 
+async def download_resource(client, url):
+    current = url
+    for _ in range(5):
+        await validate_remote(current)
+        async with client.stream("GET", current) as response:
+            if response.is_redirect:
+                current = urljoin(current, response.headers["location"])
+                continue
+            response.raise_for_status()
+            buffer = bytearray()
+            async for part in response.aiter_bytes():
+                buffer.extend(part)
+                if len(buffer) > 8 * 1024 * 1024:
+                    raise ValueError("单个卡片依赖超过 8 MB")
+            return bytes(buffer), response.headers.get("content-type", "application/octet-stream"), current
+    raise ValueError("依赖重定向次数过多")
+
+
 class Dependencies:
     def __init__(self, store):
         self.store = store
         self.directory = store.root / "dependencies"
         self.directory.mkdir(exist_ok=True)
         self.lock = asyncio.Lock()
+        # Dynamic galleries must not grow the pinned dependency manifest indefinitely.
+        # These derived images expire with this runtime; story/card data is untouched.
+        self.images = OrderedDict()
+        self.image_bytes = 0
+        self.image_tasks = {}
+        self.image_waiters = {}
+        self.image_slots = asyncio.Semaphore(4)
+
+    async def close(self):
+        for task in self.image_tasks.values():
+            task.cancel()
+        await asyncio.gather(*self.image_tasks.values(), return_exceptions=True)
+        self.image_tasks.clear()
+        self.image_waiters.clear()
+        self.images.clear()
+        self.image_bytes = 0
+
+    def client(self):
+        config = self.store.settings()
+        return httpx.AsyncClient(
+            proxy=(config.network.proxy or None) if config.network.resources_proxy else None,
+            trust_env=False, timeout=30, follow_redirects=False,
+        )
+
+    async def image(self, card, url):
+        if not card["permission"]:
+            raise ValueError("请先启用此卡脚本权限")
+        declarations = diagnose(card["document"])["external_dependencies"]
+        manifest = self.read(card)
+        for resource in manifest["resources"].values():
+            if "text/css" in resource["content_type"]:
+                css = (self.store.root / "blobs" / resource["hash"]).read_text(encoding="utf-8")
+                declarations.extend(urljoin(resource["url"], child) for child in css_urls(css))
+        if len(url) > 8192 or not declared_image(url, declarations):
+            raise ValueError("图片地址不属于此卡声明的资源、模板或目录")
+        if url in self.images:
+            self.images.move_to_end(url)
+            return self.images[url]
+        task = self.image_tasks.get(url)
+        if task is None:
+            task = self.image_tasks[url] = asyncio.create_task(self._image(card, url))
+        self.image_waiters[url] = self.image_waiters.get(url, 0) + 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            remaining = self.image_waiters.get(url, 1) - 1
+            if remaining:
+                self.image_waiters[url] = remaining
+            else:
+                self.image_waiters.pop(url, None)
+                self.image_tasks.pop(url, None)
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    async def _image(self, card, url):
+        async with self.image_slots:
+            if url in self.images:
+                self.images.move_to_end(url)
+                return self.images[url]
+            resource = self.read(card)["resources"].get(url)
+            if resource:
+                raw = (self.store.root / "blobs" / resource["hash"]).read_bytes()
+            else:
+                async with self.client() as client:
+                    raw, _, _ = await download_resource(client, url)
+            # Never return arbitrary HTML/JavaScript through the image bridge.
+            try:
+                if b"<svg" in raw[:1024]:
+                    if ElementTree.fromstring(raw).tag not in {"svg", "{http://www.w3.org/2000/svg}svg"}:
+                        raise ValueError("图片不是有效的 SVG")
+                    mime = "image/svg+xml"
+                else:
+                    with Image.open(BytesIO(raw)) as image:
+                        mime = Image.MIME[image.format]
+                        image.verify()
+            except (OSError, ElementTree.ParseError, Image.DecompressionBombError) as error:
+                raise ValueError("图片内容无效：" + url) from error
+            self.images[url] = (raw, mime)
+            self.image_bytes += len(raw)
+            while len(self.images) > 128 or self.image_bytes > 32 * 1024 * 1024:
+                _, (expired, _) = self.images.popitem(last=False)
+                self.image_bytes -= len(expired)
+            return raw, mime
+
+    async def prepare_markup(self, card, html):
+        urls = set()
+
+        def collect(url):
+            if (url.startswith("https://") and not TEMPLATE.search(url)
+                    and not re.search(r"\.(?:css|js|mjs|woff2?|ttf|otf|eot)(?:[?#]|$)", url, re.I)):
+                urls.add(url)
+            return url
+
+        rewrite_markup(html, collect, images_only=True)
+        if len(urls) > 128:
+            raise ValueError("单个内容块最多加载 128 张远程图片")
+        loaded = {}
+        total = 0
+        for url in urls:
+            raw, mime = await self.image(card, url)
+            total += len(raw)
+            if total > 32 * 1024 * 1024:
+                raise ValueError("单个内容块的远程图片原始数据超过 32 MiB")
+            loaded[url] = f'data:{mime};base64,{base64.b64encode(raw).decode()}'
+        html = rewrite_markup(html, lambda url: loaded.get(url, url), images_only=True)
+        return self.markup(card, html)
 
     def manifest_path(self, card):
         return self.store.card_manifest_path(card)
@@ -67,14 +197,13 @@ class Dependencies:
         if not card["permission"]:
             raise ValueError("请先启用此卡脚本权限")
         manifest = self.read(card)
-        config = self.store.settings()
-        async with httpx.AsyncClient(
-            proxy=(config.network.proxy or None) if config.network.resources_proxy else None, trust_env=False, timeout=30, follow_redirects=False
-        ) as client:
+        async with self.client() as client:
 
             visited = set()
 
             async def fetch(url, depth=0):
+                if TEMPLATE.search(unquote(url)):
+                    return  # Resolve image/CSS templates only after their captured values exist.
                 if depth > 10:
                     raise ValueError("依赖层数或数量超限")
                 if url in visited:
@@ -99,25 +228,7 @@ class Dependencies:
                         "provided_by": "pinned MVU runtime",
                     }
                     return
-                await validate_remote(url)
-                current = url
-                for _ in range(5):
-                    await validate_remote(current)
-                    async with client.stream("GET", current) as response:
-                        if response.is_redirect:
-                            current = urljoin(current, response.headers["location"])
-                            continue
-                        response.raise_for_status()
-                        buffer = bytearray()
-                        async for part in response.aiter_bytes():
-                            buffer.extend(part)
-                            if len(buffer) > 8 * 1024 * 1024:
-                                raise ValueError("单个卡片依赖超过 8 MB")
-                        content_type = response.headers.get("content-type", "application/octet-stream")
-                        break
-                else:
-                    raise ValueError("依赖重定向次数过多")
-                raw = bytes(buffer)
+                raw, content_type, current = await download_resource(client, url)
                 digest = self.store.blob(raw)
                 manifest["resources"][url] = {"hash": digest, "url": current, "content_type": content_type}
                 if "text/css" in content_type or urlparse(current).path.endswith(".css"):
@@ -195,6 +306,7 @@ class Dependencies:
     def markup(self, card, html):
         manifest = self.read(card)
         assets = dict(card.get("resources", {}))
+        declarations = diagnose(card["document"])["external_dependencies"]
 
         def content(url):
             local = url.removeprefix("embeded://").removeprefix("__asset:")
@@ -227,6 +339,8 @@ class Dependencies:
                 if not url or url.startswith(("data:", "blob:", "#")):
                     return match[0]
                 absolute = urljoin(base, url)
+                if TEMPLATE.search(unquote(absolute)):
+                    return f'url("{absolute}")'
                 raw, mime = content(absolute)
                 if "text/css" in mime or urlparse(absolute).path.endswith(".css"):
                     if absolute in stack:
@@ -257,12 +371,18 @@ class Dependencies:
             flags=re.I,
         )
 
-        def asset(match):
-            url = match[2]
+        def asset(url):
             if url.startswith(("data:", "blob:", "#")):
-                return match[0]
+                return url
+            if TEMPLATE.search(url):
+                # Snapshot macros are expanded by the reader; its parent prepares
+                # the resulting concrete image before mounting even script-free frames.
+                return url
+            if url.startswith("https://") and url not in manifest["resources"] and declared_image(url, declarations):
+                # Presentation-only images are resolved by the reader, after macros.
+                # Their availability must not gate story generation/atomic commits.
+                return url
             raw, mime = content(url)
-            return f'{match[1]}="data:{mime.split(";")[0]};base64,{base64.b64encode(raw).decode()}"'
+            return f'data:{mime.split(";")[0]};base64,{base64.b64encode(raw).decode()}'
 
-        html = re.sub(r"""\b(src|poster)\s*=\s*["']([^"']+)["']""", asset, html, flags=re.I)
-        return html
+        return rewrite_markup(html, asset)

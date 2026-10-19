@@ -85,6 +85,8 @@ def create_app(data_dir=None):
     from tavern.full_agent.api import register_full_agent_routes
     register_context_routes(app, store, service.context_operations)
     register_full_agent_routes(app, store, service.context_operations)
+    from tavern.application.image_api import register_image_routes
+    register_image_routes(app, store, service.dependencies)
 
     @app.post("/api/shutdown")
     async def shutdown(payload: dict):
@@ -390,7 +392,8 @@ def create_app(data_dir=None):
             await service.dependencies.resolve(card)
             for message in result["messages"]:
                 if "<" in message.get("display", ""):
-                    message["display"] = service.dependencies.markup(card, message["display"])
+                    source = {**card, "document": (message["snapshot"].get("content") or {}).get("document", card["document"])}
+                    message["display"] = service.dependencies.markup(source, message["display"])
         service.prepare_indexes(sid)
         return result
 

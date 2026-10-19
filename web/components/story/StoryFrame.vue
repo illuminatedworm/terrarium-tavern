@@ -10,6 +10,7 @@ import {
 } from '../../lib/storyAssets';
 import { frameCapabilities } from '../../../compat/frame-capabilities';
 import { frameBoot } from '../../lib/storyFrameBoot';
+import { api } from '../../lib/api';
 const props = defineProps<{
   message: any;
   session: any;
@@ -52,6 +53,7 @@ let saved: ReturnType<typeof reservePanelState>;
 let observer: IntersectionObserver | undefined;
 let suspensionTimer: ReturnType<typeof setTimeout> | undefined;
 let boot: { html: string; assets: { url: string; blob: Blob }[] } | undefined;
+let imageRequests = new AbortController();
 const release = (items: { release: () => void }[]) => items.splice(0).forEach((item) => item.release());
 const baseStyle =
   'html{background:#222326;scrollbar-width:thin;scrollbar-color:#50515c transparent}body{margin:0;color:#b9b7be;font:15px system-ui}button{cursor:pointer}*{box-sizing:border-box}';
@@ -77,6 +79,8 @@ function key() {
   ];
 }
 function clearAssets() {
+  imageRequests.abort();
+  imageRequests = new AbortController();
   boot = undefined;
   release(assets);
   release(retired);
@@ -146,6 +150,24 @@ async function build(force = false) {
     return;
   }
   let sdk: string | undefined;
+  let html = props.html;
+  if (/https:\/\//i.test(html)) {
+    try {
+      const prepared = await api(
+        `/sessions/${props.session.id}/images/markup`,
+        {
+          html,
+          message_id: props.message.id,
+        },
+        'POST',
+        imageRequests.signal,
+      );
+      html = prepared.html;
+    } catch (error) {
+      if (version === buildVersion) loadError.value = String(error);
+      return;
+    }
+  }
   if (needsScripts.value) {
     try {
       sdk = await loadStoryRuntime();
@@ -168,13 +190,15 @@ async function build(force = false) {
     historyAsset = undefined;
   }
   token = crypto.randomUUID();
+  imageRequests.abort();
+  imageRequests = new AbortController();
   ready = false;
   ++updateVersion;
   // Shared assets are opt-in for scripts which might inspect their original DOM/CSSOM.
   const markup =
     needsScripts.value && capabilities.value.sharedAssets
-      ? acquireMarkup(props.html)
-      : { html: props.html, leases: [], release() {} };
+      ? acquireMarkup(html)
+      : { html, leases: [], release() {} };
   assets.push(markup);
   let scripts = '';
   const transfers: AssetLease[] = [...markup.leases];
@@ -194,9 +218,9 @@ async function build(force = false) {
     scripts = `<script src="${sdkAsset.url}"><\/script><script src="${historyAsset.url}"><\/script><script>TavernRuntime.mountFrame(TavernRuntime,${options});<\/script>`;
   }
   const policy = `default-src 'none'; script-src ${sdk ? "'unsafe-inline' 'unsafe-eval' blob:" : "'none'"}; style-src 'unsafe-inline' data: blob:; img-src data: blob:; font-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'`;
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${baseStyle}</style>${scripts}</head><body>${markup.html}</body></html>`;
-  boot = sdk ? { html, assets: transfers.map(({ url, blob }) => ({ url, blob })) } : undefined;
-  source.value = sdk ? frameBoot(token) : html;
+  const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${baseStyle}</style>${scripts}</head><body>${markup.html}</body></html>`;
+  boot = sdk ? { html: documentHtml, assets: transfers.map(({ url, blob }) => ({ url, blob })) } : undefined;
+  source.value = sdk ? frameBoot(token) : documentHtml;
 }
 function receive(event: MessageEvent) {
   if (event.source !== frame.value?.contentWindow || event.data?.token !== token) return;
@@ -243,6 +267,10 @@ function receive(event: MessageEvent) {
     loadError.value = `面板恢复失败：${args}`;
     return;
   }
+  if (method === 'image-error') {
+    loadError.value = `图片加载失败：${args}`;
+    return;
+  }
   if (method === 'find') {
     if (frame.value?.closest('.message')) window.dispatchEvent(new Event('tavern-dialogue-find'));
     return;
@@ -256,6 +284,25 @@ function receive(event: MessageEvent) {
   const requestToken = token;
   const reply = (result: any, error?: string) =>
     destination?.postMessage({ token: requestToken, id, result, error }, '*');
+  if (method === 'image') {
+    if (!props.enabled) return reply(null, '此对话尚未启用脚本');
+    void api(
+      `/sessions/${props.session.id}/images`,
+      {
+        url: args?.url,
+        message_id: props.message.id,
+      },
+      'POST',
+      imageRequests.signal,
+    )
+      .then((result) => {
+        if (!disposed && requestToken === token) reply(result.url);
+      })
+      .catch((error) => {
+        if (!disposed && requestToken === token) reply(null, String(error));
+      });
+    return;
+  }
   if (method === 'runtime-core') {
     void loadStoryRuntime('core')
       .then((core) => {

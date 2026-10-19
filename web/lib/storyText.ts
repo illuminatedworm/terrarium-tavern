@@ -17,15 +17,17 @@ export function dialogueRanges(text: string): Array<[number, number]> {
 
 export function renderStoryText(source: string, breaks = false): string {
   const html = DOMPurify.sanitize(parseStoryMarkdown(source, breaks));
-  const root = document.createElement('div');
+  // Parse in an inert template: rendering text must not start image downloads
+  // before the story reader can route them through its resource boundary.
+  const root = document.createElement('template');
   root.innerHTML = html;
-  const groups = new Map<Element, Text[]>();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const groups = new Map<Node, Text[]>();
+  const walker = document.createTreeWalker(root.content, NodeFilter.SHOW_TEXT);
   let node: Node | null;
   while ((node = walker.nextNode())) {
     const text = node as Text;
     const block =
-      text.parentElement?.closest('p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, div') || root;
+      text.parentElement?.closest('p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, div') || root.content;
     const group = groups.get(block) || [];
     group.push(text);
     groups.set(block, group);

@@ -66,7 +66,13 @@ function forwardAction(
       :find-in-dialogue="findInDialogue"
       @action="forwardAction"
     />
-    <StoryProse v-else-if="content.text.trim()" :text="content.text" :breaks="message.role === 'user'" />
+    <StoryProse
+      v-else-if="content.text.trim()"
+      :text="content.text"
+      :breaks="message.role === 'user'"
+      :session-id="session.id"
+      :message-id="message.id"
+    />
   </template>
   <ExperimentalRecords v-if="!panelOnly" :parts="message.auxiliary || []" />
 </template>

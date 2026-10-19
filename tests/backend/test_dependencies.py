@@ -1,10 +1,127 @@
+import asyncio
 import json
+from copy import deepcopy
+from io import BytesIO
 
 import httpx
+import pytest
+from PIL import Image
 
 from tavern.core.models import SessionCreate
 from tavern.scripting.dependencies import Dependencies
+from tavern.scripting.image_resources import declared_image
 from tavern.storage.store import Store
+
+
+async def test_dynamic_image_templates_resolve_after_expansion_and_stay_image_only(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    root = "https://cards.example/gallery"
+    document = {"name": "templates", "first_mes": f'<img src="{root}/static.png">', "extensions": {
+        "regex_scripts": [
+            {"findRegex": "(.*)", "replaceString": f'<img src="{root}/$1/$2.png">'},
+            {"findRegex": "(.*)", "replaceString": f'<img src="{root}/$<category>/$<name>.png">'},
+            {"findRegex": "(.*)", "replaceString": f'<img src="{root}/{{{{getvar::art}}}}.png">'},
+            {"findRegex": "(.*)", "replaceString": f'<script>const base="{root}";const src=`{root}/${{name}}.png`;</script>'},
+        ]}}
+    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card["permission"] = 1
+    before = deepcopy(card)
+    buffer = BytesIO()
+    Image.new("RGB", (2, 3)).save(buffer, "PNG")
+    requested, validated = [], []
+    started, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def validate(url):
+        validated.append(url)
+        if not url.startswith(root + "/"):
+            raise ValueError("卡片不能访问本地或私有网络资源")
+
+    async def route(request):
+        requested.append(str(request.url))
+        assert "$" not in str(request.url) and "%24" not in str(request.url)
+        if request.url.path.endswith(("waiting.png", "cancelled.png")):
+            started.set()
+            try:
+                await release.wait()
+            finally:
+                closed.set()
+        if request.url.path.endswith("missing.png"):
+            return httpx.Response(404)
+        if request.url.path.endswith("redirect.png"):
+            return httpx.Response(302, headers={"location": "https://127.0.0.1/private.png"})
+        if request.url.path.endswith("invalid.png"):
+            return httpx.Response(200, text="<html>not an image</html>")
+        return httpx.Response(200, headers={"content-type": "application/octet-stream"}, content=buffer.getvalue())
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr("tavern.scripting.dependencies.validate_remote", validate)
+    monkeypatch.setattr("tavern.scripting.dependencies.httpx.AsyncClient",
+                        lambda **kwargs: real(transport=httpx.MockTransport(route)))
+    resolver = Dependencies(store)
+    try:
+        assert declared_image(root + "/nested/scene.png", [root + "/$1.png"])
+        assert declared_image(root + "/nested/scene.png", [root + "/$<path>.png"])
+        await resolver.resolve(card)
+        assert requested == [root + "/static.png"]
+        # Positional/named captures, snapshot macros and JS templates are declarations,
+        # never literal downloads. Source code and its HTML samples stay untouched.
+        sample = f'<script>const sample=\'<img src="{root}/$1/$2.png">\';const img=new Image();img.src="{root}/late.png";</script>'
+        handler = f'<button onclick="image.src=\'{root}/click.png\'">show</button>'
+        html = (f'<img src="{root}/scene/1.png"><picture><source srcset="{root}/small.png 1x, {root}/large.png 2x"></picture>'
+                f'<div style="background:url({root}/background.png)"></div>'
+                f'<style>.art{{background:url({root}/style.png)}}</style>' + sample + handler)
+        assert resolver.markup(card, html) == html
+        rendered = await resolver.prepare_markup(card, html)
+        assert rendered.count("data:image/png;base64,") == 5
+        assert sample in rendered
+        assert handler in rendered
+        assert not any("late.png" in url for url in requested)
+        assert await resolver.prepare_markup(card, rendered) == rendered
+        count = len(requested)
+        await resolver.image(card, root + "/scene/1.png")
+        assert len(requested) == count
+        assert "{{getvar::art}}" in await resolver.prepare_markup(card, f'<img src="{root}/{{{{getvar::art}}}}.png">')
+        for url in ["https://other.example/art.png", root + "-other/art.png", root + "/%2e%2e/private.png"]:
+            with pytest.raises(ValueError, match="不属于"):
+                await resolver.image(card, url)
+        with pytest.raises(ValueError, match="启用"):
+            await resolver.image({**card, "permission": 0}, root + "/scene/1.png")
+        with pytest.raises(httpx.HTTPStatusError):
+            await resolver.image(card, root + "/missing.png")
+        with pytest.raises(ValueError, match="私有"):
+            await resolver.image(card, root + "/redirect.png")
+        assert validated[-1] == "https://127.0.0.1/private.png"
+        with pytest.raises(ValueError, match="图片内容无效"):
+            await resolver.image(card, root + "/invalid.png")
+        first = asyncio.create_task(resolver.image(card, root + "/waiting.png"))
+        second = asyncio.create_task(resolver.image(card, root + "/waiting.png"))
+        await started.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not second.done()
+        release.set()
+        assert (await second)[1] == "image/png"
+        assert requested.count(root + "/waiting.png") == 1
+        started.clear()
+        release.clear()
+        closed.clear()
+        cancelled = asyncio.create_task(resolver.image(card, root + "/cancelled.png"))
+        await started.wait()
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        assert closed.is_set() and not resolver.image_tasks
+        # Cache eviction does not write derived image entries into persistent manifests.
+        for index in range(129):
+            await resolver.image(card, root + f"/evict-{index}.png")
+        assert len(resolver.images) == 128
+        assert resolver.image_bytes <= 32 * 1024 * 1024
+        assert card == before
+        assert list(resolver.read(card)["resources"]) == [root + "/static.png"]
+    finally:
+        await resolver.close()
+    assert not resolver.images and not resolver.image_tasks
 
 
 async def test_offline_dependency_graph_is_pinned(tmp_path, monkeypatch):

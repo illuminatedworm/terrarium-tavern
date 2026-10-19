@@ -61,6 +61,7 @@ class RoleplayRuntime:
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         await self.local_models.close()
         await self.runtime.close()
+        await self.dependencies.close()
 
     def submit(self, sid, request):
         if self.store.session(sid).get("agent_mode", "half_agent") != "half_agent":
@@ -466,7 +467,7 @@ class RoleplayRuntime:
                 bool(card["permission"]),
                 host,
                 self.dependencies.scripts({**card, "document": document}),
-                lambda html: self.dependencies.markup(card, html),
+                lambda html: self.dependencies.markup({**card, "document": document}, html),
             )
             initialized = await runtime.call("snapshot")
             snapshot["state"] = initialized["state"]
@@ -549,7 +550,7 @@ class RoleplayRuntime:
             candidate_display = await runtime.call("transform", text, rules, 2, "display", 0)
             if card["permission"] and "<script" in candidate_display.lower():
                 await runtime.add_message_frame(
-                    self.dependencies.markup(card, candidate_display),
+                    self.dependencies.markup({**card, "document": document}, candidate_display),
                     {**mirror, "serverMain": False, "currentMessage": output_index},
                     host,
                 )
@@ -604,7 +605,7 @@ class RoleplayRuntime:
             model = await runtime.call("transform", final_text, rules, 2, "model", 0)
             display = await runtime.call("transform", final_text, rules, 2, "display", 0)
             if card["permission"] and "<" in display:
-                display = self.dependencies.markup(card, display)
+                display = self.dependencies.markup({**card, "document": document}, display)
             output = {
                 "id": output_id,
                 "parent": input_id,

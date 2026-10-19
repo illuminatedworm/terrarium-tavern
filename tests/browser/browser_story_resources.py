@@ -3,10 +3,15 @@ import asyncio
 import base64
 import json
 import socket
+import sys
 import tempfile
-from threading import Thread
+from io import BytesIO
+from threading import Event, Thread
+from unittest.mock import patch
 
+import httpx
 import uvicorn
+from PIL import Image
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
@@ -14,7 +19,7 @@ from tavern.core.models import SessionCreate
 from tavern.storage.store import dump
 
 
-async def main():
+async def main(images_only=False):
     image = 'data:image/svg+xml;base64,' + base64.b64encode(
         ('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/><!--'
          + 'shared image ' * 300 + '--></svg>').encode()).decode()
@@ -28,6 +33,25 @@ render();eventOn('tavern_state_updated',render);
 document.querySelector('#update').onclick=()=>replaceVariables({stat_data:{hp:6}});
 document.querySelector('#parse').onclick=async()=>{const result=await Mvu.parseMessage("_.add('hp', 1);",{stat_data:{hp:6}});document.querySelector('#parsed').textContent=result.stat_data.hp;};
 </script>'''.replace('IMAGE', image)
+    remote = 'https://images.example/gallery'
+    requested = []
+    if images_only:
+        panel += '''<img id="macro-image" src="ROOT/{{format_message_variable::stat_data.art}}.png">
+<img id="dynamic-image"><img id="responsive-image"><div id="background-image"></div>
+<button id="change-image">换图</button><button id="missing-image">失效图片</button>
+<script>
+const imageRoot='ROOT';
+const dynamic=document.querySelector('#dynamic-image');dynamic.src=imageRoot+'/initial.png';
+document.querySelector('#responsive-image').srcset=imageRoot+'/small.png 1x, '+imageRoot+'/large.png 2x';
+document.querySelector('#background-image').style.backgroundImage='url('+imageRoot+'/background.png)';
+document.body.insertAdjacentHTML('beforeend',TavernRuntime.transform('[art:scene]',[
+  {findRegex:String.raw`/\\[art:(?<kind>\\w+)\\]/g`,replaceString:'<img id="regex-image" src="ROOT/$<kind>.png">'}
+],2,'display'));
+document.querySelector('#change-image').onclick=()=>dynamic.setAttribute('src',imageRoot+'/changed.png');
+document.querySelector('#missing-image').onclick=()=>{dynamic.src=imageRoot+'/missing.png';};
+</script>'''.replace('ROOT', remote)
+        panel = ('普通正文。![Markdown图片](ROOT/{{format_message_variable::stat_data.art}}-markdown.png)\n\n'
+                 '<img id="plain-image" src="ROOT/{{format_message_variable::stat_data.art}}-plain.png">\n\n').replace('ROOT', remote) + panel
     suspend = '''<meta name="tavern-capabilities" content="display-only suspend">
 <div>可恢复面板</div><input id="local-draft"><script>
 window.instance=crypto.randomUUID();
@@ -37,16 +61,32 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
     with tempfile.TemporaryDirectory() as root:
         app = create_app(root)
         store = app.state.store
+        if images_only:
+            pixels = BytesIO()
+            Image.new('RGB', (2, 3)).save(pixels, 'PNG')
+
+            async def validate(url):
+                if not url.startswith(remote + '/'):
+                    raise ValueError('测试禁止外部网络')
+
+            async def route(request):
+                requested.append(str(request.url))
+                return httpx.Response(404) if request.url.path.endswith('/missing.png') else httpx.Response(
+                    200, headers={'content-type': 'image/png'}, content=pixels.getvalue())
+
+            app.state.service.dependencies.client = lambda: httpx.AsyncClient(transport=httpx.MockTransport(route))
+            validation = patch('tavern.scripting.dependencies.validate_remote', validate)
+            validation.start()
         card = store.import_card(dump({'name': '资源夹具', 'first_mes': panel}).encode(), 'card.json')
         with store.connection() as db:
             db.execute('UPDATE cards SET permission=1 WHERE id=?', (card['id'],))
         session = store.new_session(SessionCreate(card_id=card['id']))
         snapshot = session['snapshot']
-        snapshot['state'] = {'stat_data': {'hp': 5}}
+        snapshot['state'] = {'stat_data': {'hp': 5, 'art': 'macro'}}
         parent = session['head']
         with store.connection() as db:
             db.execute('UPDATE messages SET snapshot=? WHERE id=?', (dump(snapshot), parent))
-            for i in range(1, 130):
+            for i in range(1, 1 if images_only else 130):
                 text = suspend if i == 120 else legacy if i == 121 else f'剧情 {i}。' + '完整正文。' * 100
                 mid = f'resource-{i}'
                 db.execute('INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -55,18 +95,23 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
             db.execute('UPDATE sessions SET head=? WHERE id=?', (parent, session['id']))
         sock = socket.socket()
         sock.bind(('127.0.0.1', 0))
-        server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
+        ready = Event()
+
+        class Server(uvicorn.Server):
+            async def startup(self, sockets=None):
+                await super().startup(sockets)
+                ready.set()
+
+        server = Server(uvicorn.Config(app, log_level='error'))
         thread = Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
         thread.start()
         try:
-            for _ in range(100):
-                if server.started:
-                    break
-                await asyncio.sleep(.05)
+            assert await asyncio.to_thread(ready.wait, 10), '测试服务启动超时'
             async with async_playwright() as p:
                 browser = await p.chromium.launch()
                 try:
-                    for width, height, scale in [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]:
+                    viewports = [(1920, 1080, 1)] if images_only else [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]
+                    for width, height, scale in viewports:
                         context = await browser.new_context(viewport={'width': width, 'height': height}, device_scale_factor=scale)
                         await context.add_init_script(f'if(window===top)localStorage.setItem("tavern-session",{json.dumps(session["id"])});')
                         page = await context.new_page()
@@ -74,18 +119,44 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         page.on('pageerror', lambda error: errors.append(str(error)))
                         page.on('request', lambda request: requests.append(request.url))
                         await page.goto(f'http://127.0.0.1:{sock.getsockname()[1]}')
-                        await expect(page.locator('.story-history')).to_have_attribute('data-virtual', 'true')
+                        if not images_only:
+                            await expect(page.locator('.story-history')).to_have_attribute('data-virtual', 'true')
                         expand = page.get_by_role('button', name='展开右侧栏', exact=True)
                         if await expand.count():
                             await expand.click()
                         locator = page.locator('section[aria-label="MVU 变量"] iframe')
                         await expect(locator).to_have_count(1)
                         frame = await (await locator.element_handle()).content_frame()
-                        await expect(frame.locator('#hp')).to_have_text('5' if width == 2560 else '6')
+                        await expect(frame.locator('#hp')).to_have_text('5' if width == 2560 or images_only else '6')
                         identity = await frame.evaluate('window.instance')
                         assert identity
                         assert await frame.locator('#hp').evaluate("el=>getComputedStyle(el).color==='rgb(0, 180, 190)'")
                         await expect(frame.locator('#asset')).to_have_js_property('naturalWidth', 10)
+                        if images_only:
+                            await expect(page.locator('.messages img[alt="Markdown图片"]')).to_have_js_property('naturalWidth', 2)
+                            plain = page.locator('.messages #plain-image')
+                            await expect(plain if await plain.count() else frame.locator('#plain-image')).to_have_js_property('naturalWidth', 2)
+                            for name in ['macro-image', 'regex-image', 'dynamic-image']:
+                                await expect(frame.locator('#' + name)).to_have_js_property('naturalWidth', 2)
+                            await frame.wait_for_function("document.querySelector('#responsive-image').naturalWidth > 0")
+                            assert await frame.locator('#background-image').evaluate("el=>el.style.backgroundImage.startsWith('url(\"data:image/png;base64,')")
+                            await frame.locator('#change-image').click()
+                            await expect(frame.locator('#dynamic-image')).to_have_js_property('naturalWidth', 2)
+                            await expect(frame.locator('#dynamic-image')).to_have_js_property('src', remote + '/changed.png')
+                            denied = await page.request.post(f'http://127.0.0.1:{sock.getsockname()[1]}/api/sessions/{session["id"]}/images', data={
+                                'message_id': session['messages'][0]['id'], 'url': 'https://other.example/private.png'})
+                            assert denied.status == 400
+                            await frame.locator('#missing-image').click()
+                            await expect(page.get_by_role('alert')).to_contain_text('404')
+                            await page.get_by_role('button', name='重新加载面板', exact=True).click()
+                            frame = await (await locator.element_handle()).content_frame()
+                            await expect(frame.locator('#dynamic-image')).to_have_js_property('naturalWidth', 2)
+                            assert not any(url.startswith('https://images.example') for url in requests)
+                            assert all('$' not in url and '%24' not in url and '%7B' not in url for url in requested)
+                            assert requested.count(remote + '/initial.png') == 1
+                            assert not errors, errors
+                            await context.close()
+                            continue
                         assert not any('/static/mvu-core.js' in url for url in requests)
                         assert await frame.evaluate('typeof MVUReference') == 'undefined'
                         assert await frame.evaluate('TavernRuntime.checkpoint().loaded.length') == 0
@@ -156,11 +227,14 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         await context.close()
                 finally:
                     await browser.close()
-            print('Live state without reload, lazy core, isolated shared assets, suspended form recovery and retained legacy state: 4 viewports passed.')
+            print('Dynamic image templates, snapshot macros, src/srcset/CSS, failure/retry and sandbox image bridge passed.' if images_only else
+                  'Live state without reload, lazy core, isolated shared assets, suspended form recovery and retained legacy state: 4 viewports passed.')
         finally:
             server.should_exit = True
             await asyncio.to_thread(thread.join, 10)
+            if images_only:
+                validation.stop()
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(main(images_only='--images-only' in sys.argv))
