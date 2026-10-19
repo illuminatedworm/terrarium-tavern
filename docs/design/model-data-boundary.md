@@ -53,6 +53,8 @@ Tracker 的映射只属于本次操作。制卡 agent 将映射与完成的请�
 
 资料先完成身份投影，再生成搜索摘要或工具结果；完整读取仍返回全文。搜索、续答和校验错误使用同一视图。开场通过 `set_opening` 编辑完整原文，适配范围见[世界书用途与初始化](../guides/card-author.md#世界书用途与初始化)。
 
+制卡 agent 在调用网页服务前恢复 `web_search` 的 `query`、`objective` 和 `read_webpage` 的 `url`，返回结果继续使用同一视图投影。恢复限定在这两个网页工具的服务调用入口，不对全部工具参数统一展开。
+
 ## 验证边界
 
 [test_model_data_boundary.py](../../tests/backend/test_model_data_boundary.py)及编辑专项检查最终业务 messages、工具结果、字段隐藏、编号恢复、父对象替换、数组操作和路径转义。检查覆盖最终模型可见数据与持久化结果。

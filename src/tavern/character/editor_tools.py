@@ -271,10 +271,12 @@ class EditorTools(PersonaTools):
         return self.overview(args.card_ref)
 
     async def web_search(self, args):
-        return await self.owner.web.search(args.query, args.limit, args.objective)
+        # Sources in prior tool results may contain reversible opaque-token handles.
+        return await self.owner.web.search(self.view.restore(args.query), args.limit,
+                                           self.view.restore(args.objective))
 
     async def read_webpage(self, args):
-        return await self.owner.web.read(args.url, args.offset, args.limit, service=args.service)
+        return await self.owner.web.read(self.view.restore(args.url), args.offset, args.limit, service=args.service)
 
     async def read_text_file(self, args):
         result = await asyncio.to_thread(read_text_file, self.file_path(args.path),

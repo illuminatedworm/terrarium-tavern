@@ -1,5 +1,7 @@
 """Actual Agent loops use the shared service without changing story/draft permissions."""
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -7,12 +9,33 @@ import pytest
 from tavern.advisor.runtime import AdvisorService, ConsultationRequest
 from tavern.application.api import create_app
 from tavern.character.card_author import CardAuthorService
+from tavern.character.editor_tools import EditorTools, tool_definitions
+from tavern.core.model_view import ModelView
 from tavern.core.models import CardAuthorRequest
 from tavern.storage.store import dump, uid
 from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_advisor import ask, setup
 from tests.backend.test_card_author import ToolLLM, import_fixture
 from tests.backend.test_chatgpt_integration import connected_store, story
+
+
+async def test_card_author_web_tools_restore_projected_service_inputs():
+    opaque = "4a3645f19705e9e73bb4df3a8e731d5ff994ce80"
+    url = f"https://example.org/blob/{opaque}/runtime.md"
+    view = ModelView({"url": url})
+    handle = view.forward[opaque]
+    web = SimpleNamespace(search=AsyncMock(return_value={"results": [{"url": url}]}),
+                          read=AsyncMock(return_value={"url": url, "text": "网页原文"}))
+    owner = SimpleNamespace(context=SimpleNamespace(view=view), web=web, legacy=False,
+                            definitions=tool_definitions())
+    tools = EditorTools(owner)
+    search = await tools.execute("web_search", {"query": f"版本 {handle}", "limit": 2, "objective": f"核对 {handle}"})
+    web.search.assert_awaited_once_with(f"版本 {opaque}", 2, f"核对 {opaque}")
+    projected_url = search["results"][0]["url"]
+    assert projected_url == f"https://example.org/blob/{handle}/runtime.md"
+    page = await tools.execute("read_webpage", {"url": projected_url, "offset": 7, "limit": 5, "service": "local"})
+    web.read.assert_awaited_once_with(url, 7, 5, service="local")
+    assert page == {"url": projected_url, "text": "网页原文"}
 
 
 @pytest.mark.parametrize("agent", ["advisor", "card_author"])

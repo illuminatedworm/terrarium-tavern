@@ -16,6 +16,7 @@ from tavern.character.editor_config import SYSTEM
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import Skill, tool_definitions
 from tavern.conversation.context import compile_context
+from tavern.core.model_view import ModelView
 from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
 from tavern.scripting.variables import analyze_variables
@@ -137,7 +138,12 @@ async def test_skill_is_whitelisted_and_full_resource_reaches_editor_model(tmp_p
         returned = [json.loads(m["content"]) for m in provider.call_log[-1] if m.get("role") == "tool"]
         sources = {path.relative_to(path.parents[1] if path.parent.name == "references" else path.parent).as_posix():
                    path.read_text(encoding="utf-8") for path in root.rglob("*.md")}
-        assert {item["resource"]: item["text"] for item in returned} == sources
+        saved_view = editor.edits.context(wid)["view"]
+        view = ModelView()
+        view.reverse, view.reserved = saved_view["reverse"], set(saved_view["reserved"])
+        wire = dump(returned)
+        assert view.reverse and all(raw not in wire for raw in view.reverse.values())
+        assert view.restore({item["resource"]: item["text"] for item in returned}) == sources
         assert not store.cards()
     finally:
         await editor.close()
