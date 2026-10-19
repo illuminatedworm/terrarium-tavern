@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
+import { keminiCompatibilityNotice } from '../../lib/kemini';
 import {
   adapterRule,
   resetAdapterRoles,
@@ -13,6 +14,7 @@ const props = defineProps<{
   apiMode: string;
   lane: string;
   types?: MessageTypeDefinition[];
+  keminiEnabled?: boolean;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: MessageAdapterConfig] }>();
 const loaded = ref<MessageTypeDefinition[]>([]),
@@ -82,6 +84,9 @@ defineExpose({ resetRoles });
 </script>
 <template>
   <section class="message-adapter-editor" aria-label="消息适配映射">
+    <p v-if="keminiEnabled && ['foreground', 'full_agent'].includes(lane)" class="muted" role="status">
+      {{ keminiCompatibilityNotice }}
+    </p>
     <div class="adapter-filter">
       <label>筛选消息类型<input v-model="search" type="search" /></label
       ><label class="adapter-check"><input v-model="showFixed" type="checkbox" />显示固定类型</label>

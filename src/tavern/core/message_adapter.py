@@ -32,6 +32,12 @@ class MessageType:
 
 TYPES = {item.id: item for item in (
     MessageType("root_system", "主系统规则"),
+    MessageType("kemini_filler", "Kemini 填充文本", role="user", scopes=("foreground", "full_agent")),
+    MessageType("kemini_clear", "Kemini CLEAR", scopes=("foreground", "full_agent")),
+    MessageType("kemini_identity", "Kemini 创作身份", role="user", scopes=("foreground", "full_agent")),
+    MessageType("kemini_info", "Kemini 资料起始", scopes=("foreground", "full_agent")),
+    MessageType("kemini_acknowledgement", "Kemini 助手确认", role="assistant", scopes=("foreground", "full_agent")),
+    MessageType("kemini_control", "Kemini 输出要求", appendable=True, role="user", scopes=("foreground", "full_agent")),
     MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),
     MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
     MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
@@ -276,6 +282,7 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
     pairs, diagnostics = [], []
     for original in messages:
         item = copy.deepcopy(original)
+        item.pop("_kemini_compat", None)
         name = item.get("message_type")
         if not name:  # Standalone protocol probes and imported SDK messages retain their identity.
             pairs.append((original, item))
@@ -305,7 +312,22 @@ def adapt_messages(messages, settings, snapshot=None, *, managed=None):
         if item["role"] not in ("system", "developer"):
             return 2
         return int(type_definition(item["message_type"]).appendable)
-    if managed:
+    kemini = (settings.kemini.enabled and lane in ("foreground", "full_agent")
+              and any(item.get("message_type", "").startswith("kemini_") for _, item in pairs))
+    if kemini:
+        # Match strict_tools' chronological projection without merging distinct
+        # source blocks or disrupting native tool-call/result adjacency.
+        leading, converted = True, 0
+        for _, item in pairs:
+            if item["role"] not in ("system", "developer"):
+                leading = False
+            elif item["role"] == "system" and not leading:
+                item["role"] = item["sdk_role"] = "user"
+                converted += 1
+            item["_kemini_compat"] = True
+        diagnostics.append(f"Kemini 式实验功能：保留消息顺序，本次 {converted} 条中途 system 消息按 user 发送；"
+                           "开头连续的 system 区域与工具交换保留。此规则来自全局设置 → 杂项。")
+    elif managed:
         pairs[:boundary] = sorted(pairs[:boundary], key=lambda pair: (rank(pair), pair[0].get("runtime_order", 0)))
     else:
         # Stable partition is the minimum crossing removal needed for a single
@@ -326,6 +348,8 @@ WIRE_FIELDS = {"role", "content", "tool_calls", "tool_call_id", "name", "reasoni
 
 def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=None):
     from tavern.core.tokens import count_text, message_tokens, request_tokens
+    if tools is None:
+        tools = context.get("tools")
     rows = context.get("runtime_trace", context["trace"])
     canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "foreground"))
     snapshot = adapter_snapshot(settings)

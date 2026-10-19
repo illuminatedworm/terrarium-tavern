@@ -41,12 +41,16 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
                    require_state_patch=False, variable_rules=None, allow_content_edit=False, regenerate_reply="",
                    replay_all=False):
     state = full_state(snapshot)
+    from tavern.core.kemini import TOOL_NAME, control_text, prefix_frames, transport_tools
+    tools = transport_tools(tools, settings.kemini, "required" if force_rollover else "auto")
     compact = settings.context_strategy == "openai_compact"
     window = state["window"]
     card = normalize(document)
     complete_source = compact or replay_all
     visible = history if complete_source else history[window["start"]:]
     turn_instructions = {
+        "kemini_acknowledgement": settings.kemini.acknowledgement if settings.kemini.enabled else "",
+        "kemini_control": control_text(settings.kemini),
         "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit}。"
@@ -57,7 +61,9 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
     }
     def expand(value):
         return macros(value, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))
-    items = []
+    # This absolute prefix is outside all application ordering and history
+    # offsets; no runtime rules or worldbook entries can split its four blocks.
+    items = prefix_frames(settings.kemini)
 
     def add(role, content, source, **metadata):
         if content:
@@ -191,7 +197,7 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
         update("mvu_rules", variable_rules_message(rules), value=rules)
     update("post", expand(wrap_card_field("post_history_instructions", card.get("post_history_instructions", ""))))
     for source, content in turn_instructions.items():
-        update(source, content)
+        update(source, content, value=[input_id, content] if source.startswith("kemini_") and content else None)
     planning = plan_value(state, session.get("plot_enabled", False), compact=compact)
     # Initial empty defaults need no frame; retained content and observed
     # versions still need explicit updates when cleared or disabled.
@@ -265,6 +271,10 @@ def compile_window(document, session, history, snapshot, user_input, settings, t
             tokens = updated
     elif not complete_source:
         update("context_budget", "")
+    if rollover_required:
+        # The current compilation itself can discover overflow. Match the actual
+        # forced-tool request even before the next compilation sees force_rollover.
+        tools = [tool for tool in tools if tool.get("function", tool)["name"] != TOOL_NAME]
     messages = wire()
     tokens = request_tokens(messages, settings, tools) + reasoning_cost
     result = {"messages": messages, "trace": [{**m, "position": i, "estimated_tokens": message_tokens(m, settings)}

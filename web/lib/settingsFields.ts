@@ -22,7 +22,79 @@ export const debugFields: SettingField[] = [
     help: '保存失败的模型生成请求与已收到的原始响应，认证凭据脱敏。请求、响应各最多 8 MiB，超限或未收完整会标记。记录可能包含角色卡和剧情；关闭后已有记录仍按日志保留设置清理。',
   },
 ];
-export const miscFields: SettingField[] = [...shortcutFields, ...debugFields];
+export const keminiFields: SettingField[] = [
+  {
+    path: 'kemini.enabled',
+    label: '启用 Kemini 式实验功能',
+    type: 'checkbox',
+    help: '正文参数传输、创作提示改写与小说填充。',
+  },
+  {
+    path: 'kemini.normal_disclaimer_enabled',
+    label: '普通免责声明',
+    type: 'checkbox',
+    disabled: (value) => !value.kemini.enabled,
+    help: '仅实验主开关开启时生效；关闭主开关会停用并保留此项选择。启用时要求模型追加声明，并在回复下单独折叠展示。',
+  },
+];
+export const keminiTextFields: SettingField[] = [
+  {
+    path: 'kemini.filler_text',
+    label: '小说填充文本',
+    help: '绝对头部第 1 条。用户自行填写；保存后随主开关完整注入，空白时省略。',
+  },
+  {
+    path: 'kemini.clear_prompt',
+    label: 'CLEAR 指令',
+    help: '绝对头部第 2 条。保存原文直接发送，不会清空应用里的对话记录或更改模型思考档位。',
+  },
+  {
+    path: 'kemini.identity_prompt',
+    label: '创作身份与文风',
+    help: '绝对头部第 3 条。包含完整身份、写作规则与文风文本；不另从其他设置补入或覆盖。',
+  },
+  {
+    path: 'kemini.info_prompt',
+    label: '资料起始提示',
+    help: '绝对头部第 4 条，默认包含参考资料说明和 <info>。之后才开始应用规则、角色资料等消息。',
+  },
+  {
+    path: 'kemini.acknowledgement',
+    label: '助手确认',
+    help: '作为预置的助手消息加入上下文，不表示模型实际做出过这条回复。',
+  },
+  {
+    path: 'kemini.thinking_prompt',
+    label: '显式自检提示',
+    help: '完整的交错思考提示，包含原预设的格式示意与要求。只控制显式输出，不控制模型内部推理。',
+  },
+  {
+    path: 'kemini.disclaimer_text',
+    label: '普通免责声明文本',
+    help: '保存完整提示，包括 <disclaimer_format> 内的说明、声明示例和格式要求。仅实验主开关和普通免责声明同时开启时使用，不再额外添加包装提示。',
+  },
+  {
+    path: 'kemini.transport_prompt',
+    label: '正文传输指令',
+    help: '位于自检与声明之后，保存文本直接发送。正文传输函数名为 kemini_emit_story，正文参数名为 content。',
+  },
+  {
+    path: 'kemini.tool_description',
+    label: '正文传输工具说明',
+    help: '作为 kemini_emit_story 函数定义的 description 发送，可在上下文预览的工具定义中核对。',
+  },
+  {
+    path: 'kemini.content_description',
+    label: '正文参数说明',
+    help: '作为 content 字符串参数的 description 发送；不改变参数类型与必填约定。',
+  },
+];
+export const miscFields: SettingField[] = [
+  ...shortcutFields,
+  ...debugFields,
+  ...keminiFields,
+  ...keminiTextFields,
+];
 const number = (
   path: string,
   label: string,

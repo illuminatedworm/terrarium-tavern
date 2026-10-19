@@ -41,6 +41,12 @@ async def main(*, misc_only=False, connections_only=False):
             card = app.state.store.import_card(b'{"name":"Connection fixture","first_mes":"Opening"}', 'fixture.json')
             session = app.state.store.new_session(SessionCreate(card_id=card['id'], agent_mode='full_agent'))
         if misc_only:
+            card = app.state.store.import_card(b'{"name":"Experiment fixture","first_mes":"Story preview"}', 'fixture.json')
+            session = app.state.store.new_session(SessionCreate(card_id=card['id']))
+            with app.state.store.connection() as db:
+                db.execute("UPDATE messages SET auxiliary=? WHERE id=?", (json.dumps([
+                    {"kind": "thinking", "text": "<script>window.keminiRecordExecuted=true</script>"},
+                    {"kind": "disclaimer", "text": "Fixture disclaimer"}]), session['head']))
             RequestDebugLog(Path(root), app.state.store.settings()).save({
                 "model": "debug-fixture", "purpose": "full_agent", "error_type": "JSONDecodeError",
                 "request": {"body": {"truncated": False}},
@@ -152,7 +158,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         print('Five model settings, provider restore, composer model history and catalogue connection passed.')
                         return
                     await select('通用 杂项')
-                    prefix_debug = page.get_by_role('checkbox', name='Full Agent 前缀消息稳定性测试（Debug）', exact=False)
+                    prefix_debug = page.get_by_role('checkbox', name='Full Agent 前缀消息稳定性测试', exact=False)
                     await expect(prefix_debug).not_to_be_checked()
                     async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
                         await prefix_debug.check()
@@ -170,7 +176,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     assert (await read())['shared']['send_shortcut'] == 'ctrl_enter'
                     await page.get_by_role('button', name='撤回本页修改', exact=True).click()
                     await expect(shortcut).to_have_value('enter')
-                    debug = page.get_by_role('checkbox', name='保留失败请求原始数据（Debug）', exact=False)
+                    debug = page.get_by_role('checkbox', name='保留失败请求原始数据', exact=False)
                     await expect(debug).not_to_be_checked()
                     async with page.expect_response(lambda response: response.request.method == 'PATCH' and response.url.endswith('/settings/shared')):
                         await debug.check()
@@ -179,6 +185,50 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     await page.get_by_role('button', name='撤回本页修改', exact=True).click()
                     await expect(debug).not_to_be_checked()
                     if misc_only:
+                        experiment = page.get_by_role('checkbox', name='启用 Kemini 式实验功能', exact=False)
+                        disclaimer = page.get_by_role('checkbox', name='普通免责声明', exact=False)
+                        await expect(experiment).not_to_be_checked()
+                        await expect(disclaimer).not_to_be_checked()
+                        await expect(disclaimer).to_be_disabled()
+                        await experiment.check()
+                        await saved()
+                        await expect(disclaimer).to_be_enabled()
+                        await expect(page.get_by_text('未配置填充文本：头部省略填充，其余已保存提示仍生效。')).to_be_visible()
+                        await page.get_by_text('编辑实验提示与填充文本', exact=True).click()
+                        prompts = {key: value for key, value in (await read())['shared']['kemini'].items()
+                                   if isinstance(value, str)}
+                        assert len(prompts) == 10
+                        for key, text in prompts.items():
+                            field = page.locator(f'[data-setting-path="kemini.{key}"] textarea')
+                            await expect(field).to_have_value(text)
+                        for key in ('transport_prompt', 'tool_description', 'content_description'):
+                            field = page.locator(f'[data-setting-path="kemini.{key}"]')
+                            await field.locator('textarea').fill('已保存的' + key)
+                            await field.locator('.text-save').click()
+                            await saved()
+                            assert (await read())['shared']['kemini'][key] == '已保存的' + key
+                        filler = page.locator('[data-setting-path="kemini.filler_text"]')
+                        await filler.locator('textarea').fill('完整填充文本末尾')
+                        assert (await read())['shared']['kemini']['filler_text'] == ''
+                        await filler.locator('.text-save').click()
+                        await saved()
+                        await disclaimer.check()
+                        await saved()
+                        assert (await read())['shared']['kemini']['filler_text'] == '完整填充文本末尾'
+                        await experiment.uncheck()
+                        await saved()
+                        await expect(disclaimer).to_be_disabled()
+                        await expect(disclaimer).to_be_checked()
+                        assert (await read())['shared']['kemini']['normal_disclaimer_enabled']
+                        await experiment.check()
+                        await saved()
+                        await expect(disclaimer).to_be_enabled()
+                        await expect(disclaimer).to_be_checked()
+                        await page.get_by_role('button', name='撤回本页修改', exact=True).click()
+                        await saved()
+                        await expect(disclaimer).not_to_be_checked()
+                        await expect(disclaimer).to_be_disabled()
+                        await expect(filler.locator('textarea')).to_have_value('')
                         record = page.locator('.failed-request-record')
                         await expect(record).to_have_count(1)
                         await record.locator('summary').first.click()
@@ -189,8 +239,19 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         assert await dialog.evaluate('e=>e.getBoundingClientRect().height') == initial_height
                         assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight')
                         await page.screenshot(path=str(output / 'misc-debug.png'))
+                        await page.keyboard.press('Escape')
+                        await page.evaluate('sid=>localStorage.setItem("tavern-session",sid)', session['id'])
+                        await page.reload()
+                        records = page.locator('.experimental-records')
+                        await expect(records).to_have_count(1)
+                        await expect(records.locator('pre').first).to_be_hidden()
+                        await records.locator('summary').click()
+                        await expect(records.locator('pre').first).to_have_text('<script>window.keminiRecordExecuted=true</script>')
+                        assert await page.evaluate('window.keminiRecordExecuted') is None
+                        assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight')
+                        await page.screenshot(path=str(output / 'experimental-records.png'))
                         assert not errors, errors
-                        print('Misc debug default, autosave, undo, raw download and internal scrolling passed.')
+                        print('Misc settings, Kemini switches, explicit text save, undo, literal auxiliary records and internal scrolling passed.')
                         return
                     await select('full agent 模型与生成')
                     # Acknowledged edits may not overwrite a newer input made in flight.

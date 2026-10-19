@@ -30,6 +30,7 @@ import ProviderSettings from './ProviderSettings.vue';
 import LocalResourceSettings from './LocalResourceSettings.vue';
 import StorageSettings from './StorageSettings.vue';
 import FailedRequestLogs from './FailedRequestLogs.vue';
+import KeminiSettings from './KeminiSettings.vue';
 import DataTransferSettings from './DataTransferSettings.vue';
 import type { TransferResult } from '../../lib/dataTransfer';
 import SavedText from './SavedText.vue';
@@ -402,6 +403,7 @@ onMounted(async () => {
                 v-if="scope === 'full_agent' && draft.full_agent[profileKey('full_agent', channel)]"
                 :key="'full-' + channel"
                 :profile="draft.full_agent[profileKey('full_agent', channel)]"
+                :kemini-enabled="draft.shared.kemini.enabled"
                 :providers="providersForChannel"
                 :channel="channel"
                 role="full_agent"
@@ -422,6 +424,7 @@ onMounted(async () => {
                   <ModelProfileEditor
                     v-if="draft.half_agent[profileKey(role, channel)]"
                     :profile="draft.half_agent[profileKey(role, channel)]"
+                    :kemini-enabled="draft.shared.kemini.enabled"
                     :providers="providersForChannel"
                     :channel="channel"
                     :role="role"
@@ -651,6 +654,16 @@ onMounted(async () => {
           </template>
           <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
           <template v-else-if="page.key === 'misc'">
+            <KeminiSettings
+              :value="draft.shared"
+              :saved="saved!.shared"
+              :text-value="(path) => editor.textValue('shared', path)"
+              :edit-text="(path, text) => editor.editText('shared', path, text)"
+              :save-text="(path) => editor.saveText('shared', path)"
+              :text-busy="textBusy"
+              :text-errors="textErrors"
+              :guard="guard"
+            />
             <h4>输入</h4>
             <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
             <h4>调试</h4>

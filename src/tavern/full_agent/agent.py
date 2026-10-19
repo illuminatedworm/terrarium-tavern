@@ -62,6 +62,7 @@ class FullAgent:
             if request.update_variables else None)
         self.resumed = progress is not None
         self.final_response = None
+        self.auxiliary = []
         self.preview = TurnPreview(store, tid)
         self.context_epoch = ""
         self.native_epoch = ""
@@ -173,6 +174,8 @@ class FullAgent:
         provider = provider or await make_provider(self.settings,
             lambda payload: self.event("provider_request", payload), request_context=self.request_context)
         provider.request_observer = request_observer
+        provider.operation_purpose = "narrative"
+        provider.auxiliary_capture = lambda items: self.event("kemini_auxiliary", {"items": items})
         if hasattr(provider, "request_context"):
             provider.request_context = self.request_context
             self.request_context.bind(response_origin(provider.settings, provider.key))
@@ -267,6 +270,7 @@ class FullAgent:
                     # Reconcile by replacement so completion never duplicates a preview.
                     self.preview.replace(text)
                     self.final_response = self.response_message(response, provider, calls)
+                    self.auxiliary = copy.deepcopy(getattr(provider, "last_auxiliary", []))
                     return text
                 if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                     raise TurnError("TOOL_PROTOCOL_INVALID", "模型返回了无效的工具调用序列")

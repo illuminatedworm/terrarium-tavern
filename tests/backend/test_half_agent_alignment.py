@@ -9,10 +9,13 @@ import pytest
 from tavern.application.service import RoleplayRuntime
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_context import apply_context, finalize_record, load_trace
+from tavern.core.kemini import PREFIX_SOURCES, control_text, prefix_frames
+from tavern.core.message_adapter import MessageAdapterConfig, adapt_messages
 from tavern.core.models import ContextRecipe, SessionCreate, Settings, TurnRequest
 from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget, complete_with_recall
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.native_response import attachment
+from tavern.scripting.protocols import native_messages
 from tavern.scripting.request_context import OperationContexts, configure_operation, response_origin
 from tavern.storage.store import Store
 from tests.backend.test_full_agent_alignment import reply
@@ -82,6 +85,50 @@ def sse(api, payload):
                   {"type": "response.completed", "response": payload}]
     return httpx.Response(200, content="".join("data: " + json.dumps(e) + "\n\n" for e in events),
                           headers={"content-type": "text/event-stream", "x-codex-turn-state": "routing"})
+
+
+def test_kemini_order_survives_projection_and_turn_replay():
+    story = Story("gemini")
+    story.cfg.kemini.enabled = True
+    story.cfg.kemini.normal_disclaimer_enabled = True
+    story.cfg.kemini.filler_text = "小说填充必须最前"
+    story.cfg.message_adapter = MessageAdapterConfig(mappings={"gemini": {
+        "state": {"role": "system", "wrap": True}}})
+    # Even an insertion deeper than all history remains behind the absolute prefix.
+    generate = {"injects": [{"role": "system", "content": "最深注入", "depth": 999}]}
+    first = story.compile(generate=generate)
+    rows = first["trace"]
+    sources = [row["source"] for row in rows]
+    assert sources[:4] == list(PREFIX_SOURCES)
+    assert sources[4] == "rules"
+    assert sources.index("inject") + 1 == sources.index("history")
+    assert not any("insertion_depth" in row for row in rows[:4])
+    expected_prefix = [{"role": "user", "content": row["content"]} for row in prefix_frames(story.cfg.kemini)]
+    assert first["messages"][:4] == expected_prefix
+    assert sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+    assert next(row for row in rows if row["source"] == "kemini_acknowledgement")["content"] == story.cfg.kemini.acknowledgement
+    assert next(row for row in rows if row["source"] == "kemini_control")["content"] == control_text(story.cfg.kemini)
+    assert all(row["role"] != "system" for row in rows)
+    wire, ordered, diagnostics = adapt_messages(first["runtime_messages"], story.cfg, managed=False)
+    assert [row["message_type"] for row in ordered] == [row["message_type"] for row in rows]
+    system, body, _ = native_messages(wire, "gemini")
+    assert system == []
+    assert body[:4] == [{"role": "user", "parts": [{"text": row["content"]}]} for row in expected_prefix]
+    assert any("Kemini" in warning for warning in diagnostics)
+    story.commit(first)
+    second = story.compile(generate=generate)
+    assert [row["source"] for row in second["trace"]].count("kemini_acknowledgement") == 1
+    assert [row["source"] for row in second["trace"]].count("kemini_control") == 1
+    assert second["messages"][:sources.index("history")] == first["messages"][:sources.index("history")]
+    story.cfg.kemini.filler_text = ""
+    unfilled = story.compile()
+    assert unfilled["messages"][0]["role"] == "system"
+    assert next(row for row in unfilled["trace"] if row["source"] == "state")["role"] == "user"
+    story.cfg.kemini.enabled = False
+    disabled = story.compile()
+    assert not any(row["source"].startswith("kemini_") for row in disabled["trace"])
+    assert next(row for row in disabled["trace"] if row["source"] == "state")["role"] == "system"
+    assert story.cfg.message_adapter.mappings["gemini"]["state"].role == "system"
 
 
 def test_dynamic_sources_retain_prefix_and_compare_current_versions():
@@ -451,6 +498,36 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         store.delete_session(fork["id"])
         with store.connection() as db:
             assert db.execute("SELECT count(*) FROM half_agent_trace WHERE session=?", (fork["id"],)).fetchone()[0] == 0
+        # Switch the same story to experimental transport: its final native call
+        # must never return through the old opaque-replay path.
+        settings.shared.kemini.enabled = True
+        settings.shared.kemini.normal_disclaimer_enabled = True
+        store.save_settings(settings)
+        fail = False
+        carried = "<thinking>实验辅助内容</thinking>实验正文<disclaimer>附加声明</disclaimer><tavern_retrieval>线索</tavern_retrieval>"
+        if api == "anthropic":
+            parts = [{"type": "tool_use", "id": "reply_call", "name": "kemini_emit_story", "input": {"content": carried}}]
+        else:
+            parts = [{"type": "function_call", "id": "reply_item", "call_id": "reply_call", "name": "kemini_emit_story",
+                      "arguments": json.dumps({"content": carried})}]
+        experimental = service.submit(session["id"], TurnRequest(text="继续", operation_id="kemini",
+                                       expected_revision=session["revision"]))
+        await service.tasks[experimental["id"]]
+        assert store.turn(experimental["id"])["status"] == "committed", store.turn(experimental["id"])["error"]
+        session = store.session(session["id"])
+        final = session["messages"][-1]
+        assert final["raw"] == final["model"] == "实验正文"
+        assert final["auxiliary"] == [{"kind": "thinking", "text": "实验辅助内容"}, {"kind": "disclaimer", "text": "附加声明"}]
+        record = load_trace(store, session["id"], session["messages"])
+        assert "response" not in record[final["id"]]
+        cfg = store.settings().for_role("foreground")
+        preview = compile_context(store.session_card(session["id"])["document"], session, session["messages"],
+                                  session["snapshot"], "继续", cfg, "preview", replay_records=record)
+        assert "实验辅助内容" not in str(preview["messages"])
+        cloned = store.fork_session(session["id"], session["head"], session["revision"])
+        assert cloned["messages"][-1]["auxiliary"] == final["auxiliary"]
+        edited = store.edit_message(session["id"], final["id"], "用户编辑正文", session["revision"])
+        assert edited["messages"][-1]["auxiliary"] == final["auxiliary"]
     finally:
         await service.close()
 

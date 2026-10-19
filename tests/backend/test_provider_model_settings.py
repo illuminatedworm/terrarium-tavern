@@ -33,9 +33,9 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     app = create_app(tmp_path)
     store = app.state.store
     migrated = store.settings_document()
-    assert migrated.version == 4
+    assert migrated.version == 6
     assert migrated.full_agent.model.model_dump() == doc.full_agent.model.model_dump()
-    backups = list(tmp_path.glob("before-provider-connections-v7-*.sqlite3"))
+    backups = list(tmp_path.glob("before-kemini-v8-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
@@ -80,7 +80,7 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
         })
         assert undone.status_code == 200, undone.text
         assert store.settings_document().full_agent.model == migrated.full_agent.model
-        assert len(list(tmp_path.glob("before-provider-connections-v7-*.sqlite3"))) == 1
+        assert len(list(tmp_path.glob("before-kemini-v8-*.sqlite3"))) == 1
 
 
 @pytest.mark.parametrize("mode,path,expected", [

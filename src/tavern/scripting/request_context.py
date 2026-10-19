@@ -119,3 +119,4 @@ def configure_operation(provider, context, event, purpose):
     if hasattr(provider, "settings") and hasattr(provider, "key"):
         context.bind(response_origin(provider.settings, provider.key))
     provider.response_capture = lambda record: event("provider_response", {"purpose": purpose, **record})
+    provider.auxiliary_capture = lambda items: event("kemini_auxiliary", {"purpose": purpose, "items": items})

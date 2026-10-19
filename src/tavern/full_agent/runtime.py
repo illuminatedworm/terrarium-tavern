@@ -185,7 +185,8 @@ class FullAgentRuntime:
             if card["permission"] and "<" in display:
                 display = self.dependencies.markup(card, display)
             output = {"id": output_id, "parent": input_id, "role": "assistant", "raw": text,
-                      "model": model, "display": display, "snapshot": snapshot, "retrieval_query": agent.retrieval_query}
+                      "model": model, "display": display, "snapshot": snapshot, "retrieval_query": agent.retrieval_query,
+                      "auxiliary": agent.auxiliary}
             if agent.final_response:
                 agent.new_trace.append({"window_id": agent.state["window"]["id"],
                     "message": {**agent.final_response, "_full_agent_final": True,

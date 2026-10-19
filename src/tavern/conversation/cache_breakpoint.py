@@ -82,6 +82,7 @@ def breakpoint_reason(session, effective_id):
 
 
 def context_breakpoint_index(trace, message_id):
+    from tavern.core.kemini import PREFIX_SOURCES
     if message_id:
         for index, entry in enumerate(trace):
             if (entry.get("source") == "history" and entry.get("role") == "assistant"
@@ -89,6 +90,8 @@ def context_breakpoint_index(trace, message_id):
                 return index
     first_history = next((index for index, entry in enumerate(trace)
                           if entry.get("source") == "history"), len(trace))
+    experimental = [index for index, entry in enumerate(trace[:first_history])
+                    if entry.get("source") in PREFIX_SOURCES]
     for source in ("constant", "character"):
         indices = [index for index, entry in enumerate(trace)
                    if index < first_history and
@@ -96,7 +99,7 @@ def context_breakpoint_index(trace, message_id):
                     else entry.get("context_source", entry.get("source")) in
                     {"character", "system_prompt", "description", "personality", "scenario"})]
         if indices:
-            return indices[-1]
+            return max([indices[-1], *experimental])
     indices = [index for index, entry in enumerate(trace[:first_history]) if is_static(entry)]
     return indices[-1] if indices else None
 
@@ -104,7 +107,8 @@ def context_breakpoint_index(trace, message_id):
 def is_static(entry):
     source = entry.get("context_source", entry.get("source"))
     return source in {"rules", "tool_protocol", "context_policy", "system", "character", "system_prompt", "description", "personality", "scenario",
-                      "persona", "examples", "custom", "session_preference"} or entry.get("lore_region") == "constant"
+                      "persona", "examples", "custom", "session_preference", "kemini_filler", "kemini_clear",
+                      "kemini_identity", "kemini_info"} or entry.get("lore_region") == "constant"
 
 
 def prepare_context(context, session, history, snapshot, settings):

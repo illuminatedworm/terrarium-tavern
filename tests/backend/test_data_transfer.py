@@ -42,6 +42,10 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         turn = engine.submit(session["id"], TurnRequest(text="一起去钟楼", operation_id="source", expected_revision=0))
         await engine.tasks[turn["id"]]
         assert source.turn(turn["id"])["status"] == "committed"
+        auxiliary = [{"kind": "thinking", "text": "生成记录 " + session["id"]}]
+        with source.connection() as db:
+            db.execute("UPDATE messages SET auxiliary=? WHERE id=(SELECT head FROM sessions WHERE id=?)",
+                       (dump(auxiliary), session["id"]))
         current = source.session(session["id"])
         # A deleted library card remains playable from its session-owned resources.
         source.delete_card(card["id"])
@@ -51,6 +55,8 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["agent_mode"] == mode
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
+        assert restored["messages"][-1]["auxiliary"] == auxiliary
+        assert payload["version"] == 2
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
             from tavern.full_agent.state import note_view
@@ -89,6 +95,10 @@ def test_all_branches_sources_cache_and_window_fingerprints_are_remapped(tmp_pat
                    (other, session["id"], first["id"], "assistant", "另一条分支", "另一条分支", "另一条分支", dump(snapshot), 100))
         db.execute("UPDATE sessions SET cache_breakpoint_message=?,cache_breakpoint_auto=0 WHERE id=?", (first["id"], session["id"]))
     payload, blobs = package(store, settings=False, personas=[persona["id"]], cards=[card["id"]], sessions=[session["id"]])
+    # Version 1 stories predate auxiliary records; original prose is authoritative.
+    payload["version"] = 1
+    for row in payload["sessions"][0]["messages"]:
+        row.pop("auxiliary")
     imported = import_package(store, payload, blobs)
     restored = store.session(imported["sessions"][0])
     message = restored["messages"][0]
@@ -97,6 +107,7 @@ def test_all_branches_sources_cache_and_window_fingerprints_are_remapped(tmp_pat
     assert restored["card"] == imported["cards"][0]
     assert restored["cache_breakpoint_message"] == message["id"]
     assert message["snapshot"]["state"] == {"hp": 75}
+    assert message["auxiliary"] == []
     assert message["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"] == message["id"]
     assert message["snapshot"]["lore_injections"][0]["anchor_id"] == message["id"]
     assert window_valid(message["snapshot"]["memory_archive"], restored["messages"])

@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -5,6 +7,14 @@ from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
+from tavern.core.kemini import (
+    PREFIX_SOURCES,
+    TOOL_NAME,
+    KeminiConfig,
+    control_text,
+    prefix_frames,
+    transport_tools,
+)
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
     DEFAULT_RETRIEVAL_PROTOCOL,
@@ -12,6 +22,7 @@ from tavern.core.prompts import (
     LEGACY_DEFAULT_RETRIEVAL_PROTOCOL,
     PROMPT_DEFINITIONS,
 )
+from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig, tool_protocol
 from tavern.memories.memory import render_memory
 from tavern.search.retrieval_text import query_instruction
@@ -36,6 +47,35 @@ def test_defaults_and_custom_prompts():
     assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
     assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
+    # Prefix excerpts match the expanded ST preview; the remaining originals
+    # retain punctuation, spacing and illustrative placeholders after macro removal.
+    source = json.loads((Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8"))
+    kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True, filler_text="用户填充原文")
+    for field in ("clear_prompt", "identity_prompt", "info_prompt", "thinking_prompt", "disclaimer_text"):
+        assert getattr(kemini, field) == re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[field], flags=re.S)
+    transport = source["transport_prompt"].replace("${toolName}", TOOL_NAME)
+    assert kemini.transport_prompt == transport
+    frames = prefix_frames(kemini)
+    assert [m["source"] for m in frames] == list(PREFIX_SOURCES)
+    assert [m["role"] for m in frames] == ["user", "system", "user", "system"]
+    assert [m["content"] for m in frames] == [kemini.filler_text, source["clear_prompt"], source["identity_prompt"], source["info_prompt"]]
+    assert control_text(kemini) == "\n\n".join([kemini.thinking_prompt, kemini.disclaimer_text, transport])
+    declaration = transport_tools([], kemini)[0]["function"]
+    assert declaration["description"] == source["tool_description"]
+    assert declaration["parameters"] == {"type": "object", "properties": {"content": {
+        "type": "string", "description": source["content_description"]}}, "required": ["content"]}
+    # Upgrading settings adds visible fields without replacing saved user text.
+    old = SettingsDocument().model_dump()
+    old["version"] = 5
+    old["shared"]["kemini"]["identity_prompt"] = "已保存的身份"
+    added = ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description")
+    for field in added:
+        old["shared"]["kemini"].pop(field)
+    migrated = migrate_settings(old)
+    assert migrated.version == 6
+    assert migrated.shared.kemini.identity_prompt == "已保存的身份"
+    assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
+    assert migrate_settings(migrated.model_dump()) == migrated
 
 
 def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):

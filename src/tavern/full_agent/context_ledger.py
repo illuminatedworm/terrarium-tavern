@@ -10,6 +10,8 @@ from tavern.scripting.request_context import response_origin
 # Retire stored call-count notifications by rebuilding the working prefix.
 VERSION = 8
 CLEAR_TEXT = {
+    "kemini_acknowledgement": "此前 Kemini 实验助手确认已撤销。",
+    "kemini_control": "此前 Kemini 实验输出要求已撤销，继续按当前正文和工具协议完成任务。",
     "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
     "regenerate_instruction": "此前的重生成要求已撤销。",
@@ -115,7 +117,8 @@ class ContextLedger:
             if source not in self.seen or not self.seen[source]:
                 return None
             content = CLEAR_TEXT[source]
-        frame = {"role": "system", "content": content, "source": source,
+        role = {"kemini_control": "user", "kemini_acknowledgement": "assistant"}.get(source, "system")
+        frame = {"role": role, "content": content, "source": source,
                  "_runtime_context": {"epoch": self.epoch, "value": copy.deepcopy(value)}}
         self.seen[source] = copy.deepcopy(value)
         self.additions.append(frame)

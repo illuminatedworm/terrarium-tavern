@@ -7,9 +7,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
+from tavern.core.kemini import TOOL_NAME, KeminiConfig, control_text, inject_half
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
 from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
+from tavern.scripting.kemini import AuxiliaryParser, KeminiReply
 from tavern.scripting.model_stream import StreamState
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
@@ -20,6 +22,36 @@ from tests.backend.test_unified_cache import config, provider, reply
 APIS = ["chat_completions", "responses", "anthropic", "gemini"]
 MESSAGES = [{"role": "user", "content": "完整原文，包含末尾"}]
 TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+
+
+async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools():
+    from types import SimpleNamespace
+    cfg = config(model_request_mode="stream")
+    cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
+    prose = '开门😀\n```html\n<thinking>代码原文</thinking>\n```'
+    raw = '<thinking>创作安排\n含"引号"</thinking>' + prose + '<disclaimer>声明</disclaimer>'
+    encoded = json.dumps({"content": raw})
+    frames = [{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "reply1",
+        "function": {"name": TOOL_NAME, "arguments": ""}}]}}]}]
+    frames.extend({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {
+        "arguments": encoded[i:i + 7]}}]}}]} for i in range(0, len(encoded), 7))
+    frames.append({"choices": [{"delta": {}, "finish_reason": "tool_calls"}]})
+    chunks = []
+    async with provider(cfg, lambda _: sse(events=frames)) as p:
+        p.operation_purpose = "narrative"
+        response = await p.chat_complete_with_preview(MESSAGES, chunks.append)
+        assert response.content == "".join(chunks) == prose
+        assert p.last_auxiliary == [{"kind": "thinking", "text": '创作安排\n含"引号"'}, {"kind": "disclaimer", "text": "声明"}]
+        assert len(chunks) > 1
+        assert p.last_response_record["raw_response"]["choices"][0]["message"]["tool_calls"]
+    call = SimpleNamespace(name=TOOL_NAME, arguments=encoded)
+    with pytest.raises(ValueError, match="不能与业务工具混合"):
+        KeminiReply(cfg.kemini, True).finish("", [call, SimpleNamespace(name="read_state")])
+    with pytest.raises(ValueError, match="未闭合"):
+        KeminiReply(cfg.kemini, True).finish("<thinking>不完整", [])
+    assert AuxiliaryParser(KeminiConfig()).feed(raw, final=True) == raw
+    disabled_disclaimer = AuxiliaryParser(KeminiConfig(normal_disclaimer_enabled=True))
+    assert disabled_disclaimer.feed(raw, final=True) == raw
 
 
 def test_prefix_debug_preserves_wire_bytes_and_separate_parameters():
@@ -63,13 +95,18 @@ async def test_prefix_debug_setting_defaults_projection_and_page_undo(tmp_path):
         editor = (await client.post("/api/settings/edit-sessions", json={})).json()
         before = editor["settings"]
         assert before["shared"]["debug_full_agent_prefix"] is False
+        assert not before["shared"]["kemini"]["enabled"]
+        assert not before["shared"]["kemini"]["normal_disclaimer_enabled"]
         assert "debug_full_agent_prefix" in next(p for p in before["pages"] if p["id"] == "shared.misc")["paths"]
         changed = await client.patch("/api/settings/shared", json={
             "expected_revision": before["revisions"]["shared"], "edit_session": editor["id"],
-            "changes": {"debug_full_agent_prefix": True}})
+            "changes": {"debug_full_agent_prefix": True, "kemini.normal_disclaimer_enabled": True,
+                        "kemini.filler_text": "完整填充末尾"}})
         assert changed.status_code == 200, changed.text
         runtime = app.state.store.settings("full_agent").for_role("full_agent")
         assert runtime.debug_full_agent_prefix
+        assert runtime.kemini.normal_disclaimer_enabled and not runtime.kemini.enabled
+        assert runtime.kemini.filler_text.endswith("末尾")
         invalid = await client.patch("/api/settings/shared", json={
             "expected_revision": changed.json()["revisions"]["shared"],
             "changes": {"debug_full_agent_prefix": "false"}})
@@ -77,6 +114,7 @@ async def test_prefix_debug_setting_defaults_projection_and_page_undo(tmp_path):
         undone = await client.post(f"/api/settings/edit-sessions/{editor['id']}/undo", json={
             "page": "shared.misc", "expected_revision": changed.json()["revisions"]["shared"]})
         assert undone.status_code == 200 and not undone.json()["shared"]["debug_full_agent_prefix"]
+        assert not undone.json()["shared"]["kemini"]["normal_disclaimer_enabled"]
         assert runtime.debug_full_agent_prefix
     legacy = SettingsDocument().model_dump()
     del legacy["shared"]["debug_full_agent_prefix"]
@@ -99,6 +137,33 @@ def events(api):
     return [payload]
 
 
+def carried_reply(api):
+    payload = reply(api)
+    content = "<thinking>创作安排</thinking>OK<disclaimer>声明</disclaimer>"
+    arguments = json.dumps({"content": content}, ensure_ascii=False)
+    if api == "chat_completions":
+        call = {"index": 0, "id": "call1", "type": "function", "function": {"name": TOOL_NAME, "arguments": arguments}}
+        payload["choices"] = [{"message": {"content": "", "tool_calls": [call]}, "finish_reason": "tool_calls"}]
+        stream = [{"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}, {"usage": payload["usage"]}]
+    elif api == "responses":
+        item = {"type": "function_call", "id": "fc1", "call_id": "call1", "name": TOOL_NAME, "arguments": arguments}
+        payload["output"] = [item]
+        stream = [{"type": "response.output_item.added", "output_index": 0, "item": {**item, "arguments": ""}},
+                  {"type": "response.function_call_arguments.delta", "item_id": "fc1", "delta": arguments},
+                  {"type": "response.completed", "response": payload}]
+    elif api == "anthropic":
+        item = {"type": "tool_use", "id": "call1", "name": TOOL_NAME, "input": {"content": content}}
+        payload.update(content=[item], stop_reason="tool_use")
+        stream = [{"type": "message_start", "message": {**payload, "content": []}},
+                  {"type": "content_block_start", "index": 0, "content_block": {**item, "input": {}}},
+                  {"type": "content_block_delta", "index": 0, "delta": {"partial_json": arguments}},
+                  {"type": "message_delta", "delta": {"stop_reason": "tool_use"}}, {"type": "message_stop"}]
+    else:
+        payload["candidates"][0]["content"]["parts"] = [{"functionCall": {"name": TOOL_NAME, "args": {"content": content}}}]
+        stream = [payload]
+    return payload, stream
+
+
 @pytest.mark.parametrize("api", APIS)
 @pytest.mark.parametrize("mode,entry,streamed", [
     ("stream", "complete", True), ("non_stream", "chat", False),
@@ -106,6 +171,8 @@ def events(api):
 ])
 async def test_mode_controls_wire_and_preserves_content_tools_and_usage(api, mode, entry, streamed):
     cfg = config(api, model_request_mode=mode)
+    cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
+    payload, stream = carried_reply(api)
     sent = []
 
     def route(request):
@@ -113,19 +180,24 @@ async def test_mode_controls_wire_and_preserves_content_tools_and_usage(api, mod
         sent.append(body)
         assert "完整原文，包含末尾" in str(body)
         assert body["tools"]
+        assert TOOL_NAME in str(body["tools"])
         if api == "gemini":
             assert (":streamGenerateContent" in request.url.path) is streamed
             assert (request.url.params.get("alt") == "sse") is streamed
         else:
             assert bool(body.get("stream")) is streamed
-        return sse(events=events(api)) if streamed else httpx.Response(200, json=reply(api))
+        return sse(events=stream) if streamed else httpx.Response(200, json=payload)
 
     async with provider(cfg, route) as p:
+        p.operation_purpose = "narrative"
         if entry == "complete":
             response = await p.chat_complete(MESSAGES, tools=TOOLS)
             assert response.content == "OK" and response.finish_reason == "stop"
         else:
-            assert [chunk async for chunk in p.chat(MESSAGES, tools=TOOLS)] == ["OK"]
+            assert "".join([chunk async for chunk in p.chat(MESSAGES, tools=TOOLS)]) == "OK"
+        assert not p.last_tool_calls and p.last_native_response is None
+        assert [part["kind"] for part in p.last_auxiliary] == ["thinking", "disclaimer"]
+        assert p.last_response_record["kemini"]["transported"]
         assert len(p.usage_history) == 1
         assert p.last_usage["prompt_tokens"] == 10
         assert p.last_usage["cached_tokens"] == 8
@@ -169,6 +241,7 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
     account_id, account = seed_account(service)
     cfg = configuration(service, account_id, account)
     cfg.model_request_mode = "non_stream"
+    cfg.kemini.enabled = True
     seen = []
 
     def route(request):
@@ -177,6 +250,7 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
 
     service.http_transport = httpx.MockTransport(route)
     p = await make_provider(cfg)
+    p.operation_purpose = "narrative"
     observed = []
     p.request_observer = lambda request: observed.append(request.content)
     try:
@@ -189,6 +263,8 @@ async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
         else:
             assert "".join([chunk async for chunk in p.chat(MESSAGES)]) == "完成"
         assert seen[0]["stream"] is True
+        assert TOOL_NAME in str(seen[0]["tools"])
+        assert p.last_response_record["kemini"]["transported"] is False
         assert len(observed) == 1 and json.loads(observed[0]) == seen[0]
     finally:
         await p.close()
@@ -227,10 +303,23 @@ async def test_selection_persists_projects_to_all_roles_and_undo_restores_defaul
 @pytest.mark.parametrize("api", APIS)
 async def test_complete_preview_keeps_full_response_and_usage(api):
     cfg = config(api, model_request_mode="stream")
+    wire_events = events(api)
+    if api == "gemini":
+        cfg.kemini.enabled = True
+        def function_chunk(call, finish=None):
+            candidate = {"content": {"role": "model", "parts": [{"functionCall": call}]}}
+            if finish:
+                candidate["finishReason"] = finish
+            return {"candidates": [candidate]}
+        wire_events = [function_chunk({"name": TOOL_NAME, "willContinue": True}),
+                       function_chunk({"partialArgs": [{"jsonPath": "$.content", "stringValue": "OK"}], "willContinue": True}),
+                       function_chunk({"partialArgs": [{"jsonPath": "$.content"}]}),
+                       function_chunk({}, "STOP"), {"usageMetadata": reply(api)["usageMetadata"]}]
     chunks = []
-    async with provider(cfg, lambda _: sse(events=events(api))) as p:
+    async with provider(cfg, lambda _: sse(events=wire_events)) as p:
+        p.operation_purpose = "narrative"
         response = await p.chat_complete_with_preview(MESSAGES, chunks.append, tools=TOOLS)
-        assert chunks == ["OK"]
+        assert "".join(chunks) == "OK"
         assert response.content == "OK" and response.finish_reason == "stop"
         assert response.usage["cached_tokens"] == 8
         assert len(p.usage_history) == 1
@@ -259,11 +348,39 @@ async def test_named_sse_error_after_terminal_is_not_success():
 
 async def test_non_stream_mode_returns_complete_response_without_incremental_callbacks():
     cfg = config(model_request_mode="non_stream")
+    cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
     chunks = []
-    async with provider(cfg, lambda _: httpx.Response(200, json=reply("chat_completions"))) as p:
-        result = await p.chat_complete_with_preview(MESSAGES, chunks.append)
+    payload = reply("chat_completions")
+    payload["choices"][0]["message"]["content"] = "OK<disclaimer>声明</disclaimer>"
+    def messages():
+        return [{key: message[key] for key in ("role", "content")} for message in
+                inject_half([{**message, "source": "input"} for message in MESSAGES], cfg.kemini)]
+    def route(request):
+        body = json.loads(request.content)
+        if cfg.kemini.enabled:
+            assert body["tools"][0]["function"]["name"] == TOOL_NAME
+            assert cfg.kemini.disclaimer_text in body["messages"][-1]["content"]
+        else:
+            assert "tools" not in body
+            assert body["messages"] == MESSAGES
+        return httpx.Response(200, json=payload)
+    async with provider(cfg, route) as p:
+        p.operation_purpose = "narrative"
+        result = await p.chat_complete_with_preview(messages(), chunks.append)
         assert result.content == "OK"
         assert chunks == []
+        assert p.last_auxiliary == [{"kind": "disclaimer", "text": "声明"}]
+        # Turning off the parent suppresses both request instructions and output
+        # parsing without erasing the user's saved child preference.
+        cfg.kemini.enabled = False
+        assert control_text(cfg.kemini) == ""
+        result = await p.chat_complete_with_preview(messages(), chunks.append)
+        assert result.content == "OK<disclaimer>声明</disclaimer>"
+        assert p.last_auxiliary == [] and cfg.kemini.normal_disclaimer_enabled
+        cfg.kemini.enabled = True
+        result = await p.chat_complete_with_preview(messages(), chunks.append)
+        assert result.content == "OK" and chunks == []
+        assert p.last_auxiliary == [{"kind": "disclaimer", "text": "声明"}]
 
 
 async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_path, monkeypatch):

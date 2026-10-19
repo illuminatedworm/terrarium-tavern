@@ -84,6 +84,55 @@ def replay(store, tid):
     return text
 
 
+async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(tmp_path):
+    store, service, session = game(tmp_path, "chat_completions")
+    settings = store.settings_document()
+    settings.shared.kemini.enabled = True
+    settings.shared.kemini.normal_disclaimer_enabled = True
+    settings.shared.kemini.filler_text = "填充末尾，不得省略"
+    settings.shared.kemini.transport_prompt = "自定义正文传输指令末尾"
+    settings.shared.kemini.tool_description = "自定义工具说明末尾"
+    settings.shared.kemini.content_description = "自定义参数说明末尾"
+    store.save_settings(settings)
+    first = WireStream(*tool_events())
+    last = WireStream(*tool_events("kemini_emit_story", {
+        "content": "<thinking>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"}))
+    _, sent = connect(store, service, first, last)
+    try:
+        tid = submit(service, session)
+        await service.tasks[tid]
+        assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
+        current = store.session(session["id"])
+        message = current["messages"][-1]
+        assert message["raw"] == message["model"] == message["display"] == replay(store, tid) == "最终正文"
+        assert message["auxiliary"] == [{"kind": "thinking", "text": "创作安排"}, {"kind": "disclaimer", "text": "声明"}]
+        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
+        assert any(m["role"] == "tool" for m in sent[1]["messages"])
+        kemini = settings.shared.kemini
+        prefix = [{"role": "user", "content": text} for text in
+                  (kemini.filler_text, kemini.clear_prompt, kemini.identity_prompt, kemini.info_prompt)]
+        assert sent[0]["messages"][:4] == sent[1]["messages"][:4] == prefix
+        assert kemini.transport_prompt in json.dumps(sent[0]["messages"], ensure_ascii=False)
+        declaration = next(t["function"] for t in sent[0]["tools"] if t["function"]["name"] == "kemini_emit_story")
+        assert declaration["description"] == kemini.tool_description
+        assert declaration["parameters"]["properties"]["content"]["description"] == kemini.content_description
+        assert all(m["role"] != "system" for m in sent[0]["messages"])
+        assert not any(e["kind"] == "full_agent_tool_started" and e["payload"].get("name") == "kemini_emit_story"
+                       for e in store.events(tid))
+        preview = store.turn(tid)["preview"]
+        assert "kemini_emit_story" in str(preview["tools"])
+        assert all(row["cache_static"] for row in preview["trace"] if row["source"] in
+                   ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info"))
+        sources = [row["source"] for row in preview["trace"]]
+        assert sources[:5] == ["kemini_filler", "kemini_clear", "kemini_identity", "kemini_info", "rules"]
+        assert sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+        assert not next(row for row in preview["trace"] if row["source"] == "kemini_acknowledgement")["cache_static"]
+        assert any(e["kind"] == "kemini_auxiliary" and e["payload"]["items"] == message["auxiliary"] for e in store.events(tid))
+        assert Store(tmp_path).session(session["id"])["messages"][-1]["auxiliary"] == message["auxiliary"]
+    finally:
+        await service.close()
+
+
 async def test_prefix_debug_observes_tool_continuation_and_survives_provider_recreation(tmp_path):
     store, service, session = game(tmp_path, "chat_completions")
     settings = store.settings("full_agent")

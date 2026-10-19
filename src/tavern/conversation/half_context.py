@@ -4,6 +4,7 @@ import json
 
 from tavern.conversation.half_compaction import enabled, local_window_enabled
 from tavern.core.cache_policy import fingerprint
+from tavern.core.kemini import control_text, prefix_frames
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.scripting.native_response import message_digest, native_items
@@ -12,11 +13,12 @@ from tavern.search.retrieval_text import split_retrieval
 
 # v4 adds per-exchange frozen lore; v3 append frames remain compatible.
 VERSION = 4
-DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference"}
-TRANSIENT = {"message_edit_notice", "regenerate_reference"}
+KEMINI_TRANSIENT = {"kemini_acknowledgement", "kemini_control"}
+DYNAMIC = {"author_note", "post", "memory", "state", "turn_instruction", "message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
+TRANSIENT = {"message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
 LABELS = {"author_note": "作者注", "post": "角色后置要求", "memory": "记忆",
           "state": "剧情状态", "turn_instruction": "本轮额外要求", "message_edit_notice": "原文编辑提醒",
-          "regenerate_reference": "待重写回复参考"}
+          "regenerate_reference": "待重写回复参考", "kemini_control": "Kemini 输出要求", "kemini_acknowledgement": "Kemini 助手确认"}
 FRAME_TAGS = {"author_note": "author_note", "post": "card_post_history_instructions", "state": "tavern_state"}
 REASONS = {"initial_context": "首次建立上下文基线", "legacy_context": "为旧剧情建立上下文基线",
            "context_version_changed": "上下文记录格式变化", "provider_or_model_changed": "模型或提供商身份变化",
@@ -121,7 +123,8 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
     window = fingerprint([purpose, next((m["id"] for m in history if m["id"] in visible_ids), None),
                           snapshot.get("context_window", {}) if local_window_enabled(settings) else {}])
     layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", "")) for b in session.get("recipe", {}).get("blocks", [])]
-    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout])
+    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout,
+                          prefix_frames(settings.kemini), control_text(settings.kemini)])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:
@@ -201,10 +204,11 @@ def apply_context(context, records, session, history, snapshot, settings, *, inp
         notice = (f"[当前{label}；取代此前同来源版本。"
                   + ("仅适用于本轮。" if source == "turn_instruction" or source in TRANSIENT else "") + "]")
         frame = {**row, "anchor_id": input_id, "_half_frame": current[key], "epoch": epoch,
-                 "content": frame_content(source, notice, row["content"])}
+                 "content": row["content"] if source in KEMINI_TRANSIENT else frame_content(source, notice, row["content"])}
         if row.get("message_type"):
             tag = type_definition(row["message_type"]).tag
-            frame["runtime_content"] = notice + "\n" + row.get("runtime_content", unwrapped(row["content"], tag))
+            raw = row.get("runtime_content", unwrapped(row["content"], tag))
+            frame["runtime_content"] = raw if source in KEMINI_TRANSIENT else notice + "\n" + raw
             frame["runtime_phase"] = "body"
         updates.append(frame)
     for key, previous_value in seen.items():

@@ -12,6 +12,7 @@ export type SettingField = {
   optional?: boolean;
   placeholder?: string;
   help?: string;
+  disabled?: (value: SettingsObject) => boolean;
   menu?: boolean;
   options?: Array<{ value: string | number; label: string; disabled?: boolean }>;
 };
@@ -75,6 +76,7 @@ function update(field: SettingField, event: Event) {
         "
         :label="field.label"
         :invalid="!!fieldError(field)"
+        :disabled="field.disabled?.(value)"
         @update:model-value="setPath(value, field.path, $event)"
       />
       <select
@@ -82,6 +84,7 @@ function update(field: SettingField, event: Event) {
         :value="getPath(value, field.path)"
         :aria-label="field.label"
         :aria-invalid="!!fieldError(field)"
+        :disabled="field.disabled?.(value)"
         @change="update(field, $event)"
       >
         <option
@@ -97,6 +100,7 @@ function update(field: SettingField, event: Event) {
         v-else-if="field.type === 'checkbox'"
         type="checkbox"
         :checked="getPath(value, field.path)"
+        :disabled="field.disabled?.(value)"
         @change="update(field, $event)"
       />
       <input
@@ -108,6 +112,7 @@ function update(field: SettingField, event: Event) {
         :step="field.step || 1"
         :aria-invalid="!!fieldError(field)"
         :placeholder="field.placeholder ?? (field.optional ? '留空使用接口默认值' : '')"
+        :disabled="field.disabled?.(value)"
         @input="update(field, $event)"
       />
       <small v-if="field.help">{{ field.help }}</small>

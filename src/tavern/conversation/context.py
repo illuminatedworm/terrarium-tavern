@@ -9,7 +9,7 @@ from tavern.character.cards import lore_entries, normalize
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
-from tavern.core.tokens import REPLY_PRIMING, count_text, counting_info, message_tokens
+from tavern.core.tokens import REPLY_PRIMING, count_text, counting_info, message_tokens, request_tokens
 from tavern.core.variable_macros import replace_variable_macros
 
 
@@ -291,6 +291,7 @@ def compile_context(
     retrieval_protocol=True,
     read_only=False,
     replay_records=None,
+    kemini=True,
 ):
     from tavern.conversation.half_compaction import (
         enabled as cloud_context,
@@ -744,7 +745,11 @@ def compile_context(
     if notice:
         messages.append({"role": "system", "content": notice, "source": "message_edit_notice",
                          "priority": 100, "required": True})
-    total = REPLY_PRIMING + sum(message_tokens(m, settings) for m in messages)
+    from tavern.core.kemini import inject_half, transport_tools
+    experiment_tools = transport_tools([], settings.kemini) if kemini else []
+    if kemini:
+        messages = inject_half(messages, settings.kemini)
+    total = request_tokens(messages, settings, experiment_tools)
     if enforce_budget and total > available:
         diagnostics.append({"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"})
     lore_by_id = {entry["id"]: entry for entry in entries}
@@ -779,6 +784,7 @@ def compile_context(
         elif old.get("present"):
             old.update(present=False, removed_at=turn_number)
     result = {
+        "tools": experiment_tools,
         "messages": [{"role": m["role"], "content": m["content"]} for m in messages],
         "trace": [
             {**m, "position": i, "estimated_tokens": message_tokens(m, settings),

@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import { adapterApis, type AdapterSettings } from '../../lib/messageAdapter';
 import MessageAdapterEditor from './MessageAdapterEditor.vue';
-const props = defineProps<{ endpoint: string }>();
+const props = defineProps<{ endpoint: string; keminiEnabled?: boolean }>();
 const state = ref<AdapterSettings>(),
   laneId = ref(''),
   protocol = ref('chat_completions');
@@ -77,6 +77,7 @@ async function save() {
         :lane="lane.id"
         :api-mode="protocol"
         :types="lane.types"
+        :kemini-enabled="keminiEnabled"
       />
       <div class="adapter-actions">
         <button class="primary" :disabled="saving" @click="save">

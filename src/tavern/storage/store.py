@@ -42,15 +42,18 @@ class Store(MessageAdapters):
             with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
                 version = (db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
                            if db.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone() else None)
-                if version is None or version[0] not in {"1", "2", "3", "4", "5", "6", "7"}:
-                    raise ValueError("数据库版本不受支持；需要 schema 1–7")
+                if version is None or version[0] not in {"1", "2", "3", "4", "5", "6", "7", "8"}:
+                    raise ValueError("数据库版本不受支持；需要 schema 1–8")
                 if version[0] in {"1", "2", "3"}:
                     with closing(sqlite3.connect(root / f"before-advisor-v4-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
                 validated_settings = migrate_settings(raw)
-                if version[0] != "7" or raw.get("version") != 4:
-                    with closing(sqlite3.connect(root / f"before-provider-connections-v7-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                if version[0] != "8" or raw.get("version") not in (5, 6):
+                    with closing(sqlite3.connect(root / f"before-kemini-v8-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
+                        db.backup(backup_db)
+                elif raw.get("version") == 5:
+                    with closing(sqlite3.connect(root / f"before-kemini-prompts-v6-{uuid.uuid4().hex[:12]}.sqlite3")) as backup_db:
                         db.backup(backup_db)
                 # Older checks below read the renamed keys; the stored raw document stays untouched.
                 keys = copy.deepcopy(raw)
@@ -80,7 +83,7 @@ class Store(MessageAdapters):
                     backup_path = root / f"settings-before-v2-{uuid.uuid4().hex[:12]}.sqlite3"
                     with closing(sqlite3.connect(backup_path)) as backup_db:
                         db.backup(backup_db)
-                elif raw.get("version") not in {2, 3, 4}:
+                elif raw.get("version") not in {2, 3, 4, 5, 6}:
                     raise ValueError("设置版本与数据库版本不一致")
                 elif any("cache" not in keys.get(scope, {}).get(key, {}) for scope, key in
                          (("full_agent", "model"), ("half_agent", "foreground"),
@@ -215,8 +218,9 @@ class Store(MessageAdapters):
         initialize_advisor(self)
         self.initialize_message_adapters()
         with self.connection() as db:
-            # Schema 7 stores per-provider model choices in conversation selections.
-            db.execute("UPDATE meta SET value='7' WHERE key='schema_version'")
+            if "auxiliary" not in {r[1] for r in db.execute("PRAGMA table_info(messages)")}:
+                db.execute("ALTER TABLE messages ADD COLUMN auxiliary TEXT NOT NULL DEFAULT '[]'")
+            db.execute("UPDATE meta SET value='8' WHERE key='schema_version'")
 
     @contextmanager
     def connection(self):
@@ -590,6 +594,7 @@ class Store(MessageAdapters):
                     raise ValueError("剧情分支无效")
                 message = rows[cursor]
                 message["snapshot"] = json.loads(message["snapshot"])
+                message["auxiliary"] = json.loads(message["auxiliary"])
                 prefix.append(message)
                 seen.add(cursor)
                 cursor = message["parent"]
@@ -650,6 +655,7 @@ class Store(MessageAdapters):
             )
             for m in copies:
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?", (m.get("retrieval_query", ""), m["id"]))
+                db.execute("UPDATE messages SET auxiliary=? WHERE id=?", (dump(m["auxiliary"]), m["id"]))
             db.execute("UPDATE sessions SET agent_mode=? WHERE id=?", (source["agent_mode"], new_sid))
             db.execute("UPDATE sessions SET plot_enabled=?,update_variables=? WHERE id=?",
                        (source["plot_enabled"], source["update_variables"], new_sid))
@@ -791,6 +797,7 @@ class Store(MessageAdapters):
                 raise ValueError("剧情分支无效")
             row = rows[head]
             row["snapshot"] = json.loads(row["snapshot"])
+            row["auxiliary"] = json.loads(row["auxiliary"])
             if row["role"] == "assistant":
                 row["versions"] = versions[row["parent"]]
                 row["version_index"] = row["versions"].index(row["id"])
@@ -1424,6 +1431,7 @@ class Store(MessageAdapters):
                 )
                 db.execute("UPDATE messages SET retrieval_query=? WHERE id=?",
                            (m.get("retrieval_query", ""), m["id"]))
+                db.execute("UPDATE messages SET auxiliary=? WHERE id=?", (dump(m.get("auxiliary", [])), m["id"]))
             self._update_cache_follow(db, turn["session"], last,
                                       advance=not scene and req.get("mode", "send") != "regenerate")
             for seq, item in enumerate(pending.get("full_agent_trace", []), 1):

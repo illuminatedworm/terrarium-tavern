@@ -327,6 +327,7 @@ class RoleplayRuntime:
                 "id": uid(),
                 "parent": old["parent"],
                 "role": old["role"],
+                "auxiliary": old["auxiliary"],
                 "raw": raw,
                 "model": await runtime.call(
                     "transform", raw, rules, 2 if old["role"] == "assistant" else 1, "model", 0
@@ -446,6 +447,7 @@ class RoleplayRuntime:
                             tid,
                             generate=args,
                             retrieval=prepared,
+                            kemini=False,
                         )
                         from tavern.conversation.cache_breakpoint import model_messages
                         from tavern.core.message_adapter import provider_messages
@@ -609,6 +611,7 @@ class RoleplayRuntime:
                 "role": "assistant",
                 "raw": final_text,
                 "retrieval_query": agent.retrieval_query,
+                "auxiliary": agent.auxiliary,
                 "model": model,
                 "display": display,
                 "snapshot": copy.deepcopy(snapshot),

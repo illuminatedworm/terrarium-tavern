@@ -1144,6 +1144,7 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
     store, _ = story
     settings = store.settings().for_role("full_agent")
     settings.api_mode, settings.model, settings.api_key = "responses", "test-model", "local"
+    settings.kemini.enabled = True
     provider = await make_provider(settings)
     try:
         assert await provider._recover_from_overflow([], None) is None
@@ -1152,6 +1153,11 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
             "parallel_tool_calls": False})
         assert payload["tool_choice"] == {"type": "function", "name": "new_context"}
         assert payload["parallel_tool_calls"] is False
+        tools = [{"type": "function", "function": {"name": "new_context", "parameters": {"type": "object"}}}]
+        provider.operation_purpose = "narrative"
+        assert provider._begin_kemini(tools, {"extra_body": {"tool_choice": {
+            "type": "function", "function": {"name": "new_context"}}}}) == tools
+        assert not provider._kemini.transport
     finally:
         await provider.close()
 
@@ -1161,6 +1167,7 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
     settings = store.settings()
     settings.full_agent.context_tokens = 16000
     settings.full_agent.reply_tokens = 12000
+    settings.kemini.enabled = True
     store.save_settings(settings)
     service = runtime(store)
     reply = "继续描写场景。" * 4000
@@ -1171,6 +1178,11 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
         assert first.requests[0]["extra_body"]["tool_choice"] == "auto"
         assert current["messages"][-1]["raw"] == reply
         assert current["snapshot"]["full_agent"]["window"]["number"] == 1
+        preview = compile_window(store.session_card(current["id"])["document"], current, current["messages"],
+            current["snapshot"], "继续", store.settings().for_role("full_agent"),
+            [{"type": "function", "function": {"name": "new_context", "parameters": {"type": "object"}}}])
+        assert preview["rollover_required"]
+        assert all(tool["function"]["name"] != "kemini_emit_story" for tool in preview["tools"])
         follow = Model(("new_context", {"handoff": "上一轮场景发展已记录", "keep_recent": 0}), "继续新的对话。")
         result, current = await turn(service, current, follow)
         assert result["status"] == "committed", result["error"]

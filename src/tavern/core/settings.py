@@ -11,6 +11,7 @@ from tavern.advisor.config import AdvisorConfig
 from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
+from tavern.core.kemini import KeminiConfig
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -153,6 +154,7 @@ class LocalResources(StrictSettings):
 
 
 class SharedSettings(StrictSettings):
+    kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
@@ -178,7 +180,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[4] = 4
+    version: Literal[6] = 6
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -346,6 +348,17 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             # start empty rather than inventing settings for other providers.
             raw["version"] = 4
             changed_scopes.update(("full_agent", "half_agent", "shared"))
+        if raw["version"] == 4:
+            raw["version"] = 5
+            raw.setdefault("shared", {}).setdefault("kemini", KeminiConfig().model_dump())
+            changed_scopes.add("shared")
+        if raw["version"] == 5:
+            raw["version"] = 6
+            kemini = raw.setdefault("shared", {}).setdefault("kemini", {})
+            defaults = KeminiConfig().model_dump()
+            for key in ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description"):
+                kemini.setdefault(key, defaults[key])
+            changed_scopes.add("shared")
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

@@ -1232,3 +1232,20 @@
     padding-bottom: 6px;
   }
 }
+.experimental-records {
+  margin-block: 0.75rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+.experimental-records summary {
+  cursor: pointer;
+}
+.experimental-records pre {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}

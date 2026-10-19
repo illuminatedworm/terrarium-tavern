@@ -195,9 +195,11 @@ def native_messages(messages, api, marker=None):
                     body.append({"role": "model" if role == "assistant" else role, "parts": parts})
         if message.get("_cache_breakpoint"):
             prefix_count = len(body)
-    # This rule is fixed and precedes all dynamic context on every request.
-    rule = {"type": "text", "text": RUNTIME_RULE} if api == "anthropic" else {"text": RUNTIME_RULE}
-    system.insert(0, rule)
+    # Kemini explicitly preserves the preset's leading filler. Reintroducing a
+    # synthetic system instruction here would silently undo that projection.
+    if not any(message.get("_kemini_compat") for message in messages):
+        rule = {"type": "text", "text": RUNTIME_RULE} if api == "anthropic" else {"text": RUNTIME_RULE}
+        system.insert(0, rule)
     return system, body, prefix_count
 
 
