@@ -46,7 +46,7 @@ Kemini 实验模式使用显式的保序例外：小说填充、CLEAR、创作�
 
 其他顶层字段的去向：`name`／`nickname` 用于身份及宏；`first_mes`／`alternate_greetings` 只将用户选中的一个开场作为普通 assistant 剧情，未选开场不注入。`creator_notes`、`creator`、`tags`、`character_version` 留在卡片信息中，作者备注作为卡片元数据保存，运行时作者注由配方配置。`character_book` 沿用世界书准入机制；`extensions` 仅按已支持的扩展解释，不整包注入。
 
-Half Agent 的 Tracker 使用独立维护上下文：`name`、`description`、`personality`、`scenario` 位于 `tavern_tracker_input` 的结构化 `character` 资料中。卡内系统要求、后置要求和示例不作为维护指令注入，需要编辑时通过工具读取。记忆参考池仅选取描述、性格、场景等设定资料，示例与未选开场不进入剧情证据。资料与剧情的区别由现有维护契约处理，不另加字段用途说明。
+Half Agent 的 Tracker 使用独立维护上下文：`name`、`description`、`personality`、`scenario` 位于 `tavern_tracker_input` 的结构化 `character` 资料中。任务输入类型 `tracker_input` 在各协议中默认发送为 user，固定规则和操作契约保持 system；避免中转把全部输入当作系统指令提取后，得到空的 Responses `input` 或 Gemini `contents`。卡内系统要求、后置要求和示例不作为维护指令注入，需要编辑时通过工具读取。记忆参考池仅选取描述、性格、场景等设定资料，示例与未选开场不进入剧情证据。资料与剧情的区别由现有维护契约处理，不另加字段用途说明。
 
 ## 动态上下文记录
 

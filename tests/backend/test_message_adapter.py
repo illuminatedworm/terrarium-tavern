@@ -101,10 +101,21 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
                {"role": "tool", "tool_call_id": "read", "content": "Result"},
                {"role": "system", "message_type": updated_type, "content": "Updated context"}], lane)
         projected, _, _ = adapt_messages(rows, settings)
-        assert all(row["role"] == expected for row in projected if row["message_type"] in configurable)
+        assert all(row["role"] == ("user" if row["message_type"] == "tracker_input" else expected)
+                   for row in projected if row["message_type"] in configurable)
         assert next(row for row in projected if row["message_type"] == "root_system")["role"] == "system"
         assert [row["role"] for row in projected if row["message_type"] in ("user", "assistant", "tool")] == ["user", "assistant", "tool"]
-        assert all(item["defaults"][api]["role"] == expected for item in directory if item["configurable"])
+        assert all(item["defaults"][api]["role"] == ("user" if item["id"] == "tracker_input" else expected)
+                   for item in directory if item["configurable"])
+        if lane == "background":
+            task_input = next(row for row in projected if row["message_type"] == "tracker_input")
+            assert task_input["runtime_content"] == "tracker_input"
+            # Explicit saved overrides remain authoritative; no hidden user frame
+            # or role correction may conceal an incompatible user configuration.
+            settings.message_adapter = MessageAdapterConfig.model_validate({"mappings": {
+                api: {"tracker_input": {"role": "system", "wrap": False}}}})
+            custom, _, _ = adapt_messages([task_input], settings)
+            assert custom[0]["role"] == "system" and custom[0]["content"] == "tracker_input"
         if api == "gemini":
             _, contents, _ = native_messages(projected, api)
             assert all(row["role"] in ("user", "model") for row in contents)

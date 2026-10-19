@@ -158,7 +158,11 @@ def default_rule(name, api, lane="foreground"):
     role = definition.role
     if name == "card_mes_example" and lane == "foreground":
         role = "assistant"
-    if definition.configurable:
+    # Explicit conversation/task identities must survive configurable defaults.
+    # Otherwise Tracker's sole user input becomes system-only, leaving relays
+    # with no Responses input / Gemini contents after extracting instructions.
+    task_role = definition.role in ("user", "assistant") and not name.startswith("compat:")
+    if definition.configurable and not task_role:
         role = "user" if api == "gemini" else "system"
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"

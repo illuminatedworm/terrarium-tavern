@@ -315,6 +315,7 @@ async def test_chat_completions_wire_carries_memory_and_variable_tools(story):
     def route(request):
         body = json.loads(request.content)
         requests.append(body)
+        assert any(m["role"] == "user" for m in body["messages"])
         message = {"role": "assistant", "content": "done"}
         if len(requests) == 1:
             message = {"role": "assistant", "content": None, "tool_calls": [
@@ -327,7 +328,14 @@ async def test_chat_completions_wire_carries_memory_and_variable_tools(story):
     provider = ModelTransport(cfg, "isolated-fixture-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
     try:
         work = task(story, provider, memory=True, variables=True)
+        work.user_input = "完整用户输入尾部"
+        work.narrative = "完整剧情正文尾部"
         await work.run(memory_start=0, memory_budget=CallBudget())
+        initial = requests[0]["messages"][-1]
+        assert initial["role"] == "user"
+        payload = json.loads(initial["content"])
+        assert payload["current_input"] == "完整用户输入尾部"
+        assert payload["current_narrative"] == "完整剧情正文尾部"
         names = {t["function"]["name"] for t in requests[0]["tools"]}
         assert {"write_memory", "patch_state"} <= names
         assert "revise_content" not in names
