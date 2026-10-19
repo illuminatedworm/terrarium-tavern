@@ -93,5 +93,5 @@ def compact_record(event):
                        "context_window_changed": "可见历史窗口或分支改变"}.get(
                            payload.get("rebuild_reason"), payload.get("rebuild_reason", ""))
     return {"seq": event["seq"], "kind": kind, "label": label, "purpose": event["purpose"],
-            "created": event["created"], "description": str(description)[:180],
+            "created": event["created"], "description": str(description) if kind == "error" else str(description)[:180],
             "bytes": len(json.dumps(payload, ensure_ascii=False).encode())}

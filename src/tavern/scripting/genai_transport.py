@@ -17,6 +17,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 from tavern.core.cache_policy import endpoint
+from tavern.scripting.http_errors import response_error
 from tavern.scripting.sse import stream_error, stream_events
 
 
@@ -79,6 +80,7 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
 
 class GenAITransport:
     def __init__(self, base_url: str, api_path: str, key: str, http: httpx.AsyncClient, *, debug=None):
+        self.key = key
         url = urlsplit(endpoint(base_url, "gemini", resource="models", api_path=api_path))
         self.transport = _RuntimeHTTP(http, debug)
         self.http = httpx.AsyncClient(transport=self.transport, trust_env=False)
@@ -100,7 +102,9 @@ class GenAITransport:
         except errors.APIError as error:
             # Keep the application's existing HTTP error/fallback contract.
             if isinstance(error.response, httpx.Response):
-                error.response.raise_for_status()
+                await error.response.aread()
+                if error.response.is_error:
+                    raise response_error(error.response, self.key) from error
             raise ValueError(f"Gemini 返回无效响应（{error.code}）") from None
         finally:
             try:

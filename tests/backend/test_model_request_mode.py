@@ -24,6 +24,43 @@ MESSAGES = [{"role": "user", "content": "完整原文，包含末尾"}]
 TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
 
 
+async def test_http_failure_explanation_reaches_work_records_without_debug(tmp_path):
+    from tavern.conversation.work_records import compact_record
+
+    message = ("Failed to get available channel for model fixture under group test: "
+               + "分组诊断；" * 40 + "token custom groups have no available channel; secret=test-key")
+    for api in APIS:
+        cfg = config(api, model_request_mode="stream")
+        cfg._data_root = tmp_path
+        calls = []
+
+        def route(request):
+            calls.append(request)
+            return httpx.Response(503, json={"error": {"code": "model_not_found", "message": message,
+                                                      "type": "new_api_error"}})
+
+        async with provider(cfg, route) as transport:
+            with pytest.raises(httpx.HTTPStatusError) as caught:
+                await transport.chat_complete(MESSAGES)
+        error = str(caught.value)
+        assert "HTTP 503" in error and "model_not_found" in error
+        assert "token custom groups have no available channel" in error
+        assert "test-key" not in error and "[REDACTED]" in error
+        assert "developer.mozilla.org" not in error
+        assert len(calls) == 1 and not RequestDebugLog(tmp_path, cfg).records()
+        wrapped = "Agent 回合未完成：[HTTPStatusError] " + error
+        record = compact_record({"seq": 1, "kind": "error", "purpose": "runtime", "created": 0,
+                                 "payload": {"message": wrapped}})
+        assert record["description"] == wrapped
+    cfg = config()
+    async with provider(cfg, lambda _: httpx.Response(502, text="gateway rejected Bearer test-key " + "x" * 5000)) as transport:
+        with pytest.raises(httpx.HTTPStatusError) as caught:
+            await transport.chat_complete(MESSAGES)
+        assert "gateway rejected Bearer [REDACTED]" in str(caught.value)
+        assert "仅显示错误片段" in str(caught.value) and "test-key" not in str(caught.value)
+        assert len(str(caught.value)) < 4100
+
+
 async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools():
     from types import SimpleNamespace
     cfg = config(model_request_mode="stream")

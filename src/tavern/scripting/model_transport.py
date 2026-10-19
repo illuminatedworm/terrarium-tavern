@@ -31,6 +31,7 @@ from tavern.scripting.cloud_cache import (
 )
 from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
+from tavern.scripting.http_errors import response_error
 from tavern.scripting.kemini import KeminiReply
 from tavern.scripting.model_stream import StreamState
 from tavern.scripting.native_response import attachment, prepare_messages
@@ -444,7 +445,7 @@ class ModelTransport(BaseLLMProvider):
                          and not (self.request_context and self.request_context.identity_rejection(api, payload))
                          and cache_rejection(response.status_code, payload, fields, resource=bool(resource)))
                 if not retry:
-                    response.raise_for_status()
+                    raise response_error(response, self.key)
             finally:
                 await response.aclose()
             fallback = "服务商拒绝缓存参数或缓存对象已过期；已完整发送上下文"
