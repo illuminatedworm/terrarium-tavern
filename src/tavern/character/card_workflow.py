@@ -6,6 +6,7 @@ import re
 from tavern.character.card_initialization_diagnostics import initialization_warnings
 from tavern.character.card_regex_diagnostics import regex_warnings
 from tavern.character.card_status_diagnostics import status_display_warnings
+from tavern.character.card_template_diagnostics import template_warnings
 from tavern.character.cards import lore_entries, parse_card
 
 AUDIENCES = {"writer", "tracker_mvu"}
@@ -47,5 +48,6 @@ def validation_report(document):
     warnings.extend(status_display_warnings(document))
     warnings.extend(regex_warnings(document))
     warnings.extend(initialization_warnings(document))
+    warnings.extend(template_warnings(document))
     return {"valid": not errors, "errors": errors, "warnings": warnings,
             "adapted": not errors and not warnings}

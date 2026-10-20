@@ -78,7 +78,7 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 |---|---|
 | 从零制卡 | card-guide.md → card-format.md |
 | 变量、正则与脚本 | runtime-guide.md → references/regex-display.md |
-| 适配与状态栏迁移 | SKILL.md → runtime-guide.md → references/workflow.md → references/status-display.md、references/regex-display.md |
+| 适配与状态栏迁移 | SKILL.md → runtime-guide.md → references/workflow.md → references/status-display.md、references/regex-display.md；含 ST-Prompt-Template 语法时加读 references/prompt-template.md |
 | 模式差异 | half-agent.md、full-agent.md：各模式的请求结构、可见数据、世界书位置、变量与脚本能力 |
 
 改变运行行为时同步修改对应指引。保存的自定义主提示词不随默认文本更新，旧提示词引用的资源名保持可读。

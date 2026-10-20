@@ -109,6 +109,18 @@ def test_correct_state_macros_do_not_require_rewriting_ordinary_prose():
     assert report["warnings"] == []
 
 
+def test_prompt_template_syntax_is_located_by_ordinal_including_disabled_special_entries():
+    document = {"name": "模板", "scenario": "<%- getvar('stat_data.地点') %>", "character_book": {"entries": {
+        "4af8b4de-116f-4b40-8822-e4e79096b43f": {"comment": "[GENERATE:BEFORE]", "enabled": False, "content": "x"},
+        "b": {"content": "@@if variables.阶段 === 1\n阶段一"},
+        "c": {"content": "@@@activate 是普通文本"},
+    }}, "extensions": {"regex_scripts": [{"findRegex": "a", "replaceString": "<%= 1 %>", "placement": [2]}]}}
+    warnings = [w for w in validation_report(document)["warnings"] if "prompt-template.md" in w]
+    assert len(warnings) == 1
+    assert all(text in warnings[0] for text in ("scenario", "世界书第 1 条", "世界书第 2 条", "正则第 1 条"))
+    assert "世界书第 3 条" not in warnings[0] and "4af8b4de" not in warnings[0]
+
+
 def test_invalid_structure_stops_semantic_diagnostics():
     report = validation_report({"name": "坏开场", "alternate_greetings": 1})
     assert not report["valid"] and not report["adapted"] and report["errors"]

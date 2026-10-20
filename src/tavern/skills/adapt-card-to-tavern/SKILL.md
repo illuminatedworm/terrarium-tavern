@@ -15,6 +15,7 @@ description: 将用户指定的角色卡草稿适配 Terrarium Tavern 共用数�
 2. `references/workflow.md`：初始化与开场的保留规则和核对清单。
 3. `references/status-display.md`：卡片要求模型逐轮输出 HTML、Markdown 表格或固定标签状态块，或用户要求迁移这类展示时读取。
 4. `references/regex-display.md`：制作、保留或迁移展示正则时读取。
+5. `references/prompt-template.md`：卡片含 `<% … %>`、`[GENERATE`/`[RENDER`/`@INJECT` 等标题前缀或 `@@` 装饰器（ST-Prompt-Template 语法）时读取。
 
 ## 步骤
 
@@ -25,7 +26,7 @@ description: 将用户指定的角色卡草稿适配 Terrarium Tavern 共用数�
 5. **改写输出要求**：检查角色字段、`system_prompt`、`post_history_instructions`、示例和常驻条目，删除或改写要求游玩模型在正文中输出变量块或状态栏的指令。
 6. **展示正则**：已有的展示和隐藏正则全部保留并逐条核对；正文状态栏按 `references/status-display.md` 迁移；没有展示时按 `references/regex-display.md` 新建。
 7. **开场**：叙事不改，不调用 `set_opening`，以下两种情况除外：改写非标准初始化时只改其中的初始化数据；用户明确要求迁移正文状态栏时，按 `references/status-display.md` 处理可见示范。
-8. **脚本**：schema 注册、校验与更新回调、宏和资源原样保留。不猜测复杂动态脚本产生的初值，也不把 arbitrary JavaScript 改写为初始化数据。无法可靠迁移的逻辑保留原状，列为人工核对项。
+8. **脚本**：schema 注册、校验与更新回调、宏和资源原样保留。不猜测复杂动态脚本产生的初值，也不把 arbitrary JavaScript 改写为初始化数据。无法可靠迁移的逻辑保留原状，列为人工核对项。ST-Prompt-Template 语法按 `references/prompt-template.md` 改写，并标明可靠性。
 9. **验证**：`validate_draft` 并修复可确定的问题；对每个受影响的开场运行 `test_draft`，按 `references/regex-display.md` 提供 `display_assertions` 与 `state_patch`。核对返回的实际状态，工具无异常不等于语义正确。
 10. **报告**：按三项要素分别列出改动、涉及条目和验证结果，再列开场是否修改、未覆盖范围和待处理项。
 

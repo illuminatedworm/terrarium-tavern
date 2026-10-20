@@ -153,7 +153,7 @@ MVU 是变量系统，展示形式可选，已有的文字、Markdown 或纯 HTM
 - 文字和 Markdown：`{{format_message_variable::stat_data.旅店.余额}}`（字符串原文，其他值 YAML）或 `{{get_message_variable::stat_data.旅店.余额}}`（其他值 JSON）；作用域还支持 chat、character、preset、global。宏递归省略 `$` 前缀字段，缺失值显示 null。
 - 模型文本：`{{getvar::stat_data.旅店.余额}}`，路径从变量根开始。宏只读取已有变量，变量须有初值。
 - 固定资料区（角色字段、常驻条目）里的变量宏每次取值变化都会改变请求前缀、降低缓存命中；常变的数值交给展示面板或各模式的状态通道（见模式文档）。
-- EJS 的 `<% … %>` 不是这些宏，需要另行适配。
+- EJS 的 `<% … %>`（ST-Prompt-Template）不是这些宏，本项目不执行；改写方法、低可靠转换和未实现能力见 `references/prompt-template.md`。
 
 ## 脚本
 

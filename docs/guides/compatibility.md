@@ -68,7 +68,7 @@ MVU 管理 `stat_data`，HTML 只是可选的展示方式。文字或 Markdown �
 
 | 项目 | 使用方式 |
 |---|---|
-| ST DOM、内部模块、完整 `getContext()`、STscript、EJS 与插件机制 | 需要改写为本项目支持的接口和展示方式 |
+| ST DOM、内部模块、完整 `getContext()`、STscript、EJS 与插件机制 | 需要改写为本项目支持的接口和展示方式；EJS 见下文“ST-Prompt-Template（EJS）” |
 | `global`、`character`、`preset` 等变量 | 作为当前会话分支内的命名空间保存 |
 | 脚本持久状态 | 通过变量 API 保存，后台脚本按回合重新加载 |
 | 世界书位置 | 支持角色前后、作者注释、示例前后、深度和命名 outlet；复杂 JavaScript 正则需适配 Python 检索环境 |
@@ -91,6 +91,32 @@ MVU 管理 `stat_data`，HTML 只是可选的展示方式。文字或 Markdown �
 - 上游差分测试比较固定输入下的 MVU 核心与适配流程输出。
 
 样本覆盖对应的导入、运行和保存流程。排查其他社区卡时，可提供具体接口、错误记录和可复现卡片片段。
+
+## ST-Prompt-Template（EJS）
+
+[ST-Prompt-Template](https://github.com/zonde306/ST-Prompt-Template) 是 SillyTavern 扩展，在生成前和楼层渲染后执行提示词、世界书、角色字段与消息中的 `<% … %>` JavaScript，并通过世界书标题前缀（`[GENERATE:…]`、`[RENDER:…]`、`@INJECT`、`[InitialVariables]`、`[Preprocessing]`）和条目开头的 `@@` 装饰器控制注入。本项目**不执行**这些语法，也不做代码或语义层面的逐项兼容：未改写时，它们作为普通文本进入模型请求或界面。
+
+`validate_draft` 会按字段、世界书序号和正则序号列出含这类语法的位置；关闭的世界书条目也会检查，因为插件有一项兼容设置会让特殊条目只在关闭时生效。制卡 agent 按内置指引 [prompt-template.md](../../src/tavern/skills/adapt-card-to-tavern/references/prompt-template.md) 改写，原卡在差异页审阅后才保存。改写按可靠性分为四级：
+
+| 等级 | 典型用法 | 说明 |
+|---|---|---|
+| 等价 | 变量插值、`[InitialVariables]`、`activateRegex` 字符串替换、`[RENDER]`/`@@iframe` 面板、启停类装饰器 | 改为变量宏、`[InitVar]`（路径补 `stat_data.`）、`regex_scripts` 与展示正则 |
+| 近似 | `[GENERATE]`/`@INJECT` 位置注入、`[GENERATE:REGEX]`、`injectPrompt` 出口、模型输出 `setvar` | 改为条目位置与深度、关键词、命名 outlet、`tracker_mvu` 规则；位置只在 Half Agent“按角色卡位置注入”时生效，outlet 需用户在会话配方中添加，变量变化由变量任务判断 |
+| 降级（低可靠） | `@@if`、`<% if %>` 条件段与多分支文本、`getwi`/`activewi`/`@@preprocessing` 按状态激活 | 插件在条件为假时不发送文本；改写后文本常驻，写明适用条件，由模型按当前变量判断，可能误用并多占 tokens。Full Agent 的变量需按需读取，可靠性更低 |
+| 未转换 | 见下 | 保留原文并列为待处理项，适配报告为部分适配 |
+
+目前未实现、无法通过改写获得等价行为的能力：
+
+- 按变量确定性门控（条件为假时文本不进入请求）；
+- 生成时计算：循环拼接、数值公式、随机（`faker`、`Math.random`）、时间、lodash 运算结果写入提示词；
+- 生成或渲染时的变量副作用（每次生成的 `setvar/incvar`、预加载 `define`）及跨条目共享函数；
+- `execute()` 执行 STscript、`SillyTavern.getContext()`、读取预设与快速回复；
+- `activateRegex` 函数式替换作用于模型文本；
+- “处理原始消息内容”永久改写楼层原文；
+- 把独立 `role` 消息插到第 N 条或按内容匹配的位置，只能以深度近似；
+- 插件的 token 统计变量。
+
+只影响显示的计算可移到展示面板脚本；需要进入模型的判断可改为由 Tracker 维护的变量。两者都属于重新设计，需用户确认。要求模型按条件输出状态栏的段落，按状态栏迁移处理，不涉及条件转换。
 
 ## MVU 与 Schema 适配
 
