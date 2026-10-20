@@ -123,7 +123,7 @@ export async function initialize(entries: any[], old: Data, emit: (name: string,
   let changed = false;
   // The InitVar marker controls initialization; injection switches and audiences
   // only control prompt delivery, so Tracker-marked defaults remain readable.
-  entries = entries.filter(e => /\[initvar\]/i.test(e.comment || ''));
+  entries = entries.filter(e => /\[initvar\]/i.test(e.comment || e.name || ''));
   const opening = Array.from(greeting.matchAll(/<initvar\b[^>]*>([\s\S]*?)<\/initvar\s*>/gi));
   const openingInitialized = _.has(data.initialized_lorebooks, 'card:opening:0');
   if (opening.length || openingInitialized) {

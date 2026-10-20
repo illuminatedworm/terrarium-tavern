@@ -12,7 +12,7 @@ from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 
-from tavern.character.cards import card_scripts, lore_entries, normalize
+from tavern.character.cards import card_scripts, is_initvar, lore_entries, normalize
 
 SDK = Path(__file__).parents[1] / "static" / "runtime.js"
 
@@ -177,7 +177,7 @@ class ScriptRuntime:
             "bookName": normalize(document).get("character_book", {}).get("name", "character"),
         }
         for entry in data["lore"]:
-            if "[initvar]" in entry.get("comment", "").lower():
+            if is_initvar(entry):
                 entry["content"] = (
                     entry.get("content", "")
                     .replace("{{user}}", persona)

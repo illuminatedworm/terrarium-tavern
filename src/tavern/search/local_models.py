@@ -10,6 +10,7 @@ import uuid
 from importlib.util import find_spec
 from pathlib import Path
 
+from tavern.character.cards import lore_title
 from tavern.search.retrieval import digest
 
 
@@ -95,8 +96,7 @@ def _worker(pipe, root, purpose, config):
                     for entry in data:
                         title = " ".join(
                             [
-                                str(entry.get("comment", "")),
-                                str(entry.get("name", "")),
+                                lore_title(entry) if request["title_in_retrieval"] else "",
                                 *entry.get("keys", []),
                             ]
                         )
@@ -332,6 +332,7 @@ class LocalModelManager:
                         "reranker_prompt": settings.local_models.reranker_prompt,
                         "chunk_tokens": settings.retrieval.chunk_tokens,
                         "chunk_overlap": settings.retrieval.chunk_overlap,
+                        "title_in_retrieval": settings.retrieval.title_in_retrieval,
                         "rerank_fragments": settings.local_models.rerank_fragments,
                     }
                 )
@@ -443,7 +444,7 @@ class LocalModelManager:
                 record.update(total_entries=len(missing), completed_entries=0, phase="indexing")
                 for i, (cache_key, entry) in enumerate(missing):
                     record.update(
-                        current_entry=str(entry.get("comment") or entry.get("name") or entry["id"]),
+                        current_entry=lore_title(entry) or entry["id"],
                         entry_started_at=time.time(),
                     )
                     while self.locks["embedding"].locked():

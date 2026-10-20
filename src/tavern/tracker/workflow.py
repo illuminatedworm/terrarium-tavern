@@ -2,7 +2,7 @@
 
 import copy
 
-from tavern.character.cards import lore_entries
+from tavern.character.cards import is_initvar, lore_entries
 from tavern.conversation.half_compaction import local_window_enabled
 from tavern.conversation.half_context import load_trace
 from tavern.conversation.window import plan_window
@@ -214,7 +214,7 @@ def merge_script_lore(document, initial_lore, processed, *, include_existing=Fal
                     continue
                 # Runtime expands initialization text. Preserve its authored form unless a callback
                 # actually changed that field after the Tracker sync.
-                init_only = "[initvar]" in entry.get("comment", "").lower()
+                init_only = is_initvar(entry)
                 if (
                     init_only
                     and field in ("content", "comment")

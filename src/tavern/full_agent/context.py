@@ -3,9 +3,10 @@
 import copy
 import json
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import is_initvar, lore_entries, normalize
 from tavern.conversation.cache_breakpoint import prepare_context
 from tavern.conversation.context import (
+    lore_text,
     macros,
     wrap_card_field,
     wrap_lorebook,
@@ -84,6 +85,12 @@ def compile_window(
     def expand(value):
         return macros(value, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))
 
+    def lore_block(entry, content):
+        return wrap_lorebook(lore_text(entry, content, settings.lore_injection_title, expand))
+
+    # Anchored records keep frozen content; an opted-in title comes from the current entry.
+    writer_lore = {e["id"]: e for e in lore_entries(document, "writer")}
+
     # This absolute prefix is outside all application ordering and history
     # offsets; no runtime rules or worldbook entries can split its four blocks.
     items = prefix_frames(settings.kemini)
@@ -113,17 +120,13 @@ def compile_window(
         )
     if session.get("turn_preference"):
         add("system", settings.preference_prompt + "\n" + session["turn_preference"], "session_preference")
-    constants = [
-        e
-        for e in lore_entries(document, "writer")
-        if e["enabled"] and e.get("constant") and "[initvar]" not in e.get("comment", "").lower()
-    ]
+    constants = [e for e in writer_lore.values() if e["enabled"] and e.get("constant") and not is_initvar(e)]
     for entry in constants:
         role = entry.get("role", "system")
         role = {0: "system", 1: "user", 2: "assistant"}.get(role, role)
         add(
             role,
-            wrap_lorebook(expand(entry["content"])),
+            lore_block(entry, expand(entry["content"])),
             "lore:" + entry["id"],
             lore_ids=[entry["id"]],
             lore_region="constant",
@@ -236,7 +239,7 @@ def compile_window(
             if record["anchor_id"] == message_id and not record.get("manually_removed"):
                 add(
                     "system",
-                    wrap_lorebook(record["content"]),
+                    lore_block(writer_lore.get(record["id"], {}), record["content"]),
                     "lore:" + record["id"],
                     lore_ids=[record["id"]],
                     anchor_id=message_id,

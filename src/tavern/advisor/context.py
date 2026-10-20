@@ -2,7 +2,7 @@
 
 import copy
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import is_initvar, lore_entries, normalize
 from tavern.conversation.context import macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.channels import require_channel
@@ -144,7 +144,7 @@ def background(story, config):
         }
     )
     for entry in lore_entries(story["document"], "writer"):
-        if entry["enabled"] and entry.get("constant") and "[initvar]" not in entry.get("comment", "").lower():
+        if entry["enabled"] and entry.get("constant") and not is_initvar(entry):
             header.append(
                 {
                     "role": "system",

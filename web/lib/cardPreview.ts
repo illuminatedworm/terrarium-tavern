@@ -1,3 +1,4 @@
+import { isInitVar, loreTitle } from './loreBook';
 import { audiences } from './loreFilter';
 
 /** Read-only projections; all values come from the selected draft, never its source card. */
@@ -13,12 +14,12 @@ export function previewLore(document: Record<string, any>) {
     const audience = effective.terrarium?.audience || 'writer';
     const enabled = effective.enabled ?? !effective.disable;
     let stateLabel = enabled ? '' : '未启用';
-    if (!enabled && /\[initvar\]/i.test(effective.comment || '')) {
+    if (!enabled && isInitVar(effective)) {
       stateLabel = audience === 'tracker_mvu' ? '初始化与变量规则' : '仅初始化';
     }
     return {
       key,
-      title: effective.comment || effective.name || `条目 ${index + 1}`,
+      title: loreTitle(effective) || `条目 ${index + 1}`,
       content: String(effective.content || ''),
       enabled,
       stateLabel,

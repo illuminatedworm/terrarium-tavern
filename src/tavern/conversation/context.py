@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
@@ -65,6 +65,13 @@ def macros(text, character, persona, state, scopes=None):
 
 def wrap_lorebook(content):
     return f"<lorebook>\n{content}\n</lorebook>"
+
+
+def lore_text(entry, content, with_title, expand=str):
+    """Writer-visible body of one entry. The title is a first body line, not a tag
+    attribute: the message adapter strips and rewraps the lorebook tag per user rule."""
+    title = expand(lore_title(entry)).strip() if with_title else ""
+    return f"【{title}】\n{content}" if title else content
 
 
 CARD_FIELDS = {
@@ -162,6 +169,7 @@ def activate_lore(
     timeline="",
     retrieval=None,
     query=None,
+    title_heading=True,
 ):
     entries = lore_entries(document, "writer")
     retrieval_ids = {eid: i for i, eid in enumerate(retrieval["ids"])} if retrieval is not None else {}
@@ -194,7 +202,7 @@ def activate_lore(
                 or eid in selected
                 or eid in checked
                 or not e["enabled"]
-                or "[initvar]" in e.get("comment", "").lower()
+                or is_initvar(e)
             ):
                 continue
             timelines = e.get("timelines", [])
@@ -258,7 +266,7 @@ def activate_lore(
                 continue
             # Prefer explicit current-input subjects over broad body keywords.
             # Heading matches are a lightweight signal, not semantic understanding.
-            heading = str(e.get("name", "")) + " " + e.get("content", "").split("\n", 1)[0]
+            heading = (lore_title(e) if title_heading else "") + " " + e.get("content", "").split("\n", 1)[0]
             heading_keys = [k for k in e["keys"] if matches(k, heading, e)]
             # A short body-only word should not activate a named subject on its own.
             # Preserve explicit regex/whole-word author rules and simple keyword books.
@@ -475,6 +483,9 @@ def compile_context(
     def expand(text):
         return macros(text, card, persona, state, snapshot.get("scopes"))
 
+    def lore_block(entry, content):
+        return wrap_lorebook(lore_text(entry, content, settings.lore_injection_title, expand))
+
     entries, diagnostics, next_lore = activate_lore(
         document,
         clue_history,
@@ -491,6 +502,7 @@ def compile_context(
         recursive=False,
         timeline=get_path(state, "世界.当前时间线", ""),
         expand_content=expand,
+        title_heading=settings.retrieval.title_in_retrieval,
     )
     diagnostics.extend(retrieval.get("diagnostics", []))
     diagnostics.extend(
@@ -535,7 +547,7 @@ def compile_context(
                 {
                     "id": e["id"],
                     "content": expand(e.get("content", "")),
-                    "title": str(e.get("comment") or e.get("name") or f"lore · {e['id']}"),
+                    "title": lore_title(e) or f"lore · {e['id']}",
                     "anchor_id": greeting["id"] if first_turn and greeting else input_message_id,
                     "source_ids": [m["id"] for m in visible_history] + [input_message_id],
                     "prevent_recursion": bool(e.get("preventRecursion")),
@@ -545,13 +557,13 @@ def compile_context(
             continue
         pos = e.get("position", 0)
         if pos in ("before_char", 0):
-            sources["lore_before"] += "\n" + wrap_lorebook(e.get("content", ""))
+            sources["lore_before"] += "\n" + lore_block(e, e.get("content", ""))
             source_lore_ids.setdefault("lore_before", []).append(e["id"])
         elif pos in ("after_char", 1):
-            sources["lore_after"] += "\n" + wrap_lorebook(e.get("content", ""))
+            sources["lore_after"] += "\n" + lore_block(e, e.get("content", ""))
             source_lore_ids.setdefault("lore_after", []).append(e["id"])
         elif pos in (2, 3):
-            sources["author_note"] += "\n" + wrap_lorebook(e.get("content", ""))
+            sources["author_note"] += "\n" + lore_block(e, e.get("content", ""))
             source_lore_ids.setdefault("author_note", []).append(e["id"])
         elif pos in (5, 6):
             positioned.append({**e, "anchor": "examples", "side": "before" if pos == 5 else "after"})
@@ -559,7 +571,7 @@ def compile_context(
             outlet = e.get("outletName", "")
             if outlet:
                 sources["outlet:" + outlet] = (
-                    sources.get("outlet:" + outlet, "") + "\n" + wrap_lorebook(e.get("content", ""))
+                    sources.get("outlet:" + outlet, "") + "\n" + lore_block(e, e.get("content", ""))
                 )
                 source_lore_ids.setdefault("outlet:" + outlet, []).append(e["id"])
             else:
@@ -676,7 +688,7 @@ def compile_context(
                 at,
                 {
                     "role": role,
-                    "content": wrap_lorebook(expand(e.get("content", ""))),
+                    "content": lore_block(e, expand(e.get("content", ""))),
                     "source": "lore:" + e["id"],
                     "lore_ids": [e["id"]],
                     "priority": 80,
@@ -690,7 +702,7 @@ def compile_context(
             (
                 int(e.get("depth", 0) or 0),
                 role,
-                wrap_lorebook(e.get("content", "")),
+                lore_block(e, e.get("content", "")),
                 "lore:" + e["id"],
                 80,
                 False,
@@ -814,6 +826,9 @@ def compile_context(
     # injection from its real dialogue anchor. Frozen content is never re-expanded.
     actual_records = []
     if conversation_lore:
+        # Records keep frozen content; their stored title may be a display
+        # placeholder, so an opted-in title line comes from the current entry.
+        writer_lore = {e["id"]: e for e in lore_entries(document, "writer")}
         for record in records:
             at = next((i for i, m in enumerate(messages) if m.get("message_id") == record["anchor_id"]), None)
             if at is None:
@@ -825,7 +840,7 @@ def compile_context(
                 at,
                 {
                     "role": "system",
-                    "content": wrap_lorebook(record["content"]),
+                    "content": lore_block(writer_lore.get(record["id"], {}), record["content"]),
                     "title": record["title"],
                     "source": "lore:" + record["id"],
                     "lore_ids": [record["id"]],
@@ -920,7 +935,7 @@ def compile_context(
         constant_messages.append(
             {
                 "role": role,
-                "content": wrap_lorebook(expand(entry["content"])),
+                "content": lore_block(entry, expand(entry["content"])),
                 "source": "lore:" + entry["id"],
                 "lore_ids": [entry["id"]],
                 "lore_region": "constant",
@@ -970,7 +985,11 @@ def compile_context(
         source = message.get("context_source", message["source"])
         if source in ("lore_before", "lore_after") or source.startswith("outlet:"):
             message["runtime_parts"] = [
-                expand(lore_by_id[eid]["content"]) for eid in message.get("lore_ids", []) if eid in lore_by_id
+                lore_text(
+                    lore_by_id[eid], expand(lore_by_id[eid]["content"]), settings.lore_injection_title, expand
+                )
+                for eid in message.get("lore_ids", [])
+                if eid in lore_by_id
             ]
             if not message["runtime_parts"]:
                 message["runtime_content"] = message["content"]
@@ -983,9 +1002,7 @@ def compile_context(
             message.setdefault(
                 "title",
                 " · ".join(
-                    str(lore_by_id[eid].get("comment") or lore_by_id[eid].get("name") or f"lore · {eid}")
-                    for eid in ids
-                    if eid in lore_by_id
+                    lore_title(lore_by_id[eid]) or f"lore · {eid}" for eid in ids if eid in lore_by_id
                 ),
             )
     for entry in entries:

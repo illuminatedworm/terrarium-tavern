@@ -10,7 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.character.card_workflow import validate_document
-from tavern.character.cards import lore_entries
+from tavern.character.cards import is_initvar, lore_entries, lore_title
 from tavern.full_agent.protocol import ToolError
 
 SettingField = Literal[
@@ -198,17 +198,16 @@ def lore_references(document, state):
 
 
 def editable_entry(raw, entry):
-    title = entry.get("comment") or entry.get("name") or ""
     return (
         entry.get("terrarium", {}).get("audience", "writer") == "writer"
-        and "[initvar]" not in title.casefold()
+        and not is_initvar(entry)
         and not runtime_code(raw)
     )
 
 
 def entry_view(entry):
     return {
-        "title": entry.get("comment") or entry.get("name") or "世界书",
+        "title": lore_title(entry) or "世界书",
         "content": entry.get("content", ""),
         "keys": entry.get("keys", []),
         "secondary_keys": entry.get("secondary_keys", []),

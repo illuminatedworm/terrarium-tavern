@@ -137,6 +137,9 @@ class RetrievalSettings(BaseModel):
     input_chars: int = Field(2000, ge=64, le=20000)
     chunk_tokens: int = Field(512, ge=64, le=4096)
     chunk_overlap: int = Field(64, ge=0, le=1024)
+    # Title text of ordinary entries in BM25/vector fragments, rerank fallback and
+    # subject headings. Keys and content are always matched.
+    title_in_retrieval: bool = True
     embedding_timeout: float = Field(1.0, gt=0, le=120)
     rerank_timeout: float = Field(1.5, gt=0, le=120)
     query_prompt: str = Field(default=DEFAULT_QUERY_PROMPT, max_length=200000)

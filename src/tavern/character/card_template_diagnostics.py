@@ -2,7 +2,7 @@
 
 import re
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import lore_entries, lore_title, normalize
 
 TAG = re.compile(r"<%|<#escape-ejs>", re.I)
 TITLE = re.compile(r"^\s*(?:\[(?:GENERATE|RENDER)[:\]]|@INJECT\b|\[InitialVariables]|\[Preprocessing])", re.I)
@@ -30,11 +30,7 @@ def template_warnings(document):
     # entries effective only while disabled. Ordinals keep entry IDs out of model text.
     for i, entry in enumerate(lore_entries(document)):
         content = entry.get("content", "")
-        if (
-            TAG.search(content)
-            or TITLE.match(str(entry.get("comment") or ""))
-            or DECORATOR.match(content.lstrip())
-        ):
+        if TAG.search(content) or TITLE.match(lore_title(entry)) or DECORATOR.match(content.lstrip()):
             locations.append(f"世界书第 {i + 1} 条")
     rules = data.get("extensions", {}).get("regex_scripts", [])
     for i, rule in enumerate(rules if isinstance(rules, list) else []):

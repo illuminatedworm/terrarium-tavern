@@ -12,6 +12,7 @@ from collections import Counter, OrderedDict, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
+from tavern.character.cards import lore_title
 from tavern.search.retrieval_text import query_text
 
 _token_lock = threading.Lock()
@@ -65,6 +66,10 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def retrieval_title(entry, config):
+    return lore_title(entry) if config.title_in_retrieval else ""
+
+
 def entry_order(entry):
     eid = str(entry["id"])
     return (
@@ -100,9 +105,7 @@ class SparseIndex:
         self.entries = {e["id"]: e for e in entries}
         self.fragments = []
         for entry in entries:
-            title = " ".join(
-                [str(entry.get("name", "")), str(entry.get("comment", "")), *entry.get("keys", [])]
-            )
+            title = " ".join([retrieval_title(entry, config), *entry.get("keys", [])])
             tokens = tokenize(entry.get("content", ""))
             stride = config.chunk_tokens - config.chunk_overlap
             for start in range(0, max(1, len(tokens)), stride):
@@ -142,8 +145,14 @@ _indexes = OrderedDict()
 _index_lock = threading.Lock()
 
 
+def sparse_key(entries, config):
+    return digest(
+        [entries, config.chunk_tokens, config.chunk_overlap, config.title_in_retrieval, "jieba-sudachi-v1"]
+    )
+
+
 def sparse_index(entries, config):
-    key = digest([entries, config.chunk_tokens, config.chunk_overlap, "jieba-sudachi-v1"])
+    key = sparse_key(entries, config)
     with _index_lock:
         if key not in _indexes:
             _indexes[key] = SparseIndex(entries, config)
@@ -175,7 +184,7 @@ def fusion_scores(rankings, config):
 def lexical_recall(
     document, history, user_input, snapshot, settings, session, seed, *, cached_only=False, turn_number=None
 ):
-    from tavern.character.cards import lore_entries, normalize
+    from tavern.character.cards import is_initvar, lore_entries, normalize
     from tavern.conversation.context import activate_lore, get_path, macros, matches
 
     config = settings.retrieval
@@ -187,7 +196,7 @@ def lexical_recall(
         for e in lore_entries(document, "writer")
         if e["enabled"]
         and not e.get("constant")
-        and "[initvar]" not in e.get("comment", "").lower()
+        and not is_initvar(e)
         and (
             not timeline
             or not e.get("timelines")
@@ -209,7 +218,7 @@ def lexical_recall(
     query = query_text(history, user_input, config)
     from tavern.search.lore_admission import keyword_evidence
 
-    lexical_ids, evidence = keyword_evidence(entries, query, user_input)
+    lexical_ids, evidence = keyword_evidence(entries, query, user_input, config)
     if (
         clues
         and not any(m.get("retrieval_query") for m in history)
@@ -229,6 +238,7 @@ def lexical_recall(
             recursive=False,
             timeline=timeline,
             turn_number=turn_number,
+            title_heading=config.title_in_retrieval,
         )
         return found, notes, round((time.perf_counter() - start) * 1000, 2)
 
@@ -238,7 +248,7 @@ def lexical_recall(
         bm25_started = time.perf_counter()
         try:
             if cached_only:
-                cache_key = digest([entries, config.chunk_tokens, config.chunk_overlap, "jieba-sudachi-v1"])
+                cache_key = sparse_key(entries, config)
                 with _index_lock:
                     index = _indexes.get(cache_key)
                 if index is None:
@@ -259,7 +269,7 @@ def lexical_recall(
     keyword = [e for e in keyword if e["id"] in lexical_ids]
 
     def keyword_order(entry):
-        heading = str(entry.get("name", "")) + " " + entry["content"].split("\n", 1)[0]
+        heading = retrieval_title(entry, config) + " " + entry["content"].split("\n", 1)[0]
         subject = any(
             matches(k, heading, entry) and matches(k, user_input, entry) for k in entry.get("keys", [])
         )
@@ -290,6 +300,7 @@ def lexical_recall(
                 retained=retained | exiting if session.get("lore_injection_mode") == "conversation" else (),
                 retrieval={"ids": ranks[channel]},
                 query=query,
+                title_heading=config.title_in_retrieval,
             )
             allowed = {e["id"] for e in eligible}
             ranks[channel] = [eid for eid in ranks[channel] if eid in allowed][: config.candidate_count]
@@ -421,6 +432,7 @@ class RetrievalEngine:
                         self.models.revision(settings),
                         config.chunk_tokens,
                         config.chunk_overlap,
+                        config.title_in_retrieval,
                     ]
                 )
                 with self.store.connection() as db:
@@ -529,6 +541,7 @@ class RetrievalEngine:
                 "diagnostics": [],
             },
             query=result["query"],
+            title_heading=config.title_in_retrieval,
         )
         allowed = {e["id"] for e in eligible}
         result["diagnostics"].extend(n for n in gate_notes if n["id"] not in allowed)
@@ -551,7 +564,7 @@ class RetrievalEngine:
                         result.get("fragment_hits", {}).get(eid)
                         or " ".join(
                             [
-                                str(by_id[eid].get("comment", "")),
+                                retrieval_title(by_id[eid], config),
                                 *by_id[eid].get("keys", []),
                                 by_id[eid]["content"],
                             ]
@@ -610,6 +623,7 @@ class RetrievalEngine:
                 else (),
                 retrieval={"ids": candidate_ids},
                 query=result["query"],
+                title_heading=config.title_in_retrieval,
             )
             allowed = {e["id"] for e in eligible}
             result["diagnostics"].extend(notes)

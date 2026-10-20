@@ -132,9 +132,21 @@ export const policies = [
 export const loreFields: SettingField[] = [
   number('lore_max_entries', '单次新增条目上限', 1, 1000),
   { path: 'lore_recursive', label: '世界书递归查询', type: 'checkbox' },
+  {
+    path: 'lore_injection_title',
+    label: '注入时携带条目标题',
+    type: 'checkbox',
+    help: '开启后，正文请求中每条世界书正文前加一行【标题】。标题取条目名称（comment），为空时取 name；两者皆空则不加。包括常驻条目，切换后请求前缀会变化一次。',
+  },
   number('lore_recursion_depth', '递归深度', 0, 16),
 ];
 export const retrievalFields: SettingField[] = [
+  {
+    path: 'retrieval.title_in_retrieval',
+    label: '条目标题参与检索',
+    type: 'checkbox',
+    help: '作用于非常驻的常规条目：标题计入关键词排序与向量切片、重排文本和条目主体判断。关闭后只用关键词与正文；向量索引会按新口径重建。',
+  },
   number('retrieval.bm25_min_coverage', '关键词最低覆盖率', 0, 1, 0.05),
   number('retrieval.bm25_min_score', '关键词最低相对得分', 0, 1, 0.05),
   number('retrieval.embedding_min_similarity', '向量最低相似度', -1, 1, 0.05),

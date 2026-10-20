@@ -16,6 +16,7 @@ import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
@@ -870,7 +871,7 @@ function contextItemTitle(item: JsonObject) {
   const source = String(item.source || '');
   if (source.startsWith('lore:')) {
     const entry = preview.value?.lore.find((e) => String(e.id) === source.slice(5));
-    return entry?.comment || entry?.name || '';
+    return loreTitle(entry);
   }
   if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;
   if (source === 'agent_tools') {

@@ -62,6 +62,16 @@ def test_bm25_finds_content_without_keywords():
     assert index.search("银色钥匙 灯塔", RetrievalSettings())[0][0] == "a"
 
 
+def test_title_retrieval_toggle_uses_comment_then_name():
+    entries = [
+        {"id": "a", "keys": ["门锁"], "comment": "", "name": "银色钥匙", "content": "红色山谷里有花"},
+        {"id": "b", "keys": ["云朵"], "comment": "灯塔守卫", "name": "银色钥匙", "content": "蓝色海面"},
+    ]
+    on, off = RetrievalSettings(), RetrievalSettings(title_in_retrieval=False)
+    assert SparseIndex(entries, on).search("银色钥匙", on)[0] == ["a"]
+    assert SparseIndex(entries, off).search("银色钥匙", off)[0] == []
+
+
 def test_fusion_ignores_score_scale_and_deduplicates():
     entries = [{"id": str(i)} for i in range(3)]
     assert fuse({"keyword": ["0", "1"], "bm25": ["1", "2"]}, entries, RetrievalSettings())[0] == "1"

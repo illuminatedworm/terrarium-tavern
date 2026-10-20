@@ -275,6 +275,33 @@ def test_each_st_top_lore_entry_has_its_own_wrapper():
         assert content.count(f"<lorebook>\n灯塔设定{i}\n</lorebook>") == 1
 
 
+def test_injection_title_is_opt_in_and_prefers_comment_over_name():
+    entries = [
+        {"id": "c", "constant": True, "comment": "常驻标题", "name": "旧名", "content": "常驻设定"},
+        {"id": "e", "keys": ["灯塔"], "comment": "", "name": "灯塔条目", "content": "灯塔设定"},
+    ]
+    doc = {"name": "角色", "character_book": {"entries": entries}}
+    history = [message("g", "assistant", "开场")]
+
+    def lore_bodies(mode, **values):
+        out = compile_context(doc, session(mode), history, {"state": {}}, "灯塔", Settings(**values), "seed")
+        # st_top lore is rewrapped per entry by the adapter from runtime_parts.
+        return [
+            part
+            for m in out["trace"]
+            if m.get("lore_ids")
+            for part in m.get("runtime_parts") or [m["content"]]
+        ]
+
+    assert not any("【" in body for body in lore_bodies("conversation"))
+    for mode in ("conversation", "st_top"):
+        bodies = lore_bodies(mode, lore_injection_title=True)
+        assert any("<lorebook>\n【常驻标题】\n常驻设定\n</lorebook>" == body for body in bodies)
+        assert any(
+            body.startswith(("【灯塔条目】\n灯塔设定", "<lorebook>\n【灯塔条目】\n")) for body in bodies
+        )
+
+
 def test_constant_over_model_budget_remains_complete_with_warning():
     content = "常驻规则" * 3000
     out = compile_context(

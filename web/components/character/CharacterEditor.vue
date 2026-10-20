@@ -9,7 +9,14 @@ import FieldHelp from '../common/FieldHelp.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
-import { appendLoreBook, loreFlagHelp, loreFlagValue, setLoreFlag } from '../../lib/loreBook';
+import {
+  appendLoreBook,
+  isInitVar,
+  loreFlagHelp,
+  loreFlagValue,
+  loreTitle,
+  setLoreFlag,
+} from '../../lib/loreBook';
 import { appendRegexScripts } from '../../lib/regexScripts';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { positionPopover } from '../../lib/anchoredPopover';
@@ -667,16 +674,16 @@ useTimedError(error);
                 v-for="item in group.items"
                 :key="item.entry.id ?? item.entry.uid ?? item.index"
                 class="lore-editor"
-                :class="{ 'mvu-lore-entry': /\[initvar\]/i.test(item.entry.comment || '') }"
+                :class="{ 'mvu-lore-entry': isInitVar(item.entry) }"
                 :data-lore-id="String(item.entry.id ?? item.entry.uid ?? item.index)"
                 @click.prevent="openLore(item)"
               >
                 <summary>
-                  {{ item.entry.comment || item.entry.name || '条目 ' + (item.index + 1) }}
+                  {{ loreTitle(item.entry) || '条目 ' + (item.index + 1) }}
                   <small>{{ audiences[entryAudience(item.entry)] }}</small>
                   <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
                   <span
-                    v-if="/\[initvar\]/i.test(item.entry.comment || '')"
+                    v-if="isInitVar(item.entry)"
                     class="mvu-entry-label"
                     title="[InitVar] 无论启停与用途均参与初始化；标记 tracker_mvu 后也向变量任务提供完整正文。"
                   >
@@ -700,11 +707,7 @@ useTimedError(error);
                   <div>
                     <span class="eyebrow">世界书条目</span>
                     <h2>
-                      {{
-                        loreDialog.mode === 'add'
-                          ? '添加条目'
-                          : loreDialog.entry.comment || loreDialog.entry.name || '编辑条目'
-                      }}
+                      {{ loreDialog.mode === 'add' ? '添加条目' : loreTitle(loreDialog.entry) || '编辑条目' }}
                     </h2>
                   </div>
                 </header>
@@ -713,7 +716,14 @@ useTimedError(error);
                     <label
                       >条目 ID <FieldHelp tooltip="世界书条目的稳定标识；脚本或外部工具可能依赖它。" /><input
                         v-model="loreDialog.entry.id" /></label
-                    ><label>条目名称<input v-model="loreDialog.entry.comment" autofocus /></label>
+                    ><label
+                      >条目名称<input
+                        v-model="loreDialog.entry.comment"
+                        :placeholder="
+                          loreDialog.entry.name ? `留空时使用 name：${loreDialog.entry.name}` : ''
+                        "
+                        autofocus
+                    /></label>
                   </div>
                   <div class="lore-checks">
                     <label class="check"

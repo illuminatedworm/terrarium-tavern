@@ -7,6 +7,15 @@ export interface LoreBook {
 const isObject = (value: unknown): value is Record<string, any> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** Match cards.lore_title: ST's comment first, the optional V2/V3 name as fallback. */
+export function loreTitle(entry: LoreEntry | null | undefined): string {
+  return String(entry?.comment || entry?.name || '');
+}
+
+export function isInitVar(entry: LoreEntry | null | undefined): boolean {
+  return /\[initvar\]/i.test(loreTitle(entry));
+}
+
 const loreFlagAliases = {
   matchWholeWords: 'match_whole_words',
   excludeRecursion: 'exclude_recursion',

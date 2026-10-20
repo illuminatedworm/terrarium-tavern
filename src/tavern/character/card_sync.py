@@ -14,7 +14,7 @@ but left unselected so syncing never silently reverts story progress.
 import copy
 from uuid import uuid4
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import lore_entries, lore_title, normalize
 
 FIELDS = (
     "name",
@@ -104,7 +104,7 @@ def _item(key, group, label, base, current, source):
 
 
 def _lore_label(entry, identity):
-    return str(entry.get("comment") or entry.get("name") or f"条目 {identity}")
+    return lore_title(entry) or f"条目 {identity}"
 
 
 def _regex_label(script, identity):

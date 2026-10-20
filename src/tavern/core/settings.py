@@ -69,6 +69,8 @@ class AgentSettings(StrictSettings):
     lore_recursive: bool = Field(default=True, strict=True)
     lore_recursion_depth: int = Field(default=1, ge=0, le=16, strict=True)
     lore_max_entries: int = Field(default=5, ge=1, le=1000, strict=True)
+    # ST sends entry content only; a title line is opt-in for Writer injection.
+    lore_injection_title: bool = Field(default=False, strict=True)
     # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     policy: Policy = "automatic"

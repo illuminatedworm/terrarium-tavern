@@ -128,6 +128,16 @@ def _lore_flag_values(fields):
     }
 
 
+def lore_title(entry):
+    # Both are optional V2/V3 entry fields. ST keeps its title in comment, so name
+    # only fills in for cards that leave comment empty.
+    return str(entry.get("comment") or entry.get("name") or "")
+
+
+def is_initvar(entry):
+    return "[initvar]" in lore_title(entry).lower()
+
+
 def lore_entries(document, audience=None):
     book = normalize(document).get("character_book", {}) or {}
     entries = book.get("entries", [])
@@ -153,11 +163,7 @@ def lore_entries(document, audience=None):
 def variable_rule_entries(document):
     # InitVar may carry legacy [value, description] rules. Its disabled switch
     # must not hide those rules once the author explicitly selects Tracker.
-    return [
-        entry
-        for entry in lore_entries(document, "tracker_mvu")
-        if entry["enabled"] or "[initvar]" in entry.get("comment", "").lower()
-    ]
+    return [entry for entry in lore_entries(document, "tracker_mvu") if entry["enabled"] or is_initvar(entry)]
 
 
 def append_lorebook(current, imported):

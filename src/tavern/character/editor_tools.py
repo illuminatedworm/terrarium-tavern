@@ -10,7 +10,7 @@ import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tavern.character.card_workflow import validate_document, validation_report
-from tavern.character.cards import diagnose, normalize
+from tavern.character.cards import diagnose, lore_title, normalize
 from tavern.character.editor_config import FIELD_PURPOSES, blank_card
 from tavern.character.editor_files import read_document, read_text_file
 from tavern.character.editor_images import IMAGE_FORMATS
@@ -602,7 +602,7 @@ class EditorTools(PersonaTools):
                 "path": self.view.pointer(
                     prefix + "/character_book/entries/" + str(key).replace("~", "~0").replace("/", "~1")
                 ),
-                "title": entry.get("comment", entry.get("name", "")),
+                "title": lore_title(entry),
                 "preview": self.view.text(entry.get("content", ""))[:180],
             }
             for key, entry in rows

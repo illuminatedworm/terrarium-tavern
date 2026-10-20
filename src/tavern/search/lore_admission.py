@@ -8,14 +8,14 @@ import re
 from collections import Counter
 
 
-def keyword_evidence(entries, query, user_input):
+def keyword_evidence(entries, query, user_input, config):
     from tavern.conversation.context import matches
+    from tavern.search.retrieval import retrieval_title
 
     frequencies = Counter(k.casefold() for e in entries for k in set(e.get("keys", [])))
     accepted, evidence = set(), {}
     for entry in entries:
-        heading = " ".join(str(entry.get(k, "")) for k in ("name", "comment"))
-        heading += " " + entry.get("content", "").split("\n", 1)[0]
+        heading = retrieval_title(entry, config) + " " + entry.get("content", "").split("\n", 1)[0]
         hits, useful = [], []
         for key in entry.get("keys", []):
             if not matches(key, query, entry):

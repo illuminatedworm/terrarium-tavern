@@ -3,7 +3,7 @@
 import asyncio
 import copy
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.context import activate_lore, macros
 
 
@@ -78,6 +78,7 @@ def inject_lore(
         retained=retained | exiting,
         recursive=False,
         max_entries=settings.lore_max_entries,
+        title_heading=settings.retrieval.title_in_retrieval,
         expand_content=lambda text: macros(
             text, card, session["persona"], snapshot["state"], snapshot.get("scopes")
         ),
@@ -95,7 +96,7 @@ def inject_lore(
             continue
         record = {
             "id": entry["id"],
-            "title": entry.get("comment") or entry.get("name") or "世界书",
+            "title": lore_title(entry) or "世界书",
             "content": content,
             "anchor_id": anchor,
             "source_ids": [m["id"] for m in history] + [input_id],

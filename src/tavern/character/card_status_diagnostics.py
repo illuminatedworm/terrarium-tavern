@@ -2,7 +2,7 @@
 
 import re
 
-from tavern.character.cards import lore_entries, normalize, variable_rule_entries
+from tavern.character.cards import is_initvar, lore_entries, normalize, variable_rule_entries
 
 MACRO = re.compile(r"\{\{\s*get(?:global)?var::([^{}]+)}}", re.I)
 HTML = re.compile(r"<(?:details|div|span|table|section|style|script|html|status)\b", re.I)
@@ -58,11 +58,9 @@ def status_display_warnings(document):
     fields.extend(
         (f"世界书第 {i + 1} 条", e.get("content", ""), None)
         for i, e in enumerate(entries)
-        if e.get("enabled", True) and "[initvar]" not in e.get("comment", "").lower()
+        if e.get("enabled", True) and not is_initvar(e)
     )
-    base_init = any(
-        "[initvar]" in str(e.get("comment") or "").lower() for e in entries if e.get("content", "").strip()
-    )
+    base_init = any(is_initvar(e) for e in entries if e.get("content", "").strip())
     initialized = [base_init or bool(INIT.search(text)) for text in openings]
     rules = any(e.get("content", "").strip() for e in variable_rule_entries(document))
     warnings, candidates = [], []

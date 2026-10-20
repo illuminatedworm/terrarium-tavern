@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import jsonpatch
 import jsonpointer
 
-from tavern.character.cards import lore_entries, normalize
+from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.context import get_path, search
 from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
 from tavern.core.model_view import ModelView, state_for_model
@@ -377,7 +377,7 @@ class TrackerTask:
                 )
                 ids = set(selected["ids"])
                 return [
-                    {"name": e.get("comment", ""), "content": e["content"]}
+                    {"name": lore_title(e), "content": e["content"]}
                     for e in selected["entries"]
                     if e["enabled"] and e["id"] in ids
                 ]
@@ -419,7 +419,7 @@ class TrackerTask:
                 )
                 ids = set(fuse(result["rankings"], result["entries"], self.settings.retrieval))
                 matches = [e for e in result["entries"] if e["enabled"] and e["id"] in ids]
-            return [{"name": e.get("comment", ""), "content": e["content"]} for e in matches]
+            return [{"name": lore_title(e), "content": e["content"]} for e in matches]
         if name == "search_memory":
             records = self.references.previous(self.memory)["records"]
             records = [r for r in records if r["status"] not in ("deleted", "superseded")]
