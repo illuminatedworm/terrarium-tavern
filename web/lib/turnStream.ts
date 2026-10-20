@@ -6,6 +6,8 @@ export interface TurnEvent {
   kind: string;
   payload: Record<string, any>;
 }
+/** A row of the turn trace: a streamed event, or a script log added by the page. */
+export type TraceEvent = Pick<TurnEvent, 'kind' | 'payload'>;
 
 /** A model step can become tool activity or be rejected after text was previewed. */
 export function turnDraft(current: string, event: TurnEvent): string {

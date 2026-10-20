@@ -1,4 +1,5 @@
 """Visible, opt-in story compatibility settings and deterministic request frames."""
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,12 +53,16 @@ def prefix_frames(config: KeminiConfig) -> list[dict]:
     """An absolute preamble, outside recipe, worldbook and script depth indexing."""
     if not config.enabled:
         return []
-    return [{"role": role, "content": text, "source": source, "message_type": source}
-            for role, text, source in (
-                ("user", config.filler_text, "kemini_filler"),
-                ("system", config.clear_prompt, "kemini_clear"),
-                ("user", config.identity_prompt, "kemini_identity"),
-                ("system", config.info_prompt, "kemini_info")) if text.strip()]
+    return [
+        {"role": role, "content": text, "source": source, "message_type": source}
+        for role, text, source in (
+            ("user", config.filler_text, "kemini_filler"),
+            ("system", config.clear_prompt, "kemini_clear"),
+            ("user", config.identity_prompt, "kemini_identity"),
+            ("system", config.info_prompt, "kemini_info"),
+        )
+        if text.strip()
+    ]
 
 
 def control_text(config: KeminiConfig) -> str:
@@ -72,26 +77,42 @@ def control_text(config: KeminiConfig) -> str:
     return "\n\n".join(part for part in parts if part.strip())
 
 
-def transport_tools(tools: list[dict] | None, config: KeminiConfig, choice: str | dict = "auto") -> list[dict] | None:
+def transport_tools(
+    tools: list[dict] | None, config: KeminiConfig, choice: str | dict = "auto"
+) -> list[dict] | None:
     """The caller's forced maintenance tool always wins; never widen that request."""
     if not config.enabled or choice != "auto":
         return tools
-    return [*(tools or []), {"type": "function", "function": {
-        "name": TOOL_NAME, "description": config.tool_description,
-        "parameters": {"type": "object", "properties": {"content": {"type": "string",
-            "description": config.content_description}},
-            "required": ["content"]}}}]
+    return [
+        *(tools or []),
+        {
+            "type": "function",
+            "function": {
+                "name": TOOL_NAME,
+                "description": config.tool_description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {"content": {"type": "string", "description": config.content_description}},
+                    "required": ["content"],
+                },
+            },
+        },
+    ]
 
 
 def turn_frames(config: KeminiConfig) -> list[dict]:
     """Request-local requirements, never historical dialogue or durable updates."""
     if not config.enabled:
         return []
-    return [{"role": role, "content": text, "source": source, "message_type": source}
-            for role, text, source in (
-                ("system", config.roleplay_prompt, "kemini_roleplay"),
-                ("assistant", config.acknowledgement, "kemini_acknowledgement"),
-                ("user", control_text(config), "kemini_control")) if text.strip()]
+    return [
+        {"role": role, "content": text, "source": source, "message_type": source}
+        for role, text, source in (
+            ("system", config.roleplay_prompt, "kemini_roleplay"),
+            ("assistant", config.acknowledgement, "kemini_acknowledgement"),
+            ("user", control_text(config), "kemini_control"),
+        )
+        if text.strip()
+    ]
 
 
 def inject_half(messages: list[dict], config: KeminiConfig) -> list[dict]:

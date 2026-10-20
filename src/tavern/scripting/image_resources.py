@@ -6,8 +6,8 @@ from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
 
 TEMPLATE = re.compile(r"\$(?:[1-9]\d?|<[^>]+>|&|\{[^}]+\})|\{\{[^}]+\}\}")
-ATTR = re.compile(r'''(?<![\w:-])([a-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))''', re.I)
-CSS_IMAGE = re.compile(r'''url\(\s*(["']?)(.*?)\1\s*\)''', re.I)
+ATTR = re.compile(r"""(?<![\w:-])([a-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+CSS_IMAGE = re.compile(r"""url\(\s*(["']?)(.*?)\1\s*\)""", re.I)
 
 
 def declared_image(url, declarations):
@@ -18,10 +18,19 @@ def declared_image(url, declarations):
     """
     decoded = unquote(url)
     parsed = urlsplit(decoded)
-    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.fragment or TEMPLATE.search(decoded):
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.fragment
+        or TEMPLATE.search(decoded)
+    ):
         return False
-    if (any(part in (".", "..") for part in parsed.path.split("/")) or "\\" in decoded
-            or re.search(r"%(?:2e|2f|5c)", decoded, re.I)):
+    if (
+        any(part in (".", "..") for part in parsed.path.split("/"))
+        or "\\" in decoded
+        or re.search(r"%(?:2e|2f|5c)", decoded, re.I)
+    ):
         return False
     for declaration in declarations:
         declaration = unquote(declaration)
@@ -30,18 +39,27 @@ def declared_image(url, declarations):
             # segment. The host stays literal and dot segments remain forbidden.
             if urlsplit(declaration).netloc != parsed.netloc:
                 continue
-            pattern = "".join("[^?#]+" if TEMPLATE.fullmatch(part) else re.escape(part)
-                              for part in re.split(f"({TEMPLATE.pattern})", declaration) if part)
+            pattern = "".join(
+                "[^?#]+" if TEMPLATE.fullmatch(part) else re.escape(part)
+                for part in re.split(f"({TEMPLATE.pattern})", declaration)
+                if part
+            )
             if re.fullmatch(pattern, decoded):
                 return True
         elif decoded == declaration:
             return True
         else:
             base = urlsplit(declaration)
-            if (base.scheme == parsed.scheme and base.netloc == parsed.netloc
-                    and not base.query and not base.fragment
-                    and not re.search(r"\.(?:js|mjs|css|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|eot)$", base.path, re.I)
-                    and parsed.path.startswith(base.path.rstrip("/") + "/")):
+            if (
+                base.scheme == parsed.scheme
+                and base.netloc == parsed.netloc
+                and not base.query
+                and not base.fragment
+                and not re.search(
+                    r"\.(?:js|mjs|css|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|eot)$", base.path, re.I
+                )
+                and parsed.path.startswith(base.path.rstrip("/") + "/")
+            ):
                 return True
     return False
 
@@ -73,18 +91,26 @@ def rewrite_markup(html, replace, *, images_only=False):
             def attribute(match):
                 name = match[1].lower()
                 value = unescape(next(v for v in match.groups()[1:] if v is not None))
-                image = (tag == "img" and name in ("src", "srcset")
-                         or tag == "source" and name == "srcset"
-                         or tag == "image" and name in ("href", "xlink:href")
-                         or name == "poster")
+                image = (
+                    tag == "img"
+                    and name in ("src", "srcset")
+                    or tag == "source"
+                    and name == "srcset"
+                    or tag == "image"
+                    and name in ("href", "xlink:href")
+                    or name == "poster"
+                )
                 if name == "style":
                     result = CSS_IMAGE.sub(css_value, value)
                 elif image and name == "srcset":
                     # Data URLs contain commas and are already self-contained.
                     if value.lstrip().startswith("data:"):
                         return match[0]
-                    result = ", ".join(" ".join([replace(parts[0]), *parts[1:]])
-                                       for item in value.split(",") if (parts := item.split()))
+                    result = ", ".join(
+                        " ".join([replace(parts[0]), *parts[1:]])
+                        for item in value.split(",")
+                        if (parts := item.split())
+                    )
                 elif image or not images_only and name in ("src", "poster"):
                     result = replace(value)
                 else:

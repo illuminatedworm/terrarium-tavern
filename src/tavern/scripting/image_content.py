@@ -1,4 +1,5 @@
 """Each native protocol owns its image block shape; inputs use canonical chat parts."""
+
 import copy
 import re
 
@@ -35,7 +36,9 @@ def response_content(content, role):
     for part in parts(content):
         kind = part.get("type", "text")
         if kind in ("text", "input_text", "output_text"):
-            result.append({**copy.deepcopy(part), "type": "output_text" if role == "assistant" else "input_text"})
+            result.append(
+                {**copy.deepcopy(part), "type": "output_text" if role == "assistant" else "input_text"}
+            )
         elif kind == "image_url" and role == "user":
             image = {"type": "input_image", "image_url": image_url(part)}
             if "detail" in part["image_url"]:

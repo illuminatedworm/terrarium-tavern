@@ -4,6 +4,7 @@ The SDK owns serialization and streaming. Runtime still owns tools, retries,
 context and cancellation; an operation-local HTTP observer records the actual
 serialized request and closes streams even when the SDK iterator is cancelled.
 """
+
 import json
 from collections.abc import Callable
 from contextlib import aclosing, asynccontextmanager
@@ -35,6 +36,7 @@ class _ObservedEvents(httpx.AsyncByteStream):
     SDK still validates/handles its stream. Runtime receives the same original
     payload, including opaque signatures and provider-specific usage fields.
     """
+
     def __init__(self, response, operation):
         self.response, self.operation = response, operation
 
@@ -66,14 +68,22 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
             raise ValueError("模型列表超过 100 页，未更新本地列表")
         if operation and operation.capture:
             operation.capture(request)
-        response = (await self.debug.send(self.http, request, stream=True) if self.debug is not None
-                    else await self.http.send(request, stream=True))
+        response = (
+            await self.debug.send(self.http, request, stream=True)
+            if self.debug is not None
+            else await self.http.send(request, stream=True)
+        )
         if operation is not None:
             operation.responses.append(response)
             if response.status_code == 200 and request.url.path.endswith(":streamGenerateContent"):
-                headers = {k: v for k, v in response.headers.items() if k not in ("content-length", "content-encoding")}
-                response = httpx.Response(200, headers=headers, request=request,
-                    stream=_ObservedEvents(response, operation))
+                headers = {
+                    k: v
+                    for k, v in response.headers.items()
+                    if k not in ("content-length", "content-encoding")
+                }
+                response = httpx.Response(
+                    200, headers=headers, request=request, stream=_ObservedEvents(response, operation)
+                )
                 operation.responses.append(response)
         return response
 
@@ -84,10 +94,17 @@ class GenAITransport:
         url = urlsplit(endpoint(base_url, "gemini", resource="models", api_path=api_path))
         self.transport = _RuntimeHTTP(http, debug)
         self.http = httpx.AsyncClient(transport=self.transport, trust_env=False)
-        self.client = genai.Client(api_key=key, vertexai=False, http_options=types.HttpOptions(
-            base_url=f"{url.scheme}://{url.netloc}", api_version=url.path.removesuffix("/models").strip("/"),
-            httpx_async_client=self.http, client_args={"trust_env": False},
-            retry_options=types.HttpRetryOptions(attempts=1)))
+        self.client = genai.Client(
+            api_key=key,
+            vertexai=False,
+            http_options=types.HttpOptions(
+                base_url=f"{url.scheme}://{url.netloc}",
+                api_version=url.path.removesuffix("/models").strip("/"),
+                httpx_async_client=self.http,
+                client_args={"trust_env": False},
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
 
     @asynccontextmanager
     async def operation(self, capture=None):
@@ -98,7 +115,9 @@ class GenAITransport:
         except ValidationError:
             # Pydantic errors include input fragments, potentially opaque native
             # state. Do not echo those fragments into runtime/tool diagnostics.
-            raise ValueError("Gemini 消息或参数不符合官方 SDK 格式，请检查工具定义、消息内容和思考签名") from None
+            raise ValueError(
+                "Gemini 消息或参数不符合官方 SDK 格式，请检查工具定义、消息内容和思考签名"
+            ) from None
         except errors.APIError as error:
             # Keep the application's existing HTTP error/fallback contract.
             if isinstance(error.response, httpx.Response):
@@ -116,17 +135,26 @@ class GenAITransport:
     @staticmethod
     def arguments(model, body, *, stream=False):
         config = dict(body.get("generationConfig", {}))
-        for wire, target in (("systemInstruction", "system_instruction"), ("tools", "tools"),
-                            ("toolConfig", "tool_config"), ("cachedContent", "cached_content")):
+        for wire, target in (
+            ("systemInstruction", "system_instruction"),
+            ("tools", "tools"),
+            ("toolConfig", "tool_config"),
+            ("cachedContent", "cached_content"),
+        ):
             if wire in body:
                 config[target] = body[wire]
-        config.update(automatic_function_calling={"disable": True}, automatic_continuation=False,
-                      should_return_http_response=not stream)
+        config.update(
+            automatic_function_calling={"disable": True},
+            automatic_continuation=False,
+            should_return_http_response=not stream,
+        )
         # Keep deployment aliases a single path segment, matching endpoint()
         # and the address shown in settings (including slashes in relay IDs).
-        return {"model": "models/" + quote(model.removeprefix("models/"), safe="-._"),
-                "contents": body.get("contents", []),
-                "config": types.GenerateContentConfig.model_validate(config)}
+        return {
+            "model": "models/" + quote(model.removeprefix("models/"), safe="-._"),
+            "contents": body.get("contents", []),
+            "config": types.GenerateContentConfig.model_validate(config),
+        }
 
     async def generate(self, model, body, capture):
         async with self.operation(capture):
@@ -136,7 +164,9 @@ class GenAITransport:
 
     async def stream(self, model, body, capture):
         async with self.operation(capture) as operation:
-            chunks = await self.client.aio.models.generate_content_stream(**self.arguments(model, body, stream=True))
+            chunks = await self.client.aio.models.generate_content_stream(
+                **self.arguments(model, body, stream=True)
+            )
             async with aclosing(chunks):
                 async for chunk in chunks:
                     headers = dict(chunk.sdk_http_response.headers or {}) if chunk.sdk_http_response else {}
@@ -145,7 +175,11 @@ class GenAITransport:
                     yield operation.raw_event, headers
 
     async def create_cache(self, prefix, ttl):
-        config = {"contents": prefix["contents"], "system_instruction": prefix["systemInstruction"], "ttl": ttl}
+        config = {
+            "contents": prefix["contents"],
+            "system_instruction": prefix["systemInstruction"],
+            "ttl": ttl,
+        }
         if "tools" in prefix:
             config.update(tools=prefix["tools"], tool_config=prefix["toolConfig"])
         async with self.operation():

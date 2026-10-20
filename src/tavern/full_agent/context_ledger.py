@@ -1,4 +1,5 @@
 """Replay durable runtime frames and append only changes to their effective values."""
+
 import copy
 import json
 
@@ -25,10 +26,18 @@ class ContextLedger:
     def __init__(self, settings, fixed, tools, document, snapshot, records, input_id, history):
         self.origin = response_origin(settings)
         window = snapshot["full_agent"]["window"]
-        signature = fingerprint({"fixed": fixed, "tools": tools, "document": document,
-            "reasoning": [settings.reasoning_effort, settings.reasoning_format],
-            "removed_lore": [r for r in snapshot.get("lore_injections", []) if r.get("manually_removed")]})
-        previous = next((m["_context_baseline"] for m in reversed(records) if m.get("_context_baseline")), None)
+        signature = fingerprint(
+            {
+                "fixed": fixed,
+                "tools": tools,
+                "document": document,
+                "reasoning": [settings.reasoning_effort, settings.reasoning_format],
+                "removed_lore": [r for r in snapshot.get("lore_injections", []) if r.get("manually_removed")],
+            }
+        )
+        previous = next(
+            (m["_context_baseline"] for m in reversed(records) if m.get("_context_baseline")), None
+        )
         observed = {}
         for message in records:
             if message.get("_context_baseline"):
@@ -45,21 +54,37 @@ class ContextLedger:
             self.reason = "context_sources_changed"
         elif any(history[key] != observed[key] for key in history.keys() & observed.keys()):
             self.reason = "history_content_changed"
-        self.epoch = (fingerprint([VERSION, signature, self.origin, window["id"], input_id, history])
-                      if self.reason else previous["epoch"])
+        self.epoch = (
+            fingerprint([VERSION, signature, self.origin, window["id"], input_id, history])
+            if self.reason
+            else previous["epoch"]
+        )
         # Changing local instructions or tools requires a new runtime baseline,
         # but does not invalidate an unchanged response from the same provider.
         # Keep a separate generation so a model switch A -> B -> A cannot revive
         # opaque A-state from before the switch.
-        self.native_epoch = (previous.get("native_epoch", previous["epoch"])
-                             if previous and previous.get("origin") == self.origin
-                             else self.epoch)
+        self.native_epoch = (
+            previous.get("native_epoch", previous["epoch"])
+            if previous and previous.get("origin") == self.origin
+            else self.epoch
+        )
         self.additions, self.invalidations = [], []
         self.seen, self.calls = {}, {}
         if self.reason:
-            self.additions.append({"role": "system", "content": "", "_context_baseline": {
-                "version": VERSION, "signature": signature, "origin": self.origin, "epoch": self.epoch,
-                "history": dict(history), "native_epoch": self.native_epoch}})
+            self.additions.append(
+                {
+                    "role": "system",
+                    "content": "",
+                    "_context_baseline": {
+                        "version": VERSION,
+                        "signature": signature,
+                        "origin": self.origin,
+                        "epoch": self.epoch,
+                        "history": dict(history),
+                        "native_epoch": self.native_epoch,
+                    },
+                }
+            )
 
     def replay(self, message, source="agent_tools"):
         if message.get("_context_baseline") or message.get("_full_agent_final"):
@@ -76,8 +101,10 @@ class ContextLedger:
 
     def native_message(self, message):
         has_native = any(k in message for k in (*REASONING_FIELDS, "_native_response"))
-        reference = {"message_id": message.get("message_id"),
-                     "response_id": (message.get("_native_response") or {}).get("response_id")}
+        reference = {
+            "message_id": message.get("message_id"),
+            "response_id": (message.get("_native_response") or {}).get("response_id"),
+        }
         if has_native and message.get("_native_epoch", message.get("_context_epoch")) != self.native_epoch:
             self.invalidations.append({**reference, "reason": "native_context_changed"})
             return portable(message)
@@ -104,8 +131,11 @@ class ContextLedger:
                 self.seen["handoff"] = args["content"]
             else:
                 previous = self.seen.get("plot", {})
-                self.seen["plot"] = {"enabled": True, "text": args["content"],
-                                          "checkpoint": previous.get("checkpoint")}
+                self.seen["plot"] = {
+                    "enabled": True,
+                    "text": args["content"],
+                    "checkpoint": previous.get("checkpoint"),
+                }
 
     def update(self, source, content, *, value=None):
         value = content if value is None else value
@@ -115,15 +145,26 @@ class ContextLedger:
             if source not in self.seen or not self.seen[source]:
                 return None
             content = CLEAR_TEXT[source]
-        frame = {"role": "system", "content": content, "source": source,
-                 "_runtime_context": {"epoch": self.epoch, "value": copy.deepcopy(value)}}
+        frame = {
+            "role": "system",
+            "content": content,
+            "source": source,
+            "_runtime_context": {"epoch": self.epoch, "value": copy.deepcopy(value)},
+        }
         self.seen[source] = copy.deepcopy(value)
         self.additions.append(frame)
         return frame
 
     def audit(self):
-        return {"version": VERSION, "epoch": self.epoch, "native_epoch": self.native_epoch,
-                "rebuild_reason": self.reason,
-                "native_replay_invalidations": self.invalidations,
-                "updates": [{"source": m["source"], "value_sha256": fingerprint(m["_runtime_context"]["value"])}
-                            for m in self.additions if "_runtime_context" in m]}
+        return {
+            "version": VERSION,
+            "epoch": self.epoch,
+            "native_epoch": self.native_epoch,
+            "rebuild_reason": self.reason,
+            "native_replay_invalidations": self.invalidations,
+            "updates": [
+                {"source": m["source"], "value_sha256": fingerprint(m["_runtime_context"]["value"])}
+                for m in self.additions
+                if "_runtime_context" in m
+            ],
+        }

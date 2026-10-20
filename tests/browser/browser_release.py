@@ -1,4 +1,5 @@
 """Release UI acceptance against a fresh, disposable store and local model stub."""
+
 import asyncio
 import json
 import os
@@ -24,17 +25,36 @@ class Provider(BaseHTTPRequestHandler):
 
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["content-length"])))
-        content = ("旅人停在灯塔前，海风吹过长廊。\n\n" * 24
-                   + "<tavern_retrieval>旅人在灯塔前等待守卫。</tavern_retrieval>")
+        content = (
+            "旅人停在灯塔前，海风吹过长廊。\n\n" * 24
+            + "<tavern_retrieval>旅人在灯塔前等待守卫。</tavern_retrieval>"
+        )
         if payload.get("stream"):
-            chunk = {"id": "fixture", "object": "chat.completion.chunk", "created": 0, "model": "fixture",
-                     "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": "stop"}]}
+            chunk = {
+                "id": "fixture",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "fixture",
+                "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": "stop"}],
+            }
             body = (f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n").encode()
             mime = "text/event-stream"
         else:
-            body = json.dumps({"id": "fixture", "choices": [{"message": {"role": "assistant", "content":
-                json.dumps({"text": "旅人到达灯塔。", "memories": []})}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 111, "completion_tokens": 20, "total_tokens": 131}}).encode()
+            body = json.dumps(
+                {
+                    "id": "fixture",
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"text": "旅人到达灯塔。", "memories": []}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 111, "completion_tokens": 20, "total_tokens": 131},
+                }
+            ).encode()
             mime = "application/json"
         self.send_response(200)
         self.send_header("Content-Type", mime)
@@ -64,37 +84,56 @@ async def main():
         for width, height, zoom in [(1440, 900, 1), (1280, 720, 1), (390, 844, 1), (1440, 900, 2)]:
             # Browser zoom reduces the CSS viewport; a scale factor preserves the
             # physical size of the screenshot while exercising identical reflow.
-            context = await browser.new_context(viewport={"width": width // zoom, "height": height // zoom},
-                                                device_scale_factor=zoom)
+            context = await browser.new_context(
+                viewport={"width": width // zoom, "height": height // zoom}, device_scale_factor=zoom
+            )
             page = await context.new_page()
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(BASE)
             label = f"{width}x{height}-zoom{zoom}"
             await assert_viewport(page, label + ":home")
             if width // zoom < 760:
-                await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
+                await page.get_by_role(
+                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                ).click()
             await page.get_by_role("button", name="设置", exact=True).click()
             dialog = page.get_by_role("dialog", name="设置")
             # SettingsPanel loads lazily; measure the frame only once its layout exists.
             await dialog.locator(".settings-layout").wait_for()
             initial = (await dialog.bounding_box())["height"]
-            configuration = (await (await page.request.get(BASE + '/api/settings')).json())
+            configuration = await (await page.request.get(BASE + "/api/settings")).json()
+
             async def navigate(item):
-                group = {'full_agent':'full agent','half_agent':'half agent','shared':'通用'}[item['scope']]
+                group = {"full_agent": "full agent", "half_agent": "half agent", "shared": "通用"}[
+                    item["scope"]
+                ]
                 if width // zoom <= 760:
-                    await dialog.locator('.settings-mode-buttons').get_by_role('button',name=group,exact=True).click()
-                    await dialog.get_by_role('combobox',name='设置页面',exact=True).select_option(item['id'])
+                    await (
+                        dialog.locator(".settings-mode-buttons")
+                        .get_by_role("button", name=group, exact=True)
+                        .click()
+                    )
+                    await dialog.get_by_role("combobox", name="设置页面", exact=True).select_option(
+                        item["id"]
+                    )
                 else:
-                    await dialog.locator('.settings-pages').get_by_role('button',name=group+' '+item['label'],exact=True).click()
-            for item in configuration['pages']:
+                    await (
+                        dialog.locator(".settings-pages")
+                        .get_by_role("button", name=group + " " + item["label"], exact=True)
+                        .click()
+                    )
+
+            for item in configuration["pages"]:
                 await navigate(item)
-                await assert_viewport(page, label + item['id'])
+                await assert_viewport(page, label + item["id"])
                 assert abs((await dialog.bounding_box())["height"] - initial) < 1
-                checked.append(label + ":" + item['id'])
-            await navigate(next(item for item in configuration['pages'] if item['id']=='shared.storage'))
+                checked.append(label + ":" + item["id"])
+            await navigate(next(item for item in configuration["pages"] if item["id"] == "shared.storage"))
             await page.locator(".storage-report").wait_for()
             await page.screenshot(path=str(OUTPUT / f"settings-{label}.png"))
-            await navigate(next(item for item in configuration['pages'] if item['id']=='half_agent.prompts'))
+            await navigate(
+                next(item for item in configuration["pages"] if item["id"] == "half_agent.prompts")
+            )
             await dialog.get_by_role("button", name="放大编辑：顶级规则/引导", exact=True).click()
             editor = page.get_by_role("dialog", name="编辑：顶级规则/引导", exact=True)
             editor_height = (await editor.bounding_box())["height"]
@@ -102,31 +141,43 @@ async def main():
             assert abs((await editor.bounding_box())["height"] - editor_height) < 1
             await assert_viewport(page, label + ":expanded-editor")
             await editor.get_by_role("button", name="关闭放大编辑", exact=True).click()
-            await page.get_by_role('alertdialog').get_by_role('button',name='放弃修改').click()
+            await page.get_by_role("alertdialog").get_by_role("button", name="放弃修改").click()
             await dialog.get_by_role("button", name="关闭", exact=True).click()
             await page.get_by_role("tab", name="角色卡", exact=True).click()
-            await page.locator('.card-side-item').first.click()
-            for tab in await page.locator('.editor-tabs button').all():
+            await page.locator(".card-side-item").first.click()
+            for tab in await page.locator(".editor-tabs button").all():
                 await tab.click()
                 await assert_viewport(page, label + ":card-author")
             if width // zoom < 760:
-                await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
+                await page.get_by_role(
+                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                ).click()
             await page.get_by_role("tab", name="会话", exact=True).click()
-            await page.locator('.session-open').first.click()
-            await page.locator('.messages').wait_for()
-            async with page.expect_response(lambda response: response.url.endswith("/preview")
-                and response.request.method == "POST" and response.request.post_data_json.get("text") == "前往灯塔") as counted:
+            await page.locator(".session-open").first.click()
+            await page.locator(".messages").wait_for()
+            async with page.expect_response(
+                lambda response: (
+                    response.url.endswith("/preview")
+                    and response.request.method == "POST"
+                    and response.request.post_data_json.get("text") == "前往灯塔"
+                )
+            ) as counted:
                 await page.get_by_placeholder("说些什么，或描述你的行动…").fill("前往灯塔")
             stats = await (await counted.value).json()
             assert stats["token_counting"]["unit"] == "tokens"
             # Composer shows "current / context window tokens" for the counted draft.
-            await page.locator(".composer-meta").get_by_text(
-                re.compile(rf"^{stats['estimated_tokens']:,} / [\d,]+ tokens$")).wait_for()
+            await (
+                page.locator(".composer-meta")
+                .get_by_text(re.compile(rf"^{stats['estimated_tokens']:,} / [\d,]+ tokens$"))
+                .wait_for()
+            )
             await page.get_by_role("button", name="发送", exact=True).click()
-            await page.locator('.message.assistant').nth(1).wait_for(timeout=30000)
+            await page.locator(".message.assistant").nth(1).wait_for(timeout=30000)
             await page.get_by_role("button", name="发送", exact=True).wait_for()
             await assert_viewport(page, label + ":dialogue")
-            await page.locator('.messages').evaluate("e => {e.scrollTop=0; e.dispatchEvent(new Event('scroll'));}")
+            await page.locator(".messages").evaluate(
+                "e => {e.scrollTop=0; e.dispatchEvent(new Event('scroll'));}"
+            )
             jump = page.get_by_role("button", name="跳到最新", exact=True)
             await jump.wait_for()
             assert await jump.evaluate("e=>getComputedStyle(e).position") == "absolute"
@@ -138,10 +189,14 @@ async def main():
             await page.locator(".regenerate-bar").get_by_role("button", name="重新生成", exact=False).click()
             await page.get_by_role("button", name="发送", exact=True).wait_for(timeout=30000)
             await page.get_by_role("button", name="后台工作记录", exact=False).click()
-            await page.locator('.work-turn').first.wait_for()
+            await page.locator(".work-turn").first.wait_for()
             await assert_viewport(page, label + ":work-records")
             await page.get_by_role("button", name="返回对话", exact=True).click()
-            for button, title in [("变量与记忆", "变量与记忆"), ("剧情分支", "新建对话"), ("上下文", "上下文预览")]:
+            for button, title in [
+                ("变量与记忆", "变量与记忆"),
+                ("剧情分支", "新建对话"),
+                ("上下文", "上下文预览"),
+            ]:
                 await page.get_by_role("button", name=button, exact=False).first.click()
                 modal = page.get_by_role("dialog")
                 await modal.get_by_role("heading", name=title, exact=True).wait_for()
@@ -154,12 +209,19 @@ async def main():
             # Clicking the open rail page collapses the inspector, so only expand it.
             if await page.get_by_role("button", name="展开右侧栏", exact=True).is_visible():
                 await page.get_by_role("button", name="展开右侧栏", exact=True).click()
-            assert await page.get_by_role("tab", name="MVU 变量", exact=True).get_attribute("aria-selected") == "true"
-            assert await page.locator('section[aria-label="MVU 变量"] > details').get_attribute("open") is None
+            assert (
+                await page.get_by_role("tab", name="MVU 变量", exact=True).get_attribute("aria-selected")
+                == "true"
+            )
+            assert (
+                await page.locator('section[aria-label="MVU 变量"] > details').get_attribute("open") is None
+            )
             await assert_viewport(page, label + ":mvu")
             if width // zoom < 760:
                 await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
-                await page.get_by_role("button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True).click()
+                await page.get_by_role(
+                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                ).click()
             await page.get_by_role("button", name="用户角色", exact=False).click()
             await assert_viewport(page, label + ":persona")
             await page.get_by_role("button", name="阅读排版", exact=False).click()
@@ -170,13 +232,18 @@ async def main():
             await page.get_by_role("dialog").get_by_role("button", name="关闭", exact=True).click()
             await page.get_by_role("button", name="开始新故事", exact=True).click()
             await assert_viewport(page, label + ":story-picker")
-            await page.locator('.story-card-option').first.click()
+            await page.locator(".story-card-option").first.click()
             await assert_viewport(page, label + ":story-setup")
             await context.close()
         await browser.close()
     assert not errors, errors
-    report = {"viewports": 4, "settings_pages": len(checked), "page_errors": errors,
-              "checks": checked, "zoom_method": "equivalent CSS viewport with 2x device scale"}
+    report = {
+        "viewports": 4,
+        "settings_pages": len(checked),
+        "page_errors": errors,
+        "checks": checked,
+        "zoom_method": "equivalent CSS viewport with 2x device scale",
+    }
     (OUTPUT / "browser.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False))
 
@@ -201,8 +268,12 @@ if __name__ == "__main__":
             card = store.import_card(filename.read_bytes(), filename.name)
             store.new_session(SessionCreate(card_id=card["id"]))
         with (OUTPUT / "server.log").open("w", encoding="utf-8") as log:
-            process = subprocess.Popen([sys.executable, "-m", "tavern", "--port", "8015", "--data", data],
-                stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            process = subprocess.Popen(
+                [sys.executable, "-m", "tavern", "--port", "8015", "--data", data],
+                stdout=log,
+                stderr=log,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
             try:
                 for _ in range(100):
                     try:
@@ -211,7 +282,7 @@ if __name__ == "__main__":
                     except httpx.HTTPError:
                         if process.poll() is not None:
                             raise RuntimeError("Release test server failed to start")
-                        time.sleep(.1)
+                        time.sleep(0.1)
                 asyncio.run(main())
             finally:
                 try:

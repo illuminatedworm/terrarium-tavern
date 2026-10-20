@@ -1,4 +1,5 @@
 """Official checkpoints stay local to Advisor and are invalidated by model changes."""
+
 import copy
 
 import pytest
@@ -21,7 +22,11 @@ class Cloud(ScriptedLLM):
 
     async def chat_complete(self, messages, **kwargs):
         self.call_log.append(copy.deepcopy(messages))
-        self.last_native_response = {"items": [{"type": "compaction", "encrypted_content": "advisor-only-encrypted-state"}]} if self.valid else None
+        self.last_native_response = (
+            {"items": [{"type": "compaction", "encrypted_content": "advisor-only-encrypted-state"}]}
+            if self.valid
+            else None
+        )
         return ChatResponse(content="OK", finish_reason="stop", usage={}, model="fixture")
 
 
@@ -34,14 +39,18 @@ async def test_official_checkpoint_is_independent_and_requires_valid_state(tmp_p
     settings.shared.advisor.keep_recent = 1
     settings.shared.advisor.context_strategy = "openai_compact"
     store.save_settings(settings)
-    session = store.new_session(SessionCreate(card_id=standard["card"], agent_mode="full_agent", channel_origin="chatgpt"))
+    session = store.new_session(
+        SessionCreate(card_id=standard["card"], agent_mode="full_agent", channel_origin="chatgpt")
+    )
     for index in range(3):
         result = await ask(advisor, session["id"], ToolLLM([]), f"云端咨询{index}")
         assert result["status"] == "completed", result
     before = copy.deepcopy(store.session(session["id"])["snapshot"])
     model = Cloud(valid)
     advisor.provider_factory = lambda: model
-    run = advisor.submit(session["id"], ConsultationRequest(expected_revision=3, operation_id=uid(), compact=True))
+    run = advisor.submit(
+        session["id"], ConsultationRequest(expected_revision=3, operation_id=uid(), compact=True)
+    )
     await advisor.tasks[run["id"]]
     result = advisor.data.run(run["id"])
     assert result["status"] == ("completed" if valid else "error"), result

@@ -4,6 +4,7 @@ The generator returns a proposal, never committed state. A whole invocation is
 atomic: failed later batches cannot advance the coverage of earlier draft batches.
 CallBudget belongs to the Runtime turn, so replanning a window cannot reset it.
 """
+
 import copy
 import json
 import time
@@ -74,12 +75,26 @@ def _merge_history_sources(supplied, additional):
         elif "exposed_excerpts" in supplied[mid]:
             # Review may reveal another fragment of an already searched long
             # message. Keep all actually exposed fragments, never the unseen gap.
-            supplied[mid]["exposed_excerpts"] = list(dict.fromkeys([
-                *supplied[mid]["exposed_excerpts"], *message.get("exposed_excerpts", [])]))
+            supplied[mid]["exposed_excerpts"] = list(
+                dict.fromkeys([*supplied[mid]["exposed_excerpts"], *message.get("exposed_excerpts", [])])
+            )
 
 
-def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids, settings, review_ids=None,
-                     on_invalid=None, on_suppressed=None, suppressed_ids=None, defer_retention=False):
+def apply_operations(
+    memory,
+    parsed,
+    originals,
+    expanded,
+    evidence,
+    *,
+    fresh_ids,
+    settings,
+    review_ids=None,
+    on_invalid=None,
+    on_suppressed=None,
+    suppressed_ids=None,
+    defer_retention=False,
+):
     if not isinstance(parsed, dict) or not isinstance(parsed.get("operations"), list):
         raise ValueError("记忆返回格式无效：需要 operations 列表；自定义提示词不得要求旧 text/memories 协议")
     if len(parsed["operations"]) > 100:
@@ -107,11 +122,17 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
                 candidate = Record.model_validate({**optional, "id": rid})
                 if not candidate.sources or not any(s.message_id in fresh_ids for s in candidate.sources):
                     raise ValueError("回调缺少本批原文")
-                if any(s.message_id not in expanded or s.excerpt not in expanded[s.message_id].get(
-                        "model", expanded[s.message_id]["raw"]) for s in candidate.sources):
+                if any(
+                    s.message_id not in expanded
+                    or s.excerpt not in expanded[s.message_id].get("model", expanded[s.message_id]["raw"])
+                    for s in candidate.sources
+                ):
                     raise ValueError("回调摘录与原文不匹配")
-                if any("exposed_excerpts" in expanded[s.message_id] and not any(
-                        s.excerpt in part for part in expanded[s.message_id]["exposed_excerpts"]) for s in candidate.sources):
+                if any(
+                    "exposed_excerpts" in expanded[s.message_id]
+                    and not any(s.excerpt in part for part in expanded[s.message_id]["exposed_excerpts"])
+                    for s in candidate.sources
+                ):
                     raise ValueError("回调摘录未在补查结果中展示")
                 if not set(candidate.setting_refs) <= supplied:
                     raise ValueError("回调引用了未提供的设定")
@@ -119,9 +140,15 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
                 if on_invalid:
                     on_invalid({"count": 1, "message": "已丢弃一条无效的可选原话记录：" + str(error)})
                 continue
-        if action not in ("add", "revise", "complete", "merge", "remove") or not isinstance(rid, str) or not 0 < len(rid) <= 100:
+        if (
+            action not in ("add", "revise", "complete", "merge", "remove")
+            or not isinstance(rid, str)
+            or not 0 < len(rid) <= 100
+        ):
             raise ValueError("记忆操作或条目ID无效；原记忆保留")
-        if rid in blocked_ids or (action == "merge" and any(other in blocked_ids for other in op.get("merge_ids", []))):
+        if rid in blocked_ids or (
+            action == "merge" and any(other in blocked_ids for other in op.get("merge_ids", []))
+        ):
             suppress(rid, "已忽略一条依赖手工删除内容的记忆操作")
             continue
         old = by_id.get(rid)
@@ -151,7 +178,9 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
             raise ValueError("模型不能直接设置自动移除状态；请使用 remove 或 merge 操作")
         for source in record["sources"]:
             mid = source["message_id"]
-            if mid not in expanded or source["excerpt"] not in expanded[mid].get("model", expanded[mid]["raw"]):
+            if mid not in expanded or source["excerpt"] not in expanded[mid].get(
+                "model", expanded[mid]["raw"]
+            ):
                 raise ValueError("记忆摘录不在本批提供的原文中；原记忆保留")
             fragments = expanded[mid].get("exposed_excerpts")
             if fragments is not None and not any(source["excerpt"] in part for part in fragments):
@@ -161,29 +190,53 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
             raise ValueError("变化必须引用本批新增剧情，不能重复应用背景历史")
         if not set(record["setting_refs"]) <= supplied:
             raise ValueError("记忆引用了未提供的设定片段")
-        if any(r.get("status") == "deleted" and (
-            (r.get("deleted_hash") == digest(record["content"].strip()) and (
-                not r.get("deleted_sources") or any(s["message_id"] == d["message_id"]
-                    for s in record["sources"] for d in r["deleted_sources"]))) or
-            any(s["message_id"] == d["message_id"] and digest(s["excerpt"]) == d["excerpt_hash"]
-                for s in record["sources"] for d in r.get("deleted_sources", [])))
-               for r in result["records"]):
+        if any(
+            r.get("status") == "deleted"
+            and (
+                (
+                    r.get("deleted_hash") == digest(record["content"].strip())
+                    and (
+                        not r.get("deleted_sources")
+                        or any(
+                            s["message_id"] == d["message_id"]
+                            for s in record["sources"]
+                            for d in r["deleted_sources"]
+                        )
+                    )
+                )
+                or any(
+                    s["message_id"] == d["message_id"] and digest(s["excerpt"]) == d["excerpt_hash"]
+                    for s in record["sources"]
+                    for d in r.get("deleted_sources", [])
+                )
+            )
+            for r in result["records"]
+        ):
             suppress(rid, "已忽略一条试图恢复手工删除内容的记忆操作")
             continue
-        if action == "merge" and any(by_id.get(other, {}).get("status") == "deleted"
-                                     for other in op.get("merge_ids", [])):
+        if action == "merge" and any(
+            by_id.get(other, {}).get("status") == "deleted" for other in op.get("merge_ids", [])
+        ):
             suppress(rid, "已忽略一条涉及手工删除记忆的合并操作")
             continue
-        record["setting_sources"] = [{k: e[k] for k in (
-            "id", "identity", "version", "reference", "anchor", "kind", "historical", "offset") if k in e}
-            for e in evidence if e["id"] in record["setting_refs"]]
+        record["setting_sources"] = [
+            {
+                k: e[k]
+                for k in ("id", "identity", "version", "reference", "anchor", "kind", "historical", "offset")
+                if k in e
+            }
+            for e in evidence
+            if e["id"] in record["setting_refs"]
+        ]
         if review_ids is not None and record["category"] != "uncertain" and not record["setting_refs"]:
             raise ValueError("消除争议必须引用复核提供的补充材料")
         if record["kind"] == "inference" and record["category"] == "current":
             record["category"] = "uncertain"
         if action == "complete":
             record["status"] = "completed"
-        if record["status"] == "completed" and (record["category"] == "open" or (old or {}).get("category") == "open"):
+        if record["status"] == "completed" and (
+            record["category"] == "open" or (old or {}).get("category") == "open"
+        ):
             record["category"] = "episode"
         if action == "remove":
             record["status"] = "superseded"
@@ -192,8 +245,13 @@ def apply_operations(memory, parsed, originals, expanded, evidence, *, fresh_ids
         if action == "merge":
             for other in op.get("merge_ids", []):
                 target = by_id.get(other)
-                if (other == rid or not target or target.get("manual") or target.get("source_stale")
-                        or target["status"] == "deleted"):
+                if (
+                    other == rid
+                    or not target
+                    or target.get("manual")
+                    or target.get("source_stale")
+                    or target["status"] == "deleted"
+                ):
                     raise ValueError("合并来源无效或受手工保护")
                 target["status"] = "superseded"
         if old:
@@ -216,20 +274,36 @@ def _messages(memory, original, expanded, start, end, evidence, settings, docume
         snapshot = original[end - 1].get("snapshot", {})
         source_document = (snapshot.get("content") or {}).get("document", document)
         instruction = macros(instruction, normalize(source_document), persona, snapshot.get("state", {}))
-    return MemoryRequest([
-        # One explicit contract follows the content policy. Keep the same
-        # arrangement for defaults and custom policies; never ask the model to
-        # reconcile two competing output schemas in separate system messages.
-        {"role": "system", "content": instruction.rstrip() + "\n\n" + PROTOCOL},
-        {"role": "user", "content": json.dumps({
-            "previous_result": previous, "messages": [references.message(m) for m in expanded[start:end]],
-            "background_messages": [references.message(m) for m in expanded[beginning:start]],
-            "evidence": references.evidence(evidence),
-            "capacity_tokens": settings.memory_capacity_tokens,
-        }, ensure_ascii=False)},
-    ], references, {"memory": copy.deepcopy(memory), "originals": {m["id"]: m for m in original},
-                    "expanded": {m["id"]: m for m in expanded[beginning:end]}, "evidence": evidence,
-                    "fresh_ids": {m["id"] for m in expanded[start:end]}, "review_ids": None})
+    return MemoryRequest(
+        [
+            # One explicit contract follows the content policy. Keep the same
+            # arrangement for defaults and custom policies; never ask the model to
+            # reconcile two competing output schemas in separate system messages.
+            {"role": "system", "content": instruction.rstrip() + "\n\n" + PROTOCOL},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "previous_result": previous,
+                        "messages": [references.message(m) for m in expanded[start:end]],
+                        "background_messages": [references.message(m) for m in expanded[beginning:start]],
+                        "evidence": references.evidence(evidence),
+                        "capacity_tokens": settings.memory_capacity_tokens,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        references,
+        {
+            "memory": copy.deepcopy(memory),
+            "originals": {m["id"]: m for m in original},
+            "expanded": {m["id"]: m for m in expanded[beginning:end]},
+            "evidence": evidence,
+            "fresh_ids": {m["id"] for m in expanded[start:end]},
+            "review_ids": None,
+        },
+    )
 
 
 def plan_batch(history, expanded, start, memory, document, settings, persona=None):
@@ -262,8 +336,9 @@ def estimate_batches(history, memory, document, persona, settings):
     return count
 
 
-async def consolidate(history, settings, generate, *, memory, start=0, document=None,
-                      persona=None, budget=None, event=None):
+async def consolidate(
+    history, settings, generate, *, memory, start=0, document=None, persona=None, budget=None, event=None
+):
     budget = budget or CallBudget()
     event = event or (lambda kind, payload: None)
     memory = copy.deepcopy(memory)
@@ -271,50 +346,93 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
     expanded = archive_history(history, document, persona)
     originals = {m["id"]: m for m in history}
     while start < len(history):
-        end, messages, pool, evidence = plan_batch(history, expanded, start, memory, document, settings, persona)
+        end, messages, pool, evidence = plan_batch(
+            history, expanded, start, memory, document, settings, persona
+        )
         budget.reserve("memory")
-        event("memory_batch", {"purpose": "memory", "from": start, "to": end,
-                               "source_ids": [m["id"] for m in history[start:end]],
-                               "estimated_input_tokens": request_tokens(messages, settings, [HISTORY_TOOL]),
-                               "evidence": evidence, "candidates": len(pool),
-                               "primary_calls": budget.primary})
+        event(
+            "memory_batch",
+            {
+                "purpose": "memory",
+                "from": start,
+                "to": end,
+                "source_ids": [m["id"] for m in history[start:end]],
+                "estimated_input_tokens": request_tokens(messages, settings, [HISTORY_TOOL]),
+                "evidence": evidence,
+                "candidates": len(pool),
+                "primary_calls": budget.primary,
+            },
+        )
         if request_tokens(messages, settings, [HISTORY_TOOL]) > settings.memory_input_tokens:
             event("context_warning", {"purpose": "memory", "message": "记忆请求估算超出输入预算，仍完整发送"})
         begun = time.perf_counter()
         response = await generate(messages, phase="memory", output_tokens=settings.memory_output_tokens)
         if count_text(response, settings) > settings.memory_output_tokens:
             raise ValueError("记忆模型响应超过整理输出上限")
-        parsed = (copy.deepcopy(response.resolved) if hasattr(response, "resolved") else
-                  messages.references.resolve(parse_json(response),
-                      on_invalid=lambda p: event("memory_records_discarded", p)))
-        event("memory_batch_completed", {"purpose": "memory", "duration_s": time.perf_counter() - begun,
-                                         "covered_count": end})
+        parsed = (
+            copy.deepcopy(response.resolved)
+            if hasattr(response, "resolved")
+            else messages.references.resolve(
+                parse_json(response), on_invalid=lambda p: event("memory_records_discarded", p)
+            )
+        )
+        event(
+            "memory_batch_completed",
+            {"purpose": "memory", "duration_s": time.perf_counter() - begun, "covered_count": end},
+        )
         beginning = context_start(expanded, start)
         supplied = {m["id"]: m for m in expanded[beginning:end]}
         _merge_history_sources(supplied, getattr(response, "history_sources", {}))
         fresh = {m["id"] for m in expanded[start:end]}
         suppressed_ids = set()
-        memory = apply_operations(memory, parsed, originals, supplied, evidence, fresh_ids=fresh, settings=settings,
-                                  on_invalid=lambda p: event("memory_records_discarded", p),
-                                  on_suppressed=lambda p: event("memory_tombstone_suppressed", p),
-                                  suppressed_ids=suppressed_ids, defer_retention=True)
+        memory = apply_operations(
+            memory,
+            parsed,
+            originals,
+            supplied,
+            evidence,
+            fresh_ids=fresh,
+            settings=settings,
+            on_invalid=lambda p: event("memory_records_discarded", p),
+            on_suppressed=lambda p: event("memory_tombstone_suppressed", p),
+            suppressed_ids=suppressed_ids,
+            defer_retention=True,
+        )
         questions = parsed.get("questions", [])
         if not isinstance(questions, list):
             raise ValueError("questions 必须是列表")
         if len(questions) > 8:
             raise ValueError("一次整理最多提出八个局部疑难问题")
-        questions = [q for q in questions if isinstance(q, dict) and q.get("topic") in (
-            "ownership", "identity", "knowledge", "injury", "relationship", "completion")]
+        questions = [
+            q
+            for q in questions
+            if isinstance(q, dict)
+            and q.get("topic")
+            in ("ownership", "identity", "knowledge", "injury", "relationship", "completion")
+        ]
         # Neither a suppressed add nor a deleted old record can be reviewed.
         # Keep unrelated questions and the rest of this batch.
         deleted_ids = {r["id"] for r in memory["records"] if r["status"] == "deleted"}
-        questions = [q for q in questions if not (isinstance(q.get("record_ids"), list) and
-                     any(isinstance(r, str) and (r in suppressed_ids or r in deleted_ids)
-                         for r in q["record_ids"]))]
-        available_ids = {r["id"] for r in memory["records"] if not r.get("manual") and r["status"] == "active"}
+        questions = [
+            q
+            for q in questions
+            if not (
+                isinstance(q.get("record_ids"), list)
+                and any(
+                    isinstance(r, str) and (r in suppressed_ids or r in deleted_ids) for r in q["record_ids"]
+                )
+            )
+        ]
+        available_ids = {
+            r["id"] for r in memory["records"] if not r.get("manual") and r["status"] == "active"
+        }
         for question in questions:
             refs = question.get("record_ids")
-            if not isinstance(refs, list) or not refs or any(not isinstance(r, str) or r not in available_ids for r in refs):
+            if (
+                not isinstance(refs, list)
+                or not refs
+                or any(not isinstance(r, str) or r not in available_ids for r in refs)
+            ):
                 raise ValueError("疑难问题必须指向实际存在的待确认记忆，不能静默丢弃核验请求")
         ids = {rid for q in questions for rid in q.get("record_ids", [])}
         targets = [r for r in memory["records"] if r["id"] in ids and not r.get("manual")]
@@ -325,44 +443,79 @@ async def consolidate(history, settings, generate, *, memory, start=0, document=
         if questions:
             reason = "复核关闭或本次操作已使用复核"
             if settings.memory_review_enabled and not budget.review and targets:
-                extra = select_evidence(pool, "\n".join(str(q.get("query", "")) for q in questions), settings,
-                                        exclude={e["id"] for e in evidence})
+                extra = select_evidence(
+                    pool,
+                    "\n".join(str(q.get("query", "")) for q in questions),
+                    settings,
+                    exclude={e["id"] for e in evidence},
+                )
                 already_read = {" ".join(e["text"].split()) for e in evidence}
                 extra = [e for e in extra if " ".join(e["text"].split()) not in already_read]
                 reason = "没有新增材料，保留待确认内容"
                 if extra:
                     refs = References()
-                    payload = {"previous_result": refs.previous({"version": 1, "records": targets}),
-                               "questions": refs.questions(questions),
-                               "messages": [refs.message(m) for m in supplied.values() if m["id"] in fresh],
-                               "background_messages": [refs.message(m) for m in supplied.values() if m["id"] not in fresh],
-                               "evidence": refs.evidence(evidence + extra)}
+                    payload = {
+                        "previous_result": refs.previous({"version": 1, "records": targets}),
+                        "questions": refs.questions(questions),
+                        "messages": [refs.message(m) for m in supplied.values() if m["id"] in fresh],
+                        "background_messages": [
+                            refs.message(m) for m in supplied.values() if m["id"] not in fresh
+                        ],
+                        "evidence": refs.evidence(evidence + extra),
+                    }
                     # Reuse this batch's resolved content policy and contract so
                     # review cannot silently fall back to a different default
                     # when the user has customized the memory instructions.
-                    review = MemoryRequest([
-                        {"role": "system", "content": messages[0]["content"] + "\n\n" + REVIEW_PROTOCOL},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], refs,
-                        {"memory": copy.deepcopy(memory), "originals": originals, "expanded": supplied,
-                         "evidence": evidence + extra, "fresh_ids": fresh,
-                         "review_ids": {r["id"] for r in targets}})
+                    review = MemoryRequest(
+                        [
+                            {"role": "system", "content": messages[0]["content"] + "\n\n" + REVIEW_PROTOCOL},
+                            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                        ],
+                        refs,
+                        {
+                            "memory": copy.deepcopy(memory),
+                            "originals": originals,
+                            "expanded": supplied,
+                            "evidence": evidence + extra,
+                            "fresh_ids": fresh,
+                            "review_ids": {r["id"] for r in targets},
+                        },
+                    )
                     if request_tokens(review, settings, [HISTORY_TOOL]) > settings.memory_input_tokens:
-                        event("context_warning", {"purpose": "memory_review",
-                                                  "message": "记忆复核估算超出输入预算，仍完整发送"})
+                        event(
+                            "context_warning",
+                            {"purpose": "memory_review", "message": "记忆复核估算超出输入预算，仍完整发送"},
+                        )
                     budget.reserve("memory_review")
-                    event("memory_review_started", {"purpose": "memory_review", "questions": questions,
-                                                     "evidence": extra})
+                    event(
+                        "memory_review_started",
+                        {"purpose": "memory_review", "questions": questions, "evidence": extra},
+                    )
                     try:
-                        review_text = await generate(review, phase="memory_review",
-                                                     output_tokens=min(2048, settings.memory_output_tokens))
+                        review_text = await generate(
+                            review,
+                            phase="memory_review",
+                            output_tokens=min(2048, settings.memory_output_tokens),
+                        )
                         _merge_history_sources(supplied, getattr(review_text, "history_sources", {}))
-                        response = (copy.deepcopy(review_text.resolved) if hasattr(review_text, "resolved")
-                                    else refs.resolve(parse_json(review_text)))
+                        response = (
+                            copy.deepcopy(review_text.resolved)
+                            if hasattr(review_text, "resolved")
+                            else refs.resolve(parse_json(review_text))
+                        )
                         if response.get("questions"):
                             raise ValueError("疑难复核不能再次请求核验")
-                        memory = apply_operations(memory, response, originals, supplied, evidence + extra,
-                            fresh_ids=fresh, settings=settings, review_ids={r["id"] for r in targets},
-                            defer_retention=True)
+                        memory = apply_operations(
+                            memory,
+                            response,
+                            originals,
+                            supplied,
+                            evidence + extra,
+                            fresh_ids=fresh,
+                            settings=settings,
+                            review_ids={r["id"] for r in targets},
+                            defer_retention=True,
+                        )
                         reason = "疑难复核完成；未解决的条目仍保持待确认"
                     except Exception as error:
                         reason = "疑难复核失败，保留待确认内容：" + str(error)

@@ -1,4 +1,5 @@
 """Public citation metadata, with no upstream identifiers or credential-bearing URLs."""
+
 from urllib.parse import urlsplit
 
 
@@ -10,7 +11,12 @@ def source_links(rows, *, strict=False):
             if not isinstance(url, str):
                 raise ValueError()
             parsed = urlsplit(url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+            ):
                 raise ValueError()
         except (ValueError, AttributeError):
             if strict:
@@ -19,7 +25,9 @@ def source_links(rows, *, strict=False):
         if url not in seen:
             seen.add(url)
             title = row.get("title")
-            result.append({"url": url, "title": title if isinstance(title, str) and title else parsed.hostname})
+            result.append(
+                {"url": url, "title": title if isinstance(title, str) and title else parsed.hostname}
+            )
     return result
 
 

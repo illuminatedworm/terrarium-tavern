@@ -1,4 +1,5 @@
 """Deterministic card probes with no story storage, downloads or nested models."""
+
 import asyncio
 import copy
 import json
@@ -23,11 +24,22 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
     try:
         data = {**mirror, "ui": True, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1}
         bootstrap = "TavernRuntime.install(" + json.dumps(data) + ", (m,a)=>__tavernHost(m,a));"
-        scripts = [SDK.read_text(encoding="utf-8"), (SDK.parent / "mvu-core.js").read_text(encoding="utf-8"), bootstrap]
-        head = "".join("<script>" + re.sub(r"</script", r"<\\/script", code, flags=re.I) + "</script>" for code in scripts)
+        scripts = [
+            SDK.read_text(encoding="utf-8"),
+            (SDK.parent / "mvu-core.js").read_text(encoding="utf-8"),
+            bootstrap,
+        ]
+        head = "".join(
+            "<script>" + re.sub(r"</script", r"<\\/script", code, flags=re.I) + "</script>"
+            for code in scripts
+        )
         for part in parts:
-            markup = await session.call("snapshotMacros", part["text"], mirror["state"], mirror.get("scopes", {}))
-            markup = markup.replace("{{user}}", mirror.get("persona", "测试用户")).replace("{{char}}", mirror.get("character", ""))
+            markup = await session.call(
+                "snapshotMacros", part["text"], mirror["state"], mirror.get("scopes", {})
+            )
+            markup = markup.replace("{{user}}", mirror.get("persona", "测试用户")).replace(
+                "{{char}}", mirror.get("character", "")
+            )
             if part["format"] == "markdown":
                 markup = await session.call("renderMarkdown", markup)
             frame = await session.context.new_page()
@@ -35,11 +47,18 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
             frame.on("pageerror", lambda error: errors.append(str(error)))
             await frame.expose_function("__tavernHost", host)
             await frame.set_content(
-                "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" "
+                '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" '
                 "content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
                 "style-src 'unsafe-inline' data:; img-src data: blob:; connect-src 'none'\">"
-                + head + "</head><body>" + markup + "</body></html>", wait_until="load")
-            await frame.evaluate("async () => { await new Promise(resolve => $(resolve)); await TavernRuntime.flush(); }")
+                + head
+                + "</head><body>"
+                + markup
+                + "</body></html>",
+                wait_until="load",
+            )
+            await frame.evaluate(
+                "async () => { await new Promise(resolve => $(resolve)); await TavernRuntime.flush(); }"
+            )
         if errors:
             raise ValueError("展示脚本执行失败：" + "\n".join(errors))
         observed = []
@@ -51,9 +70,15 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
             counts = [await locator.count() for locator in locators]
             count = sum(counts)
             actual = (await locators[counts.index(1)].text_content()).strip() if count == 1 else None
-            observed.append({"selector": assertion["selector"], "expected": expected,
-                             "actual": actual, "matches": count,
-                             "status": "passed" if count == 1 and actual == expected else "failed"})
+            observed.append(
+                {
+                    "selector": assertion["selector"],
+                    "expected": expected,
+                    "actual": actual,
+                    "matches": count,
+                    "status": "passed" if count == 1 and actual == expected else "failed",
+                }
+            )
         return observed
     finally:
         for frame in frames:
@@ -90,39 +115,87 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
         nonlocal session
         scripts = dependencies.scripts(source)
         if any(IMPORTS.search(s.get("content", "")) and not s.get("bundled") for s in scripts):
-            return {"status": "blocked", "checks": [{"check": "dependencies", "status": "blocked", "message": "脚本模块尚未缓存；本地验证不下载依赖"}]}
+            return {
+                "status": "blocked",
+                "checks": [
+                    {
+                        "check": "dependencies",
+                        "status": "blocked",
+                        "message": "脚本模块尚未缓存；本地验证不下载依赖",
+                    }
+                ],
+            }
         snapshot = {"state": {}, "scopes": {}}
-        history = [{"id": "probe-opening", "role": "assistant", "raw": greetings[index], "snapshot": snapshot}]
-        session = await runtime.open(document, history, snapshot, True, host, scripts,
-            lambda html: dependencies.markup(source, html), persona="测试用户", opening=True)
+        history = [
+            {"id": "probe-opening", "role": "assistant", "raw": greetings[index], "snapshot": snapshot}
+        ]
+        session = await runtime.open(
+            document,
+            history,
+            snapshot,
+            True,
+            host,
+            scripts,
+            lambda html: dependencies.markup(source, html),
+            persona="测试用户",
+            opening=True,
+        )
         mirror = await session.call("snapshot")
-        checks.append({"check": "initialization_and_startup", "status": "passed", "state": state_for_model(mirror["state"])})
+        checks.append(
+            {
+                "check": "initialization_and_startup",
+                "status": "passed",
+                "state": state_for_model(mirror["state"]),
+            }
+        )
         displays = []
         rules = regex_scripts(document)
         for sample_index, text in enumerate([greetings[index], *samples]):
             transformed = {}
             for placement, name in ((1, "input"), (2, "output")):
                 for target in ("model", "display"):
-                    transformed[f"{name}_{target}"] = await session.call("transform", text, rules, placement, target, 0)
+                    transformed[f"{name}_{target}"] = await session.call(
+                        "transform", text, rules, placement, target, 0
+                    )
             displays.append(transformed["output_display"])
-            checks.append({"check": "regex", "status": "observed" if rules else "skipped", "sample_index": sample_index,
-                           "rule_count": len(rules), "source": text, "observed": transformed,
-                           "message": "仅记录转换结果；是否命中预期展示需用 display_assertions 验证"})
+            checks.append(
+                {
+                    "check": "regex",
+                    "status": "observed" if rules else "skipped",
+                    "sample_index": sample_index,
+                    "rule_count": len(rules),
+                    "source": text,
+                    "observed": transformed,
+                    "message": "仅记录转换结果；是否命中预期展示需用 display_assertions 验证",
+                }
+            )
         for after in (False, True):
             if after:
                 if not state_patch:
                     break
                 mirror = await session.call("process", "", list(state_patch), "")
-                checks.append({"check": "state_patch", "status": "passed", "state": state_for_model(mirror["state"])})
+                checks.append(
+                    {"check": "state_patch", "status": "passed", "state": state_for_model(mirror["state"])}
+                )
             for sample_index, html in enumerate(displays):
-                assertions = [a for a in display_assertions if a["sample_index"] == sample_index
-                              and (not after or a.get("after_text") is not None)]
+                assertions = [
+                    a
+                    for a in display_assertions
+                    if a["sample_index"] == sample_index and (not after or a.get("after_text") is not None)
+                ]
                 if not assertions:
                     continue
-                rendered = await check_display(session, dependencies.markup(source, html), mirror, assertions, host, after=after)
-                checks.append({"check": "display_after_patch" if after else "display", "sample_index": sample_index,
-                               "status": "passed" if all(r["status"] == "passed" for r in rendered) else "failed",
-                               "assertions": rendered})
+                rendered = await check_display(
+                    session, dependencies.markup(source, html), mirror, assertions, host, after=after
+                )
+                checks.append(
+                    {
+                        "check": "display_after_patch" if after else "display",
+                        "sample_index": sample_index,
+                        "status": "passed" if all(r["status"] == "passed" for r in rendered) else "failed",
+                        "assertions": rendered,
+                    }
+                )
         if any(check["status"] == "failed" for check in checks):
             return {"status": "failed", "checks": checks}
         return {"status": "passed", "checks": checks}
@@ -133,8 +206,11 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
         result = {"status": "blocked", "checks": checks, "message": "本地验证超时，未完成的检查不能视为通过"}
     except Exception as error:
         message = str(error)
-        result = {"status": "blocked" if "尚未缓存" in message or "尚未构建" in message else "failed",
-                  "checks": checks, "message": message}
+        result = {
+            "status": "blocked" if "尚未缓存" in message or "尚未构建" in message else "failed",
+            "checks": checks,
+            "message": message,
+        }
     finally:
         if session:
             await session.close()
@@ -144,5 +220,11 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
         untested.append("HTML/MVU 前端渲染与状态绑定（未提供 display_assertions）")
     if not state_patch or not any(a.get("after_text") is not None for a in display_assertions):
         untested.append("变量补丁后的前端显示")
-    return {"card_ref": item["ref"], "opening_index": index, **result, "logs": logs,
-            "untested": untested, "model_calls": 0}
+    return {
+        "card_ref": item["ref"],
+        "opening_index": index,
+        **result,
+        "logs": logs,
+        "untested": untested,
+        "model_calls": 0,
+    }

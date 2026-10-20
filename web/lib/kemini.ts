@@ -1,4 +1,4 @@
-import type { TurnEvent } from './turnStream';
+import type { TraceEvent } from './turnStream';
 
 export const keminiCompatibilityNotice =
   '此对话使用 Kemini 式实验规则：剧情请求保留消息顺序，消息适配完成后，中途 system 转为 user；开头连续的 system 与工具交换保留。实际角色见上下文预览。';
@@ -29,7 +29,7 @@ export const auxiliaryLabels: Record<AuxiliaryPart['kind'], string> = {
   disclaimer: '免责声明',
   extra: '调用外文本',
 };
-export function latestAuxiliary(events: TurnEvent[]): AuxiliaryPart[] {
+export function latestAuxiliary(events: TraceEvent[]): AuxiliaryPart[] {
   for (let index = events.length - 1; index >= 0; index--)
     if (events[index].kind === 'kemini_auxiliary') return events[index].payload.items;
   return [];

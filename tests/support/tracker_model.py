@@ -1,4 +1,5 @@
 """Native-tool test models for the unified Tracker; no external model calls."""
+
 import copy
 import json
 
@@ -39,8 +40,10 @@ class TrackerModel:
         if isinstance(step, tuple):
             step = [step]
         if isinstance(step, list):
-            self.last_tool_calls = [NativeToolCall(f"call{index}-{i}", name, json.dumps(args, ensure_ascii=False))
-                                   for i, (name, args) in enumerate(step)]
+            self.last_tool_calls = [
+                NativeToolCall(f"call{index}-{i}", name, json.dumps(args, ensure_ascii=False))
+                for i, (name, args) in enumerate(step)
+            ]
             step = ""
         return ChatResponse(content=step, finish_reason="stop", usage={}, model="fixture")
 
@@ -62,6 +65,7 @@ class TrackerModel:
 
 class MemoryModel(TrackerModel):
     """Adapt old memory proposal fixtures to the actual write_memory protocol."""
+
     def __init__(self, proposals):
         self.proposals = list(proposals)
         self.seen = 0
@@ -91,4 +95,6 @@ class PatchModel(TrackerModel):
             operations = json.loads(proposal) if isinstance(proposal, str) else proposal
         except ValueError:
             operations = proposal
-        super().__init__(("patch_state", {"operations": operations, "comment": "Fixture turn evidence"}), "完成")
+        super().__init__(
+            ("patch_state", {"operations": operations, "comment": "Fixture turn evidence"}), "完成"
+        )

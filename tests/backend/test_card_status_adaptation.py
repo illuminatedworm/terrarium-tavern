@@ -24,42 +24,58 @@ from tavern.storage.store import Store, dump
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
 
-TEMPLATE = '<details><summary>状态栏</summary><div>TIME: {{getvar::Time}} MONEY: {{getvar::Money}}</div></details>'
-OPENING = '旅客放下行李。\n<details><summary>状态栏</summary><div>TIME: 08:20 MONEY: 12</div></details>'
-RULE = '营业收入仅在正文明确到账后增加；报价不代表到账。'
+TEMPLATE = (
+    "<details><summary>状态栏</summary><div>TIME: {{getvar::Time}} MONEY: {{getvar::Money}}</div></details>"
+)
+OPENING = "旅客放下行李。\n<details><summary>状态栏</summary><div>TIME: 08:20 MONEY: 12</div></details>"
+RULE = "营业收入仅在正文明确到账后增加；报价不代表到账。"
 
 
 def card():
-    return {"name": "测试旅店", "description": "玩家经营旅店，模型扮演来客。", "first_mes": OPENING,
-            "alternate_greetings": [], "extensions": {"unknown": "preserved"},
-            "character_book": {"entries": [
+    return {
+        "name": "测试旅店",
+        "description": "玩家经营旅店，模型扮演来客。",
+        "first_mes": OPENING,
+        "alternate_greetings": [],
+        "extensions": {"unknown": "preserved"},
+        "character_book": {
+            "entries": [
                 {"content": "每次回复结尾必须生成以下内容：\n" + TEMPLATE, "constant": True},
                 {"content": "旅店在清晨开门。", "constant": True},
-            ]}}
+            ]
+        },
+    }
 
 
 @pytest.mark.parametrize("wrapped,object_entries", [(False, False), (True, True)])
 def test_legacy_status_card_reports_locations_and_missing_contract_without_mutation(wrapped, object_entries):
     document = card()
     if object_entries:
-        document["character_book"]["entries"] = {"4af8b4de-116f-4b40-8822-e4e79096b43f": document["character_book"]["entries"][0]}
+        document["character_book"]["entries"] = {
+            "4af8b4de-116f-4b40-8822-e4e79096b43f": document["character_book"]["entries"][0]
+        }
     if wrapped:
         document = {"spec": "chara_card_v2", "spec_version": "2.0", "data": document}
     original = copy.deepcopy(document)
     report = validation_report(document)
     assert report["valid"] and not report["adapted"]
     warnings = "\n".join(report["warnings"])
-    assert all(text in warnings for text in ("first_mes", "世界书第 1 条", "逐轮", "根路径", "初始化", "tracker_mvu"))
+    assert all(
+        text in warnings for text in ("first_mes", "世界书第 1 条", "逐轮", "根路径", "初始化", "tracker_mvu")
+    )
     assert "4af8b4de" not in warnings and TEMPLATE not in warnings
     assert document == original
 
 
-@pytest.mark.parametrize("field,text", [
-    ("system_prompt", 'Every reply must append this status block: <status>HP: 8</status>'),
-    ("post_history_instructions", '每轮回答必须输出状态栏\n| 项目 | 数值 |\n| --- | --- |\n| HP | 8 |'),
-    ("scenario", '每轮回复显示状态面板'),
-    ("alternate_greetings", OPENING),
-])
+@pytest.mark.parametrize(
+    "field,text",
+    [
+        ("system_prompt", "Every reply must append this status block: <status>HP: 8</status>"),
+        ("post_history_instructions", "每轮回答必须输出状态栏\n| 项目 | 数值 |\n| --- | --- |\n| HP | 8 |"),
+        ("scenario", "每轮回复显示状态面板"),
+        ("alternate_greetings", OPENING),
+    ],
+)
 def test_model_fields_examples_and_alternate_openings_are_checked(field, text):
     document = {"name": "定位", field: [text] if field == "alternate_greetings" else text}
     report = validation_report(document)
@@ -67,13 +83,16 @@ def test_model_fields_examples_and_alternate_openings_are_checked(field, text):
     assert any(field in warning for warning in report["warnings"])
 
 
-@pytest.mark.parametrize("text", [
-    '<div style="color:cyan">欢迎来到旅店。</div>',
-    '不要在每次回复结尾生成状态栏。',
-    "Never append a status panel after every reply.",
-    '<initvar>hp: 8</initvar><StatusPlaceHolderImpl/>',
-    '<div>状态栏</div><script>const v = getMvuData();</script>',
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<div style="color:cyan">欢迎来到旅店。</div>',
+        "不要在每次回复结尾生成状态栏。",
+        "Never append a status panel after every reply.",
+        "<initvar>hp: 8</initvar><StatusPlaceHolderImpl/>",
+        "<div>状态栏</div><script>const v = getMvuData();</script>",
+    ],
+)
 def test_layout_prohibitions_and_existing_mvu_displays_are_not_migration_demands(text):
     report = validation_report({"name": "保留", "first_mes": text})
     assert report["valid"] and report["warnings"] == []
@@ -105,16 +124,27 @@ def test_initialization_hints_follow_disabled_init_and_inline_openings():
 
 
 def test_correct_state_macros_do_not_require_rewriting_ordinary_prose():
-    report = validation_report({"name": "宏", "description": '此刻是 {{getvar::stat_data.时间}}。'})
+    report = validation_report({"name": "宏", "description": "此刻是 {{getvar::stat_data.时间}}。"})
     assert report["warnings"] == []
 
 
 def test_prompt_template_syntax_is_located_by_ordinal_including_disabled_special_entries():
-    document = {"name": "模板", "scenario": "<%- getvar('stat_data.地点') %>", "character_book": {"entries": {
-        "4af8b4de-116f-4b40-8822-e4e79096b43f": {"comment": "[GENERATE:BEFORE]", "enabled": False, "content": "x"},
-        "b": {"content": "@@if variables.阶段 === 1\n阶段一"},
-        "c": {"content": "@@@activate 是普通文本"},
-    }}, "extensions": {"regex_scripts": [{"findRegex": "a", "replaceString": "<%= 1 %>", "placement": [2]}]}}
+    document = {
+        "name": "模板",
+        "scenario": "<%- getvar('stat_data.地点') %>",
+        "character_book": {
+            "entries": {
+                "4af8b4de-116f-4b40-8822-e4e79096b43f": {
+                    "comment": "[GENERATE:BEFORE]",
+                    "enabled": False,
+                    "content": "x",
+                },
+                "b": {"content": "@@if variables.阶段 === 1\n阶段一"},
+                "c": {"content": "@@@activate 是普通文本"},
+            }
+        },
+        "extensions": {"regex_scripts": [{"findRegex": "a", "replaceString": "<%= 1 %>", "placement": [2]}]},
+    }
     warnings = [w for w in validation_report(document)["warnings"] if "prompt-template.md" in w]
     assert len(warnings) == 1
     assert all(text in warnings[0] for text in ("scenario", "世界书第 1 条", "世界书第 2 条", "正则第 1 条"))
@@ -135,7 +165,11 @@ async def test_skill_is_whitelisted_and_full_resource_reaches_editor_model(tmp_p
     # Guides point to each other by resource name; every named guide must stay readable.
     root = Path(__file__).parents[2] / "src/tavern/skills"
     texts = [SYSTEM, *(path.read_text(encoding="utf-8") for path in root.rglob("*.md"))]
-    named = {name for text in texts for name in re.findall(r"(?:references/)?[\w-]+\.md", re.sub(r"https?://\S+", "", text))}
+    named = {
+        name
+        for text in texts
+        for name in re.findall(r"(?:references/)?[\w-]+\.md", re.sub(r"https?://\S+", "", text))
+    }
     assert named <= set(resources)
     store = Store(tmp_path)
     settings = store.settings_document()
@@ -148,8 +182,12 @@ async def test_skill_is_whitelisted_and_full_resource_reaches_editor_model(tmp_p
         result = await run(editor, wid, provider, "说明正文状态栏的迁移方法")
         assert result["status"] == "completed", result["error"]
         returned = [json.loads(m["content"]) for m in provider.call_log[-1] if m.get("role") == "tool"]
-        sources = {path.relative_to(path.parents[1] if path.parent.name == "references" else path.parent).as_posix():
-                   path.read_text(encoding="utf-8") for path in root.rglob("*.md")}
+        sources = {
+            path.relative_to(
+                path.parents[1] if path.parent.name == "references" else path.parent
+            ).as_posix(): path.read_text(encoding="utf-8")
+            for path in root.rglob("*.md")
+        }
         saved_view = editor.edits.context(wid)["view"]
         view = ModelView()
         view.reverse, view.reserved = saved_view["reverse"], set(saved_view["reserved"])
@@ -171,23 +209,58 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
     editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     wid = workspace["id"]
-    model = ToolLLM([
-        ("read_skill", {"resource": "references/status-display.md"}),
-        ("read_field", {"card_ref": "C1", "path": ""}),
-        ("validate_draft", {"card_ref": "C1"}),
-        ("patch_draft", {"card_ref": "C1", "comment": "迁移正文状态栏", "operations": [
-            {"op": "replace", "path": "/character_book/entries/0/content", "value": RULE},
-            {"op": "add", "path": "/character_book/entries/0/extensions", "value": {"terrarium": {"audience": "tracker_mvu"}}},
-            {"op": "add", "path": "/extensions/regex_scripts", "value": [{
-                "scriptName": "隐藏初始化", "findRegex": r"/<initvar\b[^>]*>[\s\S]*?</initvar\s*>/gi",
-                "replaceString": "", "placement": [2], "markdownOnly": True, "promptOnly": True}]}]}),
-        *[("set_opening", {"card_ref": "C1", "index": i,
-            "narrative": f'旅客放下行李。\n<initvar>时间: "{time}"\n营业收入: {money}</initvar>'})
-          for i, time, money in [(0, "08:20", 12), (1, "19:40", 35)]],
-        ("validate_draft", {"card_ref": "C1"}),
-    ])
+    model = ToolLLM(
+        [
+            ("read_skill", {"resource": "references/status-display.md"}),
+            ("read_field", {"card_ref": "C1", "path": ""}),
+            ("validate_draft", {"card_ref": "C1"}),
+            (
+                "patch_draft",
+                {
+                    "card_ref": "C1",
+                    "comment": "迁移正文状态栏",
+                    "operations": [
+                        {"op": "replace", "path": "/character_book/entries/0/content", "value": RULE},
+                        {
+                            "op": "add",
+                            "path": "/character_book/entries/0/extensions",
+                            "value": {"terrarium": {"audience": "tracker_mvu"}},
+                        },
+                        {
+                            "op": "add",
+                            "path": "/extensions/regex_scripts",
+                            "value": [
+                                {
+                                    "scriptName": "隐藏初始化",
+                                    "findRegex": r"/<initvar\b[^>]*>[\s\S]*?</initvar\s*>/gi",
+                                    "replaceString": "",
+                                    "placement": [2],
+                                    "markdownOnly": True,
+                                    "promptOnly": True,
+                                }
+                            ],
+                        },
+                    ],
+                },
+            ),
+            *[
+                (
+                    "set_opening",
+                    {
+                        "card_ref": "C1",
+                        "index": i,
+                        "narrative": f'旅客放下行李。\n<initvar>时间: "{time}"\n营业收入: {money}</initvar>',
+                    },
+                )
+                for i, time, money in [(0, "08:20", 12), (1, "19:40", 35)]
+            ],
+            ("validate_draft", {"card_ref": "C1"}),
+        ]
+    )
     try:
-        result = await run(editor, wid, model, "将正文状态栏迁移为独立变量；金额已确认为营业收入，保留两个开场的初值。")
+        result = await run(
+            editor, wid, model, "将正文状态栏迁移为独立变量；金额已确认为营业收入，保留两个开场的初值。"
+        )
         assert result["status"] == "completed", result["error"]
         model_wire = dump(model.call_log[-1])
         assert "世界书第 1 条" in model_wire and "初始化来源" in model_wire
@@ -216,8 +289,19 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
             finally:
                 await runtime.close()
             snapshot = session["snapshot"]
-            half = compile_context(document, session, session["messages"], snapshot, "继续", store.settings(), "test")
-            full = compile_window(document, session, session["messages"], snapshot, "继续", store.settings(), [], require_state_patch=True)
+            half = compile_context(
+                document, session, session["messages"], snapshot, "继续", store.settings(), "test"
+            )
+            full = compile_window(
+                document,
+                session,
+                session["messages"],
+                snapshot,
+                "继续",
+                store.settings(),
+                [],
+                require_state_patch=True,
+            )
             for compiled in (half, full):
                 wire = dump(compiled["messages"])
                 assert TEMPLATE not in wire and "<details>" not in wire and "<initvar>" not in wire
@@ -225,14 +309,24 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
             assert RULE not in dump(half["messages"])
             assert RULE in dump(full["messages"])
         # Half Agent sends the same semantic rule to the independent variable task.
-        provider = ScriptedLLM(['[]'])
+        provider = ScriptedLLM(["[]"])
 
         class Capture:
             def event(self, *args):
                 pass
 
-        await analyze_variables(Capture(), "test", store.settings(), [], state, "继续", "旅客等待。",
-                                lambda: provider, document=document, persona="店主")
+        await analyze_variables(
+            Capture(),
+            "test",
+            store.settings(),
+            [],
+            state,
+            "继续",
+            "旅客等待。",
+            lambda: provider,
+            document=document,
+            persona="店主",
+        )
         assert RULE in dump(provider.last_messages) and TEMPLATE not in dump(provider.last_messages)
         assert store.card(source["id"])["document"] == original
     finally:

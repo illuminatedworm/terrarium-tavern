@@ -1,4 +1,5 @@
 """Validated, independently configurable retrieval and provider profiles."""
+
 import re
 from typing import Literal
 
@@ -32,6 +33,7 @@ class Provider(BaseModel):
     @model_validator(mode="after")
     def valid_url(self):
         from urllib.parse import urlparse
+
         if self.auth_mode == "chatgpt_subscription":
             self.base_url = "https://api.openai.com"
         parsed = urlparse(self.base_url)
@@ -54,8 +56,10 @@ class ModelConnection(BaseModel):
     @classmethod
     def valid_api_path(cls, value):
         value = value.strip().strip("/")
-        if value and (not re.fullmatch(r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*", value)
-                      or any(part in (".", "..") for part in value.split("/"))):
+        if value and (
+            not re.fullmatch(r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*", value)
+            or any(part in (".", "..") for part in value.split("/"))
+        ):
             raise ValueError("API 路径应为 v1、v1beta 等路径，不含域名或查询参数")
         return value
 
@@ -79,7 +83,9 @@ class ModelProfile(ModelConnection):
     prompt_cache_key: str | None = Field(None, max_length=256, exclude=True)
     prompt_cache_mode: Literal["default", "no_write", "instructions"] = Field("default", exclude=True)
     prompt_cache_retention: Literal["default", "in_memory", "24h"] = Field("default", exclude=True)
-    reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] = "default"
+    reasoning_effort: Literal["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"] = (
+        "default"
+    )
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""
@@ -91,7 +97,8 @@ class ModelProfile(ModelConnection):
         connection = result.provider_connections.pop(provider_id, ModelConnection())
         if self.provider_id:
             result.provider_connections[self.provider_id] = ModelConnection(
-                model=self.model, api_mode=self.api_mode, api_path=self.api_path)
+                model=self.model, api_mode=self.api_mode, api_path=self.api_path
+            )
         return result.model_copy(update={"provider_id": provider_id, **connection.model_dump()})
 
     @model_validator(mode="after")
@@ -111,7 +118,9 @@ class Network(BaseModel):
 
 
 class RetrievalSettings(BaseModel):
-    channels: list[Literal["keyword", "bm25", "embedding"]] = Field(default_factory=lambda: ["keyword", "bm25"])
+    channels: list[Literal["keyword", "bm25", "embedding"]] = Field(
+        default_factory=lambda: ["keyword", "bm25"]
+    )
     candidate_count: int = Field(30, ge=1, le=1000)
     fusion_count: int = Field(20, ge=1, le=1000)
     rrf_k: int = Field(60, ge=1, le=1000)
@@ -133,15 +142,15 @@ class RetrievalSettings(BaseModel):
     query_prompt: str = Field(default=DEFAULT_QUERY_PROMPT, max_length=200000)
     protocol_prompt: str = Field(default=DEFAULT_RETRIEVAL_PROTOCOL, max_length=200000)
 
-
     @model_validator(mode="after")
     def valid(self):
         if not self.channels or len(set(self.channels)) != len(self.channels):
             raise ValueError("至少选择一种召回方案，且不能重复")
         if self.chunk_overlap >= self.chunk_tokens:
             raise ValueError("切片重叠必须小于切片长度")
-        if any(k not in ("keyword", "bm25", "embedding") or not 0 < v <= 100
-               for k, v in self.weights.items()):
+        if any(
+            k not in ("keyword", "bm25", "embedding") or not 0 < v <= 100 for k, v in self.weights.items()
+        ):
             raise ValueError("召回权重必须为 0–100 之间的正数")
         return self
 

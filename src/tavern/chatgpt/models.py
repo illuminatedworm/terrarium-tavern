@@ -1,4 +1,5 @@
 """Account-advertised capabilities intersected with the direct Responses contract."""
+
 DIRECT_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
 
@@ -8,7 +9,11 @@ def model_details(item):
     if isinstance(levels, list):
         supported, unavailable, seen = [], [], set()
         for level in levels:
-            if not isinstance(level, dict) or not isinstance(level.get("effort"), str) or level["effort"] in seen:
+            if (
+                not isinstance(level, dict)
+                or not isinstance(level.get("effort"), str)
+                or level["effort"] in seen
+            ):
                 continue
             effort = level["effort"]
             seen.add(effort)

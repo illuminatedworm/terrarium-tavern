@@ -16,14 +16,32 @@ from tests.backend.test_card_authoring import run
 
 
 def fixture():
-    return {"name": "初值保留", "first_mes": '清晨开门。\n<UpdateVariable><initvar>hp: 8\nplace: morning</initvar></UpdateVariable>',
-            "alternate_greetings": ['夜间开门。\n<initvar>hp: 3\nplace: night</initvar>', '普通开场。'],
-            "character_book": {"entries": [{"comment": "[InitVar] 默认初值", "enabled": False,
-                                             "content": '<initvar>hp: 100\nplace: default\nextra: true</initvar>'}]},
-            "extensions": {"regex_scripts": [{
-                "scriptName": "隐藏开场变量", "findRegex": r"/<(initvar|UpdateVariable)\b[^>]*>[\s\S]*?<\/\1\s*>/gi",
-                "replaceString": "", "placement": [2], "markdownOnly": True, "promptOnly": True,
-            }]}}
+    return {
+        "name": "初值保留",
+        "first_mes": "清晨开门。\n<UpdateVariable><initvar>hp: 8\nplace: morning</initvar></UpdateVariable>",
+        "alternate_greetings": ["夜间开门。\n<initvar>hp: 3\nplace: night</initvar>", "普通开场。"],
+        "character_book": {
+            "entries": [
+                {
+                    "comment": "[InitVar] 默认初值",
+                    "enabled": False,
+                    "content": "<initvar>hp: 100\nplace: default\nextra: true</initvar>",
+                }
+            ]
+        },
+        "extensions": {
+            "regex_scripts": [
+                {
+                    "scriptName": "隐藏开场变量",
+                    "findRegex": r"/<(initvar|UpdateVariable)\b[^>]*>[\s\S]*?<\/\1\s*>/gi",
+                    "replaceString": "",
+                    "placement": [2],
+                    "markdownOnly": True,
+                    "promptOnly": True,
+                }
+            ]
+        },
+    }
 
 
 async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_contexts(tmp_path):
@@ -34,13 +52,21 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
     service = RoleplayRuntime(store)
     wid = editor.edits.create(card["id"])["id"]
     try:
-        provider = ToolLLM([
-            ("read_skill", {"resource": "references/workflow.md"}),
-            ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
-            ("set_opening", {"card_ref": "C1", "index": 0,
-                             "narrative": original["first_mes"].replace("清晨开门。", "清晨，店门打开。")}),
-            ("validate_draft", {"card_ref": "C1"}),
-        ])
+        provider = ToolLLM(
+            [
+                ("read_skill", {"resource": "references/workflow.md"}),
+                ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
+                (
+                    "set_opening",
+                    {
+                        "card_ref": "C1",
+                        "index": 0,
+                        "narrative": original["first_mes"].replace("清晨开门。", "清晨，店门打开。"),
+                    },
+                ),
+                ("validate_draft", {"card_ref": "C1"}),
+            ]
+        )
         result = await run(editor, wid, provider)
         assert result["status"] == "completed", result["error"]
         doc = editor.edits.conversation(wid)["cards"][0]["document"]
@@ -51,8 +77,11 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
         assert validation_report(doc)["warnings"] == []
         imported = store.import_card(dump(doc).encode(), "edited.json")
         openings = [doc["first_mes"], *doc["alternate_greetings"]]
-        expected = [{"hp": 8, "place": "morning"}, {"hp": 3, "place": "night"},
-                    {"hp": 100, "place": "default", "extra": True}]
+        expected = [
+            {"hp": 8, "place": "morning"},
+            {"hp": 3, "place": "night"},
+            {"hp": 100, "place": "default", "extra": True},
+        ]
         for index, initial in enumerate(expected):
             session = store.new_session(SessionCreate(card_id=imported["id"], greeting=index))
             session = await service.initialize_session(session["id"])
@@ -62,8 +91,12 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
             assert message["model"].strip() == openings[index].split("\n")[0]
             assert message["display"] == message["model"]
             for compiled in (
-                compile_context(doc, session, session["messages"], session["snapshot"], "继续", store.settings(), "test"),
-                compile_window(doc, session, session["messages"], session["snapshot"], "继续", store.settings(), []),
+                compile_context(
+                    doc, session, session["messages"], session["snapshot"], "继续", store.settings(), "test"
+                ),
+                compile_window(
+                    doc, session, session["messages"], session["snapshot"], "继续", store.settings(), []
+                ),
             ):
                 wire = dump(compiled["messages"])
                 assert "<initvar>" not in wire.lower() and "<updatevariable>" not in wire.lower()
@@ -74,10 +107,13 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
         await service.close()
 
 
-@pytest.mark.parametrize("problem,warning", [
-    ("unclosed", "标签未成对"),
-    ("legacy_update", "不会自动执行"),
-])
+@pytest.mark.parametrize(
+    "problem,warning",
+    [
+        ("unclosed", "标签未成对"),
+        ("legacy_update", "不会自动执行"),
+    ],
+)
 def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
     doc = fixture()
     if problem == "unclosed":
@@ -93,8 +129,12 @@ def test_ambiguous_sources_are_reported_without_deleting_data(problem, warning):
 @pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
 async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_story(tmp_path, mode):
     store = Store(tmp_path)
-    doc = {"name": "初值更新", "first_mes": "开门。", "extensions": {},
-           "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]}}
+    doc = {
+        "name": "初值更新",
+        "first_mes": "开门。",
+        "extensions": {},
+        "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]},
+    }
     card = store.import_card(dump(doc).encode(), "card.json")
     service = RoleplayRuntime(store)
     try:
@@ -116,12 +156,19 @@ def test_removed_initialization_channel_is_rejected_in_tools_and_card_import(tmp
     from pydantic import ValidationError
 
     from tavern.character.editor_tools import Opening
+
     assert "initialization" not in Opening.model_json_schema()["properties"]
     with pytest.raises(ValidationError, match="Extra inputs"):
         Opening(card_ref="C1", index=0, narrative="开门。", initialization="<initvar>Money: 0</initvar>")
     doc = fixture()
-    doc["extensions"]["terrarium"] = {"workflow": {"version": 1, "greetings": [
-        {"id": "old", "initialization": "<initvar>Money: 0</initvar>", "greeting_hash": "obsolete"}]}}
+    doc["extensions"]["terrarium"] = {
+        "workflow": {
+            "version": 1,
+            "greetings": [
+                {"id": "old", "initialization": "<initvar>Money: 0</initvar>", "greeting_hash": "obsolete"}
+            ],
+        }
+    }
     report = validation_report(doc)
     assert not report["valid"] and "已移除" in report["errors"][0]
     store = Store(tmp_path)

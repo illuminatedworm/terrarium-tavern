@@ -38,7 +38,7 @@ defineEmits<{ inspect: []; remove: [] }>();
   display: inline-flex;
   max-width: min(100%, 260px);
   border: 1px solid var(--border-control);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--surface-hover);
 }
 .reference-content {
@@ -52,7 +52,7 @@ defineEmits<{ inspect: []; remove: [] }>();
   border-radius: inherit;
   background: transparent;
   color: var(--text-secondary);
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 .reference-content > span {
   overflow: hidden;
@@ -74,7 +74,7 @@ defineEmits<{ inspect: []; remove: [] }>();
   height: 16px;
   padding: 1px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--surface-panel);
   color: var(--text-muted);
   opacity: 0;

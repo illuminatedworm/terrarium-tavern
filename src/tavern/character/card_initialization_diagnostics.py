@@ -19,5 +19,8 @@ def initialization_warnings(document):
         if len(INIT.findall(text)) != len(INIT_END.findall(text)):
             warnings.append(location + "：initvar 标签未成对；先修复边界并验证初值，不要删除特殊数据")
         if UPDATE.search(updates):
-            warnings.append(location + "：发现开场增量指令；内置初始化读取内联 initvar 全量数据，但不会自动执行原文 UpdateVariable/JSONPatch 增量。保留原文和隐藏正则，核对脚本并运行 test_draft，不能把隐藏成功当成初始化成功")
+            warnings.append(
+                location
+                + "：发现开场增量指令；内置初始化读取内联 initvar 全量数据，但不会自动执行原文 UpdateVariable/JSONPatch 增量。保留原文和隐藏正则，核对脚本并运行 test_draft，不能把隐藏成功当成初始化成功"
+            )
     return warnings

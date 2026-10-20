@@ -1,4 +1,5 @@
 """Setting-only edits, single-entry reads, script protection and bounded model data."""
+
 import copy
 import json
 from types import SimpleNamespace
@@ -33,26 +34,54 @@ def owner(request):
     # and script detection have the same branches for every document container.
     wrapped, dictionary = getattr(request, "param", (False, False))
     entries = [
-        {"id": "harbor", "comment": "港口", "content": "Harbor source", "keys": ["港口"],
-         "extensions": {"unknown": {"keep": True}, "position": 4}},
-        {"id": "ship", "name": "旧船", "content": "Ship source", "key": ["船"],
-         "keysecondary": ["夜"], "disable": True, "insertion_order": 80},
+        {
+            "id": "harbor",
+            "comment": "港口",
+            "content": "Harbor source",
+            "keys": ["港口"],
+            "extensions": {"unknown": {"keep": True}, "position": 4},
+        },
+        {
+            "id": "ship",
+            "name": "旧船",
+            "content": "Ship source",
+            "key": ["船"],
+            "keysecondary": ["夜"],
+            "disable": True,
+            "insertion_order": 80,
+        },
         {"id": "rule", "content": "Variable rule", "extensions": {"terrarium": {"audience": "tracker_mvu"}}},
         {"id": "init", "comment": "[InitVar] state", "content": "hp: 8"},
         {"id": "script", "content": "<script>eventOn('ready', () => {});</script>"},
     ]
     if dictionary:
         entries = {f"legacy/key~{i}": row for i, row in enumerate(entries)}
-    data = {"name": "Guide", "description": "Before", "personality": "Shy", "scenario": "A port",
-        "first_mes": "<button onclick='run()'>Start</button>", "alternate_greetings": ["Opening"],
-        "extensions": {"tavern_helper": {"scripts": [{"id": "script-id", "content": "console.log('keep');"}]},
-                       "regex_scripts": [{"findRegex": "old", "replaceString": "new"}], "unknown": {"keep": True}},
-        "character_book": {"name": "World", "scan_depth": 3, "entries": entries}}
+    data = {
+        "name": "Guide",
+        "description": "Before",
+        "personality": "Shy",
+        "scenario": "A port",
+        "first_mes": "<button onclick='run()'>Start</button>",
+        "alternate_greetings": ["Opening"],
+        "extensions": {
+            "tavern_helper": {"scripts": [{"id": "script-id", "content": "console.log('keep');"}]},
+            "regex_scripts": [{"findRegex": "old", "replaceString": "new"}],
+            "unknown": {"keep": True},
+        },
+        "character_book": {"name": "World", "scan_depth": 3, "entries": entries},
+    }
     document = {"spec": "chara_card_v2", "spec_version": "2.0", "data": data} if wrapped else data
     req = TurnRequest(operation_id="content", expected_revision=0, allow_content_edit=True)
-    result = SimpleNamespace(document=document, state=new_state(), snapshot={}, session={}, tid="content",
-        model_view=ModelView(document), request=req,
-        definitions=tool_definitions(req, {"policy_effective": "auto"}, document=document))
+    result = SimpleNamespace(
+        document=document,
+        state=new_state(),
+        snapshot={},
+        session={},
+        tid="content",
+        model_view=ModelView(document),
+        request=req,
+        definitions=tool_definitions(req, {"policy_effective": "auto"}, document=document),
+    )
     result.tools = AgentTools(result)
     return result
 
@@ -100,10 +129,28 @@ async def test_search_is_navigation_only_and_disabled_entry_aliases_roundtrip(ow
     with pytest.raises(ValueError, match="read_lore_entry"):
         await revise(owner, {"op": "update_lore", "ref": ref, "changes": {"content": "After"}})
     read = await call(owner, "read_lore_entry", ref=ref)
-    assert read == {"ref": ref, "title": "旧船", "content": "Ship source", "keys": ["船"],
-                    "secondary_keys": ["夜"], "enabled": False}
-    await revise(owner, {"op": "update_lore", "ref": ref,
-        "changes": {"title": "新船", "content": "After", "keys": ["新"], "secondary_keys": [], "enabled": True}})
+    assert read == {
+        "ref": ref,
+        "title": "旧船",
+        "content": "Ship source",
+        "keys": ["船"],
+        "secondary_keys": ["夜"],
+        "enabled": False,
+    }
+    await revise(
+        owner,
+        {
+            "op": "update_lore",
+            "ref": ref,
+            "changes": {
+                "title": "新船",
+                "content": "After",
+                "keys": ["新"],
+                "secondary_keys": [],
+                "enabled": True,
+            },
+        },
+    )
     entries = card_data(owner.document)["character_book"]["entries"]
     rows = list(entries.values()) if isinstance(entries, dict) else entries
     ship = rows[1]
@@ -119,8 +166,11 @@ async def test_target_reads_are_current_window_scoped_and_batch_failure_is_atomi
     before = copy.deepcopy(owner.document)
     reads = copy.deepcopy(owner.tools.reads.records)
     with pytest.raises(ValueError, match="read_lore_entry"):
-        await revise(owner, {"op": "set_character", "field": "description", "value": "After"},
-                     {"op": "remove_lore", "ref": "L2"})
+        await revise(
+            owner,
+            {"op": "set_character", "field": "description", "value": "After"},
+            {"op": "remove_lore", "ref": "L2"},
+        )
     assert owner.document == before and owner.tools.reads.records == reads
     await revise(owner, {"op": "set_character", "field": "description", "value": "After"})
     await revise(owner, {"op": "set_character", "field": "personality", "value": "Bold"})
@@ -129,14 +179,21 @@ async def test_target_reads_are_current_window_scoped_and_batch_failure_is_atomi
         await revise(owner, {"op": "remove_lore", "ref": "L1"})
     await call(owner, "read_lore_entry", ref="L1")
     entries = card_data(owner.document)["character_book"]["entries"]
-    target = next(e for e in (entries.values() if isinstance(entries, dict) else entries) if e["id"] == "harbor")
+    target = next(
+        e for e in (entries.values() if isinstance(entries, dict) else entries) if e["id"] == "harbor"
+    )
     target["content"] = "Changed outside tool"
     with pytest.raises(ValueError, match="最新条目"):
         await revise(owner, {"op": "remove_lore", "ref": "L1"})
 
 
-EXECUTABLE = ["<script src='remote.js'></script>", "<a href='java&#x73;cript:run()'>X</a>",
-              "<UpdateVariable>change</UpdateVariable>", "{{setvar::hp::1}}", "```javascript\nrun();\n```"]
+EXECUTABLE = [
+    "<script src='remote.js'></script>",
+    "<a href='java&#x73;cript:run()'>X</a>",
+    "<UpdateVariable>change</UpdateVariable>",
+    "{{setvar::hp::1}}",
+    "```javascript\nrun();\n```",
+]
 
 
 @pytest.mark.parametrize("text", EXECUTABLE)
@@ -160,8 +217,10 @@ async def test_protected_entries_and_script_bearing_fields_cannot_be_read_change
     search = await call(owner, "find_lore_for_edit", query="*")
     assert {row["title"] for row in search["matches"]} == {"港口", "旧船"}
     for ref in ("L20", "L21", "L22"):
-        for name, args in [("read_lore_entry", {"ref": ref}),
-            ("revise_content", {"operations": [{"op": "remove_lore", "ref": ref}], "comment": "Forbidden"})]:
+        for name, args in [
+            ("read_lore_entry", {"ref": ref}),
+            ("revise_content", {"operations": [{"op": "remove_lore", "ref": ref}], "comment": "Forbidden"}),
+        ]:
             with pytest.raises(ValueError, match="变量规则、初始化或脚本"):
                 await call(owner, name, **args)
     card_data(owner.document)["description"] = "Text <script>keep()</script>"
@@ -174,7 +233,7 @@ async def test_protected_entries_and_script_bearing_fields_cannot_be_read_change
 @pytest.mark.parametrize("owner", CARD_FORMATS, indirect=True)
 async def test_append_requires_no_bulk_read_and_old_references_do_not_shift(owner):
     entries = card_data(owner.document)["character_book"]["entries"]
-    for entry in (entries.values() if isinstance(entries, dict) else entries):
+    for entry in entries.values() if isinstance(entries, dict) else entries:
         entry.pop("id")
     await call(owner, "read_lore_entry", ref="L1")
     second = await call(owner, "read_lore_entry", ref="L2")
@@ -182,7 +241,9 @@ async def test_append_requires_no_bulk_read_and_old_references_do_not_shift(owne
     # The existing read of L2 remains valid after deleting its preceding array item.
     await revise(owner, {"op": "update_lore", "ref": "L2", "changes": {"content": "Same ship, new text"}})
     assert (await call(owner, "read_lore_entry", ref="L2"))["title"] == second["title"]
-    result = await revise(owner, {"op": "add_lore", "entry": {"title": "New place", "content": "Plain setting"}})
+    result = await revise(
+        owner, {"op": "add_lore", "entry": {"title": "New place", "content": "Plain setting"}}
+    )
     assert len(result["added_refs"]) == 1 and result["added_refs"][0] not in ("L1", "L2")
     with pytest.raises(ValueError, match="已删除"):
         await call(owner, "read_lore_entry", ref="L1")
@@ -195,24 +256,39 @@ async def test_effective_extension_aliases_and_injection_invalidation(owner):
     entries = card_data(owner.document)["character_book"]["entries"]
     raw = next(e for e in (entries.values() if isinstance(entries, dict) else entries) if e["id"] == "harbor")
     raw["extensions"].update(content="Effective text", keys=["Effective keyword"])
-    owner.snapshot["lore_injections"] = [{"id": "harbor", "content": "Old"}, {"id": "ship", "content": "Other"}]
+    owner.snapshot["lore_injections"] = [
+        {"id": "harbor", "content": "Old"},
+        {"id": "ship", "content": "Other"},
+    ]
     owner.snapshot["lore"] = {"harbor": {"present": True}, "ship": {"present": True}}
     await call(owner, "read_lore_entry", ref="L1")
-    await revise(owner, {"op": "update_lore", "ref": "L1", "changes": {"content": "New effective", "keys": ["New"]}})
-    raw = next(e for e in (card_data(owner.document)["character_book"]["entries"].values()
-        if isinstance(entries, dict) else card_data(owner.document)["character_book"]["entries"]) if e["id"] == "harbor")
+    await revise(
+        owner, {"op": "update_lore", "ref": "L1", "changes": {"content": "New effective", "keys": ["New"]}}
+    )
+    raw = next(
+        e
+        for e in (
+            card_data(owner.document)["character_book"]["entries"].values()
+            if isinstance(entries, dict)
+            else card_data(owner.document)["character_book"]["entries"]
+        )
+        if e["id"] == "harbor"
+    )
     assert raw["content"] == "Harbor source" and raw["extensions"]["content"] == "New effective"
     assert raw["extensions"]["unknown"] == {"keep": True}
     assert owner.snapshot["lore_injections"] == [{"id": "ship", "content": "Other"}]
     assert owner.snapshot["lore"] == {"ship": {"present": True}}
 
 
-@pytest.mark.parametrize("operation", [
-    {"op": "replace", "path": "", "value": {"name": "Bulk replacement"}},
-    {"op": "add_lore", "entry": {"title": "X", "content": "Y", "id": "invented"}},
-    {"op": "add_lore", "entry": {"title": "X", "content": "Y", "extensions": {"scripts": []}}},
-    {"op": "remove_lore", "ref": "harbor"},
-])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"op": "replace", "path": "", "value": {"name": "Bulk replacement"}},
+        {"op": "add_lore", "entry": {"title": "X", "content": "Y", "id": "invented"}},
+        {"op": "add_lore", "entry": {"title": "X", "content": "Y", "extensions": {"scripts": []}}},
+        {"op": "remove_lore", "ref": "harbor"},
+    ],
+)
 async def test_strict_interface_rejects_paths_ids_configuration_and_empty_changes(owner, operation):
     original = copy.deepcopy(owner.document)
     with pytest.raises(ValueError):
@@ -241,17 +317,39 @@ async def test_visible_character_and_additions_work_when_reads_are_disabled(stor
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             url = f"/api/sessions/{session['id']}/full-agent/tools"
-            result = await client.put(url, json={"expected_revision": 0, "disabled_tools": ["read_character", "read_lore_entry"]})
+            result = await client.put(
+                url, json={"expected_revision": 0, "disabled_tools": ["read_character", "read_lore_entry"]}
+            )
             session = result.json()
             catalog = (await client.get(url, params={"allow_content_edit": "true"})).json()["tools"]
             edit = next(tool for tool in catalog if tool["name"] == "revise_content")
             assert edit["available"] and edit["edit_capabilities"] == {
-                "character": True, "lore_update_remove": True, "lore_add": True}
-        model = Model(("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "Blocked"}], "comment": "Check"}),
-            ("revise_content", {"operations": [{"op": "add_lore", "entry": {"title": "New", "content": "New setting"}}], "comment": "Check"}), "Narrative")
+                "character": True,
+                "lore_update_remove": True,
+                "lore_add": True,
+            }
+        model = Model(
+            (
+                "revise_content",
+                {
+                    "operations": [{"op": "set_character", "field": "description", "value": "Blocked"}],
+                    "comment": "Check",
+                },
+            ),
+            (
+                "revise_content",
+                {
+                    "operations": [{"op": "add_lore", "entry": {"title": "New", "content": "New setting"}}],
+                    "comment": "Check",
+                },
+            ),
+            "Narrative",
+        )
         result, _ = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
-        results = [e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"]
+        results = [
+            e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"
+        ]
         assert results[0]["data"]["saved_to_draft"] and results[1]["data"]["saved_to_draft"]
     finally:
         await service.close()
@@ -260,24 +358,57 @@ async def test_visible_character_and_additions_work_when_reads_are_disabled(stor
 
 async def test_five_hundred_entries_only_selected_source_reaches_model_and_other_data_is_preserved(story):
     store, _ = story
-    entries = [{"id": uuid4().hex, "comment": f"Entry {i}", "content": f"UNRELATED_ENTRY_{i} " + "Setting " * 100,
-                "extensions": {"position": 4, "source_hash": "e" * 64}} for i in range(500)]
+    entries = [
+        {
+            "id": uuid4().hex,
+            "comment": f"Entry {i}",
+            "content": f"UNRELATED_ENTRY_{i} " + "Setting " * 100,
+            "extensions": {"position": 4, "source_hash": "e" * 64},
+        }
+        for i in range(500)
+    ]
     entries[250].update(comment="PICKED_TARGET", content="Selected full source " * 3000 + "TARGET_END")
-    original = {"spec": "chara_card_v2", "spec_version": "2.0", "data": {"name": "Large world", "first_mes": "Opening",
-        "description": "Safe narrative", "extensions": {"tavern_helper": {"scripts": [{"content": "DO_NOT_LOAD_SCRIPT"}]}, "unknown": {"keep": True}},
-        "character_book": {"name": "World", "entries": entries}}}
+    original = {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": "Large world",
+            "first_mes": "Opening",
+            "description": "Safe narrative",
+            "extensions": {
+                "tavern_helper": {"scripts": [{"content": "DO_NOT_LOAD_SCRIPT"}]},
+                "unknown": {"keep": True},
+            },
+            "character_book": {"name": "World", "entries": entries},
+        },
+    }
     card = store.import_card(json.dumps(original).encode(), "large.json")
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     settings = store.settings()
     settings.context_tokens = 128000
     store.save_settings(settings)
     service = runtime(store)
-    model = Model(("find_lore_for_edit", {"query": "PICKED_TARGET"}), ("read_lore_entry", {"ref": "L251"}),
-        ("revise_content", {"operations": [{"op": "update_lore", "ref": "L251", "changes": {"content": "Updated selected setting"}}], "comment": "User request"}), "Narrative")
+    model = Model(
+        ("find_lore_for_edit", {"query": "PICKED_TARGET"}),
+        ("read_lore_entry", {"ref": "L251"}),
+        (
+            "revise_content",
+            {
+                "operations": [
+                    {"op": "update_lore", "ref": "L251", "changes": {"content": "Updated selected setting"}}
+                ],
+                "comment": "User request",
+            },
+        ),
+        "Narrative",
+    )
     try:
         result, current = await turn(service, session, model, allow_content_edit=True)
         assert result["status"] == "committed", result["error"]
-        wire = json.dumps([message.get("content", "") for req in model.requests for message in req["messages"]], ensure_ascii=False)
+        wire = json.dumps(
+            [message.get("content", "") for req in model.requests for message in req["messages"]],
+            ensure_ascii=False,
+        )
         assert "TARGET_END" in wire and "DO_NOT_LOAD_SCRIPT" not in wire
         assert all(f"UNRELATED_ENTRY_{i}" not in wire for i in range(500) if i != 250)
         assert all(entry["id"] not in wire for entry in entries) and "e" * 64 not in wire

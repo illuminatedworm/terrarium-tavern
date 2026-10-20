@@ -15,6 +15,13 @@ export type TransferResult = {
   browser_preferences: { layout?: Record<string, unknown> };
 };
 
+export type ReadingLayout = ReturnType<typeof defaultReadingLayout>;
+
+/** Matches .inspector-panel's CSS cap so the stored width never exceeds what is shown. */
+export function clampRightWidth(width: number) {
+  return Math.min(640, Math.floor(window.innerWidth * 0.35), Math.max(240, width));
+}
+
 export function defaultReadingLayout(width: number) {
   return {
     fontSize: 18,

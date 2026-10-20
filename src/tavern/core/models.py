@@ -76,6 +76,7 @@ class ContextRecipe(BaseModel):
         ]
     )
 
+
 class PreferencePreset(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=128)
@@ -92,6 +93,7 @@ class PreferencePreset(BaseModel):
 
 class Settings(BaseModel):
     """Operation-local runtime configuration (persist SettingsDocument instead)."""
+
     _full_runtime: Any = PrivateAttr(default=None)
     _settings_source: Any = PrivateAttr(default=None)
     _settings_mode: str = PrivateAttr(default="half_agent")
@@ -130,30 +132,58 @@ class Settings(BaseModel):
     def for_role(self, role="foreground"):
         if role == "full_agent" and self._full_runtime is not None:
             return self._full_runtime.model_copy(deep=True)
-        profile = (self.background if role == "card_author" and self.card_author is None else
-                   self.foreground if role == "full_agent" and self.full_agent is None else getattr(self, role))
+        profile = (
+            self.background
+            if role == "card_author" and self.card_author is None
+            else self.foreground
+            if role == "full_agent" and self.full_agent is None
+            else getattr(self, role)
+        )
         if profile is None:
             return self.model_copy(deep=True)
         provider = next((p for p in self.providers if p.id == profile.provider_id), None)
         if provider is None and not profile.provider_id and not profile.model:
-            return self.model_copy(deep=True, update={"model": "", "api_key": "", "channel_origin": None if role == "card_author" else self.channel_origin})
+            return self.model_copy(
+                deep=True,
+                update={
+                    "model": "",
+                    "api_key": "",
+                    "channel_origin": None if role == "card_author" else self.channel_origin,
+                },
+            )
         if provider is None:
             raise ValueError("所选模型引用了不存在的提供商")
-        result = self.model_copy(deep=True, update={**profile.model_dump(exclude={"provider_id", "provider_connections"}),
-            "cache": profile.cache.model_copy(deep=True),
-            "message_adapter": profile.message_adapter.model_copy(deep=True),
-            "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path), "api_key": provider.api_key,
-            "proxy": self.network.proxy, "use_proxy": self.network.api_proxy and provider.use_proxy,
-            "auth_mode": provider.auth_mode, "chatgpt_account_id": provider.chatgpt_account_id})
+        result = self.model_copy(
+            deep=True,
+            update={
+                **profile.model_dump(exclude={"provider_id", "provider_connections"}),
+                "cache": profile.cache.model_copy(deep=True),
+                "message_adapter": profile.message_adapter.model_copy(deep=True),
+                "base_url": api_root(provider.base_url, profile.api_mode, profile.api_path),
+                "api_key": provider.api_key,
+                "proxy": self.network.proxy,
+                "use_proxy": self.network.api_proxy and provider.use_proxy,
+                "auth_mode": provider.auth_mode,
+                "chatgpt_account_id": provider.chatgpt_account_id,
+            },
+        )
         if provider.auth_mode == "chatgpt_subscription":
             result.base_url, result.api_mode, result.api_path = "https://api.openai.com/v1", "responses", "v1"
             result.api_key = ""
-            result._auth_generation = (self._auth_generations[provider.chatgpt_account_id]
-                if provider.chatgpt_account_id in self._auth_generations else
-                self._chatgpt.generation(provider.chatgpt_account_id) if self._chatgpt else "")
+            result._auth_generation = (
+                self._auth_generations[provider.chatgpt_account_id]
+                if provider.chatgpt_account_id in self._auth_generations
+                else self._chatgpt.generation(provider.chatgpt_account_id)
+                if self._chatgpt
+                else ""
+            )
         if role == "card_author":
             result.channel_origin = None
-        result._adapter_lane = "full_agent" if self.runtime_mode == "full_agent" and role in ("foreground", "background") else role
+        result._adapter_lane = (
+            "full_agent"
+            if self.runtime_mode == "full_agent" and role in ("foreground", "background")
+            else role
+        )
         return result
 
     base_url: str = "https://api.openai.com/v1"
@@ -223,15 +253,21 @@ class Settings(BaseModel):
     memory_review_enabled: bool = Field(default=True, strict=True)
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
 
-
     @model_validator(mode="after")
     def validate_linked_settings(self):
-        if self.runtime_mode == "half_agent" and self.memory_output_tokens + 2048 >= self.background.context_tokens:
+        if (
+            self.runtime_mode == "half_agent"
+            and self.memory_output_tokens + 2048 >= self.background.context_tokens
+        ):
             raise ValueError("记忆输出上限必须为后台模型的输入及安全余量留出空间")
         if len({p.id for p in self.providers}) != len(self.providers) or not self.providers:
             raise ValueError("提供商不能为空或重复")
         for profile in (self.foreground, self.background, self.card_author, self.full_agent):
-            if profile and (profile.provider_id or profile.model) and profile.provider_id not in {p.id for p in self.providers}:
+            if (
+                profile
+                and (profile.provider_id or profile.model)
+                and profile.provider_id not in {p.id for p in self.providers}
+            ):
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
             raise ValueError("模型上下文窗口必须大于单次输出上限/维护输出预算加 2048 tokens 的安全余量")
@@ -239,7 +275,10 @@ class Settings(BaseModel):
             raise ValueError("压力裁剪目标必须小于压力触发阈值")
         # Lore messages share the window. Batch parity and timer arithmetic can
         # no longer prove coverage; the planner checks actual exchange boundaries.
-        if self.chunk_mode == "tokens" and self.chunk_max_tokens > self.context_tokens - self.reply_tokens - 2048:
+        if (
+            self.chunk_mode == "tokens"
+            and self.chunk_max_tokens > self.context_tokens - self.reply_tokens - 2048
+        ):
             raise ValueError("历史预算不能超过模型上下文窗口减单次输出上限及 2048 tokens 安全余量")
         return self
 

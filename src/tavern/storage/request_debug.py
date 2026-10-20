@@ -1,4 +1,5 @@
 """Bounded, opt-in HTTP evidence, independent of story/recovery state."""
+
 import json
 import uuid
 import zipfile
@@ -34,7 +35,9 @@ class RequestDebugLog:
         records = []
         for path in self.entries():
             records.append({**self._metadata(path), "bytes": path.stat().st_size})
-        return sorted(records, key=lambda r: (r["created"], r["id"]), reverse=True)[offset:offset + MAX_RECORDS]
+        return sorted(records, key=lambda r: (r["created"], r["id"]), reverse=True)[
+            offset : offset + MAX_RECORDS
+        ]
 
     @staticmethod
     def _metadata(path: Path) -> dict:
@@ -58,7 +61,12 @@ class RequestDebugLog:
         # time must still determine ordering and expiry.
         entries.sort(key=lambda p: (created[p], p.name), reverse=True)
         protected_bytes = sum(p.stat().st_size for p in protected_paths)
-        total, kept, count, remove = sum(p.stat().st_size for p in entries), protected_bytes, len(protected_paths), []
+        total, kept, count, remove = (
+            sum(p.stat().st_size for p in entries),
+            protected_bytes,
+            len(protected_paths),
+            [],
+        )
         cutoff = time() - self.days * 86400
         for path in entries:
             if path in protected_paths:
@@ -79,8 +87,12 @@ class RequestDebugLog:
                     remove.append(path)
                 else:
                     kept += size
-        return remove, {"request_debug_bytes": total, "request_debug_reclaimable_bytes": total - kept,
-                        "request_debug_records": len(entries), "request_debug_protected_bytes": protected_bytes}
+        return remove, {
+            "request_debug_bytes": total,
+            "request_debug_reclaimable_bytes": total - kept,
+            "request_debug_records": len(entries),
+            "request_debug_protected_bytes": protected_bytes,
+        }
 
     def cleanup(self, protected=()):
         paths, report = self.plan(protected)
@@ -111,8 +123,14 @@ class RequestDebugLog:
         path = self.path(identity)
         temporary = path.with_suffix(".tmp")
         with zipfile.ZipFile(temporary, "x", zipfile.ZIP_STORED) as archive:
-            archive.writestr("metadata.json", json.dumps(
-                {**metadata, "version": 1, "id": identity, "created": time()}, ensure_ascii=False, indent=2))
+            archive.writestr(
+                "metadata.json",
+                json.dumps(
+                    {**metadata, "version": 1, "id": identity, "created": time()},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            )
             archive.writestr("request.bin", request_body)
             if response_body is not None:
                 archive.writestr("response.bin", response_body)

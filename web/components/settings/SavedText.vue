@@ -132,7 +132,7 @@ function trap(event: KeyboardEvent) {
 }
 .saved-text-error {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-md);
   overflow-wrap: anywhere;
   margin: 0;
 }
@@ -158,7 +158,7 @@ function trap(event: KeyboardEvent) {
   display: block;
   margin-top: 6px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .saved-text-actions button {
   display: grid;
@@ -167,7 +167,7 @@ function trap(event: KeyboardEvent) {
   width: 26px;
   height: 26px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
 }
 .saved-text-actions .expand-editor {
   border: 1px solid var(--border-subtle);
@@ -188,12 +188,12 @@ function trap(event: KeyboardEvent) {
   min-width: 40px;
   height: 38px;
   padding: 6px 10px;
-  background: #39714a;
-  border-color: #73c48e;
-  color: #e7ffed;
+  background: color-mix(in srgb, var(--success) 42%, var(--surface-base));
+  border-color: var(--success);
+  color: var(--text-strong);
 }
 .text-save:hover {
-  background: #458559;
+  background: color-mix(in srgb, var(--success) 52%, var(--surface-base));
 }
 .text-save svg {
   width: 24px;
@@ -211,13 +211,14 @@ function trap(event: KeyboardEvent) {
 .expanded-editor-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1500;
+  z-index: var(--z-dialog);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: #0009;
-  backdrop-filter: blur(5px);
+  background: rgb(var(--canvas-rgb) / 0.6);
+  -webkit-backdrop-filter: blur(5px) saturate(120%);
+  backdrop-filter: blur(5px) saturate(120%);
 }
 .settings-text-dialog {
   display: flex;
@@ -229,8 +230,8 @@ function trap(event: KeyboardEvent) {
   gap: 16px;
   background: var(--surface-panel);
   border: 1px solid var(--border-control);
-  border-radius: 12px;
-  box-shadow: 0 24px 80px #0008;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
 }
 .settings-text-dialog header,
 .settings-text-dialog footer {
@@ -243,7 +244,7 @@ function trap(event: KeyboardEvent) {
 }
 .settings-text-dialog h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-xl);
 }
 .settings-text-dialog textarea {
   flex: 1;

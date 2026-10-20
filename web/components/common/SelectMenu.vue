@@ -359,7 +359,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: rgb(var(--well-rgb) / 0.42);
   color: var(--text-secondary);
-  font: 13px/1.5 var(--font-ui);
+  font: var(--fs-md) / 1.5 var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
@@ -367,9 +367,9 @@ onBeforeUnmount(() => {
   min-height: 30px;
   padding: 5px 9px;
   border-color: transparent;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 .select-menu .select-menu-trigger:hover:not(:disabled),
 .select-menu .select-menu-trigger.open {
@@ -425,7 +425,7 @@ onBeforeUnmount(() => {
   backdrop-filter: var(--glass-blur-strong);
   color: var(--text-secondary);
   box-shadow: var(--glass-highlight), var(--shadow-pop);
-  font: 13px/1.5 var(--font-ui);
+  font: var(--fs-md) / 1.5 var(--font-ui);
 }
 .select-menu-popup:popover-open {
   display: flex;
@@ -442,7 +442,7 @@ onBeforeUnmount(() => {
   flex: none;
   padding: 6px 10px 8px;
   color: var(--text-faint);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.06em;
 }
@@ -479,7 +479,7 @@ onBeforeUnmount(() => {
   background: transparent;
   box-shadow: none;
   color: var(--text-primary);
-  font: 13px/1.5 var(--font-ui);
+  font: var(--fs-md) / 1.5 var(--font-ui);
 }
 .select-menu-list {
   min-height: 0;
@@ -491,7 +491,7 @@ onBeforeUnmount(() => {
 .select-menu-list:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
 }
 .select-menu-option {
   display: flex;
@@ -525,7 +525,7 @@ onBeforeUnmount(() => {
   display: block;
   margin-top: 3px;
   color: var(--text-muted);
-  font: 11px/1.5 var(--font-ui);
+  font: var(--fs-xs) / 1.5 var(--font-ui);
 }
 .select-menu-check {
   flex: none;
@@ -538,12 +538,12 @@ onBeforeUnmount(() => {
   padding: 20px 12px;
   color: var(--text-muted);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .select-menu-error {
   padding: 8px 10px;
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 @container composer (max-width: 380px) {

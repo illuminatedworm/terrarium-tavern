@@ -1,4 +1,5 @@
 """Thin Full Agent host: authorization, script IO, cancellation, atomic commit."""
+
 import asyncio
 import copy
 
@@ -37,9 +38,11 @@ class FullAgentRuntime:
         tid, created = self.store.create_turn(sid, request)
         if created:
             self.tasks[tid] = asyncio.create_task(self.run(tid))
+
             def completed(task):
                 for key in [k for k, v in self.tasks.items() if v.done()][:-30]:
                     self.tasks.pop(key, None)
+
             self.tasks[tid].add_done_callback(completed)
         return self.store.turn(tid)
 
@@ -64,14 +67,23 @@ class FullAgentRuntime:
         card = self.store.session_card(sid)
         if card["permission"]:
             await self.dependencies.resolve(card)
+
         async def host(method, args):
             if method == "log":
                 return None
             raise ValueError("开场初始化不允许调用模型")
-        script = await self.runtime.open(card["document"], session["messages"], session["snapshot"],
-            bool(card["permission"]), host, self.dependencies.scripts(card),
-            lambda html: self.dependencies.markup(card, html), persona=session["persona"],
-            opening=True)
+
+        script = await self.runtime.open(
+            card["document"],
+            session["messages"],
+            session["snapshot"],
+            bool(card["permission"]),
+            host,
+            self.dependencies.scripts(card),
+            lambda html: self.dependencies.markup(card, html),
+            persona=session["persona"],
+            opening=True,
+        )
         try:
             mirror = await script.call("snapshot")
             snapshot = session["snapshot"]
@@ -83,8 +95,10 @@ class FullAgentRuntime:
             if card["permission"] and "<" in display:
                 display = self.dependencies.markup(card, display)
             with self.store.connection() as db:
-                db.execute("UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
-                           (dump(snapshot), model, display, greeting["id"]))
+                db.execute(
+                    "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
+                    (dump(snapshot), model, display, greeting["id"]),
+                )
         finally:
             await script.close()
         return self.store.session(sid)
@@ -96,8 +110,13 @@ class FullAgentRuntime:
             request = TurnRequest.model_validate(turn["request"])
             session = self.store.session(turn["session"])
             from tavern.core.message_adapter import bind_adapter
-            settings = bind_adapter(self.store.session_settings(session).for_role("full_agent").model_copy(deep=True),
-                                    self.store, "story", session["id"])
+
+            settings = bind_adapter(
+                self.store.session_settings(session).for_role("full_agent").model_copy(deep=True),
+                self.store,
+                "story",
+                session["id"],
+            )
             if request.reasoning_effort is not None:
                 settings.reasoning_effort = request.reasoning_effort
             history, reused = session["messages"], None
@@ -113,22 +132,33 @@ class FullAgentRuntime:
             if not request.text.strip():
                 raise ValueError("请输入消息")
             from tavern.full_agent.state import new_state
-            before = copy.deepcopy(reused["snapshot"] if reused else history[-1]["snapshot"] if history else
-                {"state": {}, "scopes": {}, "lore": {}, "content": None, "full_agent": new_state()})
+
+            before = copy.deepcopy(
+                reused["snapshot"]
+                if reused
+                else history[-1]["snapshot"]
+                if history
+                else {"state": {}, "scopes": {}, "lore": {}, "content": None, "full_agent": new_state()}
+            )
             progress = self.store.full_agent_progress(tid)
             snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
             from tavern.conversation.message_editing import (
                 NOTIFICATIONS,
                 inherit_edit_notifications,
             )
+
             inherit_edit_notifications(snapshot, session["snapshot"])
             card = self.store.session_card(session["id"])
-            document = copy.deepcopy(progress["document"] if progress else
-                (snapshot.get("content") or {}).get("document", card["document"]))
+            document = copy.deepcopy(
+                progress["document"]
+                if progress
+                else (snapshot.get("content") or {}).get("document", card["document"])
+            )
             self.store.set_turn(tid, status="running")
             self.store.event(tid, "started", {"purpose": "full_agent"})
             if card["permission"]:
                 await self.dependencies.resolve({**card, "document": document})
+
             async def host(method, args):
                 if method == "log":
                     self.store.event(tid, "script_log", args)
@@ -136,41 +166,90 @@ class FullAgentRuntime:
                 if method == "cancel":
                     return False
                 raise ValueError("Full Agent 的角色脚本不允许发起额外模型请求；请使用当前 Agent 的工具")
-            script = await self.runtime.open(document, history, snapshot, bool(card["permission"]), host,
+
+            script = await self.runtime.open(
+                document,
+                history,
+                snapshot,
+                bool(card["permission"]),
+                host,
                 self.dependencies.scripts({**card, "document": document}),
-                lambda html: self.dependencies.markup({**card, "document": document}, html), persona=session["persona"])
+                lambda html: self.dependencies.markup({**card, "document": document}, html),
+                persona=session["persona"],
+            )
             mirror = copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
             snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
             rules, input_raw = regex_scripts(document), request.text
-            request.text = (progress["user"]["model"] if progress else
-                await script.call("transform", input_raw, rules, 1, "model", 0))
-            input_id, output_id = (progress["user"]["id"] if progress else
-                reused["id"] if reused else uid()), (mirror["messages"][-1]["id"] if progress else uid())
-            user = copy.deepcopy(progress["user"]) if progress else reused or {
-                "id": input_id, "parent": history[-1]["id"] if history else None, "role": "user", "raw": input_raw,
-                "model": request.text, "display": await script.call("transform", input_raw, rules, 1, "display", 0),
-                "snapshot": copy.deepcopy(snapshot)}
+            request.text = (
+                progress["user"]["model"]
+                if progress
+                else await script.call("transform", input_raw, rules, 1, "model", 0)
+            )
+            input_id, output_id = (
+                (progress["user"]["id"] if progress else reused["id"] if reused else uid()),
+                (mirror["messages"][-1]["id"] if progress else uid()),
+            )
+            user = (
+                copy.deepcopy(progress["user"])
+                if progress
+                else reused
+                or {
+                    "id": input_id,
+                    "parent": history[-1]["id"] if history else None,
+                    "role": "user",
+                    "raw": input_raw,
+                    "model": request.text,
+                    "display": await script.call("transform", input_raw, rules, 1, "display", 0),
+                    "snapshot": copy.deepcopy(snapshot),
+                }
+            )
             if not progress:
                 for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
-                    mirror["messages"].append({"message_id": len(mirror["messages"]), "id": mid, "role": role,
-                                               "message": text, "variables": copy.deepcopy(snapshot["state"])})
+                    mirror["messages"].append(
+                        {
+                            "message_id": len(mirror["messages"]),
+                            "id": mid,
+                            "role": role,
+                            "message": text,
+                            "variables": copy.deepcopy(snapshot["state"]),
+                        }
+                    )
             await script.call("update", mirror)
-            agent = FullAgent(self.store, tid, document, session, history, snapshot, request, script,
-                              settings, user, self.retrieval, progress)
+            agent = FullAgent(
+                self.store,
+                tid,
+                document,
+                session,
+                history,
+                snapshot,
+                request,
+                script,
+                settings,
+                user,
+                self.retrieval,
+                progress,
+            )
             self.agents[tid] = agent
             if not settings.debug_full_agent_prefix:
                 self.prefix_debug.clear()
+
             def observe_request(request):
                 agent.event("full_agent_prefix_debug", self.prefix_debug.record(request))
-            text = await agent.run(self.provider_factory() if self.provider_factory else None,
-                request_observer=observe_request if settings.debug_full_agent_prefix else None)
+
+            text = await agent.run(
+                self.provider_factory() if self.provider_factory else None,
+                request_observer=observe_request if settings.debug_full_agent_prefix else None,
+            )
             mirror = await script.call("snapshot")
             mirror["messages"][-1]["message"] = text
             await script.call("update", mirror)
             candidate = await script.call("transform", text, rules, 2, "display", 0)
             if card["permission"] and "<script" in candidate.lower():
-                await script.add_message_frame(self.dependencies.markup({**card, "document": document}, candidate),
-                    {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1}, host)
+                await script.add_message_frame(
+                    self.dependencies.markup({**card, "document": document}, candidate),
+                    {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1},
+                    host,
+                )
             processed = await script.call("process", text, [], "")
             snapshot.update(state=processed["state"], scopes=processed["scopes"])
             if processed.get("loreModified"):
@@ -184,17 +263,38 @@ class FullAgentRuntime:
             display = await script.call("transform", text, rules, 2, "display", 0)
             if card["permission"] and "<" in display:
                 display = self.dependencies.markup({**card, "document": document}, display)
-            output = {"id": output_id, "parent": input_id, "role": "assistant", "raw": text,
-                      "model": model, "display": display, "snapshot": snapshot, "retrieval_query": agent.retrieval_query,
-                      "auxiliary": agent.auxiliary}
+            output = {
+                "id": output_id,
+                "parent": input_id,
+                "role": "assistant",
+                "raw": text,
+                "model": model,
+                "display": display,
+                "snapshot": snapshot,
+                "retrieval_query": agent.retrieval_query,
+                "auxiliary": agent.auxiliary,
+            }
             if agent.final_response:
-                agent.new_trace.append({"window_id": agent.state["window"]["id"],
-                    "message": {**agent.final_response, "_full_agent_final": True,
-                        "_history_observations": {user["id"]: fingerprint(user["model"]),
-                                                  output_id: fingerprint(model)}}})
-            pending = {"messages": [output] if reused else [user, output], "before": before,
-                       "reason": "Full Agent 回合提交", "full_agent_trace": agent.new_trace,
-                       "message_edit_notified": list(snapshot.get(NOTIFICATIONS, []))}
+                agent.new_trace.append(
+                    {
+                        "window_id": agent.state["window"]["id"],
+                        "message": {
+                            **agent.final_response,
+                            "_full_agent_final": True,
+                            "_history_observations": {
+                                user["id"]: fingerprint(user["model"]),
+                                output_id: fingerprint(model),
+                            },
+                        },
+                    }
+                )
+            pending = {
+                "messages": [output] if reused else [user, output],
+                "before": before,
+                "reason": "Full Agent 回合提交",
+                "full_agent_trace": agent.new_trace,
+                "message_edit_notified": list(snapshot.get(NOTIFICATIONS, [])),
+            }
             agent.preview.replace(text)
             finish_turn(self.store, tid, session, pending, snapshot)
         except asyncio.CancelledError:
@@ -203,8 +303,15 @@ class FullAgentRuntime:
         except Exception as error:
             message = str(error) or type(error).__name__
             self.store.set_turn(tid, status="error", error=message)
-            self.store.event(tid, "error", {"message": message, "error_type": type(error.__cause__ or error).__name__,
-                                           "error_code": getattr(error, "code", "RUNTIME_FAILURE")})
+            self.store.event(
+                tid,
+                "error",
+                {
+                    "message": message,
+                    "error_type": type(error.__cause__ or error).__name__,
+                    "error_code": getattr(error, "code", "RUNTIME_FAILURE"),
+                },
+            )
         finally:
             self.agents.pop(tid, None)
             if script:

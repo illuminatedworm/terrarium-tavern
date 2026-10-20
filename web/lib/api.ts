@@ -42,6 +42,10 @@ export async function streamApi(path: string, data: any, signal: AbortSignal, on
       buffer = buffer.slice(end + 1);
       if (line) onLine(JSON.parse(line));
     }
-    if (done) return;
+    if (done) {
+      // A final record without a trailing newline is still a complete record.
+      if (buffer) onLine(JSON.parse(buffer));
+      return;
+    }
   }
 }

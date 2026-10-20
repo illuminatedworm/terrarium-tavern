@@ -9,7 +9,7 @@
   min-height: 0;
   min-width: 0;
   color: var(--text-primary);
-  font: 13px/1.6 var(--font-ui);
+  font: var(--fs-md) / 1.6 var(--font-ui);
   /* Sits on the inspector's glass pane. */
   background: transparent;
 }
@@ -38,7 +38,7 @@
   place-items: center;
   width: 34px;
   height: 34px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   color: var(--ivory);
   background:
     radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.4), transparent 62%),
@@ -61,8 +61,8 @@
   max-height: calc(100dvh - 16px);
   overflow: auto;
   padding: 14px;
-  border-radius: 14px;
-  font: 13px/1.6 var(--font-ui);
+  border-radius: var(--radius-md);
+  font: var(--fs-md) / 1.6 var(--font-ui);
 }
 .advisor-clear-confirm p {
   margin: 8px 0 12px;
@@ -75,10 +75,10 @@
 }
 .advisor-clear-actions button {
   padding: 6px 10px;
-  font: 12px/1.4 var(--font-ui);
+  font: var(--fs-sm) / 1.4 var(--font-ui);
 }
 .advisor-panel button {
-  font: 13px/1.4 var(--font-ui);
+  font: var(--fs-md) / 1.4 var(--font-ui);
 }
 .advisor-connection {
   display: flex;
@@ -96,7 +96,7 @@
   padding: 11px 12px;
   background: transparent;
   border: 1px solid var(--border-control);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 .advisor-model-trigger span {
   overflow: hidden;
@@ -114,7 +114,7 @@
   place-items: center;
   width: 42px;
   padding: 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   border: 1px solid var(--border-control);
 }
@@ -141,7 +141,7 @@
   background: transparent;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-context-bar svg {
   width: 14px;
@@ -163,23 +163,23 @@
 }
 .advisor-range {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 .advisor-range-stepper {
   display: inline-flex;
   align-items: center;
   border: 1px solid var(--border-control);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgb(var(--well-rgb) / 0.42);
 }
 .advisor-context-bar .advisor-range-step {
   justify-content: center;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .advisor-context-bar .advisor-range-step:hover:not(:disabled) {
   background: var(--hover-wash);
@@ -199,7 +199,7 @@
   background: transparent;
   box-shadow: none;
   color: var(--text-primary);
-  font: 500 12px/1 var(--font-ui);
+  font: 500 var(--fs-sm) / 1 var(--font-ui);
   text-align: center;
   appearance: textfield;
   -moz-appearance: textfield;
@@ -211,7 +211,7 @@
 }
 .advisor-context-bar .advisor-range-source {
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .advisor-context-bar button.advisor-range-source {
   text-decoration: underline dotted;
@@ -234,18 +234,18 @@
   display: grid;
   gap: 4px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-controls p {
   margin: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .advisor-controls input,
 .advisor-controls select {
   width: 100%;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .advisor-control-actions {
   display: flex;
@@ -267,10 +267,10 @@
   margin: 0 0 22px auto;
   padding: 12px 15px;
   border: 1px solid rgb(var(--accent-rgb) / 0.22);
-  border-radius: 14px 14px 4px 14px;
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-xs) var(--radius-md);
   background: linear-gradient(160deg, rgb(var(--accent-rgb) / 0.22), rgb(var(--accent-rgb) / 0.1));
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.8;
   white-space: pre-wrap;
 }
@@ -294,16 +294,16 @@
   display: block;
   margin: 1px 0 8px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-answer-bubble {
   border: 1px solid var(--border-subtle);
   background: rgb(255 255 255 / 0.035);
-  border-radius: 4px 14px 14px 14px;
+  border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-md);
   padding: 12px 14px;
 }
 .advisor-answer-bubble .prose {
-  font: 14px/1.85 var(--font-ui);
+  font: var(--fs-base) / 1.85 var(--font-ui);
   color: var(--text-primary);
   margin: 0;
   width: auto;
@@ -330,7 +330,7 @@
 }
 .advisor-offers > span {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .advisor-offers button {
   display: flex;
@@ -342,10 +342,10 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   border: 1px solid var(--border-control);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.6;
 }
 .advisor-offers button:hover:not(:disabled) {
@@ -355,12 +355,12 @@
 .advisor-offers small {
   flex-shrink: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .advisor-tool-record {
   margin-top: 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   color: var(--text-secondary);
 }
@@ -370,7 +370,7 @@
   gap: 7px;
   cursor: pointer;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-tool-record summary::-webkit-details-marker {
   display: none;
@@ -386,19 +386,19 @@
 .advisor-tool-record pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 11px/1.7 var(--font-ui);
+  font: var(--fs-xs) / 1.7 var(--font-ui);
   max-height: 260px;
   overflow: auto;
 }
 .advisor-tool-record p,
 .advisor-live-tools p {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 8px 0;
 }
 .advisor-live-tools {
   margin: 0 0 20px 38px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-compose-area {
   flex-shrink: 0;
@@ -412,7 +412,7 @@
   padding: 10px;
   background: rgb(var(--well-rgb) / 0.38);
   border: 1px solid var(--border-control);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   transition:
     border-color 0.18s var(--ease-out),
     box-shadow 0.18s var(--ease-out);
@@ -434,7 +434,7 @@
   outline: none;
   box-shadow: none;
   background: transparent;
-  font: 13px/1.7 var(--font-ui);
+  font: var(--fs-md) / 1.7 var(--font-ui);
   color: var(--text-primary);
 }
 .advisor-composer textarea::placeholder {
@@ -450,7 +450,7 @@
   background: var(--accent);
   color: var(--surface-input);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 .advisor-send:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -468,14 +468,14 @@
   flex-wrap: wrap;
   gap: 4px 8px;
   margin-top: 9px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 .advisor-token-note {
   display: block;
   margin-top: 4px;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .advisor-empty {
   padding: 44px 0 28px;
@@ -487,13 +487,13 @@
   margin-bottom: 12px;
 }
 .advisor-empty h3 {
-  font-size: 17px;
+  font-size: var(--fs-lg);
   font-weight: 500;
   margin: 0 0 8px;
 }
 .advisor-empty p {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 0 0 22px;
 }
 .advisor-empty button {
@@ -519,24 +519,24 @@
 .advisor-thinking,
 .advisor-setup {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 0 0 9px;
 }
 .advisor-stale {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .advisor-setup button {
   padding: 0 3px;
   border: 0;
   background: none;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .advisor-error {
   margin: 0 0 10px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   max-height: 110px;
   overflow: auto;
   overflow-wrap: anywhere;
@@ -547,33 +547,33 @@
   padding-top: 6px;
 }
 .advisor-error button {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 @container advisor (min-width: 480px) {
   .advisor-heading {
     padding: 24px 30px 18px;
   }
   .right-sidebar .advisor-heading h2 {
-    font-size: 24px;
+    font-size: var(--fs-2xl);
   }
   .advisor-connection {
     margin-inline: 30px;
   }
   .advisor-panel .advisor-model-trigger {
-    font-size: 16px;
+    font-size: var(--fs-lg);
   }
   .advisor-context-bar {
     margin-inline: 30px;
     padding-bottom: 20px;
   }
   .advisor-context-bar button {
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   .advisor-messages {
     padding: 14px 30px 26px;
   }
   .advisor-user-message {
-    font-size: 17px;
+    font-size: var(--fs-lg);
     padding: 13px 16px;
     margin-bottom: 26px;
   }
@@ -582,7 +582,7 @@
     height: 34px;
   }
   .advisor-speaker {
-    font-size: 14px;
+    font-size: var(--fs-base);
     margin-bottom: 10px;
   }
   .advisor-answer {
@@ -593,22 +593,22 @@
     padding: 15px 16px;
   }
   .advisor-answer-bubble .prose {
-    font-size: 17px;
+    font-size: var(--fs-lg);
   }
   .advisor-tool-record summary {
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   .advisor-compose-area {
     padding: 14px 30px 20px;
   }
   .advisor-composer textarea {
-    font-size: 15px;
+    font-size: var(--fs-ui);
   }
   .advisor-compose-hint {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
 }
-@media (max-width: 600px) {
+@media (max-width: 620px) {
   .advisor-heading {
     padding: 18px 16px 14px;
   }

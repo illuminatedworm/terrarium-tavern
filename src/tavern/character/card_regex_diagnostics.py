@@ -26,7 +26,9 @@ def regex_warnings(document):
         replacement = rule.get("replaceString", "")
         if isinstance(replacement, str) and "<script" in replacement.lower() and not rule.get("disabled"):
             if not rule.get("markdownOnly") or rule.get("promptOnly"):
-                warnings.append(location + "：HTML 脚本可能进入模型文本；展示规则应 markdownOnly=true、promptOnly=false")
+                warnings.append(
+                    location + "：HTML 脚本可能进入模型文本；展示规则应 markdownOnly=true、promptOnly=false"
+                )
             if isinstance(rule.get("placement"), list) and rule["placement"] and 2 not in rule["placement"]:
                 warnings.append(location + "：展示规则未覆盖助手输出 placement=2")
     return warnings

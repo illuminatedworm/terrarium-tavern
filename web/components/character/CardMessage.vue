@@ -50,9 +50,9 @@ defineProps<{
   max-width: 100%;
   padding: 5px 9px;
   border: 1px solid var(--border-control);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   color: var(--text-secondary);
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 .message-files span {
   overflow-wrap: anywhere;
@@ -70,14 +70,14 @@ defineProps<{
   justify-content: center;
   width: 35px;
   height: 35px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
 .cw-avatar-user {
   background: var(--surface-active);
   color: var(--text-secondary);
-  font: 500 15px var(--font-ui);
+  font: 500 var(--fs-ui) var(--font-ui);
 }
 .cw-message {
   display: flex;
@@ -98,12 +98,12 @@ defineProps<{
   color: var(--text-secondary);
 }
 .cw-message-meta strong {
-  font: 500 13px/1.5 var(--font-ui);
+  font: 500 var(--fs-md) / 1.5 var(--font-ui);
   color: var(--text-primary);
 }
 .cw-message-meta small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .cw-message-content :deep(.prose) {
   font-family: var(--story-font-family, var(--font-ui));
@@ -144,7 +144,7 @@ defineProps<{
   .cw-avatar {
     width: 29px;
     height: 29px;
-    border-radius: 9px;
+    border-radius: var(--radius-sm);
   }
   .cw-message-meta {
     margin-top: 2px;

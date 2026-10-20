@@ -64,7 +64,7 @@ body::after {
 }
 ::selection {
   background: rgb(var(--accent-rgb) / 0.32);
-  color: #fff;
+  color: var(--text-strong);
 }
 
 /* ---------- Typography ---------- */
@@ -110,7 +110,7 @@ a {
   line-height: 1.9;
 }
 pre {
-  font: 12px/1.7 var(--font-mono);
+  font: var(--fs-sm) / 1.7 var(--font-mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: rgb(var(--well-rgb) / 0.6);
@@ -123,7 +123,7 @@ pre {
 label {
   display: block;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 18px 0 8px;
 }
 label input,
@@ -200,7 +200,7 @@ a > .icon:first-child {
 }
 .primary:hover:not(:disabled),
 .send:hover:not(:disabled) {
-  background: #fff;
+  background: var(--text-strong);
   border-color: transparent;
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.8),
@@ -265,7 +265,7 @@ a > .icon:first-child {
 .link {
   display: inline-block;
   margin-top: 14px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 
 /* ---------- Fields ---------- */
@@ -340,7 +340,7 @@ input[type='radio'] {
   cursor: pointer;
 }
 input[type='checkbox'] {
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
 }
 input[type='radio'] {
   border-radius: 50%;
@@ -412,7 +412,7 @@ select:focus-visible {
 details {
   padding: 12px 0;
   border-bottom: 1px solid var(--border-control);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 summary {
   cursor: pointer;
@@ -438,7 +438,7 @@ summary:hover {
 ::-webkit-scrollbar-thumb {
   min-height: 36px;
   border: 2px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--scrollbar);
   background-clip: content-box;
 }
@@ -480,14 +480,14 @@ summary:hover {
   margin: 0;
 }
 .empty-small {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-faint);
   padding: 10px;
   line-height: 1.9;
 }
 .state-empty {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   margin: 8px 0;
 }
@@ -495,7 +495,7 @@ summary:hover {
   width: 100%;
   border: 0;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 .field-help {
   display: inline-grid;
@@ -506,7 +506,7 @@ summary:hover {
   border: 1px solid var(--text-faint);
   border-radius: 50%;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   cursor: help;
 }
 .field-help[data-tooltip]:focus-visible {
@@ -526,7 +526,7 @@ summary:hover {
   border: 1px solid var(--danger-edge);
   background: var(--danger-surface);
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   border-radius: var(--radius-md);
   display: flex;
   justify-content: space-between;
@@ -547,7 +547,7 @@ summary:hover {
   border: 1px solid rgb(var(--warning-rgb) / 0.28);
   background: rgb(var(--warning-rgb) / 0.08);
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   border-radius: var(--radius-md);
   display: flex;
@@ -567,7 +567,7 @@ summary:hover {
   border: 1px solid rgb(var(--accent-rgb) / 0.4);
   padding: 20px;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .review button {
   margin: 12px 12px 0 0;
@@ -610,7 +610,7 @@ summary:hover {
 }
 .prose img {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 /* Reserve a quiet slot while a remote image streams in; static, no animation. */
 .prose img[data-tavern-src] {
@@ -673,7 +673,7 @@ summary:hover {
 .prose :not(pre) > code {
   background: var(--surface-hover);
   color: var(--text-secondary);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0.15em 0.35em;
 }
 .prose pre {
@@ -727,7 +727,7 @@ summary:hover {
   padding: 8px 0;
 }
 .state-tree summary {
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-primary);
 }
 .state-tree .state-tree {
@@ -743,11 +743,11 @@ summary:hover {
   border-bottom: 1px solid var(--border-subtle);
 }
 .state-leaf > span {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 .state-leaf > strong {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 400;
   line-height: 1.75;
   overflow-wrap: anywhere;
@@ -755,10 +755,10 @@ summary:hover {
 }
 .state-leaf .numeric {
   color: var(--text-primary);
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-variant-numeric: tabular-nums;
 }
 .state-leaf .prose {
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.75;
 }

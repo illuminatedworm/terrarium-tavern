@@ -160,7 +160,7 @@ function composerKeydown(event: KeyboardEvent) {
   margin: 0;
   padding: 11px 12px 36px;
   resize: none;
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.75;
 }
 .expandable-textarea > .prompt-field.has-prefix {
@@ -173,7 +173,7 @@ function composerKeydown(event: KeyboardEvent) {
   max-height: none;
 }
 .expandable-textarea.is-code > .prompt-field > textarea {
-  font: 12px/1.7 var(--font-mono);
+  font: var(--fs-sm) / 1.7 var(--font-mono);
 }
 .expandable-textarea.is-compact {
   margin-top: 0;
@@ -195,7 +195,7 @@ function composerKeydown(event: KeyboardEvent) {
   height: 26px;
   padding: 0;
   border: 1px solid var(--glass-edge);
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   background: var(--glass-chip);
   color: var(--text-muted);
 }
@@ -215,7 +215,7 @@ function composerKeydown(event: KeyboardEvent) {
 .expanded-editor-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1500;
+  z-index: var(--z-dialog);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -252,7 +252,7 @@ function composerKeydown(event: KeyboardEvent) {
   border-bottom: 1px solid var(--border-subtle);
 }
 .expanded-editor-heading h2 {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   margin: 0;
   letter-spacing: normal;
 }
@@ -283,17 +283,17 @@ function composerKeydown(event: KeyboardEvent) {
   resize: none;
   padding: 14px;
   color: var(--text-story);
-  font-size: 15px;
+  font-size: var(--fs-ui);
   line-height: 1.8;
 }
 .expanded-editor > .prompt-field > textarea.is-code {
-  font: 13px/1.75 var(--font-mono);
+  font: var(--fs-md) / 1.75 var(--font-mono);
 }
 .expanded-editor-error {
   flex-shrink: 0;
   margin: 0 20px 12px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .expanded-editor footer {
   display: flex;
@@ -307,11 +307,11 @@ function composerKeydown(event: KeyboardEvent) {
 .expanded-editor footer span {
   margin-right: auto;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .expanded-editor footer button {
   padding: 7px 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 @media (max-width: 620px) {
   .expanded-editor {

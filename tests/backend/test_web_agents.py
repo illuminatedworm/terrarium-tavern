@@ -1,4 +1,5 @@
 """Actual Agent loops use the shared service without changing story/draft permissions."""
+
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -24,16 +25,23 @@ async def test_card_author_web_tools_restore_projected_service_inputs():
     url = f"https://example.org/blob/{opaque}/runtime.md"
     view = ModelView({"url": url})
     handle = view.forward[opaque]
-    web = SimpleNamespace(search=AsyncMock(return_value={"results": [{"url": url}]}),
-                          read=AsyncMock(return_value={"url": url, "text": "网页原文"}))
-    owner = SimpleNamespace(context=SimpleNamespace(view=view), web=web, legacy=False,
-                            definitions=tool_definitions())
+    web = SimpleNamespace(
+        search=AsyncMock(return_value={"results": [{"url": url}]}),
+        read=AsyncMock(return_value={"url": url, "text": "网页原文"}),
+    )
+    owner = SimpleNamespace(
+        context=SimpleNamespace(view=view), web=web, legacy=False, definitions=tool_definitions()
+    )
     tools = EditorTools(owner)
-    search = await tools.execute("web_search", {"query": f"版本 {handle}", "limit": 2, "objective": f"核对 {handle}"})
+    search = await tools.execute(
+        "web_search", {"query": f"版本 {handle}", "limit": 2, "objective": f"核对 {handle}"}
+    )
     web.search.assert_awaited_once_with(f"版本 {opaque}", 2, f"核对 {opaque}")
     projected_url = search["results"][0]["url"]
     assert projected_url == f"https://example.org/blob/{handle}/runtime.md"
-    page = await tools.execute("read_webpage", {"url": projected_url, "offset": 7, "limit": 5, "service": "local"})
+    page = await tools.execute(
+        "read_webpage", {"url": projected_url, "offset": 7, "limit": 5, "service": "local"}
+    )
     web.read.assert_awaited_once_with(url, 7, 5, service="local")
     assert page == {"url": projected_url, "text": "网页原文"}
 
@@ -50,17 +58,29 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
     store.save_settings(doc)
     source = "网页资料" * 5000 + "模型必须收到第二页尾部"
     requests = []
+
     async def public(url):
         return url
+
     monkeypatch.setattr("tavern.web.client.public_url", public)
+
     def route(request):
         requests.append(request)
         assert request.headers["authorization"] == "Bearer private-tavily-key"
         if request.url.path == "/search":
-            return httpx.Response(200, json={"results": [{"title": "来源", "url": "https://example.org", "content": "定位信息"}]})
+            return httpx.Response(
+                200,
+                json={"results": [{"title": "来源", "url": "https://example.org", "content": "定位信息"}]},
+            )
         return httpx.Response(200, json={"results": [{"url": "https://example.org", "raw_content": source}]})
-    provider = ToolLLM([("web_search", {"query": "背景"}), ("read_webpage", {"url": "https://example.org"}),
-                       ("read_webpage", {"url": "https://example.org", "offset": 12000, "service": "tavily"})])
+
+    provider = ToolLLM(
+        [
+            ("web_search", {"query": "背景"}),
+            ("read_webpage", {"url": "https://example.org"}),
+            ("read_webpage", {"url": "https://example.org", "offset": 12000, "service": "tavily"}),
+        ]
+    )
     if agent == "advisor":
         service = advisor
         service.web_transport = httpx.MockTransport(route)
@@ -74,7 +94,9 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
         card = import_fixture(store)
         workspace = service.edits.create(card["id"])
         service.provider_factory = lambda: provider
-        run = service.submit(workspace["id"], CardAuthorRequest(text="查证设定", expected_revision=0, operation_id=uid()))
+        run = service.submit(
+            workspace["id"], CardAuthorRequest(text="查证设定", expected_revision=0, operation_id=uid())
+        )
         await service.tasks[run["id"]]
         assert service.edits.run(run["id"])["status"] == "completed"
         assert service.edits.get(workspace["id"])["document"] == card["document"]
@@ -82,7 +104,11 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
     assert len(requests) == 3
     assert "模型必须收到第二页尾部" not in dump(provider.call_log[2])
     final_wire = dump(provider.call_log[-1])
-    assert source[:12000] in final_wire and source[12000:] in final_wire and "private-tavily-key" not in final_wire
+    assert (
+        source[:12000] in final_wire
+        and source[12000:] in final_wire
+        and "private-tavily-key" not in final_wire
+    )
     results = [json.loads(m["content"]) for m in provider.call_log[-1] if m.get("role") == "tool"]
     pages = [r for r in results if "returned_chars" in r]
     assert [p["offset"] for p in pages] == [0, 12000]
@@ -94,7 +120,9 @@ async def test_shared_web_pages_reach_model_intact_and_off_is_enforced(tmp_path,
         assert (await ask(service, session["id"], blocked))["status"] == "completed"
     else:
         service.provider_factory = lambda: blocked
-        run = service.submit(workspace["id"], CardAuthorRequest(text="查证", expected_revision=0, operation_id=uid()))
+        run = service.submit(
+            workspace["id"], CardAuthorRequest(text="查证", expected_revision=0, operation_id=uid())
+        )
         await service.tasks[run["id"]]
         assert service.edits.run(run["id"])["status"] == "completed"
     assert len(requests) == 3
@@ -115,9 +143,13 @@ async def test_previews_use_actual_agent_mode_and_never_expose_shared_credential
     app.state.store._chatgpt_accounts = store.chatgpt
     card, session = story(app.state.store)
     workspace = app.state.editor.edits.create(card["id"])
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-        responses = [await client.get(f"/api/sessions/{session['id']}/advisor/preview"),
-                     await client.post(f"/api/card-author/conversations/{workspace['id']}/preview", json={})]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        responses = [
+            await client.get(f"/api/sessions/{session['id']}/advisor/preview"),
+            await client.post(f"/api/card-author/conversations/{workspace['id']}/preview", json={}),
+        ]
     for response in responses:
         assert response.status_code == 200, response.text
         assert "never-in-preview" not in response.text
@@ -131,7 +163,9 @@ async def test_previews_use_actual_agent_mode_and_never_expose_shared_credential
 
 @pytest.mark.parametrize("agent", ["advisor", "card_author"])
 @pytest.mark.parametrize("resume", [False, True])
-async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sources(tmp_path, monkeypatch, agent, resume):
+async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sources(
+    tmp_path, monkeypatch, agent, resume
+):
     store, _, _ = connected_store(tmp_path)
     card, session = story(store)
     doc = store.settings_document()
@@ -140,17 +174,40 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
     doc.shared.web.duckduckgo.enabled = False
     store.save_settings(doc)
     wire = []
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
         n = len(wire)
         if n == 1:
-            tools = [("update_turn_preference", {"action": "append", "content": "保持悬念", "request_ref": "Q1"})] if agent == "advisor" else [
-                ("read_field", {"card_ref": "C1", "path": ""}),
-                ("set_text_field", {"card_ref": "C1", "path": "/description", "text": "修改后设定", "comment": "更新设定"})]
+            tools = (
+                [("update_turn_preference", {"action": "append", "content": "保持悬念", "request_ref": "Q1"})]
+                if agent == "advisor"
+                else [
+                    ("read_field", {"card_ref": "C1", "path": ""}),
+                    (
+                        "set_text_field",
+                        {
+                            "card_ref": "C1",
+                            "path": "/description",
+                            "text": "修改后设定",
+                            "comment": "更新设定",
+                        },
+                    ),
+                ]
+            )
             return sse(completed("", tools))
         if n == 2:
-            return httpx.Response(400, json={"error": {"code": "unsupported_tool", "param": "tools", "message": "web_search is not supported"}})
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": "unsupported_tool",
+                        "param": "tools",
+                        "message": "web_search is not supported",
+                    }
+                },
+            )
         if n == 3:
             payload = completed("", [("web_search", {"query": "资料"})])
             payload["output"][0].update(id="item-search", call_id="call-search")
@@ -158,38 +215,72 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
         if n == 4 and resume:
             return sse(events=[{"type": "response.output_text.delta", "delta": "连接提前结束"}])
         return sse(completed("搜索完成。"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
+
     async def public(url):
         return url
+
     monkeypatch.setattr("tavern.web.client.public_url", public)
     web_requests = []
+
     def local(request):
         web_requests.append(request)
-        return httpx.Response(200, json={"results": [{"title": "完整定位资料", "url": "https://example.org/source", "content": "已取得搜索结果尾部"}]})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "完整定位资料",
+                        "url": "https://example.org/source",
+                        "content": "已取得搜索结果尾部",
+                    }
+                ]
+            },
+        )
+
     web_transport = httpx.MockTransport(local)
     if agent == "advisor":
         service = AdvisorService(store, None)
         service.web_transport = web_transport
-        request = ConsultationRequest(text="保存偏好：保持悬念，然后查资料", expected_revision=0, operation_id=uid())
+        request = ConsultationRequest(
+            text="保存偏好：保持悬念，然后查资料", expected_revision=0, operation_id=uid()
+        )
         run = service.submit(session["id"], request)
     else:
         service = CardAuthorService(store)
         service.web_transport = web_transport
         workspace = service.edits.create(card["id"])
-        run = service.submit(workspace["id"], CardAuthorRequest(text="修改设定并查资料", expected_revision=0, operation_id=uid()))
+        run = service.submit(
+            workspace["id"],
+            CardAuthorRequest(text="修改设定并查资料", expected_revision=0, operation_id=uid()),
+        )
     await service.tasks[run["id"]]
     result = service.data.run(run["id"]) if agent == "advisor" else service.edits.run(run["id"])
     if resume:
         assert result["status"] == "error"
         if agent == "advisor":
             assert store.session(session["id"])["turn_preference"] == ""
-            continued = service.submit(session["id"], ConsultationRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]))
+            continued = service.submit(
+                session["id"],
+                ConsultationRequest(
+                    text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]
+                ),
+            )
         else:
             assert service.edits.get(workspace["id"])["document"]["description"] != "修改后设定"
-            continued = service.submit(workspace["id"], CardAuthorRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]))
+            continued = service.submit(
+                workspace["id"],
+                CardAuthorRequest(text="", expected_revision=0, operation_id=uid(), resume_run_id=run["id"]),
+            )
         await service.tasks[continued["id"]]
-        result = service.data.run(continued["id"]) if agent == "advisor" else service.edits.run(continued["id"])
-        assert any(i.get("type") == "function_call_output" and "已取得搜索结果尾部" in i.get("output", "") for i in wire[-1]["input"])
+        result = (
+            service.data.run(continued["id"]) if agent == "advisor" else service.edits.run(continued["id"])
+        )
+        assert any(
+            i.get("type") == "function_call_output" and "已取得搜索结果尾部" in i.get("output", "")
+            for i in wire[-1]["input"]
+        )
     assert result["status"] == "completed", result.get("error")
     assert len(wire) == (5 if resume else 4)
     assert len(web_requests) == 1
@@ -199,7 +290,14 @@ async def test_cloud_fallback_in_agent_preserves_prior_mutation_and_native_sourc
     if agent == "advisor":
         assert store.session(session["id"])["turn_preference"] == "保持悬念"
         trace = service.public(session["id"])["exchanges"][-1]["trace"]
-        assert sum(c["function"]["name"] == "update_turn_preference" for row in trace for c in row.get("tool_calls", [])) == 1
+        assert (
+            sum(
+                c["function"]["name"] == "update_turn_preference"
+                for row in trace
+                for c in row.get("tool_calls", [])
+            )
+            == 1
+        )
     else:
         assert service.edits.get(workspace["id"])["document"]["description"] == "修改后设定"
         assert store.card(card["id"])["document"]["description"] != "修改后设定"

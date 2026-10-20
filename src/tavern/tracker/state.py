@@ -1,4 +1,5 @@
 """Validate a variable proposal without executing MVU or any card callback."""
+
 import copy
 
 import jsonpatch
@@ -39,16 +40,20 @@ def _metadata(value, previous):
         previous = previous if isinstance(previous, dict) else {}
         if value.keys() & METADATA:
             raise ProtectedStateField("MVU 内部字段由程序维护")
-        return {**{k: _metadata(v, previous.get(k)) for k, v in value.items()},
-                **{k: copy.deepcopy(v) for k, v in previous.items() if k in METADATA}}
+        return {
+            **{k: _metadata(v, previous.get(k)) for k, v in value.items()},
+            **{k: copy.deepcopy(v) for k, v in previous.items() if k in METADATA},
+        }
     if isinstance(value, list) and isinstance(previous, list):
         visible = [v for v in previous if v != MARKER]
         by_id = {v["id"]: v for v in visible if isinstance(v, dict) and isinstance(v.get("id"), (str, int))}
+
         def prior(item, index):
             if isinstance(item, dict) and "id" in item:
                 return by_id.get(item["id"])
             candidate = visible[index] if index < len(visible) else None
             return None if isinstance(candidate, dict) and "id" in candidate else candidate
+
         restored = [_metadata(v, prior(v, i)) for i, v in enumerate(value)]
         if MARKER in previous and MARKER not in restored:
             restored.insert(min(previous.index(MARKER), len(restored)), MARKER)
@@ -91,7 +96,11 @@ def stage(raw, operations):
             op["from"] = pointer(result, op["from"])
         if action in ("add", "replace") and "value" in op:
             parent = jsonpointer.resolve_pointer(result, op["path"].rpartition("/")[0], default=None)
-            previous = None if action == "add" and isinstance(parent, list) else jsonpointer.resolve_pointer(result, op["path"], default=None)
+            previous = (
+                None
+                if action == "add" and isinstance(parent, list)
+                else jsonpointer.resolve_pointer(result, op["path"], default=None)
+            )
             op["value"] = preserve_metadata(op["value"], previous)
         result = jsonpatch.apply_patch(result, [op])
         accepted.append(op)

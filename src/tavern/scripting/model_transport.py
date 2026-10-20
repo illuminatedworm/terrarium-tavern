@@ -1,4 +1,5 @@
 """Four HTTP protocols behind the same Terrarium chat/tool contract."""
+
 import copy
 import hashlib
 import json
@@ -51,13 +52,24 @@ from tavern.scripting.sse import stream_events
 
 class ModelTransport(BaseLLMProvider):
     def __init__(self, settings, key, capture=None, *, http_client=None, request_context=None):
-        super().__init__(LLMConfig(model=settings.model, temperature=settings.temperature,
-                                   max_tokens=settings.reply_tokens))
+        super().__init__(
+            LLMConfig(
+                model=settings.model, temperature=settings.temperature, max_tokens=settings.reply_tokens
+            )
+        )
         self.settings, self.key, self.capture = settings, key, capture
-        self._http = (http_client if http_client is not None else httpx.AsyncClient(
-            proxy=(settings.proxy or None) if settings.use_proxy else None, timeout=120, trust_env=False))
-        self._client = (None if settings.api_mode == "gemini" else
-                        AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=self._http))
+        self._http = (
+            http_client
+            if http_client is not None
+            else httpx.AsyncClient(
+                proxy=(settings.proxy or None) if settings.use_proxy else None, timeout=120, trust_env=False
+            )
+        )
+        self._client = (
+            None
+            if settings.api_mode == "gemini"
+            else AsyncOpenAI(api_key=key, base_url=settings.base_url, max_retries=0, http_client=self._http)
+        )
         self._genai = None
         self._failure_debug = FailureDebug()
         self.capability_key = capability_key(settings, key)
@@ -84,8 +96,9 @@ class ModelTransport(BaseLLMProvider):
     @property
     def genai(self):
         if self._genai is None:
-            self._genai = GenAITransport(self.settings.base_url, self.settings.api_path, self.key, self.http,
-                                        debug=self._failure_debug)
+            self._genai = GenAITransport(
+                self.settings.base_url, self.settings.api_path, self.key, self.http, debug=self._failure_debug
+            )
         return self._genai
 
     async def chat_complete(self, messages, **kwargs):
@@ -108,16 +121,24 @@ class ModelTransport(BaseLLMProvider):
     def last_usage(self):
         # Terrarium's numeric accounting cannot add None. Preserve the real values
         # separately for the application's usage event and keep raw evidence.
-        return {**self._last_usage, "cached_tokens": self._last_usage.get("cached_tokens") or 0,
-                "cache_write_tokens": self._last_usage.get("cache_write_tokens") or 0}
+        return {
+            **self._last_usage,
+            "cached_tokens": self._last_usage.get("cached_tokens") or 0,
+            "cache_write_tokens": self._last_usage.get("cache_write_tokens") or 0,
+        }
 
     @property
     def reported_usage(self):
-        result = {key: sum(u[key] for u in self.usage_history) for key in
-                  ("prompt_tokens", "completion_tokens", "total_tokens")}
+        result = {
+            key: sum(u[key] for u in self.usage_history)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+        }
         for key in ("cached_tokens", "cache_write_tokens"):
-            result[key] = (sum(u[key] for u in self.usage_history)
-                           if self.usage_history and all(u[key] is not None for u in self.usage_history) else None)
+            result[key] = (
+                sum(u[key] for u in self.usage_history)
+                if self.usage_history and all(u[key] is not None for u in self.usage_history)
+                else None
+            )
         result["raw_usage"] = [u["raw_usage"] for u in self.usage_history]
         return result
 
@@ -126,10 +147,19 @@ class ModelTransport(BaseLLMProvider):
             return self
         clone = copy.copy(self)
         clone.settings = self.settings.model_copy(deep=True, update={"model": name})
-        clone.config = self.config.model_copy(update={"model": name}) if hasattr(self.config, "model_copy") else copy.copy(self.config)
+        clone.config = (
+            self.config.model_copy(update={"model": name})
+            if hasattr(self.config, "model_copy")
+            else copy.copy(self.config)
+        )
         clone.config.model = name
         clone.capability_key = capability_key(clone.settings, self.key)
-        clone._last_tool_calls, clone._last_usage, clone._last_assistant_extra_fields, clone.usage_history = [], {}, {}, []
+        clone._last_tool_calls, clone._last_usage, clone._last_assistant_extra_fields, clone.usage_history = (
+            [],
+            {},
+            {},
+            [],
+        )
         clone.last_native_response, clone.last_response_record, clone._response_headers = None, {}, {}
         clone.request_context = copy.deepcopy(self.request_context)
         clone._sent_breakpoints = copy.deepcopy(self._sent_breakpoints)
@@ -148,15 +178,18 @@ class ModelTransport(BaseLLMProvider):
                 await self.http.aclose()
 
     def _breakpoint_history(self):
-        return (self.request_context.sent_breakpoints
-                if self.request_context and self.request_context.sent_breakpoints is not None
-                else self._sent_breakpoints)
+        return (
+            self.request_context.sent_breakpoints
+            if self.request_context and self.request_context.sent_breakpoints is not None
+            else self._sent_breakpoints
+        )
 
     def _breakpoint_identity(self):
         origin = response_origin(self.settings, self.key)
         if not self.request_context or self.request_context.sent_breakpoints is None:
-            origin["scope"] = (self.request_context.session_id if self.request_context
-                               else self.settings.cache_scope)
+            origin["scope"] = (
+                self.request_context.session_id if self.request_context else self.settings.cache_scope
+            )
         return fingerprint(origin)
 
     def _retains_breakpoints(self, selected):
@@ -166,11 +199,18 @@ class ModelTransport(BaseLLMProvider):
         messages, _, _ = adapt_messages(messages, self.settings)
         selected = preset(self.settings)
         enabled = self.settings.cache.mode == "runtime" and (
-            any(m.get("_cache_breakpoint") for m in messages) or self._retains_breakpoints(selected))
+            any(m.get("_cache_breakpoint") for m in messages) or self._retains_breakpoints(selected)
+        )
         marker = selected if enabled and selected["kind"] == "block" else None
         tools = tools or (kwargs.get("extra_body") or {}).get("tools")
-        return self._body(messages, tools, False, marker,
-                          selected["request"] if marker or selected["kind"] == "implicit" else {}, kwargs)
+        return self._body(
+            messages,
+            tools,
+            False,
+            marker,
+            selected["request"] if marker or selected["kind"] == "implicit" else {},
+            kwargs,
+        )
 
     def _body(self, messages, tools, stream, marker, params, kwargs):
         cfg, api = self.settings, self.settings.api_mode
@@ -185,29 +225,44 @@ class ModelTransport(BaseLLMProvider):
         if api == "chat_completions":
             body = {"model": cfg.model, "messages": openai_messages(messages, marker), "max_tokens": maximum}
             if tools:
-                body.update(tools=definitions(tools), tool_choice=choice,
-                            parallel_tool_calls=extra.get("parallel_tool_calls", False))
+                body.update(
+                    tools=definitions(tools),
+                    tool_choice=choice,
+                    parallel_tool_calls=extra.get("parallel_tool_calls", False),
+                )
             for field in ("top_p", "top_k", "frequency_penalty", "presence_penalty"):
                 if getattr(cfg, field) is not None and (sampling or field not in ("top_p", "top_k")):
                     body[field] = getattr(cfg, field)
             if cfg.reasoning_effort != "default":
                 effort = gemini_effort(cfg.model, cfg.reasoning_effort)
-                body.update({"reasoning_effort": effort} if cfg.reasoning_format == "reasoning_effort"
-                            else {"reasoning": {"effort": effort}})
+                body.update(
+                    {"reasoning_effort": effort}
+                    if cfg.reasoning_format == "reasoning_effort"
+                    else {"reasoning": {"effort": effort}}
+                )
             if stream:
                 body.update(stream=True, stream_options={"include_usage": True})
         elif api == "responses":
-            body = {"model": cfg.model, "input": response_input(messages, marker), "store": False,
-                    "max_output_tokens": maximum}
+            body = {
+                "model": cfg.model,
+                "input": response_input(messages, marker),
+                "store": False,
+                "max_output_tokens": maximum,
+            }
             if tools:
                 if isinstance(choice, dict) and choice.get("type") == "function":
                     choice = {"type": "function", "name": choice.get("function", choice)["name"]}
-                body.update(tools=response_tools(tools), tool_choice=choice,
-                            parallel_tool_calls=extra.get("parallel_tool_calls", False))
+                body.update(
+                    tools=response_tools(tools),
+                    tool_choice=choice,
+                    parallel_tool_calls=extra.get("parallel_tool_calls", False),
+                )
             if cfg.top_p is not None:
                 body["top_p"] = cfg.top_p
             if cfg.reasoning_effort != "default":
-                body.update(reasoning={"effort": cfg.reasoning_effort}, include=["reasoning.encrypted_content"])
+                body.update(
+                    reasoning={"effort": cfg.reasoning_effort}, include=["reasoning.encrypted_content"]
+                )
             if stream:
                 body["stream"] = True
             if "tool_choice" in extra:
@@ -232,11 +287,17 @@ class ModelTransport(BaseLLMProvider):
                             # Full Agent still enforces new_context during forced
                             # rollover. Expose only the requested tool, using the
                             # auto mode accepted by the model's native API.
-                            selected_tools = [t for t in definitions(tools) if t.get("function", t)["name"] == name]
+                            selected_tools = [
+                                t for t in definitions(tools) if t.get("function", t)["name"] == name
+                            ]
                             if not selected_tools:
                                 raise ValueError("指定工具不在当前允许的工具列表中")
                         else:
-                            selection = {"type": "tool", "name": name, "disable_parallel_tool_use": disable_parallel}
+                            selection = {
+                                "type": "tool",
+                                "name": name,
+                                "disable_parallel_tool_use": disable_parallel,
+                            }
                     elif choice == "none":
                         selection = {"type": "none"}
                     body.update(tools=native_tools(selected_tools, api), tool_choice=selection)
@@ -261,7 +322,11 @@ class ModelTransport(BaseLLMProvider):
                 thinking = gemini_thinking(cfg.model, cfg.reasoning_effort)
                 if thinking:
                     generation["thinkingConfig"] = thinking
-                body = {"systemInstruction": {"parts": system}, "contents": contents, "generationConfig": generation}
+                body = {
+                    "systemInstruction": {"parts": system},
+                    "contents": contents,
+                    "generationConfig": generation,
+                }
                 if tools:
                     fc = {"mode": "AUTO"}
                     if isinstance(choice, dict):
@@ -298,21 +363,37 @@ class ModelTransport(BaseLLMProvider):
                 messages[target]["_cache_breakpoint"] = True
         selected = preset(cfg)
         planned = next((i for i, m in enumerate(messages) if explicit and m.get("_cache_breakpoint")), None)
-        diagnostic = {"mode": cfg.cache.mode, "status": "cloud", "planned_index": planned,
-                      "sent_index": None, "reason": fallback, "kind": selected["kind"]}
+        diagnostic = {
+            "mode": cfg.cache.mode,
+            "status": "cloud",
+            "planned_index": planned,
+            "sent_index": None,
+            "reason": fallback,
+            "kind": selected["kind"],
+        }
         if invalid_native:
             diagnostic["native_replay_invalidations"] = invalid_native
         if planned is not None:
-            diagnostic.update(source=messages[planned].get("_cache_source"),
-                              message_id=messages[planned].get("_cache_message_id"))
-        marker, params, resource = None, (retention_request(cfg) if cfg.cache.mode == "cloud" and not fallback else {}), None
+            diagnostic.update(
+                source=messages[planned].get("_cache_source"),
+                message_id=messages[planned].get("_cache_message_id"),
+            )
+        marker, params, resource = (
+            None,
+            (retention_request(cfg) if cfg.cache.mode == "cloud" and not fallback else {}),
+            None,
+        )
         diagnostic["retention"] = effective_retention(cfg)[1]
         if not explicit:
             diagnostic.update(mode="cloud", reason="当前 Gemini 模型仅支持隐式缓存，本地缓存配置不适用")
         if cfg.cache.mode == "runtime":
             reason = fallback or DISABLED.get(self.capability_key)
-            if (not reason and planned is None and selected["kind"] != "implicit"
-                    and not self._retains_breakpoints(selected)):
+            if (
+                not reason
+                and planned is None
+                and selected["kind"] != "implicit"
+                and not self._retains_breakpoints(selected)
+            ):
                 reason = "没有可用的固定前缀断点"
             if not reason and selected["kind"] == "unknown":
                 reason = "模型没有已匹配的缓存参数，请手动配置"
@@ -321,10 +402,14 @@ class ModelTransport(BaseLLMProvider):
                     reason = "当前协议不支持 Gemini 缓存对象引用"
                 else:
                     try:
-                        resource, reason = await gemini_object(self, messages, tools,
-                            (kwargs.get("extra_body") or {}).get("tool_choice", "auto"))
+                        resource, reason = await gemini_object(
+                            self, messages, tools, (kwargs.get("extra_body") or {}).get("tool_choice", "auto")
+                        )
                     except ValueError:
-                        resource, reason = None, "当前消息映射不能用于原生缓存对象；按所选消息角色发送普通请求"
+                        resource, reason = (
+                            None,
+                            "当前消息映射不能用于原生缓存对象；按所选消息角色发送普通请求",
+                        )
             if reason:
                 diagnostic.update(status="fallback", reason=reason)
             else:
@@ -333,36 +418,45 @@ class ModelTransport(BaseLLMProvider):
                 if selected["kind"] == "block":
                     marker = selected
                 elif selected["kind"] == "implicit":
-                    diagnostic.update(status="cloud", sent_index=None, reason=(
-                        "当前 Gemini 模型仅支持隐式缓存，不发送显式缓存对象、断点或时效参数"
-                        if not gemini_controls(api, cfg.model)[1] else
-                        "该模型由服务端管理缓存前缀，仅发送时效参数"))
+                    diagnostic.update(
+                        status="cloud",
+                        sent_index=None,
+                        reason=(
+                            "当前 Gemini 模型仅支持隐式缓存，不发送显式缓存对象、断点或时效参数"
+                            if not gemini_controls(api, cfg.model)[1]
+                            else "该模型由服务端管理缓存前缀，仅发送时效参数"
+                        ),
+                    )
         body = self._body(messages, tools, stream, marker, params, kwargs)
         if resource:
             if api == "gemini":
-                body["contents"] = body["contents"][resource["boundary"]:]
+                body["contents"] = body["contents"][resource["boundary"] :]
                 for field in ("systemInstruction", "tools", "toolConfig"):
                     body.pop(field, None)
                 body["cachedContent"] = resource["name"]
             else:
                 # Google-compatible Chat can reference an object created through the native endpoint.
-                suffix = copy.deepcopy(messages[planned + 1:])
+                suffix = copy.deepcopy(messages[planned + 1 :])
                 for message in suffix:
                     if message["role"] in ("system", "developer") and not message.get("_adapter_typed"):
                         message["role"] = "user"
-                        message["content"] = "<tavern_runtime_context>\n" + str(message.get("content", "")) + "\n</tavern_runtime_context>"
+                        message["content"] = (
+                            "<tavern_runtime_context>\n"
+                            + str(message.get("content", ""))
+                            + "\n</tavern_runtime_context>"
+                        )
                 body["messages"] = openai_messages(suffix)
                 body.pop("tools", None)
                 body.pop("tool_choice", None)
                 body.pop("parallel_tool_calls", None)
                 body["extra_body"] = {"google": {"cached_content": resource["name"]}}
             diagnostic["resource"] = resource["name"]
-        diagnostic["parameters"] = ({marker["field"]: marker["value"], **params} if marker else params)
+        diagnostic["parameters"] = {marker["field"]: marker["value"], **params} if marker else params
         if api in APIS and marker and marker.get("field") == FIELD:
             diagnostic["sent_breakpoints"] = marked_boundaries(body, api)
             if planned is None and not diagnostic["sent_breakpoints"]:
                 return await self._prepare(messages, tools, stream, kwargs, fallback="没有可用的固定前缀断点")
-        diagnostic["prefix_sha256"] = fingerprint(messages[:planned + 1]) if planned is not None else None
+        diagnostic["prefix_sha256"] = fingerprint(messages[: planned + 1]) if planned is not None else None
         return body, diagnostic, resource
 
     def _capture(self, messages, tools, body, diagnostic, url, request=None):
@@ -374,16 +468,27 @@ class ModelTransport(BaseLLMProvider):
         wire_messages = body.get("messages", body.get("input", body.get("contents", [])))
         effective_messages, _ = prepare_messages(messages, response_origin(cfg, self.key))
         cost = request_tokens(effective_messages, cfg, definitions(tools))
-        payload = {"model": cfg.model, "api_mode": cfg.api_mode, "url": url,
-                      "messages": wire_messages, "wire": copy.deepcopy(body), "cache": diagnostic,
-                      "tools": [t.get("function", t).get("name") for t in definitions(tools)],
-                      "tools_sha256": fingerprint(definitions(tools)),
-                      "reasoning": cfg.reasoning_effort, "estimated_input_tokens": cost,
-                      "context_warning": "估算超出模型上下文，完整发送" if cost + cfg.reply_tokens + 2048 > cfg.context_tokens else None,
-                      "token_counting": counting_info(cfg)}
+        payload = {
+            "model": cfg.model,
+            "api_mode": cfg.api_mode,
+            "url": url,
+            "messages": wire_messages,
+            "wire": copy.deepcopy(body),
+            "cache": diagnostic,
+            "tools": [t.get("function", t).get("name") for t in definitions(tools)],
+            "tools_sha256": fingerprint(definitions(tools)),
+            "reasoning": cfg.reasoning_effort,
+            "estimated_input_tokens": cost,
+            "context_warning": "估算超出模型上下文，完整发送"
+            if cost + cfg.reply_tokens + 2048 > cfg.context_tokens
+            else None,
+            "token_counting": counting_info(cfg),
+        }
         if request is not None:
-            payload.update(headers=identity_headers(request.headers),
-                           wire_sha256=hashlib.sha256(request.content).hexdigest())
+            payload.update(
+                headers=identity_headers(request.headers),
+                wire_sha256=hashlib.sha256(request.content).hexdigest(),
+            )
         if self.request_context:
             payload["request_context"] = self.request_context.audit()
         serialized = json.dumps(payload, ensure_ascii=False)
@@ -396,14 +501,19 @@ class ModelTransport(BaseLLMProvider):
         snapshot = adapter_snapshot(cfg)
         messages, _, adapter_warnings = adapt_messages(messages, cfg, snapshot)
         url = endpoint(cfg.base_url, api, cfg.model, stream=stream, api_path=cfg.api_path)
-        headers = ({"x-api-key": self.key, "anthropic-version": "2023-06-01"} if api == "anthropic" else
-                   {"Authorization": "Bearer " + self.key})
+        headers = (
+            {"x-api-key": self.key, "anthropic-version": "2023-06-01"}
+            if api == "anthropic"
+            else {"Authorization": "Bearer " + self.key}
+        )
         if self.request_context:
             self.request_context.bind(response_origin(cfg, self.key))
             headers.update(self.request_context.headers(api))
         fallback = None
         for attempt in range(2):
-            body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
+            body, diagnostic, resource = await self._prepare(
+                messages, tools, stream, kwargs, fallback=fallback
+            )
             diagnostic.update(adapter_revision=snapshot["revision"], adapter_warnings=adapter_warnings)
             request = self.http.build_request("POST", url, headers=headers, json=body)
             history, identity = self._breakpoint_history(), self._breakpoint_identity()
@@ -428,8 +538,9 @@ class ModelTransport(BaseLLMProvider):
             # response still proves dispatch, regardless of status or parsing.
             remember_sent()
             if response.status_code < 400:
-                self._response_headers = {k: response.headers[k] for k in ("request-id", "x-request-id")
-                                          if k in response.headers}
+                self._response_headers = {
+                    k: response.headers[k] for k in ("request-id", "x-request-id") if k in response.headers
+                }
                 if self.request_context:
                     self.request_context.receive(api, response.headers)
                 return response
@@ -441,9 +552,12 @@ class ModelTransport(BaseLLMProvider):
                     payload = {}
                 selected = preset(cfg)
                 fields = [selected.get("field", "cachedContent"), *selected["request"]]
-                retry = (attempt == 0 and diagnostic["status"] == "sent"
-                         and not (self.request_context and self.request_context.identity_rejection(api, payload))
-                         and cache_rejection(response.status_code, payload, fields, resource=bool(resource)))
+                retry = (
+                    attempt == 0
+                    and diagnostic["status"] == "sent"
+                    and not (self.request_context and self.request_context.identity_rejection(api, payload))
+                    and cache_rejection(response.status_code, payload, fields, resource=bool(resource))
+                )
                 if not retry:
                     raise response_error(response, self.key)
             finally:
@@ -462,12 +576,17 @@ class ModelTransport(BaseLLMProvider):
         messages, _, warnings = adapt_messages(messages, cfg, snapshot)
         fallback = None
         for attempt in range(2):
-            body, diagnostic, resource = await self._prepare(messages, tools, stream, kwargs, fallback=fallback)
-            diagnostic.update(adapter_revision=snapshot["revision"], adapter_warnings=warnings,
-                              transport="google-genai")
+            body, diagnostic, resource = await self._prepare(
+                messages, tools, stream, kwargs, fallback=fallback
+            )
+            diagnostic.update(
+                adapter_revision=snapshot["revision"], adapter_warnings=warnings, transport="google-genai"
+            )
 
             def capture(request):
-                self._capture(messages, tools, json.loads(request.content), diagnostic, str(request.url), request)
+                self._capture(
+                    messages, tools, json.loads(request.content), diagnostic, str(request.url), request
+                )
 
             emitted = False
             try:
@@ -475,13 +594,17 @@ class ModelTransport(BaseLLMProvider):
                     async with aclosing(self.genai.stream(cfg.model, body, capture)) as events:
                         async for payload, headers in events:
                             emitted = True
-                            self._response_headers = {k: v for k, v in headers.items()
-                                                      if k.lower() in ("request-id", "x-request-id")}
+                            self._response_headers = {
+                                k: v
+                                for k, v in headers.items()
+                                if k.lower() in ("request-id", "x-request-id")
+                            }
                             yield payload
                 else:
                     payload, headers = await self.genai.generate(cfg.model, body, capture)
-                    self._response_headers = {k: v for k, v in headers.items()
-                                              if k.lower() in ("request-id", "x-request-id")}
+                    self._response_headers = {
+                        k: v for k, v in headers.items() if k.lower() in ("request-id", "x-request-id")
+                    }
                     yield payload
                 return
             except httpx.HTTPStatusError as error:
@@ -489,8 +612,14 @@ class ModelTransport(BaseLLMProvider):
                     payload = error.response.json()
                 except ValueError:
                     payload = {}
-                if (emitted or attempt or not resource or not cache_rejection(
-                        error.response.status_code, payload, ["cachedContent"], resource=True)):
+                if (
+                    emitted
+                    or attempt
+                    or not resource
+                    or not cache_rejection(
+                        error.response.status_code, payload, ["cachedContent"], resource=True
+                    )
+                ):
                     raise
                 fallback = "服务商拒绝缓存对象或缓存对象已过期；已完整发送上下文"
                 await invalidate_object(self, resource)
@@ -500,8 +629,12 @@ class ModelTransport(BaseLLMProvider):
     def _begin_kemini(self, tools, kwargs):
         self._kemini, self.last_auxiliary = None, []
         config = self.settings.kemini
-        if (getattr(self, "operation_purpose", None) == "narrative" and config.enabled
-                and not kwargs.get("_maintenance_instructions") and not kwargs.get("_compact_threshold")):
+        if (
+            getattr(self, "operation_purpose", None) == "narrative"
+            and config.enabled
+            and not kwargs.get("_maintenance_instructions")
+            and not kwargs.get("_compact_threshold")
+        ):
             choice = (kwargs.get("extra_body") or {}).get("tool_choice", "auto")
             self._kemini = KeminiReply(config, choice == "auto")
             if self.auxiliary_capture:
@@ -514,8 +647,11 @@ class ModelTransport(BaseLLMProvider):
             return self._finish_payload(payload)
         except ValueError as error:
             if self._kemini:
-                self.last_response_record = {"api_mode": self.settings.api_mode,
-                    "raw_response": copy.deepcopy(payload), "error": str(error)}
+                self.last_response_record = {
+                    "api_mode": self.settings.api_mode,
+                    "raw_response": copy.deepcopy(payload),
+                    "error": str(error),
+                }
                 if self.response_capture:
                     self.response_capture(copy.deepcopy(self.last_response_record))
             raise
@@ -529,16 +665,22 @@ class ModelTransport(BaseLLMProvider):
             choice = (payload.get("choices") or [{}])[0]
             message = choice.get("message") or {}
             text, finish = message.get("content") or "", choice.get("finish_reason")
-            self._last_tool_calls = [NativeToolCall(id=c["id"], name=c["function"]["name"],
-                arguments=c["function"]["arguments"]) for c in message.get("tool_calls") or []]
-            self._last_assistant_extra_fields = {k: message[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in message}
+            self._last_tool_calls = [
+                NativeToolCall(id=c["id"], name=c["function"]["name"], arguments=c["function"]["arguments"])
+                for c in message.get("tool_calls") or []
+            ]
+            self._last_assistant_extra_fields = {
+                k: message[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in message
+            }
         elif api == "responses":
             if payload.get("status") != "completed":
                 raise ValueError("Responses 请求未完整结束，本回合未提交")
             reasoning = []
             for item in payload.get("output", []):
                 if item["type"] == "function_call":
-                    self._last_tool_calls.append(NativeToolCall(id=item["call_id"], name=item["name"], arguments=item["arguments"]))
+                    self._last_tool_calls.append(
+                        NativeToolCall(id=item["call_id"], name=item["name"], arguments=item["arguments"])
+                    )
                 elif item["type"] == "message":
                     text += "".join(p.get("text", "") for p in item.get("content", []))
                 elif item["type"] == "reasoning" and item.get("encrypted_content"):
@@ -551,13 +693,22 @@ class ModelTransport(BaseLLMProvider):
                 if part["type"] == "text":
                     text += part["text"]
                 elif part["type"] == "tool_use":
-                    self._last_tool_calls.append(NativeToolCall(id=part["id"], name=part["name"],
-                                                               arguments=json.dumps(part["input"], ensure_ascii=False)))
+                    self._last_tool_calls.append(
+                        NativeToolCall(
+                            id=part["id"],
+                            name=part["name"],
+                            arguments=json.dumps(part["input"], ensure_ascii=False),
+                        )
+                    )
                 elif part["type"] in ("thinking", "redacted_thinking"):
                     thinking.append(copy.deepcopy(part))
             if thinking:
-                self._last_assistant_extra_fields = {"reasoning_details": [{"provider": api, "thinking": thinking}]}
-            finish = {"max_tokens": "length", "refusal": "content_filter"}.get(payload.get("stop_reason"), "stop")
+                self._last_assistant_extra_fields = {
+                    "reasoning_details": [{"provider": api, "thinking": thinking}]
+                }
+            finish = {"max_tokens": "length", "refusal": "content_filter"}.get(
+                payload.get("stop_reason"), "stop"
+            )
             if not payload.get("stop_reason"):
                 raise ValueError("Anthropic 响应未完整结束")
         else:
@@ -567,11 +718,18 @@ class ModelTransport(BaseLLMProvider):
             for part in parts:
                 if "functionCall" in part:
                     call = part["functionCall"]
-                    self._last_tool_calls.append(NativeToolCall(id=call.get("id") or "gemini_" + uuid.uuid4().hex,
-                        name=call["name"], arguments=json.dumps(call.get("args", {}), ensure_ascii=False)))
+                    self._last_tool_calls.append(
+                        NativeToolCall(
+                            id=call.get("id") or "gemini_" + uuid.uuid4().hex,
+                            name=call["name"],
+                            arguments=json.dumps(call.get("args", {}), ensure_ascii=False),
+                        )
+                    )
                 elif not part.get("thought"):
                     text += part.get("text", "")
-            self._last_assistant_extra_fields = {"reasoning_details": [{"provider": api, "parts": copy.deepcopy(parts)}]}
+            self._last_assistant_extra_fields = {
+                "reasoning_details": [{"provider": api, "parts": copy.deepcopy(parts)}]
+            }
             reason = candidate.get("finishReason")
             finish = "stop" if reason == "STOP" else "length" if reason == "MAX_TOKENS" else "content_filter"
             if not reason:
@@ -591,26 +749,50 @@ class ModelTransport(BaseLLMProvider):
                 # Opaque reasoning may contain the old tool/text representation.
                 # It remains diagnostic evidence, never an alternate history source.
                 self._last_assistant_extra_fields = {}
-        canonical = {"role": "assistant", "content": text, "tool_calls": [
-            {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}} for c in self._last_tool_calls]}
-        self.last_native_response = None if rewritten else attachment(payload, response_origin(self.settings, self.key), canonical)
+        canonical = {
+            "role": "assistant",
+            "content": text,
+            "tool_calls": [
+                {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}}
+                for c in self._last_tool_calls
+            ],
+        }
+        self.last_native_response = (
+            None if rewritten else attachment(payload, response_origin(self.settings, self.key), canonical)
+        )
         if self.last_native_response is not None and self.request_context is not None:
             self._last_assistant_extra_fields["_native_response"] = copy.deepcopy(self.last_native_response)
-        self.last_response_record = {"api_mode": api, "response_id": payload.get("id"), "model": model,
-            "headers": dict(self._response_headers), "raw_usage": copy.deepcopy(raw),
+        self.last_response_record = {
+            "api_mode": api,
+            "response_id": payload.get("id"),
+            "model": model,
+            "headers": dict(self._response_headers),
+            "raw_usage": copy.deepcopy(raw),
             "diagnostics": copy.deepcopy(payload.get("diagnostics")),
-            "native": copy.deepcopy(self.last_native_response)}
+            "native": copy.deepcopy(self.last_native_response),
+        }
         if self._kemini:
-            self.last_response_record.update(raw_response=copy.deepcopy(payload), kemini={
-                "transported": self._kemini.transported, "auxiliary": copy.deepcopy(self.last_auxiliary),
-                "status": "函数参数传输" if self._kemini.transported else
-                          "业务工具续答" if self._last_tool_calls else
-                          "本轮未使用函数传输" if self._kemini.transport else "普通文本"})
+            self.last_response_record.update(
+                raw_response=copy.deepcopy(payload),
+                kemini={
+                    "transported": self._kemini.transported,
+                    "auxiliary": copy.deepcopy(self.last_auxiliary),
+                    "status": "函数参数传输"
+                    if self._kemini.transported
+                    else "业务工具续答"
+                    if self._last_tool_calls
+                    else "本轮未使用函数传输"
+                    if self._kemini.transport
+                    else "普通文本",
+                },
+            )
         if self.response_capture:
             self.response_capture(copy.deepcopy(self.last_response_record))
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
 
-    async def chat_complete_with_preview(self, messages, on_text: Callable[[str], None], **kwargs) -> ChatResponse:
+    async def chat_complete_with_preview(
+        self, messages, on_text: Callable[[str], None], **kwargs
+    ) -> ChatResponse:
         """Preview deltas without losing the authoritative response and metadata."""
         return await self.chat_complete(messages, on_text=on_text, **kwargs)
 

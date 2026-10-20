@@ -32,14 +32,22 @@ def clear_caches():
 
 
 def config(api="chat_completions", **kwargs):
-    return Settings(api_key="test-key", model={"anthropic": "claude-fixture", "gemini": "gemini-3.8-flash"}.get(api, "gpt-fixture"),
-                    api_mode=api, base_url="https://example.test/proxy/v1", use_proxy=False,
-                    cache=CacheSettings(mode="runtime"), **kwargs)
+    return Settings(
+        api_key="test-key",
+        model={"anthropic": "claude-fixture", "gemini": "gemini-3.8-flash"}.get(api, "gpt-fixture"),
+        api_mode=api,
+        base_url="https://example.test/proxy/v1",
+        use_proxy=False,
+        cache=CacheSettings(mode="runtime"),
+        **kwargs,
+    )
 
 
 @asynccontextmanager
 async def provider(cfg, route, capture=None):
-    p = ModelTransport(cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    p = ModelTransport(
+        cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
     try:
         yield p
     finally:
@@ -48,39 +56,85 @@ async def provider(cfg, route, capture=None):
 
 def reply(api):
     if api == "responses":
-        return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}],
-                "usage": {"input_tokens": 10, "output_tokens": 1, "input_tokens_details": {"cached_tokens": 8}}}
+        return {
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}],
+            "usage": {"input_tokens": 10, "output_tokens": 1, "input_tokens_details": {"cached_tokens": 8}},
+        }
     if api == "anthropic":
-        return {"content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn",
-                "usage": {"input_tokens": 2, "cache_read_input_tokens": 8, "cache_creation_input_tokens": 0, "output_tokens": 1}}
+        return {
+            "content": [{"type": "text", "text": "OK"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 2,
+                "cache_read_input_tokens": 8,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 1,
+            },
+        }
     if api == "gemini":
-        return {"candidates": [{"content": {"parts": [{"text": "OK"}]}, "finishReason": "STOP"}],
-                "usageMetadata": {"promptTokenCount": 10, "cachedContentTokenCount": 8, "candidatesTokenCount": 1}}
-    return {"choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 1, "prompt_tokens_details": {"cached_tokens": 8, "cached_creation_tokens": 2}}}
+        return {
+            "candidates": [{"content": {"parts": [{"text": "OK"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "cachedContentTokenCount": 8,
+                "candidatesTokenCount": 1,
+            },
+        }
+    return {
+        "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 1,
+            "prompt_tokens_details": {"cached_tokens": 8, "cached_creation_tokens": 2},
+        },
+    }
 
 
-@pytest.mark.parametrize("api,field", [("chat_completions", "prompt_tokens_details"),
-                                      ("responses", "input_tokens_details")])
+@pytest.mark.parametrize(
+    "api,field", [("chat_completions", "prompt_tokens_details"), ("responses", "input_tokens_details")]
+)
 def test_creation_alias_keeps_zero_and_skips_null(api, field):
-    assert normalize_usage({field: {"cache_write_tokens": None, "cache_creation_tokens": 72}}, api)[
-        "cache_write_tokens"] == 72
-    assert normalize_usage({field: {"cache_write_tokens": 0, "cache_creation_tokens": 72}}, api)[
-        "cache_write_tokens"] == 0
+    assert (
+        normalize_usage({field: {"cache_write_tokens": None, "cache_creation_tokens": 72}}, api)[
+            "cache_write_tokens"
+        ]
+        == 72
+    )
+    assert (
+        normalize_usage({field: {"cache_write_tokens": 0, "cache_creation_tokens": 72}}, api)[
+            "cache_write_tokens"
+        ]
+        == 0
+    )
     assert normalize_usage({field: {"cache_creation_tokens": 0}}, api)["cache_write_tokens"] == 0
 
 
 def compiled(mode, cfg):
     history = [{"id": "greeting", "parent": None, "role": "assistant", "raw": "Opening"}]
     for index in range(4):
-        history.extend([{"id": f"u{index}", "parent": history[-1]["id"], "role": "user", "raw": f"Question {index}"},
-                        {"id": f"a{index}", "parent": f"u{index}", "role": "assistant", "raw": f"Answer {index}"}])
-    session = {"id": "branch", "agent_mode": mode, "cache_breakpoint_auto": True,
-               "recipe": {"blocks": [{"source": "history", "enabled": True}]}}
+        history.extend(
+            [
+                {"id": f"u{index}", "parent": history[-1]["id"], "role": "user", "raw": f"Question {index}"},
+                {"id": f"a{index}", "parent": f"u{index}", "role": "assistant", "raw": f"Answer {index}"},
+            ]
+        )
+    session = {
+        "id": "branch",
+        "agent_mode": mode,
+        "cache_breakpoint_auto": True,
+        "recipe": {"blocks": [{"source": "history", "enabled": True}]},
+    }
     trace = [{"role": "system", "content": "stable ledger data " * 3000, "source": "character"}]
-    trace.extend({"role": m["role"], "content": m["raw"], "source": "history", "message_id": m["id"]} for m in history)
-    trace.extend([{"role": "user", "content": "latest", "source": "input"},
-                  {"role": "system", "content": "dynamic handoff", "source": "handoff"}])
+    trace.extend(
+        {"role": m["role"], "content": m["raw"], "source": "history", "message_id": m["id"]} for m in history
+    )
+    trace.extend(
+        [
+            {"role": "user", "content": "latest", "source": "input"},
+            {"role": "system", "content": "dynamic handoff", "source": "handoff"},
+        ]
+    )
     context = {"messages": [{k: m[k] for k in ("role", "content")} for m in trace], "trace": trace}
     snapshot = {"state": {}, "full_agent": {"window": {"start": 0, "id": "w1"}}}
     return prepare_context(context, session, history, snapshot, cfg), session, history, snapshot
@@ -95,6 +149,7 @@ async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api
     messages = model_messages(context)
     assert all(not any(k.startswith("_cache") for k in m) for m in context["messages"])
     seen, captured = [], []
+
     def route(request):
         body = json.loads(request.content)
         seen.append((request.url.path, body))
@@ -102,6 +157,7 @@ async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api
             assert body["contents"][-1]["parts"][0]["text"] == "Answer 2"
             return httpx.Response(200, json={"name": "cachedContents/test"})
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route, captured.append) as p:
         result = await p.chat_complete(messages)
     assert result.content == "OK" and result.usage["cached_tokens"] == 8
@@ -118,7 +174,13 @@ async def test_second_latest_reply_boundary_reaches_final_wire_for_all_modes(api
         assert "dynamic handoff" not in str(wire["system"])
     else:
         inputs = wire["input" if api == "responses" else "messages"]
-        marked = [b for m in inputs if isinstance(m.get("content"), list) for b in m["content"] if "prompt_cache_breakpoint" in b]
+        marked = [
+            b
+            for m in inputs
+            if isinstance(m.get("content"), list)
+            for b in m["content"]
+            if "prompt_cache_breakpoint" in b
+        ]
         assert len(marked) == 1 and marked[0]["text"] == "Answer 2"
     assert all("test-key" not in json.dumps(item) for item in captured)
 
@@ -129,27 +191,44 @@ async def test_cloud_mode_never_injects_runtime_controls(api):
     cfg.cache = CacheSettings(mode="cloud", request={"prompt_cache_key": "ignored"})
     context, *_ = compiled("full_agent", cfg)
     seen = []
+
     def route(request):
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route) as p:
         await p.chat_complete(model_messages(context))
     assert len(seen) == 1
-    assert not any(token in json.dumps(seen) for token in ("cache_control", "prompt_cache_breakpoint", "prompt_cache_key", "cachedContent", "_cache_breakpoint"))
-    assert seen[0].get("prompt_cache_retention") == ("in_memory" if api in ("responses", "chat_completions") else None)
+    assert not any(
+        token in json.dumps(seen)
+        for token in (
+            "cache_control",
+            "prompt_cache_breakpoint",
+            "prompt_cache_key",
+            "cachedContent",
+            "_cache_breakpoint",
+        )
+    )
+    assert seen[0].get("prompt_cache_retention") == (
+        "in_memory" if api in ("responses", "chat_completions") else None
+    )
 
 
 async def test_explicit_rejection_falls_back_once_and_remembers_capability():
     cfg = config()
     context, *_ = compiled("full_agent", cfg)
     seen, events = [], []
+
     def route(request):
         body = json.loads(request.content)
         seen.append(body)
         if len(seen) == 1:
-            return httpx.Response(400, json={"error": {"message": "prompt_cache_breakpoint is not supported"}})
+            return httpx.Response(
+                400, json={"error": {"message": "prompt_cache_breakpoint is not supported"}}
+            )
         assert "prompt_cache" not in json.dumps(body)
         return httpx.Response(200, json=reply("chat_completions"))
+
     for _ in range(2):
         async with provider(cfg, route, events.append) as p:
             await p.chat_complete(model_messages(context))
@@ -162,11 +241,15 @@ async def test_never_retries_ambiguous_generation_failures(failure):
     cfg = config()
     context, *_ = compiled("full_agent", cfg)
     seen = []
+
     def route(request):
         seen.append(request)
         if failure == "timeout":
             raise httpx.ReadTimeout("timeout", request=request)
-        return httpx.Response(500 if failure == "server" else 400, json={"error": {"message": "temperature invalid"}})
+        return httpx.Response(
+            500 if failure == "server" else 400, json={"error": {"message": "temperature invalid"}}
+        )
+
     async with provider(cfg, route) as p:
         with pytest.raises(httpx.HTTPError):
             await p.chat_complete(model_messages(context))
@@ -179,6 +262,7 @@ async def test_gemini_reuse_rollover_expiry_and_complete_fallback():
     messages = model_messages(context)
     created, deleted, generated = [], [], []
     expire = False
+
     def route(request):
         if request.method == "DELETE":
             deleted.append(request.url.path)
@@ -191,6 +275,7 @@ async def test_gemini_reuse_rollover_expiry_and_complete_fallback():
         if expire and body.get("cachedContent"):
             return httpx.Response(404, json={"error": {"message": "cachedContent not found"}})
         return httpx.Response(200, json=reply("gemini"))
+
     async with provider(cfg, route) as p:
         await p.chat_complete(messages)
         await p.chat_complete(messages)
@@ -207,26 +292,33 @@ async def test_gemini_reuse_rollover_expiry_and_complete_fallback():
     assert len(deleted) == 2
 
 
-@pytest.mark.parametrize("api,model,retention,expected", [
-    ("anthropic", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
-    ("chat_completions", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
-    ("anthropic", "claude-opus-5-5", "default", {"type": "ephemeral"}),
-    ("chat_completions", "gpt-5.4", "24h", "24h"),
-    ("responses", "gpt-5.4", "default", "in_memory"),
-    ("responses", "gpt-5.5", "default", "24h"),
-    ("responses", "gpt-6-sol", "default", "30m"),
-    ("chat_completions", "gpt-5.6-sol", "default", "30m"),
-])
+@pytest.mark.parametrize(
+    "api,model,retention,expected",
+    [
+        ("anthropic", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
+        ("chat_completions", "claude-opus-5-5", "1h", {"type": "ephemeral", "ttl": "1h"}),
+        ("anthropic", "claude-opus-5-5", "default", {"type": "ephemeral"}),
+        ("chat_completions", "gpt-5.4", "24h", "24h"),
+        ("responses", "gpt-5.4", "default", "in_memory"),
+        ("responses", "gpt-5.5", "default", "24h"),
+        ("responses", "gpt-6-sol", "default", "30m"),
+        ("chat_completions", "gpt-5.6-sol", "default", "30m"),
+    ],
+)
 async def test_retention_reaches_final_http_request(api, model, retention, expected):
     cfg = config(api)
     cfg.model, cfg.cache.retention = model, retention
     cfg.cache.request = {"prompt_cache_key": "preserved"}
     seen = []
+
     def route(request):
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=reply(api))
-    messages = [{"role": "system", "content": "fixed", "_cache_breakpoint": True},
-                {"role": "user", "content": "suffix"}]
+
+    messages = [
+        {"role": "system", "content": "fixed", "_cache_breakpoint": True},
+        {"role": "user", "content": "suffix"},
+    ]
     async with provider(cfg, route) as p:
         await p.chat_complete(messages)
     body = seen[0]
@@ -249,9 +341,11 @@ async def test_cloud_retention_without_explicit_breakpoints(api):
     cfg.model = "gpt-6-sol"
     cfg.cache = CacheSettings(mode="cloud")
     seen = []
+
     def route(request):
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "complete content"}])
     assert seen[0]["prompt_cache_options"] == {"ttl": "30m"}
@@ -262,12 +356,18 @@ async def test_native_claude_cloud_uses_automatic_retention_without_local_breakp
     cfg = config("anthropic")
     cfg.cache = CacheSettings(mode="cloud", retention="1h")
     seen = []
+
     def route(request):
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=reply("anthropic"))
+
     async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "system", "content": "complete fixed rules"},
-                               {"role": "user", "content": "complete user text"}])
+        await p.chat_complete(
+            [
+                {"role": "system", "content": "complete fixed rules"},
+                {"role": "user", "content": "complete user text"},
+            ]
+        )
     assert seen[0].pop("cache_control") == {"type": "ephemeral", "ttl": "1h"}
     assert "cache_control" not in json.dumps(seen[0])
 
@@ -276,10 +376,12 @@ async def test_native_claude_cloud_uses_automatic_retention_without_local_breakp
 async def test_gemini_retention_replaces_old_object_and_honors_server_expiry(api):
     import time
     from datetime import datetime, timezone
+
     cfg = config(api)
     cfg.model = "gemini-3.8-flash"
     context, *_ = compiled("full_agent", cfg)
     created, deleted = [], []
+
     def route(request):
         if request.method == "DELETE":
             deleted.append(request.url.path)
@@ -287,9 +389,15 @@ async def test_gemini_retention_replaces_old_object_and_honors_server_expiry(api
         body = json.loads(request.content)
         if request.url.path.endswith("cachedContents"):
             created.append(body)
-            return httpx.Response(200, json={"name": f"cachedContents/{len(created)}",
-                "expireTime": datetime.fromtimestamp(time.time() + 1800, timezone.utc).isoformat()})
+            return httpx.Response(
+                200,
+                json={
+                    "name": f"cachedContents/{len(created)}",
+                    "expireTime": datetime.fromtimestamp(time.time() + 1800, timezone.utc).isoformat(),
+                },
+            )
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route) as p:
         await p.chat_complete(model_messages(context))
         await p.chat_complete(model_messages(context))
@@ -309,6 +417,7 @@ async def test_gemini_create_failure_uses_complete_context():
     cfg = config("gemini")
     context, *_ = compiled("full_agent", cfg)
     seen, events = [], []
+
     def route(request):
         body = json.loads(request.content)
         seen.append(body)
@@ -317,6 +426,7 @@ async def test_gemini_create_failure_uses_complete_context():
         assert "cachedContent" not in body
         assert "Answer 0" in str(body)
         return httpx.Response(200, json=reply("gemini"))
+
     async with provider(cfg, route, events.append) as p:
         await p.chat_complete(model_messages(context))
     assert len(seen) == 2 and events[-1]["cache"]["status"] == "fallback"
@@ -325,16 +435,30 @@ async def test_gemini_create_failure_uses_complete_context():
 def test_native_tool_signatures_survive_replay():
     cfg = config("gemini")
     p = ModelTransport(cfg, "test")
-    raw_parts = [{"functionCall": {"name": "lookup", "args": {"q": "hello"}, "id": "native-id"},
-                  "thoughtSignature": "opaque-signature"}]
+    raw_parts = [
+        {
+            "functionCall": {"name": "lookup", "args": {"q": "hello"}, "id": "native-id"},
+            "thoughtSignature": "opaque-signature",
+        }
+    ]
     p._finish({"candidates": [{"content": {"parts": raw_parts}, "finishReason": "STOP"}]})
     call = p.last_tool_calls[0]
-    messages = [{"role": "assistant", "content": "", **p.last_assistant_extra_fields,
-                 "tool_calls": [{"id": call.id, "function": {"name": call.name, "arguments": call.arguments}}]},
-                {"role": "tool", "tool_call_id": call.id, "content": '{"found":true}'}]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            **p.last_assistant_extra_fields,
+            "tool_calls": [{"id": call.id, "function": {"name": call.name, "arguments": call.arguments}}],
+        },
+        {"role": "tool", "tool_call_id": call.id, "content": '{"found":true}'},
+    ]
     _, wire, _ = native_messages(messages, "gemini")
     assert wire[0]["parts"] == raw_parts
-    assert wire[1]["parts"][0]["functionResponse"] == {"name": "lookup", "id": "native-id", "response": {"found": True}}
+    assert wire[1]["parts"][0]["functionResponse"] == {
+        "name": "lookup",
+        "id": "native-id",
+        "response": {"found": True},
+    }
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
@@ -352,7 +476,9 @@ def test_streams_require_completion_and_preserve_usage(api):
         state.feed({"type": "message_start", "message": {"usage": {"input_tokens": 2}}})
         state.feed({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
         assert state.feed({"type": "content_block_delta", "index": 0, "delta": {"text": "OK"}}) == "OK"
-        state.feed({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}})
+        state.feed(
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}}
+        )
         state.feed({"type": "message_stop"})
     else:
         assert state.feed(reply(api)) == "OK"
@@ -362,22 +488,32 @@ def test_streams_require_completion_and_preserve_usage(api):
 def test_settings_migration_backs_up_old_settings_once(tmp_path):
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
-    for scope, key in (("full_agent", "model"), ("half_agent", "foreground"), ("half_agent", "background"), ("shared", "card_author")):
+    for scope, key in (
+        ("full_agent", "model"),
+        ("half_agent", "foreground"),
+        ("half_agent", "background"),
+        ("shared", "card_author"),
+    ):
         raw[scope][key].pop("cache")
-        raw[scope][key].update(prompt_cache_mode="no_write", prompt_cache_key="retained-key", prompt_cache_retention="24h")
+        raw[scope][key].update(
+            prompt_cache_mode="no_write", prompt_cache_key="retained-key", prompt_cache_retention="24h"
+        )
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     migrated = Store(tmp_path).settings_document()
     assert migrated.full_agent.model.cache.mode == migrated.half_agent.foreground.cache.mode == "runtime"
     assert migrated.half_agent.background.cache.mode == migrated.shared.card_author.cache.mode == "cloud"
-    assert migrated.full_agent.model.cache.request == {"prompt_cache_key": "retained-key", "prompt_cache_retention": "24h"}
-    backups = list(tmp_path.glob("settings-before-cache-*.sqlite3"))
+    assert migrated.full_agent.model.cache.request == {
+        "prompt_cache_key": "retained-key",
+        "prompt_cache_retention": "24h",
+    }
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         before = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
     assert before == raw
     Store(tmp_path)
-    assert len(list(tmp_path.glob("settings-before-cache-*.sqlite3"))) == 1
+    assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
 def test_custom_fields_validation_urls_and_usage():
@@ -388,16 +524,30 @@ def test_custom_fields_validation_urls_and_usage():
         CacheSettings(field="text")
     assert endpoint("https://host.test", "anthropic") == "https://host.test/v1/messages"
     assert endpoint("https://host.test/x/v1", "responses") == "https://host.test/x/v1/responses"
-    assert endpoint("https://host.test/x/v1beta", "gemini", "gemini-3.8-flash-high") == "https://host.test/x/v1beta/models/gemini-3.8-flash-high:generateContent"
+    assert (
+        endpoint("https://host.test/x/v1beta", "gemini", "gemini-3.8-flash-high")
+        == "https://host.test/x/v1beta/models/gemini-3.8-flash-high:generateContent"
+    )
     assert normalize_usage({}, "responses")["cached_tokens"] is None
-    assert normalize_usage({"prompt_tokens_details": {"cached_creation_tokens": 19}}, "chat_completions")["cache_write_tokens"] == 19
-    assert normalize_usage({"promptTokenCount": 100, "thoughtsTokenCount": 7, "candidatesTokenCount": 3}, "gemini")["completion_tokens"] == 10
+    assert (
+        normalize_usage({"prompt_tokens_details": {"cached_creation_tokens": 19}}, "chat_completions")[
+            "cache_write_tokens"
+        ]
+        == 19
+    )
+    assert (
+        normalize_usage(
+            {"promptTokenCount": 100, "thoughtsTokenCount": 7, "candidatesTokenCount": 3}, "gemini"
+        )["completion_tokens"]
+        == 10
+    )
 
 
 def test_partial_json_profiles_keep_story_defaults_without_forcing_background():
-    settings = SettingsDocument(full_agent={"model": {"model": "new-full"}},
-                                half_agent={"foreground": {"model": "new-writer"},
-                                            "background": {"model": "new-background"}})
+    settings = SettingsDocument(
+        full_agent={"model": {"model": "new-full"}},
+        half_agent={"foreground": {"model": "new-writer"}, "background": {"model": "new-background"}},
+    )
     assert settings.full_agent.model.cache.mode == settings.half_agent.foreground.cache.mode == "runtime"
     assert settings.half_agent.background.cache.mode == settings.shared.card_author.cache.mode == "cloud"
 
@@ -428,6 +578,7 @@ async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
     context, session, history, snapshot = compiled(mode, cfg)
     session["cache_breakpoint_follow"] = {"interval": 3, "offset": 2, "anchor": "a0", "progress": 1}
     captured, bodies, creations = [], [], []
+
     def route(request):
         body = json.loads(request.content)
         if request.url.path.endswith("cachedContents"):
@@ -436,6 +587,7 @@ async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
             return httpx.Response(200, json={"name": "cachedContents/held"})
         bodies.append(body)
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route, captured.append) as transport:
         for tail in ("first tail", "changed tail"):
             context["messages"][-2]["content"] = tail
@@ -450,8 +602,13 @@ async def test_held_follow_anchor_keeps_final_wire_prefix_stable(api, mode):
     else:
         field = "cache_control" if api == "anthropic" else "prompt_cache_breakpoint"
         for body in bodies:
-            marked = [part for message in body.get("input", body.get("messages", []))
-                      if isinstance(message.get("content"), list) for part in message["content"] if field in part]
+            marked = [
+                part
+                for message in body.get("input", body.get("messages", []))
+                if isinstance(message.get("content"), list)
+                for part in message["content"]
+                if field in part
+            ]
             assert len(marked) == 1 and marked[0]["text"] == "Answer 0"
 
 
@@ -459,6 +616,7 @@ async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_s
     cfg = config()
     cfg.model = "gemini-3.8-flash"
     context, *_ = compiled("half_agent", cfg)
+
     def route(request):
         body = json.loads(request.content)
         if request.url.path.endswith("cachedContents"):
@@ -468,6 +626,7 @@ async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_s
         assert all(m["role"] != "system" for m in body["messages"])
         assert "tavern_runtime_context" in body["messages"][-1]["content"]
         return httpx.Response(200, json=reply("chat_completions"))
+
     async with provider(cfg, route) as p:
         await p.chat_complete(model_messages(context))
 
@@ -475,14 +634,20 @@ async def test_gemini_compatible_reference_contains_only_suffix_and_no_dynamic_s
 async def test_undersized_gemini_prefix_does_not_disable_larger_future_prefix():
     cfg = config("gemini")
     seen = []
+
     def route(request):
         seen.append(request.url.path)
         if request.url.path.endswith("cachedContents"):
             return httpx.Response(200, json={"name": "cachedContents/large"})
         return httpx.Response(200, json=reply("gemini"))
+
     async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "system", "content": "small", "_cache_breakpoint": True},
-                               {"role": "user", "content": "hello"}])
+        await p.chat_complete(
+            [
+                {"role": "system", "content": "small", "_cache_breakpoint": True},
+                {"role": "user", "content": "hello"},
+            ]
+        )
         assert len(seen) == 1 and p.capability_key not in DISABLED
         context, *_ = compiled("full_agent", cfg)
         await p.chat_complete(model_messages(context))
@@ -492,13 +657,17 @@ async def test_undersized_gemini_prefix_does_not_disable_larger_future_prefix():
 async def test_gemini_never_caches_system_content_beyond_selected_boundary():
     cfg = config("gemini")
     seen, events = [], []
+
     def route(request):
         seen.append(json.loads(request.content))
         assert not request.url.path.endswith("cachedContents")
         return httpx.Response(200, json=reply("gemini"))
-    messages = [{"role": "system", "content": "stable text " * 5000, "_cache_breakpoint": True},
-                {"role": "system", "content": "later fixed character data"},
-                {"role": "user", "content": "input"}]
+
+    messages = [
+        {"role": "system", "content": "stable text " * 5000, "_cache_breakpoint": True},
+        {"role": "system", "content": "later fixed character data"},
+        {"role": "user", "content": "input"},
+    ]
     async with provider(cfg, route, events.append) as p:
         await p.chat_complete(messages)
     assert len(seen) == 1 and "later fixed character data" in str(seen[0])
@@ -509,8 +678,11 @@ async def test_gemini_never_caches_system_content_beyond_selected_boundary():
 async def test_claude_requested_rollover_tool_preserves_permission_boundary(model):
     cfg = config("anthropic")
     cfg.model = model
-    tools = [{"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
-             for name in ("read_history", "new_context")]
+    tools = [
+        {"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+        for name in ("read_history", "new_context")
+    ]
+
     def route(request):
         body = json.loads(request.content)
         if model == "claude-opus-5-5":
@@ -521,18 +693,28 @@ async def test_claude_requested_rollover_tool_preserves_permission_boundary(mode
             assert body["tool_choice"]["name"] == "new_context"
             assert len(body["tools"]) == 2
         return httpx.Response(200, json=reply("anthropic"))
+
     async with provider(cfg, route) as p:
-        await p.chat_complete([{"role": "user", "content": "save handoff"}], extra_body={
-            "tools": tools, "tool_choice": {"type": "function", "function": {"name": "new_context"}}})
+        await p.chat_complete(
+            [{"role": "user", "content": "save handoff"}],
+            extra_body={
+                "tools": tools,
+                "tool_choice": {"type": "function", "function": {"name": "new_context"}},
+            },
+        )
 
 
-@pytest.mark.parametrize("model,effort,expected,adaptive", [
-    ("claude-opus-4-6", "high", "high", True),
-    ("claude-opus-4-5", "high", "high", False),
-])
+@pytest.mark.parametrize(
+    "model,effort,expected,adaptive",
+    [
+        ("claude-opus-4-6", "high", "high", True),
+        ("claude-opus-4-5", "high", "high", False),
+    ],
+)
 async def test_anthropic_reasoning_protocol(model, effort, expected, adaptive):
     cfg = config("anthropic", reasoning_effort=effort, reply_tokens=8192)
     cfg.model = model
+
     def route(request):
         body = json.loads(request.content)
         assert body["output_config"] == {"effort": expected}
@@ -542,6 +724,7 @@ async def test_anthropic_reasoning_protocol(model, effort, expected, adaptive):
         else:
             assert "thinking" not in body
         return httpx.Response(200, json=reply("anthropic"))
+
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
@@ -550,8 +733,10 @@ async def test_anthropic_reasoning_protocol(model, effort, expected, adaptive):
 async def test_legacy_claude_without_effort_requires_default_before_sending(model):
     cfg = config("anthropic", reasoning_effort="high")
     cfg.model = model
+
     def route(request):
         pytest.fail("unsupported legacy effort must not make a paid request")
+
     async with provider(cfg, route) as p:
         with pytest.raises(ValueError, match="不支持文字思考档位"):
             await p.chat_complete([{"role": "user", "content": "hello"}])
@@ -561,23 +746,29 @@ async def test_legacy_claude_without_effort_requires_default_before_sending(mode
 async def test_claude_none_explicitly_disables_thinking_where_supported(model, expected):
     cfg = config("anthropic", reasoning_effort="none")
     cfg.model = model
+
     def route(request):
         body = json.loads(request.content)
         assert body["thinking"] == expected
         assert "output_config" not in body
         return httpx.Response(200, json=reply("anthropic"))
+
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("api,style,effort", [
-    ("chat_completions", "reasoning_effort", "high"),
-    ("chat_completions", "reasoning", "medium"),
-    ("responses", "reasoning_effort", "high"),
-    ("responses", "reasoning_effort", "default"),
-])
+@pytest.mark.parametrize(
+    "api,style,effort",
+    [
+        ("chat_completions", "reasoning_effort", "high"),
+        ("chat_completions", "reasoning", "medium"),
+        ("responses", "reasoning_effort", "high"),
+        ("responses", "reasoning_effort", "default"),
+    ],
+)
 async def test_openai_protocols_keep_selected_text_effort(api, style, effort):
     cfg = config(api, reasoning_effort=effort, reasoning_format=style)
+
     def route(request):
         body = json.loads(request.content)
         assert "thinking" not in body and "output_config" not in body
@@ -590,23 +781,29 @@ async def test_openai_protocols_keep_selected_text_effort(api, style, effort):
             assert body["reasoning_effort"] == effort
             assert "reasoning" not in body
         return httpx.Response(200, json=reply(api))
+
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
 
-@pytest.mark.parametrize("model,effort,thinking", [
-    ("gemini-3.8-flash", "high", {"thinkingLevel": "HIGH"}),
-    ("gemini-2.5-flash", "none", {"thinkingBudget": 0}),
-])
+@pytest.mark.parametrize(
+    "model,effort,thinking",
+    [
+        ("gemini-3.8-flash", "high", {"thinkingLevel": "HIGH"}),
+        ("gemini-2.5-flash", "none", {"thinkingBudget": 0}),
+    ],
+)
 async def test_gemini_native_uses_model_supported_thinking_control(model, effort, thinking):
     cfg = config("gemini", reasoning_effort=effort)
     cfg.model = model
+
     def route(request):
         body = json.loads(request.content)
         # Google's SDK may use protobuf snake_case aliases inside nested fields.
         actual = genai_types.ThinkingConfig.model_validate(body["generationConfig"]["thinkingConfig"])
         assert actual.model_dump(by_alias=True, exclude_none=True) == {**thinking, "includeThoughts": True}
         return httpx.Response(200, json=reply("gemini"))
+
     async with provider(cfg, route) as p:
         await p.chat_complete([{"role": "user", "content": "hello"}])
 
@@ -615,8 +812,10 @@ async def test_gemini_native_uses_model_supported_thinking_control(model, effort
 async def test_gemini_rejects_unsupported_thinking_off_before_sending(api, model):
     cfg = config(api, reasoning_effort="none")
     cfg.model = model
+
     def route(request):
         pytest.fail("unsupported thinking mode must not make a paid request")
+
     async with provider(cfg, route) as p:
         with pytest.raises(ValueError, match="不支持关闭思考"):
             await p.chat_complete([{"role": "user", "content": "hello"}])
@@ -627,20 +826,36 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
     messages = [{"role": "system", "content": "fixed"}]
     for batch in range(2):
         ids = [f"batch-{batch}-{i}" for i in range(2)]
-        messages.append({"role": "assistant", "content": "inspect", "tool_calls": [
-            {"id": id_, "function": {"name": "read_history", "arguments": '{"ref":"H2"}'}} for id_ in ids]})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "inspect",
+                "tool_calls": [
+                    {"id": id_, "function": {"name": "read_history", "arguments": '{"ref":"H2"}'}}
+                    for id_ in ids
+                ],
+            }
+        )
         for i, id_ in enumerate(ids):
-            messages.append({"role": "tool", "tool_call_id": id_, "content": f"result-{id_}",
-                             "_tool_error": i == 0,
-                             "_cache_breakpoint": batch == 0 and i == marked_result})
-        messages.append({"role": "system", "content": f"chronological context {batch}", "_cache_static": False})
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": id_,
+                    "content": f"result-{id_}",
+                    "_tool_error": i == 0,
+                    "_cache_breakpoint": batch == 0 and i == marked_result,
+                }
+            )
+        messages.append(
+            {"role": "system", "content": f"chronological context {batch}", "_cache_static": False}
+        )
     original = copy.deepcopy(messages)
     marker = {"field": "cache_control", "value": {"type": "ephemeral"}}
     _, body, boundary = native_messages(messages, "anthropic", marker)
     assert messages == original
     assert len(body) == 6
     for batch in range(2):
-        assistant, results, context = body[batch * 3:batch * 3 + 3]
+        assistant, results, context = body[batch * 3 : batch * 3 + 3]
         calls = [b["id"] for b in assistant["content"] if b["type"] == "tool_use"]
         assert results["role"] == "user"
         assert [b["tool_use_id"] for b in results["content"]] == calls
@@ -659,6 +874,7 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
 @pytest.mark.parametrize("call_count", [1, 2])
 async def test_full_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api, call_count):
     from tests.backend.test_full_agent import runtime, turn
+
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     settings = store.settings()
@@ -669,6 +885,7 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
     store.save_settings(settings)
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     seen = []
+
     def route(request):
         if request.url.path.endswith("cachedContents"):
             return httpx.Response(404)
@@ -676,24 +893,62 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
         seen.append(body)
         if len(seen) == 1:
             if api == "anthropic":
-                return httpx.Response(200, json={"stop_reason": "tool_use", "content": [
-                    {"type": "thinking", "thinking": "inspect", "signature": "opaque-signature"},
-                    *[{"type": "tool_use", "id": f"native-id-{i}", "name": "read_history", "input": {"ref": "H2"}}
-                      for i in range(call_count)]]})
-            return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [
-                {"functionCall": {"id": f"native-id-{i}", "name": "read_history", "args": {"ref": "H2"}},
-                 "thoughtSignature": "opaque-signature"} for i in range(call_count)]}}]})
+                return httpx.Response(
+                    200,
+                    json={
+                        "stop_reason": "tool_use",
+                        "content": [
+                            {"type": "thinking", "thinking": "inspect", "signature": "opaque-signature"},
+                            *[
+                                {
+                                    "type": "tool_use",
+                                    "id": f"native-id-{i}",
+                                    "name": "read_history",
+                                    "input": {"ref": "H2"},
+                                }
+                                for i in range(call_count)
+                            ],
+                        ],
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {
+                            "finishReason": "STOP",
+                            "content": {
+                                "parts": [
+                                    {
+                                        "functionCall": {
+                                            "id": f"native-id-{i}",
+                                            "name": "read_history",
+                                            "args": {"ref": "H2"},
+                                        },
+                                        "thoughtSignature": "opaque-signature",
+                                    }
+                                    for i in range(call_count)
+                                ]
+                            },
+                        }
+                    ]
+                },
+            )
         assert "opaque-signature" in json.dumps(body)
-        assert "tool_result" in json.dumps(body) if api == "anthropic" else "functionResponse" in json.dumps(body)
+        assert (
+            "tool_result" in json.dumps(body)
+            if api == "anthropic"
+            else "functionResponse" in json.dumps(body)
+        )
         if api == "anthropic":
             messages = body["messages"]
-            at = next(i for i, m in enumerate(messages)
-                      if any(b["type"] == "tool_use" for b in m["content"]))
+            at = next(i for i, m in enumerate(messages) if any(b["type"] == "tool_use" for b in m["content"]))
             calls = [b["id"] for b in messages[at]["content"] if b["type"] == "tool_use"]
             results = messages[at + 1]
             assert results["role"] == "user"
             assert [b["tool_use_id"] for b in results["content"]] == calls
         return httpx.Response(200, json=reply(api))
+
     service = runtime(store)
     try:
         async with provider(store.settings().for_role("full_agent"), route) as model:

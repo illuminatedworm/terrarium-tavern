@@ -1,4 +1,5 @@
 """Observe bytes before parsers; only failed HTTP attempts are persisted."""
+
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -12,14 +13,23 @@ if TYPE_CHECKING:
     from tavern.scripting.model_transport import ModelTransport
 
 REDACTED = "[REDACTED]"
-SECRET_HEADERS = {"authorization", "proxy-authorization", "x-api-key", "x-goog-api-key", "api-key",
-                  "cookie", "set-cookie"}
+SECRET_HEADERS = {
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "x-goog-api-key",
+    "api-key",
+    "cookie",
+    "set-cookie",
+}
 SECRET_QUERY = {"key", "api_key", "api-key", "apikey", "access_token", "token"}
 
 
 def headers(value: httpx.Headers, secret: str) -> dict[str, str]:
-    return {key: REDACTED if key.lower() in SECRET_HEADERS else item.replace(secret, REDACTED) if secret else item
-            for key, item in value.items()}
+    return {
+        key: REDACTED if key.lower() in SECRET_HEADERS else item.replace(secret, REDACTED) if secret else item
+        for key, item in value.items()
+    }
 
 
 def address(value: httpx.URL, secret: str) -> str:
@@ -39,11 +49,16 @@ class Body:
 
     def feed(self, data: bytes) -> None:
         self.received += len(data)
-        self.data.extend(data[:max(0, self.limit - len(self.data))])
+        self.data.extend(data[: max(0, self.limit - len(self.data))])
 
     def metadata(self):
-        return {"received_bytes": self.received, "captured_bytes": len(self.data),
-                "limit_bytes": self.limit, "truncated": self.received > len(self.data), "complete": self.complete}
+        return {
+            "received_bytes": self.received,
+            "captured_bytes": len(self.data),
+            "limit_bytes": self.limit,
+            "truncated": self.received > len(self.data),
+            "complete": self.complete,
+        }
 
 
 class ObservedBody(httpx.AsyncByteStream):
@@ -83,10 +98,21 @@ class Attempt:
                 data = data.replace(self.secret.encode(), REDACTED.encode())
             return data
 
-        request = {"method": self.request.method, "url": address(self.request.url, self.secret),
-                   "headers": headers(self.request.headers, self.secret), "body": self.request_body.metadata()}
-        response = ({"status_code": self.response.status_code, "headers": headers(self.response.headers, self.secret),
-                     "body": self.response_body.metadata()} if self.response is not None else None)
+        request = {
+            "method": self.request.method,
+            "url": address(self.request.url, self.secret),
+            "headers": headers(self.request.headers, self.secret),
+            "body": self.request_body.metadata(),
+        }
+        response = (
+            {
+                "status_code": self.response.status_code,
+                "headers": headers(self.response.headers, self.secret),
+                "body": self.response_body.metadata(),
+            }
+            if self.response is not None
+            else None
+        )
         request_data = redact(bytes(self.request_body.data))
         response_data = redact(bytes(self.response_body.data)) if response is not None else None
         request["body"]["saved_bytes"] = len(request_data)
@@ -94,12 +120,17 @@ class Attempt:
             response["body"]["saved_bytes"] = len(response_data)
             response["body"]["representation"] = self.response_representation
         context = provider.request_context
-        metadata = {"api_mode": provider.settings.api_mode, "model": provider.config.model,
-                    "purpose": getattr(provider, "operation_purpose", provider.settings._adapter_lane),
-                    "session_id": context.session_id if context else None,
-                    "turn_id": context.turn_id if context else None,
-                    "error_type": error_type, "credentials_redacted": True,
-                    "request": request, "response": response}
+        metadata = {
+            "api_mode": provider.settings.api_mode,
+            "model": provider.config.model,
+            "purpose": getattr(provider, "operation_purpose", provider.settings._adapter_lane),
+            "session_id": context.session_id if context else None,
+            "turn_id": context.turn_id if context else None,
+            "error_type": error_type,
+            "credentials_redacted": True,
+            "request": request,
+            "response": response,
+        }
         log.save(metadata, request_data, response_data)
 
 
@@ -140,7 +171,9 @@ class FailureDebug:
             finally:
                 self.current.reset(token)
 
-    async def send(self, http: httpx.AsyncClient, request: httpx.Request, *, stream=False, **kwargs) -> httpx.Response:
+    async def send(
+        self, http: httpx.AsyncClient, request: httpx.Request, *, stream=False, **kwargs
+    ) -> httpx.Response:
         capture = self.current.get()
         if capture is None:
             return await http.send(request, stream=stream, **kwargs)

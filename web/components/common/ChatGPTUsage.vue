@@ -23,7 +23,7 @@ defineProps<{ active?: boolean; label?: string; error?: string }>();
   flex-wrap: wrap;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 .chatgpt-usage a {
@@ -34,7 +34,7 @@ defineProps<{ active?: boolean; label?: string; error?: string }>();
 .chatgpt-limit a {
   padding: 3px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   color: var(--text-primary);
 }
 </style>

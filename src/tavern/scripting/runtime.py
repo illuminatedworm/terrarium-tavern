@@ -72,20 +72,46 @@ class ScriptRuntime:
             raise ValueError("兼容 SDK 尚未构建，请先运行 npm run build")
         context = await self.browser.new_context(service_workers="block")
         try:
-            return await self._open_context(context, document, history, snapshot, allowed, host,
-                                            scripts_override, prepare_markup, persona, opening)
+            return await self._open_context(
+                context,
+                document,
+                history,
+                snapshot,
+                allowed,
+                host,
+                scripts_override,
+                prepare_markup,
+                persona,
+                opening,
+            )
         except BaseException:
             # Setup failures and cancellation before install have the same lifetime
             # boundary as script failures. No orphan browser contexts may survive.
             await context.close()
             raise
 
-    async def _open_context(self, context, document, history, snapshot, allowed, host,
-                            scripts_override, prepare_markup, persona, opening):
+    async def _open_context(
+        self,
+        context,
+        document,
+        history,
+        snapshot,
+        allowed,
+        host,
+        scripts_override,
+        prepare_markup,
+        persona,
+        opening,
+    ):
         prefix = f"https://tavern.invalid/{secrets.token_urlsafe(24)}/"
         messages = [
-            {"message_id": i, "id": m["id"], "role": m["role"], "message": m["raw"],
-             "variables": copy.deepcopy(m["snapshot"].get("state", {}))}
+            {
+                "message_id": i,
+                "id": m["id"],
+                "role": m["role"],
+                "message": m["raw"],
+                "variables": copy.deepcopy(m["snapshot"].get("state", {})),
+            }
             for i, m in enumerate(history)
         ]
         # Shallow prefix maps retain immutable values once. Reading the combined
@@ -100,17 +126,22 @@ class ScriptRuntime:
             url = route.request.url
             if not url.startswith(prefix) or route.request.method != "GET":
                 return await route.abort()
-            key = url[len(prefix):]
+            key = url[len(prefix) :]
             if key == "core.js":
                 body, mime = script_source(SDK.parent / "mvu-core.js"), "text/javascript"
             else:
                 match = re.fullmatch(r"(messages|variables)/(\d+)", key)
                 if not match or int(match[2]) >= len(messages):
                     return await route.abort()
-                body = json.dumps((messages if match[1] == "messages" else variables)[int(match[2])], ensure_ascii=False)
+                body = json.dumps(
+                    (messages if match[1] == "messages" else variables)[int(match[2])], ensure_ascii=False
+                )
                 mime = "application/json"
-            await route.fulfill(body=body, content_type=mime,
-                                headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"})
+            await route.fulfill(
+                body=body,
+                content_type=mime,
+                headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"},
+            )
 
         await context.route("**/*", resource)
         page = await context.new_page()
@@ -168,11 +199,18 @@ class ScriptRuntime:
                     if "<script" not in html.lower():
                         continue
                     await runtime.add_message_frame(
-                        html, {**{k: v for k, v in data.items() if k != "messages"},
-                               "serverMain": False, "currentMessage": index}, host
+                        html,
+                        {
+                            **{k: v for k, v in data.items() if k != "messages"},
+                            "serverMain": False,
+                            "currentMessage": index,
+                        },
+                        host,
                     )
             greeting = history[0]["raw"] if opening and history else ""
-            greeting = greeting.replace("{{user}}", persona).replace("{{char}}", normalize(document).get("name", ""))
+            greeting = greeting.replace("{{user}}", persona).replace(
+                "{{char}}", normalize(document).get("name", "")
+            )
             await runtime.call("initMvu", greeting)
             return runtime
         except BaseException:
@@ -199,7 +237,9 @@ class RuntimeSession:
                 self.owner.document_bytes += size
                 while self.owner.document_bytes > 16 * 1024 * 1024 or len(self.owner.documents) > 128:
                     old, docs = self.owner.documents.popitem(last=False)
-                    self.owner.document_bytes -= len(old.encode("utf-8")) + sum(len(d.encode("utf-8")) for d in docs)
+                    self.owner.document_bytes -= len(old.encode("utf-8")) + sum(
+                        len(d.encode("utf-8")) for d in docs
+                    )
         elif self.owner:
             self.owner.documents.move_to_end(html)
         for document in documents:
@@ -207,8 +247,12 @@ class RuntimeSession:
                 capabilities = await self.call("frameCapabilities", document)
                 if capabilities["displayOnly"]:
                     continue
-                document = await self.call("snapshotMacros", document, data.get("state", {}), data.get("scopes", {}))
-                document = document.replace("{{user}}", data.get("persona", "用户")).replace("{{char}}", data.get("character", ""))
+                document = await self.call(
+                    "snapshotMacros", document, data.get("state", {}), data.get("scopes", {})
+                )
+                document = document.replace("{{user}}", data.get("persona", "用户")).replace(
+                    "{{char}}", data.get("character", "")
+                )
                 await self._add_message_frame(document, data, host)
 
     async def _add_message_frame(self, html, data, host):
@@ -218,7 +262,8 @@ class RuntimeSession:
         )
         await frame.expose_function("__tavernHost", host)
         await frame.add_script_tag(content=script_source(SDK))
-        await frame.evaluate("""({data,prefix,length})=>{
+        await frame.evaluate(
+            """({data,prefix,length})=>{
             const read=(kind,index)=>{
                 const request=new XMLHttpRequest();
                 request.open('GET',prefix+kind+'/'+index,false); request.send();
@@ -233,7 +278,9 @@ class RuntimeSession:
                     document.head.append(script);
                 })
             });
-        }""", {"data": data, "prefix": self.prefix, "length": self.history_length})
+        }""",
+            {"data": data, "prefix": self.prefix, "length": self.history_length},
+        )
         await frame.evaluate("html=>{document.body.innerHTML=html;}", html)
         await frame.evaluate(
             "()=>{if(!document.querySelector('#send_textarea')){const e=document.createElement('textarea');e.id='send_textarea';e.hidden=true;document.body.append(e);}}"
@@ -264,8 +311,14 @@ class RuntimeSession:
         # Full Agent patches may invoke MVU callbacks in message-local realms.
         # Restore every mirror on failure, not just the server's stat_data.
         patch_call = name == "process" and len(args) >= 3 and args[2] == "" and bool(args[1])
-        checkpoints = [(page, await page.evaluate("() => TavernRuntime.checkpoint()"))
-                       for page in [self.page, *self.frames]] if patch_call else []
+        checkpoints = (
+            [
+                (page, await page.evaluate("() => TavernRuntime.checkpoint()"))
+                for page in [self.page, *self.frames]
+            ]
+            if patch_call
+            else []
+        )
         try:
             return await asyncio.wait_for(self.page.evaluate(expression, payload), timeout=10)
         except asyncio.TimeoutError:

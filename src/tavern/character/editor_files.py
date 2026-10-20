@@ -1,4 +1,5 @@
 """Bounded reads of external authoring references, separate from internal card reads."""
+
 import asyncio
 import codecs
 import io
@@ -80,7 +81,7 @@ class _BoundedReader(io.RawIOBase):
         self.consumed += len(chunk)
         if self.consumed > MAX_FILE_BYTES:
             raise ValueError("源文件超过 32 MiB，请先拆分文件。")
-        buffer[:len(chunk)] = chunk
+        buffer[: len(chunk)] = chunk
         return len(chunk)
 
 
@@ -93,9 +94,13 @@ def _encoding(header: bytes, requested: str | None) -> str:
             return info.name
         except LookupError:
             raise ValueError("encoding 不是支持的文本编码；可使用 utf-8、utf-16 或 gb18030。") from None
-    for bom, encoding in ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
-                          (codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"),
-                          (codecs.BOM_UTF16_BE, "utf-16")):
+    for bom, encoding in (
+        (codecs.BOM_UTF32_LE, "utf-32"),
+        (codecs.BOM_UTF32_BE, "utf-32"),
+        (codecs.BOM_UTF8, "utf-8-sig"),
+        (codecs.BOM_UTF16_LE, "utf-16"),
+        (codecs.BOM_UTF16_BE, "utf-16"),
+    ):
         if header.startswith(bom):
             return encoding
     return "utf-8"
@@ -106,8 +111,12 @@ def read_text_file(path: str, offset: int = 1, limit: int = 200, encoding: str |
         selected_encoding = _encoding(source.read(4), encoding)
         source.seek(0)
         try:
-            with io.TextIOWrapper(io.BufferedReader(_BoundedReader(source)),
-                                  encoding=selected_encoding, errors="strict", newline="") as text:
+            with io.TextIOWrapper(
+                io.BufferedReader(_BoundedReader(source)),
+                encoding=selected_encoding,
+                errors="strict",
+                newline="",
+            ) as text:
                 for _ in range(offset - 1):
                     if not text.readline():
                         break
@@ -117,7 +126,9 @@ def read_text_file(path: str, offset: int = 1, limit: int = 200, encoding: str |
                     if not line:
                         break
                     if _BINARY_CONTROLS.search(line):
-                        raise ValueError("文件包含二进制控制字符，不能作为纯文本读取；DOCX/XLSX 请用 read_document。")
+                        raise ValueError(
+                            "文件包含二进制控制字符，不能作为纯文本读取；DOCX/XLSX 请用 read_document。"
+                        )
                     if len(line) > MAX_TEXT_CHARS:
                         # Return any preceding complete lines first. The offending line remains the next page.
                         if lines:
@@ -132,10 +143,18 @@ def read_text_file(path: str, offset: int = 1, limit: int = 200, encoding: str |
                 else:
                     has_more = bool(text.read(1))
         except UnicodeError:
-            raise ValueError("文本解码失败，请用 encoding 指定正确编码（如 gb18030）；二进制文档请用 read_document。") from None
-    return {"path": str(resolved), "encoding": selected_encoding, "text": "".join(lines), "offset": offset,
-            "returned_lines": len(lines), "has_more": has_more,
-            "next_offset": offset + len(lines) if has_more else None}
+            raise ValueError(
+                "文本解码失败，请用 encoding 指定正确编码（如 gb18030）；二进制文档请用 read_document。"
+            ) from None
+    return {
+        "path": str(resolved),
+        "encoding": selected_encoding,
+        "text": "".join(lines),
+        "offset": offset,
+        "returned_lines": len(lines),
+        "has_more": has_more,
+        "next_offset": offset + len(lines) if has_more else None,
+    }
 
 
 def _check_archive(blob: bytes) -> None:
@@ -181,19 +200,34 @@ def convert_document(path: str, offset: int, limit: int) -> dict:
         raise ValueError("Office 文件转换失败，文件可能损坏、已加密或包含不支持的内容。") from None
     if len(markdown) > MAX_DOCUMENT_CHARS:
         raise ValueError("转换后 Markdown 超过 800 万字符，请先拆分文件。")
-    page = markdown[offset:offset + limit]
+    page = markdown[offset : offset + limit]
     has_more = offset + len(page) < len(markdown)
-    return {"path": str(resolved), "format": extension[1:], "markdown": page, "offset": offset,
-            "returned_chars": len(page), "total_chars": len(markdown), "has_more": has_more,
-            "next_offset": offset + len(page) if has_more else None, "limitations": DOCUMENT_LIMITATIONS}
+    return {
+        "path": str(resolved),
+        "format": extension[1:],
+        "markdown": page,
+        "offset": offset,
+        "returned_chars": len(page),
+        "total_chars": len(markdown),
+        "has_more": has_more,
+        "next_offset": offset + len(page) if has_more else None,
+        "limitations": DOCUMENT_LIMITATIONS,
+    }
 
 
 async def read_document(path: str, offset: int = 0, limit: int = 12_000) -> dict:
     # Spawn is shielded so cancellation during process creation cannot orphan a worker.
-    launch = asyncio.create_task(asyncio.create_subprocess_exec(
-        sys.executable, "-m", "tavern.character.editor_file_worker",
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {})))
+    launch = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "tavern.character.editor_file_worker",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}),
+        )
+    )
     process = None
     try:
         process = await asyncio.shield(launch)

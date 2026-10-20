@@ -1,4 +1,5 @@
 """Author outlines are optional, branch-local drafts, never story facts."""
+
 import asyncio
 import copy
 import json
@@ -33,7 +34,9 @@ def test_legacy_database_is_backed_up_before_additive_plot_migration(story):
     original["full_agent"].pop("plot", None)
     raw = store.settings_document().model_dump()
     raw["full_agent"]["tools"].pop("plot_tokens")
-    raw["full_agent"]["system_prompt"] = Path("tests/fixtures/full_agent_prompt_before_plot.txt").read_text(encoding="utf-8")
+    raw["full_agent"]["system_prompt"] = Path("tests/fixtures/full_agent_prompt_before_plot.txt").read_text(
+        encoding="utf-8"
+    )
     with store.connection() as db:
         db.execute("ALTER TABLE sessions DROP COLUMN plot_enabled")
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(original), session["head"]))
@@ -42,13 +45,13 @@ def test_legacy_database_is_backed_up_before_additive_plot_migration(story):
     assert not reopened.session(session["id"])["plot_enabled"]
     assert reopened.session(session["id"])["snapshot"] == original
     assert reopened.settings_document().full_agent.tools.plot_tokens == 4096
-    backups = list(store.root.glob("before-plot-*.sqlite3"))
+    backups = list(store.root.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert "plot_enabled" not in {r[1] for r in db.execute("PRAGMA table_info(sessions)")}
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     Store(store.root)
-    assert list(store.root.glob("before-plot-*.sqlite3")) == backups
+    assert list(store.root.glob("before-upgrade-*.sqlite3")) == backups
 
 
 def test_plot_activity_hides_spoilers_until_expanded():
@@ -79,18 +82,29 @@ async def test_optional_plot_initial_gate_success_observation_and_no_per_turn_wr
         result, session = await turn(service, session, disabled)
         assert result["status"] == "committed", result["error"]
         assert not session["snapshot"]["full_agent"]["plot"]["text"]
-        assert "write_plot" not in {t["function"]["name"] for t in disabled.requests[0]["extra_body"]["tools"]}
+        assert "write_plot" not in {
+            t["function"]["name"] for t in disabled.requests[0]["extra_body"]["tools"]
+        }
         assert any('"PERMISSION_DENIED"' in m.get("content", "") for m in disabled.requests[-1]["messages"])
 
         session = enable(store, session)
-        model = Model("提前正文不得提交", ("write_plot", {"content": "近期港口交锋；远期依选择揭露旧信。"}),
-                      ("read_state", {}), "有效正文")
+        model = Model(
+            "提前正文不得提交",
+            ("write_plot", {"content": "近期港口交锋；远期依选择揭露旧信。"}),
+            ("read_state", {}),
+            "有效正文",
+        )
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert session["messages"][-1]["raw"] == "有效正文"
-        assert session["snapshot"]["full_agent"]["plot"] == {"text": "近期港口交锋；远期依选择揭露旧信。", "revision": 1}
+        assert session["snapshot"]["full_agent"]["plot"] == {
+            "text": "近期港口交锋；远期依选择揭露旧信。",
+            "revision": 1,
+        }
         assert len(model.requests) == 4
-        assert len(outlines(model.requests[-1]["messages"])) == 1  # initial empty frame; accepted tool carries the update
+        assert (
+            len(outlines(model.requests[-1]["messages"])) == 1
+        )  # initial empty frame; accepted tool carries the update
         assert not session["snapshot"]["full_agent"]["notes"]
         follow = Model("接着写，无需每轮重写大纲。")
         result, current = await turn(service, session, follow)
@@ -108,11 +122,16 @@ async def test_failed_empty_and_oversized_plot_leave_current_draft_intact(story)
     store.save_settings(config)
     service = runtime(store)
     try:
-        model = Model(("write_plot", {"content": "   "}), ("write_plot", {"content": "长大纲" * 1000}), "正文")
+        model = Model(
+            ("write_plot", {"content": "   "}), ("write_plot", {"content": "长大纲" * 1000}), "正文"
+        )
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        errors = [e["payload"]["result"]["error"]["code"] for e in store.events(result["id"])
-                  if e["kind"] == "full_agent_tool"]
+        errors = [
+            e["payload"]["result"]["error"]["code"]
+            for e in store.events(result["id"])
+            if e["kind"] == "full_agent_tool"
+        ]
         assert errors == ["CONTENT_LIMIT", "CONTENT_LIMIT"]
         assert current["snapshot"]["full_agent"]["plot"] == session["snapshot"]["full_agent"]["plot"]
     finally:
@@ -124,12 +143,21 @@ async def test_plot_failure_reopen_resume_and_rollover(story):
     session = enable(store, session)
     service = runtime(store)
     try:
-        result, unchanged = await turn(service, session, Model(
-            ("write_plot", {"content": "独立保存的未来大纲"}),
-            ("new_context", {"handoff": "当前在港口。", "keep_recent": 0}), RuntimeError("disconnected")))
+        result, unchanged = await turn(
+            service,
+            session,
+            Model(
+                ("write_plot", {"content": "独立保存的未来大纲"}),
+                ("new_context", {"handoff": "当前在港口。", "keep_recent": 0}),
+                RuntimeError("disconnected"),
+            ),
+        )
         assert result["status"] == "error"
         assert unchanged["snapshot"] == session["snapshot"]
-        assert store.full_agent_progress(result["id"])["snapshot"]["full_agent"]["plot"]["text"] == "独立保存的未来大纲"
+        assert (
+            store.full_agent_progress(result["id"])["snapshot"]["full_agent"]["plot"]["text"]
+            == "独立保存的未来大纲"
+        )
     finally:
         await service.close()
     reopened = Store(store.root)
@@ -137,9 +165,15 @@ async def test_plot_failure_reopen_resume_and_rollover(story):
     try:
         model = Model("恢复后的正文")
         service.full.provider_factory = lambda: model
-        resumed = service.submit(session["id"], TurnRequest(
-            text=result["request"]["text"], operation_id="resume-plot", expected_revision=session["revision"],
-            resume_turn_id=result["id"]))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=result["request"]["text"],
+                operation_id="resume-plot",
+                expected_revision=session["revision"],
+                resume_turn_id=result["id"],
+            ),
+        )
         await service.tasks[resumed["id"]]
         assert reopened.turn(resumed["id"])["status"] == "committed"
         assert len(model.requests) == 1
@@ -165,7 +199,9 @@ async def test_cancelling_after_plot_write_does_not_commit(story):
 
     try:
         service.full.provider_factory = lambda: WaitingModel(("write_plot", {"content": "取消的草稿"}))
-        pending = service.submit(session["id"], TurnRequest(text="继续", operation_id="cancel-plot", expected_revision=0))
+        pending = service.submit(
+            session["id"], TurnRequest(text="继续", operation_id="cancel-plot", expected_revision=0)
+        )
         await asyncio.wait_for(waiting.wait(), timeout=10)
         await service.cancel(pending["id"])
         assert store.turn(pending["id"])["status"] == "cancelled"
@@ -182,10 +218,23 @@ async def test_plot_follows_whole_turn_review(story, accept):
         db.execute("UPDATE sessions SET policy='review' WHERE id=?", (session["id"],))
     service = runtime(store)
     try:
-        result, current = await turn(service, session, Model(
-            ("write_plot", {"content": "待审核大纲"}), ("read_character", {"ref": "description"}),
-            ("revise_content", {"operations": [{"op": "set_character", "field": "description", "value": "新描述"}],
-                                "comment": "调整角色"}), "待审核正文"), allow_content_edit=True)
+        result, current = await turn(
+            service,
+            session,
+            Model(
+                ("write_plot", {"content": "待审核大纲"}),
+                ("read_character", {"ref": "description"}),
+                (
+                    "revise_content",
+                    {
+                        "operations": [{"op": "set_character", "field": "description", "value": "新描述"}],
+                        "comment": "调整角色",
+                    },
+                ),
+                "待审核正文",
+            ),
+            allow_content_edit=True,
+        )
         assert result["status"] == "awaiting_review", result["error"]
         assert current["snapshot"] == session["snapshot"]
         service.review(result["id"], accept)
@@ -242,43 +291,73 @@ async def test_plot_api_edits_pause_clear_catalog_and_conflicts(story):
             state = (await client.get(path)).json()
             assert not state["plot_enabled"] and state["plot"] == {"text": "", "revision": 0}
             assert state["plot_tokens"] == 4096
-            response = await client.put(path + "/plot", json={"expected_revision": 0, "enabled": True, "content": "玩家大纲"})
+            response = await client.put(
+                path + "/plot", json={"expected_revision": 0, "enabled": True, "content": "玩家大纲"}
+            )
             assert response.status_code == 200, response.text
             current = response.json()
             catalog = (await client.get(path + "/tools")).json()["tools"]
             tool = next(t for t in catalog if t["name"] == "write_plot")
             assert tool["enabled"] and tool["available"] and tool["controlled_by"] == "plot_enabled"
-            assert (await client.put(path + "/tools", json={"expected_revision": current["revision"],
-                                                           "disabled_tools": ["write_plot"]})).status_code == 400
-            assert (await client.put(path + "/plot", json={"expected_revision": 0, "content": "覆盖竞争"})).status_code == 409
-            paused = await client.put(path + "/plot", json={"expected_revision": current["revision"], "enabled": False})
+            assert (
+                await client.put(
+                    path + "/tools",
+                    json={"expected_revision": current["revision"], "disabled_tools": ["write_plot"]},
+                )
+            ).status_code == 400
+            assert (
+                await client.put(path + "/plot", json={"expected_revision": 0, "content": "覆盖竞争"})
+            ).status_code == 409
+            paused = await client.put(
+                path + "/plot", json={"expected_revision": current["revision"], "enabled": False}
+            )
             assert paused.status_code == 200, paused.text
             current = paused.json()
-            assert not current["plot_enabled"] and current["snapshot"]["full_agent"]["plot"]["text"] == "玩家大纲"
-            edited = await client.put(path + "/plot", json={"expected_revision": current["revision"], "content": "暂停时编辑"})
+            assert (
+                not current["plot_enabled"]
+                and current["snapshot"]["full_agent"]["plot"]["text"] == "玩家大纲"
+            )
+            edited = await client.put(
+                path + "/plot", json={"expected_revision": current["revision"], "content": "暂停时编辑"}
+            )
             assert edited.status_code == 200, edited.text
             current = edited.json()
-            cleared = await client.put(path + "/plot", json={"expected_revision": current["revision"], "enabled": True, "content": "  "})
+            cleared = await client.put(
+                path + "/plot",
+                json={"expected_revision": current["revision"], "enabled": True, "content": "  "},
+            )
             assert cleared.status_code == 200, cleared.text
             current = cleared.json()
             assert current["snapshot"]["full_agent"]["plot"] == {"text": "", "revision": 3}
             config = store.settings_document()
             config.full_agent.tools.plot_tokens = 128
             store.save_settings(config)
-            excessive = await client.put(path + "/plot", json={"expected_revision": current["revision"], "content": "长大纲" * 1000})
+            excessive = await client.put(
+                path + "/plot", json={"expected_revision": current["revision"], "content": "长大纲" * 1000}
+            )
             assert excessive.status_code == 400
             assert store.session(session["id"])["revision"] == current["revision"]
             for status in ("queued", "running", "awaiting_review"):
-                tid, _ = store.create_turn(session["id"], TurnRequest(text="继续", operation_id=status,
-                                                                    expected_revision=current["revision"]))
+                tid, _ = store.create_turn(
+                    session["id"],
+                    TurnRequest(text="继续", operation_id=status, expected_revision=current["revision"]),
+                )
                 store.set_turn(tid, status=status)
-                denied = await client.put(path + "/plot", json={"expected_revision": current["revision"], "enabled": False})
+                denied = await client.put(
+                    path + "/plot", json={"expected_revision": current["revision"], "enabled": False}
+                )
                 assert denied.status_code == 409
                 store.set_turn(tid, status="cancelled")
             with store.connection() as db:
-                db.execute("INSERT INTO context_operations(id,session,operation,kind,status,expected_revision,created) VALUES (?,?,?,?,?,?,0)",
-                           ("context", session["id"], "context", "compact", "running", current["revision"]))
-            assert (await client.put(path + "/plot", json={"expected_revision": current["revision"], "enabled": False})).status_code == 409
+                db.execute(
+                    "INSERT INTO context_operations(id,session,operation,kind,status,expected_revision,created) VALUES (?,?,?,?,?,?,0)",
+                    ("context", session["id"], "context", "compact", "running", current["revision"]),
+                )
+            assert (
+                await client.put(
+                    path + "/plot", json={"expected_revision": current["revision"], "enabled": False}
+                )
+            ).status_code == 409
     finally:
         await app.state.service.close()
 
@@ -296,14 +375,25 @@ async def test_empty_story_can_enable_plot_but_not_save_text_and_half_agent_is_r
             assert not empty["head"]
             response = await client.put(path, json={"expected_revision": empty["revision"], "enabled": True})
             assert response.status_code == 200 and response.json()["plot_enabled"]
-            assert (await client.put(path, json={"expected_revision": response.json()["revision"], "content": "尚无节点"})).status_code == 400
-            assert (await client.put(f"/api/sessions/{half['id']}/full-agent/plot", json={"expected_revision": 0, "enabled": True})).status_code == 400
+            assert (
+                await client.put(
+                    path, json={"expected_revision": response.json()["revision"], "content": "尚无节点"}
+                )
+            ).status_code == 400
+            assert (
+                await client.put(
+                    f"/api/sessions/{half['id']}/full-agent/plot",
+                    json={"expected_revision": 0, "enabled": True},
+                )
+            ).status_code == 400
     finally:
         await app.state.service.close()
 
 
 def context_fixture(*, compact=False):
-    settings = Settings(model="fixture", api_mode="responses", context_strategy="openai_compact" if compact else "new_context")
+    settings = Settings(
+        model="fixture", api_mode="responses", context_strategy="openai_compact" if compact else "new_context"
+    )
     session = {"id": "test-plot", "revision": 0, "persona": "玩家", "messages": [], "plot_enabled": True}
     snapshot = {"state": {}, "scopes": {}}
     full_state(snapshot)["plot"] = {"text": "完整大纲的尾部_MARKER", "revision": 42}
@@ -312,9 +402,13 @@ def context_fixture(*, compact=False):
 
     def compile_current():
         tools = tool_definitions(req, session, settings.full_agent_config)
-        return compile_window({}, session, [], snapshot, "继续", settings, tools, input_id="input", continuation=records)
+        return compile_window(
+            {}, session, [], snapshot, "继续", settings, tools, input_id="input", continuation=records
+        )
 
-    return SimpleNamespace(settings=settings, session=session, snapshot=snapshot, records=records, compile=compile_current)
+    return SimpleNamespace(
+        settings=settings, session=session, snapshot=snapshot, records=records, compile=compile_current
+    )
 
 
 def test_plot_frames_follow_edits_disable_clear_and_do_not_expose_metadata():
@@ -347,9 +441,13 @@ def test_cloud_checkpoint_restores_complete_current_plot_once_per_checkpoint():
     ctx = context_fixture(compact=True)
     first = ctx.compile()
     ctx.records.extend(first["context_additions"])
-    checkpoint = {"version": 1, "origin": response_origin(ctx.settings), "signature": first["_compact_signature"],
-                  "covered": hashes(first["_compact_body"]),
-                  "items": [{"type": "compaction", "encrypted_content": "opaque-old-outline"}]}
+    checkpoint = {
+        "version": 1,
+        "origin": response_origin(ctx.settings),
+        "signature": first["_compact_signature"],
+        "covered": hashes(first["_compact_body"]),
+        "items": [{"type": "compaction", "encrypted_content": "opaque-old-outline"}],
+    }
     ctx.snapshot["full_agent"]["compaction"] = checkpoint
     after = ctx.compile()
     assert after["compaction_opaque"]
@@ -393,16 +491,28 @@ async def test_player_changes_replace_old_effective_plot_after_real_trace_replay
     session = enable(store, session, "原大纲")
     service = runtime(store)
     try:
-        result, current = await turn(service, session, Model(("write_plot", {"content": "模型旧大纲"}), "正文"))
+        result, current = await turn(
+            service, session, Model(("write_plot", {"content": "模型旧大纲"}), "正文")
+        )
         assert result["status"] == "committed"
         current = enable(store, current, "玩家新大纲")
-        compiled = compile_window(store.session_card(current["id"])["document"], current, current["messages"],
-                                  current["snapshot"], "继续", store.settings().for_role("full_agent"),
-                                  tool_definitions(TurnRequest(operation_id="preview", expected_revision=current["revision"]), current),
-                                  trace=load_trace(store, current["id"], current["messages"]))
+        compiled = compile_window(
+            store.session_card(current["id"])["document"],
+            current,
+            current["messages"],
+            current["snapshot"],
+            "继续",
+            store.settings().for_role("full_agent"),
+            tool_definitions(
+                TurnRequest(operation_id="preview", expected_revision=current["revision"]), current
+            ),
+            trace=load_trace(store, current["id"], current["messages"]),
+        )
         assert "玩家新大纲" in outlines(compiled["messages"])[-1]
         assert compiled["messages"][-1]["role"] == "system"
-        assert "模型旧大纲" in str(compiled["messages"])  # historical tool arguments are retained, not retroactively changed
+        assert "模型旧大纲" in str(
+            compiled["messages"]
+        )  # historical tool arguments are retained, not retroactively changed
     finally:
         await service.close()
 
@@ -428,10 +538,19 @@ async def test_context_mode_conversion_preserves_plot_without_writing_or_replann
             assert not result["usage"]
             assert session["plot_enabled"] and session["snapshot"]["full_agent"]["plot"] == original
             settings = store.session_settings(session).for_role("full_agent")
-            tools = tool_definitions(TurnRequest(operation_id="preview", expected_revision=session["revision"]), session)
-            compiled = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
-                                      session["snapshot"], "继续", settings, tools,
-                                      trace=load_trace(store, session["id"], session["messages"]))
+            tools = tool_definitions(
+                TurnRequest(operation_id="preview", expected_revision=session["revision"]), session
+            )
+            compiled = compile_window(
+                store.session_card(session["id"])["document"],
+                session,
+                session["messages"],
+                session["snapshot"],
+                "继续",
+                settings,
+                tools,
+                trace=load_trace(store, session["id"], session["messages"]),
+            )
             assert original["text"] in outlines(compiled["messages"])[-1]
     finally:
         await service.close()

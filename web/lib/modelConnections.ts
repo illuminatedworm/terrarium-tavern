@@ -43,7 +43,7 @@ export function selectProfileProvider(
 /** Conversation models override names only; protocol/path follow this role's provider record. */
 export function conversationModelProfile(
   profile: ModelProfile,
-  selection?: ConversationModelSelection | null,
+  selection?: ConversationModelSelection | { provider_id?: undefined } | null,
 ): ModelProfile {
   if (!selection?.provider_id) return clone(profile);
   const result = selectProfileProvider(profile, selection.provider_id);

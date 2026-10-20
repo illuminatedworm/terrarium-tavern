@@ -1,4 +1,5 @@
 """Official-client request contracts, exercised against local HTTP mocks only."""
+
 import copy
 import hashlib
 import json
@@ -19,33 +20,71 @@ from tests.backend.test_full_agent import Model, runtime, turn
 
 
 def config(api="anthropic", mode="runtime", **kwargs):
-    return Settings(api_mode=api, model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
-                    api_key="local-audit-secret", base_url="https://fixture.test/v1", use_proxy=False,
-                    reasoning_effort="high", cache={"mode": mode}, **kwargs)
+    return Settings(
+        api_mode=api,
+        model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
+        api_key="local-audit-secret",
+        base_url="https://fixture.test/v1",
+        use_proxy=False,
+        reasoning_effort="high",
+        cache={"mode": mode},
+        **kwargs,
+    )
 
 
 def reply(api, items=None):
     if api == "anthropic":
-        return {"id": "msg_fixture", "model": "claude-opus-5-5", "stop_reason": "end_turn",
-                "content": items if items is not None else [{"type": "text", "text": "done"}],
-                "usage": {"input_tokens": 2, "output_tokens": 3, "cache_read_input_tokens": 40,
-                          "cache_creation_input_tokens": 5}}
-    return {"id": "resp_fixture", "status": "completed", "model": "gpt-6-sol",
-            "output": items if items is not None else [{"type": "message", "id": "msg_fixture",
-                "role": "assistant", "content": [{"type": "output_text", "text": "done", "annotations": []}]}],
-            "usage": {"input_tokens": 47, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 40}}}
+        return {
+            "id": "msg_fixture",
+            "model": "claude-opus-5-5",
+            "stop_reason": "end_turn",
+            "content": items if items is not None else [{"type": "text", "text": "done"}],
+            "usage": {
+                "input_tokens": 2,
+                "output_tokens": 3,
+                "cache_read_input_tokens": 40,
+                "cache_creation_input_tokens": 5,
+            },
+        }
+    return {
+        "id": "resp_fixture",
+        "status": "completed",
+        "model": "gpt-6-sol",
+        "output": items
+        if items is not None
+        else [
+            {
+                "type": "message",
+                "id": "msg_fixture",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "done", "annotations": []}],
+            }
+        ],
+        "usage": {"input_tokens": 47, "output_tokens": 3, "input_tokens_details": {"cached_tokens": 40}},
+    }
 
 
 def transport(cfg, route, context=None, capture=None):
-    return ModelTransport(cfg, cfg.api_key, capture, request_context=context,
-                          http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    return ModelTransport(
+        cfg,
+        cfg.api_key,
+        capture,
+        request_context=context,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
+    )
 
 
 def assistant(provider, response):
-    return {"role": "assistant", "content": response.content, **provider.last_assistant_extra_fields,
-            "tool_calls": [{"id": c.id, "function": {"name": c.name, "arguments": c.arguments}}
-                           for c in provider.last_tool_calls],
-            "_native_response": copy.deepcopy(provider.last_native_response)}
+    return {
+        "role": "assistant",
+        "content": response.content,
+        **provider.last_assistant_extra_fields,
+        "tool_calls": [
+            {"id": c.id, "function": {"name": c.name, "arguments": c.arguments}}
+            for c in provider.last_tool_calls
+        ],
+        "_native_response": copy.deepcopy(provider.last_native_response),
+    }
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
@@ -60,8 +99,11 @@ async def test_identity_is_independent_of_cache_and_survives_resume(tmp_path, ap
 
     def route(request):
         requests.append(request)
-        return httpx.Response(200, json=reply(api), headers={"x-codex-turn-state": "opaque-routing-token",
-                                                            "request-id": "req_fixture"})
+        return httpx.Response(
+            200,
+            json=reply(api),
+            headers={"x-codex-turn-state": "opaque-routing-token", "request-id": "req_fixture"},
+        )
 
     cfg = config(api, mode)
     p = transport(cfg, route, context, captured.append)
@@ -70,7 +112,9 @@ async def test_identity_is_independent_of_cache_and_survives_resume(tmp_path, ap
         await p.chat_complete(messages)
         await p.chat_complete(messages)
         saved = context.saved()
-        restored = ProviderRequestContext(sid.hex, saved["turn_id"], "window1", store.device_id(), saved["routing"])
+        restored = ProviderRequestContext(
+            sid.hex, saved["turn_id"], "window1", store.device_id(), saved["routing"]
+        )
         resumed = transport(cfg, route, restored, captured.append)
         try:
             await resumed.chat_complete(messages)
@@ -89,13 +133,20 @@ async def test_identity_is_independent_of_cache_and_survives_resume(tmp_path, ap
         if api == "anthropic":
             assert request.headers["X-Claude-Code-Session-Id"] == str(sid)
             assert json.loads(body["metadata"]["user_id"]) == {
-                "device_id": device, "account_uuid": "", "session_id": str(sid)}
+                "device_id": device,
+                "account_uuid": "",
+                "session_id": str(sid),
+            }
         else:
             assert request.headers["session-id"] == request.headers["thread-id"] == str(sid)
             assert body["prompt_cache_key"] == str(sid)
     if api == "responses":
         assert "x-codex-turn-state" not in requests[0].headers
-        assert requests[1].headers["x-codex-turn-state"] == requests[2].headers["x-codex-turn-state"] == "opaque-routing-token"
+        assert (
+            requests[1].headers["x-codex-turn-state"]
+            == requests[2].headers["x-codex-turn-state"]
+            == "opaque-routing-token"
+        )
         assert "x-codex-turn-state" not in requests[3].headers
     assert captured[0]["wire_sha256"] == hashlib.sha256(requests[0].content).hexdigest()
     assert "local-audit-secret" not in json.dumps(captured)
@@ -110,8 +161,15 @@ async def test_routing_state_cannot_cross_provider_identity(change):
     p = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")), context)
     context.routing["turn_state"] = "old-route"
     await p.close()
-    cfg = cfg.model_copy(update={change: "different-model" if change == "model" else
-                                 "different-key" if change == "api_key" else "https://other.test/v1"})
+    cfg = cfg.model_copy(
+        update={
+            change: "different-model"
+            if change == "model"
+            else "different-key"
+            if change == "api_key"
+            else "https://other.test/v1"
+        }
+    )
     next_provider = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")), context)
     try:
         assert "turn_state" not in context.routing
@@ -121,17 +179,30 @@ async def test_routing_state_cannot_cross_provider_identity(change):
 
 def native_blocks(api):
     if api == "anthropic":
-        return [{"type": "thinking", "thinking": "analysis", "signature": "signed-original"},
-                {"type": "tool_use", "id": "tool_1", "name": "read_state", "input": {}},
-                {"type": "text", "text": "between calls"},
-                {"type": "redacted_thinking", "data": "opaque-original"},
-                {"type": "tool_use", "id": "tool_2", "name": "read_state", "input": {"path": "x"}}]
-    return [{"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "encrypted-original"},
-            {"type": "function_call", "id": "fc_1", "call_id": "tool_1", "name": "read_state", "arguments": "{}"},
-            {"type": "message", "id": "msg_1", "role": "assistant", "content": [
-                {"type": "output_text", "text": "between calls", "annotations": []}]},
-            {"type": "function_call", "id": "fc_2", "call_id": "tool_2", "name": "read_state",
-             "arguments": '{"path":"x"}'}]
+        return [
+            {"type": "thinking", "thinking": "analysis", "signature": "signed-original"},
+            {"type": "tool_use", "id": "tool_1", "name": "read_state", "input": {}},
+            {"type": "text", "text": "between calls"},
+            {"type": "redacted_thinking", "data": "opaque-original"},
+            {"type": "tool_use", "id": "tool_2", "name": "read_state", "input": {"path": "x"}},
+        ]
+    return [
+        {"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "encrypted-original"},
+        {"type": "function_call", "id": "fc_1", "call_id": "tool_1", "name": "read_state", "arguments": "{}"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "between calls", "annotations": []}],
+        },
+        {
+            "type": "function_call",
+            "id": "fc_2",
+            "call_id": "tool_2",
+            "name": "read_state",
+            "arguments": '{"path":"x"}',
+        },
+    ]
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
@@ -158,8 +229,11 @@ async def test_native_items_round_trip_in_original_order_and_invalidate_on_edit(
 
 async def test_explicit_cache_key_wins_and_half_agent_gets_no_identity():
     cfg = config("responses", prompt_cache_key="custom-key")
-    p = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")),
-                  ProviderRequestContext(uuid4().hex, "turn", "window", "device"))
+    p = transport(
+        cfg,
+        lambda _: httpx.Response(200, json=reply("responses")),
+        ProviderRequestContext(uuid4().hex, "turn", "window", "device"),
+    )
     plain = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")))
     try:
         assert p._request([])["prompt_cache_key"] == "custom-key"
@@ -210,14 +284,18 @@ def set_handoff(store, session, text):
 async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(tmp_path):
     store, service, session = game(tmp_path)
     session = set_handoff(store, session, "MEMORY_A")
-    model = Model(("read_state", {}), ("write_handoff", {"content": "MEMORY_B"}),
-                  ("write_handoff", {"content": "MEMORY_B"}), "narrative")
+    model = Model(
+        ("read_state", {}),
+        ("write_handoff", {"content": "MEMORY_B"}),
+        ("write_handoff", {"content": "MEMORY_B"}),
+        "narrative",
+    )
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         requests = [strip_local(r["messages"]) for r in model.requests]
         for first, second in zip(requests, requests[1:]):
-            assert first == second[:len(first)]
+            assert first == second[: len(first)]
         for messages in requests:
             assert len(handoff_frames(messages)) == 1
             assert "MEMORY_A" in handoff_frames(messages)[0]["content"]
@@ -232,10 +310,23 @@ async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(
             assert result["status"] == "committed", result["error"]
             assert result["preview"]["context_ledger"]["epoch"] == baseline_epoch
             assert len(handoff_frames(next_model.requests[0]["messages"])) == 1
-            assert sum("<tavern_context_status>" in m.get("content", "")
-                       for m in next_model.requests[0]["messages"]) == status_count
-        assert len([r for r in load_trace(store, current["id"], current["messages"])
-                    if r["message"].get("source") == "handoff"]) == 1
+            assert (
+                sum(
+                    "<tavern_context_status>" in m.get("content", "")
+                    for m in next_model.requests[0]["messages"]
+                )
+                == status_count
+            )
+        assert (
+            len(
+                [
+                    r
+                    for r in load_trace(store, current["id"], current["messages"])
+                    if r["message"].get("source") == "handoff"
+                ]
+            )
+            == 1
+        )
     finally:
         await service.close()
 
@@ -248,40 +339,97 @@ async def test_turn_requirements_replay_in_place_and_append_revocations():
     session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
     snapshot = {"state": {}, "full_agent": new_state()}
     document = {"name": "fixture"}
-    first = compile_window(document, session, [], snapshot, "First input", settings, [],
-        input_id="u1", require_state_patch=True, instruction="只重写这一轮。", regenerate_reply="完整待重写参考。")
+    first = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "First input",
+        settings,
+        [],
+        input_id="u1",
+        require_state_patch=True,
+        instruction="只重写这一轮。",
+        regenerate_reply="完整待重写参考。",
+    )
     records = first["context_additions"] + [
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_read", "type": "function",
-            "function": {"name": "read_state", "arguments": "{}"}}]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+            ],
+        },
         {"role": "tool", "tool_call_id": "call_read", "content": '{"hp":8}'},
     ]
-    sent = compile_window(document, session, [], snapshot, "First input", settings, [],
-        input_id="u1", continuation=records, require_state_patch=True,
-        instruction="只重写这一轮。", regenerate_reply="完整待重写参考。")
+    sent = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "First input",
+        settings,
+        [],
+        input_id="u1",
+        continuation=records,
+        require_state_patch=True,
+        instruction="只重写这一轮。",
+        regenerate_reply="完整待重写参考。",
+    )
     records += sent["context_additions"]
-    history = [{"id": "u1", "role": "user", "raw": "First input"},
-               {"id": "a1", "role": "assistant", "raw": "First narrative"}]
-    trace = [{"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
-             for m in records]
-    second = compile_window(document, session, history, snapshot, "Second input", settings, [],
-        input_id="u2", trace=trace, require_state_patch=True)
+    history = [
+        {"id": "u1", "role": "user", "raw": "First input"},
+        {"id": "a1", "role": "assistant", "raw": "First narrative"},
+    ]
+    trace = [
+        {"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
+        for m in records
+    ]
+    second = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "Second input",
+        settings,
+        [],
+        input_id="u2",
+        trace=trace,
+        require_state_patch=True,
+    )
     assert second["context_ledger"]["rebuild_reason"] is None
-    assert second["messages"][:len(sent["messages"])] == sent["messages"]
-    assert [m["content"] for m in second["runtime_trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：False。"]
-    assert {m["source"]: m["content"] for m in second["context_additions"]
-            if m["source"].startswith("regenerate_")} == {
+    assert second["messages"][: len(sent["messages"])] == sent["messages"]
+    assert [m["content"] for m in second["runtime_trace"] if m["source"] == "turn_instruction"] == [
+        "允许修改设定：False。"
+    ]
+    assert {
+        m["source"]: m["content"]
+        for m in second["context_additions"]
+        if m["source"].startswith("regenerate_")
+    } == {
         "regenerate_instruction": "此前的重生成要求已撤销。",
         "regenerate_reference": "此前的待重写回复参考已失效；不再作为本轮重写依据，也不作为已发生剧情或当前状态。",
     }
-    again = compile_window(document, session, history, snapshot, "Second input", settings, [],
-        input_id="u2", trace=trace, continuation=second["context_additions"], require_state_patch=True)
+    again = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "Second input",
+        settings,
+        [],
+        input_id="u2",
+        trace=trace,
+        continuation=second["context_additions"],
+        require_state_patch=True,
+    )
     assert again["messages"] == second["messages"]
     assert again["context_additions"] == []
     provider = transport(settings, lambda _: pytest.fail("Context compilation must not call the model"))
     try:
         before, after = provider._request(sent["messages"]), provider._request(second["messages"])
         assert after["systemInstruction"] == before["systemInstruction"]
-        assert after["contents"][:len(before["contents"])] == before["contents"]
+        assert after["contents"][: len(before["contents"])] == before["contents"]
         assert "完整待重写参考。" in json.dumps(after, ensure_ascii=False)
         assert "此前的待重写回复参考已失效" in json.dumps(after, ensure_ascii=False)
     finally:
@@ -304,28 +452,67 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
     session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
     snapshot = {"state": {}, "full_agent": new_state()}
     document = {"name": "fixture"}
-    tools = [{"type": "function", "function": {"name": "read_state", "description": "读取状态",
-              "parameters": {"type": "object", "properties": {}}}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_state",
+                "description": "读取状态",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
     first = compile_window(document, session, [], snapshot, "first", settings, tools, input_id="u1")
-    legacy = [{"role": role, "source": source, "content": "旧提示不可回放：" + source,
-               "_runtime_context": {"epoch": first["context_ledger"]["epoch"], "value": ["u1", "旧值"]}}
-              for role, source in zip(("system", "assistant", "user"), TURN_SOURCES, strict=True)]
-    exchange = [{"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
-                 "function": {"name": "read_state", "arguments": "{}"}}]},
-                {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"}]
-    history = [{"id": "u1", "role": "user", "raw": "first"},
-               {"id": "a1", "role": "assistant", "raw": "完整剧情尾部"}]
-    trace = [{"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
-             for m in [*first["context_additions"], *legacy, *exchange]]
+    legacy = [
+        {
+            "role": role,
+            "source": source,
+            "content": "旧提示不可回放：" + source,
+            "_runtime_context": {"epoch": first["context_ledger"]["epoch"], "value": ["u1", "旧值"]},
+        }
+        for role, source in zip(("system", "assistant", "user"), TURN_SOURCES, strict=True)
+    ]
+    exchange = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"},
+    ]
+    history = [
+        {"id": "u1", "role": "user", "raw": "first"},
+        {"id": "a1", "role": "assistant", "raw": "完整剧情尾部"},
+    ]
+    trace = [
+        {"window_id": snapshot["full_agent"]["window"]["id"], "message_id": "a1", "message": m}
+        for m in [*first["context_additions"], *legacy, *exchange]
+    ]
     saved = copy.deepcopy(trace)
-    second = compile_window(document, session, history, snapshot, "second", settings, tools, input_id="u2", trace=trace)
-    continued = compile_window(document, session, history, snapshot, "second", settings, tools, input_id="u2",
-        trace=trace, continuation=[*second["context_additions"], *legacy])
+    second = compile_window(
+        document, session, history, snapshot, "second", settings, tools, input_id="u2", trace=trace
+    )
+    continued = compile_window(
+        document,
+        session,
+        history,
+        snapshot,
+        "second",
+        settings,
+        tools,
+        input_id="u2",
+        trace=trace,
+        continuation=[*second["context_additions"], *legacy],
+    )
     for context in (first, second, continued):
         assert [m["source"] for m in context["trace"] if m["source"] in TURN_SOURCES] == list(TURN_SOURCES)
-        assert context["messages"][-3:] == [{"role": "user", "content": settings.kemini.roleplay_prompt},
-                                          {"role": "assistant", "content": settings.kemini.acknowledgement},
-                                          {"role": "user", "content": control_text(settings.kemini)}]
+        assert context["messages"][-3:] == [
+            {"role": "user", "content": settings.kemini.roleplay_prompt},
+            {"role": "assistant", "content": settings.kemini.acknowledgement},
+            {"role": "user", "content": control_text(settings.kemini)},
+        ]
         assert context["messages"][-1]["content"].endswith("当前正文约束\n\n当前传输\n\n当前末尾提示")
         assert not any(m.get("source") in TURN_SOURCES for m in context["context_additions"])
         assert "旧提示不可回放" not in json.dumps(context["messages"], ensure_ascii=False)
@@ -339,16 +526,21 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
 
 async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
     store, service, session = game(tmp_path)
-    model = Model(("read_state", {}),
-                  ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
-                  ("archive_note", {"key": "plan"}),
-                  ("new_context", {"handoff": "已归档计划，继续当前故事", "keep_recent": 0}),
-                  ("read_state", {}), "narrative")
+    model = Model(
+        ("read_state", {}),
+        ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
+        ("archive_note", {"key": "plan"}),
+        ("new_context", {"handoff": "已归档计划，继续当前故事", "keep_recent": 0}),
+        ("read_state", {}),
+        "narrative",
+    )
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        notices = [[m["content"] for m in request["messages"]
-                    if "<tavern_context_status>" in m.get("content", "")] for request in model.requests]
+        notices = [
+            [m["content"] for m in request["messages"] if "<tavern_context_status>" in m.get("content", "")]
+            for request in model.requests
+        ]
         assert [len(items) for items in notices] == [1, 1, 2, 3, 1, 1]
         assert "有效 1 条，已归档 0 条" in notices[2][-1]
         assert "有效 0 条，已归档 1 条" in notices[3][-1]
@@ -375,13 +567,24 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        expected = [None, None, "线索/钟楼", "线索/钟楼", "线索/钟楼", "线索/钟楼\n计划/港口",
-                    "计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口", "线索/钟楼\n计划/港口"]
+        expected = [
+            None,
+            None,
+            "线索/钟楼",
+            "线索/钟楼",
+            "线索/钟楼",
+            "线索/钟楼\n计划/港口",
+            "计划/港口",
+            "线索/钟楼\n计划/港口",
+            "线索/钟楼\n计划/港口",
+            "线索/钟楼\n计划/港口",
+        ]
         fixed_prefix = None
         for request, keys in zip(model.requests, expected, strict=True):
             messages = request["messages"]
-            directories = [i for i, m in enumerate(messages)
-                           if m.get("content", "").startswith("<tavern_note_list>\n")]
+            directories = [
+                i for i, m in enumerate(messages) if m.get("content", "").startswith("<tavern_note_list>\n")
+            ]
             if keys is None:
                 assert directories == []
                 continue
@@ -396,7 +599,7 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
             assert messages[at + 1]["role"] == "user"
         # Editing contents with the same key keeps the entire previously sent prefix.
         before_edit, after_edit = [strip_local(r["messages"]) for r in model.requests[3:5]]
-        assert after_edit[:len(before_edit)] == before_edit
+        assert after_edit[: len(before_edit)] == before_edit
         assert current["snapshot"]["full_agent"]["window"]["number"] == 3
         directory_trace = next(m for m in result["preview"]["trace"] if m["source"] == "note_list")
         assert directory_trace["runtime_phase"] == "header"
@@ -404,8 +607,11 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
         follow = Model("next narrative")
         follow_result, _ = await turn(service, current, follow)
         assert follow_result["status"] == "committed", follow_result["error"]
-        directory = next(m for m in follow.requests[0]["messages"]
-                         if m.get("content", "").startswith("<tavern_note_list>\n"))
+        directory = next(
+            m
+            for m in follow.requests[0]["messages"]
+            if m.get("content", "").startswith("<tavern_note_list>\n")
+        )
         assert directory["content"] == model.requests[-1]["messages"][len(fixed_prefix)]["content"]
     finally:
         await service.close()
@@ -417,22 +623,34 @@ async def test_call_notifications_are_absent_even_on_last_request_and_resume(tmp
     document = store.settings_document()
     document.full_agent.tools.max_steps = 3
     store.save_settings(document)
-    model = Model(("read_state", {}), ("read_state", {}),
-                  RuntimeError("last request disconnected") if fail_last_request else "narrative")
+    model = Model(
+        ("read_state", {}),
+        ("read_state", {}),
+        RuntimeError("last request disconnected") if fail_last_request else "narrative",
+    )
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == ("error" if fail_last_request else "committed"), result["error"]
         for request in model.requests:
-            assert not any("tavern_call_budget" in m.get("content", "")
-                           or "tavern_last_call_notice" in m.get("content", "")
-                           or "最后一次模型请求" in m.get("content", "") for m in request["messages"])
+            assert not any(
+                "tavern_call_budget" in m.get("content", "")
+                or "tavern_last_call_notice" in m.get("content", "")
+                or "最后一次模型请求" in m.get("content", "")
+                for m in request["messages"]
+            )
         next_model = Model("next narrative")
         if fail_last_request:
             assert current["revision"] == 0
             service.full.provider_factory = lambda: next_model
-            resumed = service.submit(current["id"], TurnRequest(
-                text=result["request"]["text"], operation_id="resume-last-call", expected_revision=0,
-                resume_turn_id=result["id"]))
+            resumed = service.submit(
+                current["id"],
+                TurnRequest(
+                    text=result["request"]["text"],
+                    operation_id="resume-last-call",
+                    expected_revision=0,
+                    resume_turn_id=result["id"],
+                ),
+            )
             await service.tasks[resumed["id"]]
             following = store.turn(resumed["id"])
         else:
@@ -451,8 +669,9 @@ async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tm
         first, session = await turn(service, session, initial)
         assert first["status"] == "committed", first["error"]
         assert not handoff_frames(initial.requests[0]["messages"])
-        assert not any(m.get("content", "").startswith("<tavern_plot>\n")
-                       for m in initial.requests[0]["messages"])
+        assert not any(
+            m.get("content", "").startswith("<tavern_plot>\n") for m in initial.requests[0]["messages"]
+        )
         assert not any(m.get("source") in ("handoff", "plot") for m in first["preview"]["trace"])
         expected = []
         for value in ("", "MEMORY_A", "MEMORY_A", "MEMORY_B", "MEMORY_A", "", ""):
@@ -495,8 +714,12 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
             self.requests.append(copy.deepcopy(messages))
-            self.last_tool_calls = [SimpleNamespace(id=f"call-{index}", name="write_handoff",
-                arguments=json.dumps({"content": value})) for index, value in enumerate(("MEMORY_A", "MEMORY_B"))]
+            self.last_tool_calls = [
+                SimpleNamespace(
+                    id=f"call-{index}", name="write_handoff", arguments=json.dumps({"content": value})
+                )
+                for index, value in enumerate(("MEMORY_A", "MEMORY_B"))
+            ]
             return SimpleNamespace(content="", usage={}, finish_comment="stop")
 
     original = AgentTools.execute
@@ -525,8 +748,15 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
     model = Model("done after restart")
     service.full.provider_factory = lambda: model
     try:
-        resumed = service.submit(session["id"], TurnRequest(text=failed["request"]["text"],
-            operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
         await service.tasks[resumed["id"]]
         result = store.turn(resumed["id"])
         assert result["status"] == "committed", result["error"]
@@ -545,9 +775,14 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
 
     def route(request):
         requests.append(json.loads(request.content))
-        items = ([{"type": "tool_use", "id": "bad", "name": "read_history", "input": {}},
-                  {"type": "tool_use", "id": "good", "name": "read_state", "input": {}}]
-                 if len(requests) == 1 else [{"type": "text", "text": "继续故事"}])
+        items = (
+            [
+                {"type": "tool_use", "id": "bad", "name": "read_history", "input": {}},
+                {"type": "tool_use", "id": "good", "name": "read_state", "input": {}},
+            ]
+            if len(requests) == 1
+            else [{"type": "text", "text": "继续故事"}]
+        )
         return httpx.Response(200, json=reply("anthropic", items))
 
     async def factory(settings, capture=None, *, request_context=None):
@@ -556,8 +791,10 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
         for _ in range(2):
-            result = service.submit(session["id"], TurnRequest(text="继续", operation_id=uuid4().hex,
-                                                               expected_revision=session["revision"]))
+            result = service.submit(
+                session["id"],
+                TurnRequest(text="继续", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
             await service.tasks[result["id"]]
             assert store.turn(result["id"])["status"] == "committed"
             await service.close()
@@ -566,9 +803,16 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
             session = store.session(session["id"])
         assert len(requests) == 3
         for body in requests[1:]:
-            results = [b for m in body["messages"] for b in m.get("content", [])
-                       if isinstance(b, dict) and b.get("type") == "tool_result"]
-            assert [(b["tool_use_id"], b.get("is_error", False)) for b in results] == [("bad", True), ("good", False)]
+            results = [
+                b
+                for m in body["messages"]
+                for b in m.get("content", [])
+                if isinstance(b, dict) and b.get("type") == "tool_result"
+            ]
+            assert [(b["tool_use_id"], b.get("is_error", False)) for b in results] == [
+                ("bad", True),
+                ("good", False),
+            ]
         assert "_tool_error" not in json.dumps(requests)
     finally:
         await service.close()
@@ -582,11 +826,22 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
     requests, responses = [], []
     tool_items = native_blocks(api)
-    final_items = ([{"type": "thinking", "thinking": "final thought", "signature": "final-signature"},
-                    {"type": "text", "text": "FINAL_NARRATIVE"}] if api == "anthropic" else
-                   [{"type": "reasoning", "id": "rs_final", "summary": [], "encrypted_content": "final-encrypted"},
-                    {"type": "message", "id": "msg_final", "role": "assistant", "content": [
-                        {"type": "output_text", "text": "FINAL_NARRATIVE", "annotations": []}]}])
+    final_items = (
+        [
+            {"type": "thinking", "thinking": "final thought", "signature": "final-signature"},
+            {"type": "text", "text": "FINAL_NARRATIVE"},
+        ]
+        if api == "anthropic"
+        else [
+            {"type": "reasoning", "id": "rs_final", "summary": [], "encrypted_content": "final-encrypted"},
+            {
+                "type": "message",
+                "id": "msg_final",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "FINAL_NARRATIVE", "annotations": []}],
+            },
+        ]
+    )
 
     def route(request):
         requests.append(request)
@@ -600,8 +855,10 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
         for _ in range(2):
-            result = service.submit(session["id"], TurnRequest(text="continue", operation_id=uuid4().hex,
-                                                               expected_revision=session["revision"]))
+            result = service.submit(
+                session["id"],
+                TurnRequest(text="continue", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
             await service.tasks[result["id"]]
             result = store.turn(result["id"])
             assert result["status"] == "committed", result["error"]
@@ -610,17 +867,23 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
         assert len(bodies) == 3
         assert all(not b.get("stream") for b in bodies)
         if api == "anthropic":
-            echoed = next(m["content"] for m in bodies[1]["messages"]
-                          if m["role"] == "assistant" and any(p.get("type") == "tool_use" for p in m["content"]))
+            echoed = next(
+                m["content"]
+                for m in bodies[1]["messages"]
+                if m["role"] == "assistant" and any(p.get("type") == "tool_use" for p in m["content"])
+            )
             assert echoed == tool_items
-            final = next(m["content"] for m in bodies[2]["messages"]
-                         if any(p.get("text") == "FINAL_NARRATIVE" for p in m["content"]))
+            final = next(
+                m["content"]
+                for m in bodies[2]["messages"]
+                if any(p.get("text") == "FINAL_NARRATIVE" for p in m["content"])
+            )
             assert final[0] == final_items[0]
             assert final[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
             assert json.dumps(bodies[2]).count('"text": "FINAL_NARRATIVE"') == 1
         else:
             at = next(i for i, m in enumerate(bodies[1]["input"]) if m.get("id") == "rs_1")
-            assert bodies[1]["input"][at:at + len(tool_items)] == tool_items
+            assert bodies[1]["input"][at : at + len(tool_items)] == tool_items
             final = next(m for m in bodies[2]["input"] if m.get("id") == "msg_final")
             assert final["content"][-1]["prompt_cache_breakpoint"] == {"mode": "explicit"}
             assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[2]["input"])
@@ -628,7 +891,9 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
             assert "x-codex-turn-state" not in requests[2].headers
         events = store.events(result["id"])
         assert next(e for e in events if e["kind"] == "provider_request")["payload"]["headers"]
-        assert next(e for e in events if e["kind"] == "full_agent_response")["payload"]["provider_response"]["native"]
+        assert next(e for e in events if e["kind"] == "full_agent_response")["payload"]["provider_response"][
+            "native"
+        ]
         assert result["preview"]["cache"]["message_id"] == session["messages"][-3]["id"]
     finally:
         await service.close()
@@ -652,14 +917,28 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
             preview = response.json()
         settings = store.settings().for_role("full_agent")
         request = TurnRequest(operation_id="direct", expected_revision=session["revision"], **payload)
-        actual = compile_window(store.session_card(session["id"])["document"], session, session["messages"],
-            session["snapshot"], "next", settings,
-            tool_definitions(request, session, settings.full_agent_config, settings=settings,
-                             document=store.session_card(session["id"])["document"]),
+        actual = compile_window(
+            store.session_card(session["id"])["document"],
+            session,
+            session["messages"],
+            session["snapshot"],
+            "next",
+            settings,
+            tool_definitions(
+                request,
+                session,
+                settings.full_agent_config,
+                settings=settings,
+                document=store.session_card(session["id"])["document"],
+            ),
             trace=load_trace(store, session["id"], session["messages"]),
-            require_state_patch=True, allow_content_edit=True)
+            require_state_patch=True,
+            allow_content_edit=True,
+        )
         assert preview["messages"] == actual["messages"]
-        assert [m["content"] for m in actual["runtime_trace"] if m["source"] == "turn_instruction"] == ["允许修改设定：True。"]
+        assert [m["content"] for m in actual["runtime_trace"] if m["source"] == "turn_instruction"] == [
+            "允许修改设定：True。"
+        ]
         assert [m["sdk_role"] for m in preview["trace"] if m["source"] == "turn_instruction"] == ["system"]
         assert len(handoff_frames(preview["messages"])) == 1
         assert "handoff" not in [u["source"] for u in preview["context_ledger"]["updates"]]
@@ -667,7 +946,9 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
         await service.close()
 
 
-async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old_thinking(tmp_path, monkeypatch):
+async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old_thinking(
+    tmp_path, monkeypatch
+):
     import tavern.full_agent.agent as agent_module
 
     store, service, session = game(tmp_path)
@@ -677,19 +958,40 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
         def route(request):
             requests.append(request)
             api = settings.api_mode
-            items = ([{"type": "thinking", "thinking": "hidden", "signature": "MODEL_PRIVATE_SIGNATURE"},
-                      {"type": "text", "text": "portable narrative"}] if api == "anthropic" else
-                     [{"type": "reasoning", "id": "rs_private", "summary": [], "encrypted_content": "MODEL_PRIVATE_SIGNATURE"},
-                      {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "portable narrative"}]}])
+            items = (
+                [
+                    {"type": "thinking", "thinking": "hidden", "signature": "MODEL_PRIVATE_SIGNATURE"},
+                    {"type": "text", "text": "portable narrative"},
+                ]
+                if api == "anthropic"
+                else [
+                    {
+                        "type": "reasoning",
+                        "id": "rs_private",
+                        "summary": [],
+                        "encrypted_content": "MODEL_PRIVATE_SIGNATURE",
+                    },
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "portable narrative"}],
+                    },
+                ]
+            )
             return httpx.Response(200, json=reply(api, items), headers={"x-codex-turn-state": "old-route"})
+
         return transport(settings, route, request_context, capture)
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
     session = set_handoff(store, session, "MEMORY_A")
     try:
         epochs = []
-        for api, model in [("anthropic", "claude-opus-5-5"), ("anthropic", "claude-sonnet-4-6"),
-                           ("anthropic", "claude-opus-5-5"), ("responses", "gpt-6-sol")]:
+        for api, model in [
+            ("anthropic", "claude-opus-5-5"),
+            ("anthropic", "claude-sonnet-4-6"),
+            ("anthropic", "claude-opus-5-5"),
+            ("responses", "gpt-6-sol"),
+        ]:
             doc = store.settings_document()
             doc.full_agent.model.api_mode = api
             doc.half_agent.foreground.api_mode = api
@@ -697,8 +999,10 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             doc.shared.card_author.api_mode = api
             doc.full_agent.model.model = model
             store.save_settings(doc)
-            pending = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex,
-                                                                expected_revision=session["revision"]))
+            pending = service.submit(
+                session["id"],
+                TurnRequest(text="next", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
             await service.tasks[pending["id"]]
             result = store.turn(pending["id"])
             assert result["status"] == "committed", result["error"]
@@ -712,7 +1016,10 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
                 assert audit["rebuild_reason"] == "provider_or_model_changed"
                 assert "portable narrative" in requests[-1].content.decode()
         assert len(set(epochs)) == 4
-        assert len({r.headers.get("x-claude-code-session-id", r.headers.get("session-id")) for r in requests}) == 1
+        assert (
+            len({r.headers.get("x-claude-code-session-id", r.headers.get("session-id")) for r in requests})
+            == 1
+        )
     finally:
         await service.close()
 
@@ -744,9 +1051,20 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
 async def test_fork_remaps_runtime_references_and_uses_new_session_identity(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        result, session = await turn(service, session, Model(("read_state", {}), ("patch_state", {"operations": [], "comment": "none"}),
-            ("patch_state", {"operations": [{"op": "add", "path": "/audit", "value": True}], "comment": "audit"}), "first"),
-            update_variables=True)
+        result, session = await turn(
+            service,
+            session,
+            Model(
+                ("read_state", {}),
+                ("patch_state", {"operations": [], "comment": "none"}),
+                (
+                    "patch_state",
+                    {"operations": [{"op": "add", "path": "/audit", "value": True}], "comment": "audit"},
+                ),
+                "first",
+            ),
+            update_variables=True,
+        )
         assert result["status"] == "committed", result["error"]
         fork = store.fork_session(session["id"], session["head"], session["revision"])
         original_trace = load_trace(store, session["id"], session["messages"])
@@ -758,7 +1076,8 @@ async def test_fork_remaps_runtime_references_and_uses_new_session_identity(tmp_
                 assert value["input_id"] not in old_ids
                 assert value["input_id"] in {m["id"] for m in fork["messages"]}
         assert [m["message"].get("tool_call_id") for m in original_trace] == [
-            m["message"].get("tool_call_id") for m in fork_trace]
+            m["message"].get("tool_call_id") for m in fork_trace
+        ]
         result, fork = await turn(service, fork, Model("fork continuation"))
         assert result["status"] == "committed", result["error"]
         assert result["preview"]["cache"]["scope"] == fork["id"] != session["id"]
@@ -776,17 +1095,32 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         requests.append(request)
         if len(requests) == 2:
             raise httpx.ReadTimeout("synthetic timeout", request=request)
-        items = ([{"type": "reasoning", "id": "rs_memory", "summary": [], "encrypted_content": "opaque-memory"},
-                  {"type": "function_call", "id": "fc_memory", "call_id": "call_memory", "name": "write_handoff",
-                   "arguments": '{"content":"MEMORY_B"}'}] if len(requests) == 1 else None)
-        return httpx.Response(200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"})
+        items = (
+            [
+                {"type": "reasoning", "id": "rs_memory", "summary": [], "encrypted_content": "opaque-memory"},
+                {
+                    "type": "function_call",
+                    "id": "fc_memory",
+                    "call_id": "call_memory",
+                    "name": "write_handoff",
+                    "arguments": '{"content":"MEMORY_B"}',
+                },
+            ]
+            if len(requests) == 1
+            else None
+        )
+        return httpx.Response(
+            200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"}
+        )
 
     async def factory(settings, capture=None, *, request_context=None):
         return transport(settings, route, request_context, capture)
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
-        failed = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex, expected_revision=0))
+        failed = service.submit(
+            session["id"], TurnRequest(text="next", operation_id=uuid4().hex, expected_revision=0)
+        )
         await service.tasks[failed["id"]]
         failed = store.turn(failed["id"])
         assert failed["status"] == "error"
@@ -797,8 +1131,12 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
     store = Store(store.root)
     service = runtime(store)
     try:
-        resumed = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex,
-            expected_revision=0, resume_turn_id=failed["id"]))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text="next", operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]
+            ),
+        )
         await service.tasks[resumed["id"]]
         result = store.turn(resumed["id"])
         assert result["status"] == "committed", result["error"]
@@ -810,7 +1148,9 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         body = json.loads(requests[2].content)
         assert any(i.get("encrypted_content") == "opaque-memory" for i in body["input"])
         assert sum(i.get("type") == "function_call_output" for i in body["input"]) == 1
-        request_event = next(e["payload"] for e in store.events(result["id"]) if e["kind"] == "provider_request")
+        request_event = next(
+            e["payload"] for e in store.events(result["id"]) if e["kind"] == "provider_request"
+        )
         assert request_event["request_context"]["turn_id"] == saved["request_context"]["turn_id"]
         assert "persisted-route" not in json.dumps(store.events(result["id"]))
     finally:
@@ -820,17 +1160,26 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
 async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        _, session = await turn(service, session, Model(("write_handoff", {"content": "MEMORY_B"}), "old narrative"))
+        _, session = await turn(
+            service, session, Model(("write_handoff", {"content": "MEMORY_B"}), "old narrative")
+        )
         with store.connection() as db:
-            rows = db.execute("SELECT seq,payload FROM full_agent_trace WHERE message_id=?", (session["head"],)).fetchall()
+            rows = db.execute(
+                "SELECT seq,payload FROM full_agent_trace WHERE message_id=?", (session["head"],)
+            ).fetchall()
             for row in rows:
                 message = json.loads(row["payload"])
                 if message.get("tool_calls") or message["role"] == "tool":
                     message = {k: v for k, v in message.items() if not k.startswith("_")}
-                    db.execute("UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=?",
-                               (json.dumps(message), session["head"], row["seq"]))
+                    db.execute(
+                        "UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=?",
+                        (json.dumps(message), session["head"], row["seq"]),
+                    )
                 else:
-                    db.execute("DELETE FROM full_agent_trace WHERE message_id=? AND seq=?", (session["head"], row["seq"]))
+                    db.execute(
+                        "DELETE FROM full_agent_trace WHERE message_id=? AND seq=?",
+                        (session["head"], row["seq"]),
+                    )
         model = Model("new narrative")
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
@@ -859,8 +1208,9 @@ def test_legacy_permission_frames_are_removed_when_rebuilding_context(monkeypatc
     assert second["context_ledger"]["epoch"] != first["context_ledger"]["epoch"]
     assert not any(m["source"] == "turn_instruction" for m in second["trace"])
     assert not any("允许修改设定" in m["content"] for m in second["messages"])
-    third = compile_window(*args, input_id="u1",
-                           continuation=first["context_additions"] + second["context_additions"])
+    third = compile_window(
+        *args, input_id="u1", continuation=first["context_additions"] + second["context_additions"]
+    )
     assert third["context_ledger"]["rebuild_reason"] is None
     assert third["messages"] == second["messages"]
 
@@ -883,17 +1233,26 @@ def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch,
         notice["content"] = f"本回合还可调用模型 {remaining} 次。"
         notice["_runtime_context"]["value"] = notice["content"]
         records.append(notice)
-    for source, content in (("call_budget", "本次运行模型请求上限：24；包含本次请求的剩余次数：1。"),
-                            ("last_call_notice", "这是本回合最后一次模型请求。")):
+    for source, content in (
+        ("call_budget", "本次运行模型请求上限：24；包含本次请求的剩余次数：1。"),
+        ("last_call_notice", "这是本回合最后一次模型请求。"),
+    ):
         notice = copy.deepcopy(old_status)
         notice.update(source=source, message_type=source, content=content)
         notice["_runtime_context"]["value"] = content
         records.append(notice)
-    records.extend([
-        {"role": "assistant", "content": "", "tool_calls": [{"id": "read", "type": "function",
-            "function": {"name": "read_state", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "read", "content": "原有完整工具结果"},
-    ])
+    records.extend(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "read", "type": "function", "function": {"name": "read_state", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "read", "content": "原有完整工具结果"},
+        ]
+    )
     rebuilt = compile_window(*args, input_id="u1", continuation=records)
     assert rebuilt["context_ledger"]["rebuild_reason"] == "context_version_changed"
     assert not any("还可调用模型" in m.get("content", "") for m in rebuilt["messages"])
@@ -919,7 +1278,9 @@ def test_history_macro_change_rebuilds_once_and_records_why():
     second = compile_window(*args, input_id="u2", continuation=first["context_additions"])
     assert second["context_ledger"]["rebuild_reason"] == "history_content_changed"
     assert second["context_ledger"]["epoch"] != first["context_ledger"]["epoch"]
-    third = compile_window(*args, input_id="u2", continuation=first["context_additions"] + second["context_additions"])
+    third = compile_window(
+        *args, input_id="u2", continuation=first["context_additions"] + second["context_additions"]
+    )
     assert third["context_ledger"]["rebuild_reason"] is None
     assert third["messages"] == second["messages"]
 
@@ -977,20 +1338,30 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
         for allow in (False, True):
-            pending = service.submit(session["id"], TurnRequest(text="next", operation_id=uuid4().hex,
-                expected_revision=session["revision"], allow_content_edit=allow))
+            pending = service.submit(
+                session["id"],
+                TurnRequest(
+                    text="next",
+                    operation_id=uuid4().hex,
+                    expected_revision=session["revision"],
+                    allow_content_edit=allow,
+                ),
+            )
             await service.tasks[pending["id"]]
             result = store.turn(pending["id"])
             assert result["status"] == "committed", result["error"]
             session = store.session(session["id"])
         assert result["preview"]["context_ledger"]["rebuild_reason"] == "context_sources_changed"
         if api == "anthropic":
-            echoed = next(m["content"] for m in requests[-1]["messages"]
-                          if any(p.get("type") == "tool_use" for p in m["content"]))
+            echoed = next(
+                m["content"]
+                for m in requests[-1]["messages"]
+                if any(p.get("type") == "tool_use" for p in m["content"])
+            )
             assert echoed == original
         else:
             at = next(i for i, m in enumerate(requests[-1]["input"]) if m.get("id") == "rs_1")
-            assert requests[-1]["input"][at:at + len(original)] == original
+            assert requests[-1]["input"][at : at + len(original)] == original
     finally:
         await service.close()
 
@@ -1001,7 +1372,9 @@ async def test_rejected_last_response_and_correction_survive_step_limit(tmp_path
     doc.full_agent.tools.max_steps = 2
     store.save_settings(doc)
     try:
-        result, current = await turn(service, session, Model("rejected one", "rejected two"), update_variables=True)
+        result, current = await turn(
+            service, session, Model("rejected one", "rejected two"), update_variables=True
+        )
         assert result["status"] == "error" and current["revision"] == 0
         progress = store.full_agent_progress(result["id"])
         rejected = [i["message"] for i in progress["new_trace"] if i["message"].get("_full_agent_rejected")]
@@ -1019,7 +1392,9 @@ async def test_rejected_identity_does_not_trigger_a_cache_fallback_retry(api, fi
 
     def route(request):
         requests.append(request)
-        return httpx.Response(400, json={"error": {"message": f"Unsupported parameter: {field}", "param": field}})
+        return httpx.Response(
+            400, json={"error": {"message": f"Unsupported parameter: {field}", "param": field}}
+        )
 
     context = ProviderRequestContext(uuid4().hex, "turn", "window", "device")
     p = transport(cfg, route, context)

@@ -34,7 +34,7 @@
 .story-heading .story-title .character-portrait {
   width: 36px;
   height: 36px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
 }
 .story-heading.kemini {
   background: var(--experiment-wash);
@@ -76,7 +76,7 @@
   flex: none;
   gap: 2px;
   padding: 3px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgb(0 0 0 / 0.24);
   box-shadow:
     inset 0 0 0 1px var(--border-subtle),
@@ -89,7 +89,7 @@
   min-height: 30px;
   padding: 4px 13px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: var(--fs-sm);
@@ -121,7 +121,7 @@
   border-radius: var(--radius-pill);
   background: rgb(255 255 255 / 0.08);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 16px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -201,9 +201,10 @@
 
 /* ---------- Reading column ---------- */
 .dialogue-viewport {
-  --reading-side: max(24px, calc((100% - var(--reading-content-width)) / 2));
-  /* The right gutter hosts the history rail and the reading jumps. */
-  --dialogue-right-gutter: max(88px, var(--reading-side));
+  /* The right gutter hosts the history rail and the reading jumps; the left one
+     mirrors it so the prose stays centred in the sheet. */
+  --reading-side: max(88px, calc((100% - var(--reading-content-width)) / 2));
+  --dialogue-right-gutter: var(--reading-side);
   position: relative;
   display: flex;
   flex: 1;
@@ -236,7 +237,7 @@
   gap: 18px;
   margin: 10px 0 30px;
   color: var(--text-faint);
-  font: italic 13px/1.4 var(--font-display);
+  font: italic var(--fs-md) / 1.4 var(--font-display);
   letter-spacing: 0.18em;
 }
 .chapter span {
@@ -272,15 +273,15 @@
   font-size: var(--fs-2xs);
 }
 .message-meta .cache-breakpoint-status {
-  color: #d8ad39;
+  color: var(--cache-gold-text);
 }
 .message .avatar,
 .message .message-meta .character-portrait {
   width: 30px;
   height: 30px;
   flex: none;
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-md);
 }
 .message.user .avatar {
   display: grid;
@@ -289,7 +290,7 @@
   background: rgb(255 255 255 / 0.08);
   box-shadow: inset 0 0 0 1px var(--glass-edge);
   color: var(--text-secondary);
-  font: 500 12px var(--font-ui);
+  font: 500 var(--fs-sm) var(--font-ui);
 }
 .message-body {
   min-width: 0;
@@ -297,7 +298,7 @@
 /* The player's turns read as quieter, inset notes beside the narrative. */
 .message.user > .message-body {
   padding: 12px 18px 10px;
-  border-radius: 4px var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  border-radius: var(--radius-xs) var(--radius-lg) var(--radius-lg) var(--radius-lg);
   background: rgb(255 255 255 / 0.03);
   box-shadow:
     inset 2px 0 0 rgb(var(--accent-rgb) / 0.45),
@@ -455,7 +456,7 @@
 .source-excerpt mark {
   background: var(--accent-soft);
   color: var(--text-primary);
-  border-radius: 3px;
+  border-radius: var(--radius-2xs);
 }
 .source-excerpt {
   margin: 12px 0;
@@ -480,21 +481,21 @@
   border: 2px solid var(--cache-gold-light);
   border-radius: 50%;
   background: var(--cache-gold);
-  box-shadow: 0 0 0 4px rgba(242, 185, 40, 0.17);
+  box-shadow: 0 0 0 4px rgb(var(--cache-gold-rgb) / 0.17);
   cursor: pointer;
 }
 .cache-breakpoint-dot:hover:not(:disabled),
 .cache-breakpoint-dot:focus-visible {
   border-color: var(--cache-gold-light);
   background: var(--cache-gold);
-  box-shadow: 0 0 0 6px rgba(242, 185, 40, 0.3);
+  box-shadow: 0 0 0 6px rgb(var(--cache-gold-rgb) / 0.3);
   outline: 2px solid var(--cache-gold-light);
   outline-offset: 2px;
 }
 .cache-breakpoint-dot.manual {
   box-shadow:
-    0 0 0 4px rgba(242, 185, 40, 0.17),
-    inset 0 0 0 3px #674b12;
+    0 0 0 4px rgb(var(--cache-gold-rgb) / 0.17),
+    inset 0 0 0 3px var(--cache-gold-deep);
 }
 .cache-breakpoint-dot:disabled {
   cursor: default;
@@ -548,7 +549,7 @@
   position: relative;
   pointer-events: auto;
   padding: 4px 6px 2px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   background: var(--glass-sheen), var(--glass-bar);
   -webkit-backdrop-filter: var(--glass-blur-strong);
   backdrop-filter: var(--glass-blur-strong);
@@ -567,7 +568,7 @@
 }
 .composer .conversation-compose-frame {
   border-color: transparent;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -603,7 +604,7 @@
   font-size: var(--fs-sm);
 }
 .compose-bottom .quiet {
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
 .compose-bottom .regenerate-toggle[aria-expanded='true'] {
@@ -724,9 +725,11 @@
 .composer-stats-error {
   color: var(--warning);
 }
+/* Sits in the right gutter under the message-jump capsule (DialogueTools.vue), so
+   it never covers the prose that scrolls beneath the composer. */
 .jump-latest {
   position: absolute;
-  left: 50%;
+  right: calc(max(39px, var(--dialogue-right-gutter) - 64px) + 3px - var(--dialogue-right-gutter));
   bottom: calc(100% + 12px);
   z-index: 5;
   display: grid;
@@ -741,7 +744,6 @@
   backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow-soft);
   color: var(--text-primary);
-  transform: translateX(-50%);
 }
 .jump-latest:hover:not(:disabled) {
   background: var(--glass-float);
@@ -803,7 +805,7 @@
   gap: 12px;
   margin-bottom: 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .failed-turn-retry button {
   flex-shrink: 0;
@@ -813,7 +815,7 @@
   min-width: 0;
   width: auto;
   padding: 7px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .maintenance-warning {
   flex: none;
@@ -823,7 +825,7 @@
   padding: 8px 18px;
   background: var(--surface-panel);
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   max-height: 100px;
   overflow: auto;
 }
@@ -834,7 +836,7 @@
 .maintenance-warning button {
   flex-shrink: 0;
   padding: 5px 8px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ---------- Inline editing ---------- */
@@ -888,7 +890,7 @@
   min-height: 0;
   overflow: auto;
   padding: 18px 24px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .work-toolbar {
   display: flex;
@@ -906,7 +908,7 @@
 .work-toolbar p {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 .work-controls {
@@ -919,7 +921,7 @@
 .work-controls select,
 .work-load-more,
 .work-view-footer button {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 5px 10px;
 }
 .work-controls select {
@@ -1005,11 +1007,11 @@
 .work-event small {
   color: var(--text-muted);
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .work-status {
   min-width: 48px;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 .work-status.running,
@@ -1041,7 +1043,7 @@
 }
 .work-purpose {
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   min-width: 48px;
 }
 .work-payload {
@@ -1052,7 +1054,7 @@
 }
 .work-data-branch small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .work-data-body {
   padding-left: 16px;
@@ -1076,7 +1078,7 @@
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .work-data-body pre {
   margin: 0;
@@ -1087,19 +1089,19 @@
   overflow-wrap: anywhere;
   max-height: 440px;
   overflow: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.65;
 }
 .work-empty {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 10px 0;
   margin: 0;
   line-height: 1.7;
 }
 .work-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px 0;
   margin: 0;
   overflow-wrap: anywhere;
@@ -1116,7 +1118,7 @@
   padding: 12px 24px;
   border-top: 1px solid var(--border-subtle);
   background: rgb(0 0 0 / 0.12);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .work-view-footer > span {
   flex: 1;

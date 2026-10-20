@@ -1,4 +1,5 @@
 """Produce a source distribution from an explicit allowlist, never the workspace."""
+
 import hashlib
 import importlib.metadata
 import json
@@ -8,11 +9,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = (
-    ".gitignore", ".python-version", ".prettierrc.json", "README.md",
-    "pyproject.toml", "uv.lock", "package.json", "package-lock.json",
-    "compatibility.lock.json", "index.html", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
-    "setup.ps1", "start.ps1", "stop.ps1", "run-dev.ps1", "build.ps1",
-    "setup.sh", "start.sh", "stop.sh", "run-dev.sh", "build.sh",
+    ".gitignore",
+    ".python-version",
+    ".prettierrc.json",
+    "README.md",
+    "pyproject.toml",
+    "uv.lock",
+    "package.json",
+    "package-lock.json",
+    "compatibility.lock.json",
+    "index.html",
+    "tsconfig.json",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "setup.ps1",
+    "start.ps1",
+    "stop.ps1",
+    "run-dev.ps1",
+    "build.ps1",
+    "setup.sh",
+    "start.sh",
+    "stop.sh",
+    "run-dev.sh",
+    "build.sh",
 )
 DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools")
 
@@ -22,8 +41,7 @@ def publishable(relative):
     name = relative.name.lower()
     if any(part.lower() == ".agents" for part in relative.parts):
         return False
-    if any(part.startswith('.') or part in {"__pycache__", "node_modules"}
-           for part in relative.parts[1:]):
+    if any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in relative.parts[1:]):
         return False
     if name.startswith(("credentials", "secrets")) or name == "settings.json" or ".local." in name:
         return False
@@ -32,7 +50,18 @@ def publishable(relative):
     ):
         return True
     return relative.suffix.lower() in {
-        ".py", ".ts", ".vue", ".css", ".js", ".mjs", ".html", ".md", ".json", ".ttf", ".svg", ".ico",
+        ".py",
+        ".ts",
+        ".vue",
+        ".css",
+        ".js",
+        ".mjs",
+        ".html",
+        ".md",
+        ".json",
+        ".ttf",
+        ".svg",
+        ".ico",
     } or name in {"license", "copying", "notice", "cl100k_base.tiktoken.gz", "o200k_base.tiktoken.gz"}
 
 
@@ -45,16 +74,21 @@ def package(destination=None):
     if (ROOT / ".git").exists():
         result = subprocess.run(
             ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
-            cwd=ROOT, capture_output=True, check=True,
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
         )
         ignored = set(result.stdout.decode("utf-8").split("\0"))
     for folder in DIRECTORIES:
         for path in (ROOT / folder).rglob("*"):
             relative = path.relative_to(ROOT)
             generated = relative.parts[:3] == ("src", "tavern", "static")
-            if (path.is_file() and not any(parent.is_symlink() for parent in (path, *path.parents))
-                    and publishable(relative)
-                    and (relative.as_posix() not in ignored or generated)):
+            if (
+                path.is_file()
+                and not any(parent.is_symlink() for parent in (path, *path.parents))
+                and publishable(relative)
+                and (relative.as_posix() not in ignored or generated)
+            ):
                 contents[relative.as_posix()] = path.read_bytes()
     # Include actual dependency license files, not paths into the build machine.
     for distribution in importlib.metadata.distributions():
@@ -75,7 +109,8 @@ def package(destination=None):
     assert any("kohakuterrarium" in name.lower() and "license" in name.lower() for name in contents)
     manifest = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(contents.items())}
     contents["release-manifest.json"] = json.dumps(
-        {"version": version, "files": manifest}, ensure_ascii=False, indent=2).encode()
+        {"version": version, "files": manifest}, ensure_ascii=False, indent=2
+    ).encode()
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, data in sorted(contents.items()):
             info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
@@ -86,8 +121,16 @@ def package(destination=None):
             archive.writestr(info, data)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     destination.with_suffix(".zip.sha256").write_text(f"{digest}  {destination.name}\n", encoding="ascii")
-    print(json.dumps({"file": str(destination), "files": len(contents), "bytes": destination.stat().st_size,
-                      "sha256": digest}))
+    print(
+        json.dumps(
+            {
+                "file": str(destination),
+                "files": len(contents),
+                "bytes": destination.stat().st_size,
+                "sha256": digest,
+            }
+        )
+    )
     return destination
 
 

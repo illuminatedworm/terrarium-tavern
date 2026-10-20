@@ -330,7 +330,7 @@ useTimedError(error);
 .recipe-source-description,
 .recipe-footnote {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.8;
 }
 .recipe-layout {
@@ -347,13 +347,13 @@ useTimedError(error);
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .recipe-sequence-heading strong {
   font-weight: 500;
 }
 .recipe-sequence-heading small {
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .recipe-list {
   list-style: none;
@@ -382,7 +382,7 @@ useTimedError(error);
   padding: 8px;
   cursor: grab;
   color: var(--text-muted);
-  font-size: 19px;
+  font-size: var(--fs-xl);
 }
 .recipe-grip:active {
   cursor: grabbing;
@@ -397,13 +397,13 @@ useTimedError(error);
   padding: 10px 8px 10px 0;
 }
 .recipe-number {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-faint);
   width: 16px;
   flex-shrink: 0;
 }
 .recipe-title {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -412,7 +412,7 @@ useTimedError(error);
 .recipe-title small {
   display: block;
   margin-top: 4px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-muted);
 }
 .recipe-add {
@@ -423,12 +423,12 @@ useTimedError(error);
 .recipe-add select {
   min-width: 0;
   flex: 1;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 7px;
 }
 .recipe-add button {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 7px;
 }
 .recipe-parameters {
@@ -445,7 +445,7 @@ useTimedError(error);
   gap: 8px;
 }
 .recipe-detail-heading h3 {
-  font-size: 15px;
+  font-size: var(--fs-ui);
   margin: 0;
 }
 .recipe-detail-heading > div {
@@ -454,7 +454,7 @@ useTimedError(error);
   flex-shrink: 0;
 }
 .recipe-detail-heading button {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 5px 7px;
 }
 .recipe-detail-heading .recipe-remove {
@@ -463,20 +463,20 @@ useTimedError(error);
 .recipe-source-description {
   padding: 12px;
   background: var(--surface-base);
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   margin: 14px 0;
 }
 .recipe-parameters input,
 .recipe-parameters select {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .recipe-parameters label {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin-top: 14px;
 }
 .recipe-parameters label small {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.65;
   margin-top: 6px;
 }
@@ -504,12 +504,12 @@ useTimedError(error);
   background: var(--danger-surface);
   color: var(--danger);
   padding: 10px;
-  font-size: 12px;
-  border-radius: 6px;
+  font-size: var(--fs-sm);
+  border-radius: var(--radius-xs);
 }
 .recipe-footnote {
   margin-top: 18px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 @media (max-width: 760px) {
   .recipe-layout {

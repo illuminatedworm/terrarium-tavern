@@ -6,6 +6,7 @@ Every batch/review owns a fresh map; it is never serialized into a snapshot or
 accepted from the model. Resolution precedes the existing branch/hash/excerpt
 validator, so a short reference is not a relaxation of source validation.
 """
+
 import copy
 import re
 import uuid
@@ -49,8 +50,10 @@ class References:
         self.counts = {"S": 0, "H": 0}
 
     def passages(self, mid, text, *, prefix="S", commit=True):
-        parts = [{"ref": f"{prefix}{self.counts[prefix] + i}", "text": part}
-                 for i, part in enumerate(split_passages(text), 1)]
+        parts = [
+            {"ref": f"{prefix}{self.counts[prefix] + i}", "text": part}
+            for i, part in enumerate(split_passages(text), 1)
+        ]
         if commit:
             self.counts[prefix] += len(parts)
             self.sources.update({p["ref"]: {"message_id": mid, "excerpt": p["text"]} for p in parts})
@@ -73,15 +76,29 @@ class References:
         for record in memory["records"]:
             if not is_retained_record(record):
                 continue
-            alias = next((key for key, rid in self.records.items() if rid == record["id"]),
-                         f"R{len(self.records) + 1}")
+            alias = next(
+                (key for key, rid in self.records.items() if rid == record["id"]), f"R{len(self.records) + 1}"
+            )
             self.records[alias] = record["id"]
             # Old citations are not newly supplied evidence. Hide persistent
             # IDs, hashes and tombstone internals, while keeping protection and
             # uncertainty visible. Runtime retains the complete original record.
-            row = {k: copy.deepcopy(record[k]) for k in (
-                "category", "content", "kind", "people", "story_time", "known_to",
-                "status", "manual", "callback", "source_stale") if k in record}
+            row = {
+                k: copy.deepcopy(record[k])
+                for k in (
+                    "category",
+                    "content",
+                    "kind",
+                    "people",
+                    "story_time",
+                    "known_to",
+                    "status",
+                    "manual",
+                    "callback",
+                    "source_stale",
+                )
+                if k in record
+            }
             records.append({"id": alias, **row})
         return {"version": 1, "records": records}
 
@@ -95,8 +112,11 @@ class References:
             # a hash into either the prompt or the model's response.
             version = str(item.get("version", "unknown"))
             self.versions.setdefault(version, f"V{len(self.versions) + 1}")
-            row = {"id": alias, "version": self.versions[version], **{
-                k: item[k] for k in ("kind", "text", "historical") if k in item}}
+            row = {
+                "id": alias,
+                "version": self.versions[version],
+                **{k: item[k] for k in ("kind", "text", "historical") if k in item},
+            }
             if item.get("kind") == "character" and item.get("identity") in CARD_FIELDS:
                 row["text"] = wrap_card_field(item["identity"], item["text"])
             elif item.get("kind") in ("lore", "frozen_lore"):
@@ -146,11 +166,22 @@ class References:
                 continue  # The normal validator reports malformed records.
             if "sources" in record:
                 resolved = []
-                unknown = next((s for s in record["sources"] if isinstance(s, str) and s not in self.sources), None)
+                unknown = next(
+                    (s for s in record["sources"] if isinstance(s, str) and s not in self.sources), None
+                )
                 if unknown is not None:
-                    if op.get("op") == "add" and record.get("callback") and record.get("category") == "episode":
+                    if (
+                        op.get("op") == "add"
+                        and record.get("callback")
+                        and record.get("category") == "episode"
+                    ):
                         if on_invalid:
-                            on_invalid({"count": 1, "message": f"已丢弃一条无效的可选原话记录：未知片段编号 {unknown}"})
+                            on_invalid(
+                                {
+                                    "count": 1,
+                                    "message": f"已丢弃一条无效的可选原话记录：未知片段编号 {unknown}",
+                                }
+                            )
                         continue
                     raise ValueError(f"未知原文片段编号 {unknown}；旧记忆及覆盖水位保留")
                 for source in record["sources"]:

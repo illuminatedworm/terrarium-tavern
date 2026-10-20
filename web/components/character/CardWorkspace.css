@@ -10,7 +10,7 @@
   background: transparent;
 }
 .card-workspace button {
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 /* Header mirrors the story header: mark, title over a quiet subtitle, tools. */
 .cw-header {
@@ -140,7 +140,7 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   color: var(--ivory);
   background:
     radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.4), transparent 62%),
@@ -153,17 +153,17 @@
   width: 56px;
   height: 56px;
   margin-bottom: 22px;
-  border-radius: 17px;
+  border-radius: var(--radius-lg);
 }
 .cw-empty h2 {
   color: var(--text-primary);
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 30px;
+  font-size: var(--fs-3xl);
   margin: 0 0 16px;
 }
 .cw-empty p {
-  font-size: 14px;
+  font-size: var(--fs-base);
   margin: 8px 0;
 }
 .cw-composer {
@@ -182,7 +182,7 @@
   gap: 2px;
 }
 .cw-composer-tools .cw-quiet {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 6px 8px;
 }
 .cw-skills-button {
@@ -215,7 +215,7 @@
 }
 .cw-discard {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 6px 10px;
 }
 .cw-discard + .cw-send {
@@ -233,7 +233,7 @@
 .cw-stop span {
   width: 9px;
   height: 9px;
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   background: currentColor;
 }
 .cw-references {
@@ -242,7 +242,7 @@
   gap: 6px;
 }
 .cw-references button {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cw-reference-add svg {
   color: var(--accent-hover);
@@ -253,7 +253,7 @@
   color: var(--warning);
   background: rgb(var(--warning-rgb) / 0.08);
   border-bottom: 1px solid rgb(var(--warning-rgb) / 0.16);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -265,7 +265,7 @@
   overflow: auto;
   padding: 12px var(--cw-gutter);
   border-top: 1px solid var(--border-control);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cw-pending strong {
   color: var(--warning);
@@ -291,14 +291,14 @@
 }
 .cw-inspector h2 {
   margin: 0 0 14px;
-  font: 600 16px/1.5 var(--font-ui);
+  font: 600 var(--fs-lg) / 1.5 var(--font-ui);
 }
 .cw-inspector label {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 .cw-inspector label.check {
@@ -309,7 +309,7 @@
   width: 100%;
   padding: 8px 10px;
   min-height: 36px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   background: transparent;
 }
 .cw-tabs {
@@ -334,7 +334,7 @@
   border-radius: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cw-tabs button:hover:not(:disabled) {
   border-color: transparent;
@@ -352,16 +352,16 @@
   right: 18%;
   bottom: -1px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent-glow);
 }
 .cw-tab-count {
   min-width: 18px;
   padding: 0 4px;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: rgb(255 255 255 / 0.08);
-  font: 10px/1.8 var(--font-ui);
+  font: var(--fs-2xs) / 1.8 var(--font-ui);
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
@@ -371,12 +371,12 @@
   overflow: auto;
   overscroll-behavior: contain;
   padding: 22px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 .cw-card-kind {
   margin: 0 0 20px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cw-edit-form {
   display: flex;
@@ -406,7 +406,7 @@
 .cw-inspector > .cw-empty {
   padding: 24px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .cw-inspector-footer {
   flex: 0 0 auto;
@@ -417,7 +417,7 @@
   border-top: 1px solid var(--border-subtle);
 }
 .cw-inspector-footer span {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 .cw-save-buttons {
@@ -439,13 +439,13 @@
   margin-bottom: 20px;
 }
 .cw-save-actions button {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px 10px;
 }
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cw-inspector-toggle,
 .cw-close-inspector {
@@ -469,7 +469,7 @@ pre {
   white-space: nowrap;
   border: 0;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1200px) {
   .card-workspace {
     --cw-gutter: 24px;
   }
@@ -503,13 +503,13 @@ pre {
     padding: 10px 12px 10px 16px;
   }
   .cw-heading h1 {
-    font-size: 18px;
+    font-size: var(--fs-xl);
   }
   .cw-header .cw-toolbar {
     gap: 2px;
   }
   .cw-header button {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 6px 7px;
   }
 }
@@ -527,10 +527,10 @@ pre {
     flex: 1 1 100%;
   }
   .cw-heading h1 {
-    font-size: 17px;
+    font-size: var(--fs-lg);
   }
   .cw-heading p {
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .cw-header .cw-toolbar {
     justify-content: flex-start;
@@ -547,7 +547,7 @@ pre {
     padding: 28px 0;
   }
   .cw-empty h2 {
-    font-size: 23px;
+    font-size: var(--fs-title);
   }
   .cw-composer {
     padding-bottom: 10px;
@@ -571,7 +571,7 @@ pre {
   }
   .cw-composer-tools .cw-quiet {
     gap: 4px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 6px 5px;
   }
   .cw-composer-tools svg {

@@ -1,4 +1,5 @@
 """Application routing only. The two story engines never invoke one another."""
+
 from tavern.application.service import RoleplayRuntime
 from tavern.full_agent.runtime import FullAgentRuntime
 
@@ -7,6 +8,7 @@ class ModeRuntime:
     def __init__(self, store):
         self.store = store
         from tavern.application.context_operations import ContextOperations
+
         self.half = RoleplayRuntime(store)
         self.context_operations = ContextOperations(store, self.half.retrieval)
         self.full = FullAgentRuntime(store, self.half.retrieval, self.half.dependencies)
@@ -73,11 +75,16 @@ class ModeRuntime:
     def prepare_indexes(self, sid):
         if self.store.session(sid)["agent_mode"] != "full_agent":
             return self.half.prepare_indexes(sid)
+
         async def prepare(record):
             s = self.store.session(sid)
-            document = (s["snapshot"].get("content") or {}).get("document", self.store.session_card(sid)["document"])
-            await self.full.retrieval.prepare(document, [], "", s["snapshot"], self.store.session_settings(s), s,
-                                             "prepare", index_only=True)
+            document = (s["snapshot"].get("content") or {}).get(
+                "document", self.store.session_card(sid)["document"]
+            )
+            await self.full.retrieval.prepare(
+                document, [], "", s["snapshot"], self.store.session_settings(s), s, "prepare", index_only=True
+            )
+
         try:
             return self.local_models.job("prepare:" + sid, prepare)
         except ValueError:

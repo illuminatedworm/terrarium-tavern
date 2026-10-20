@@ -4,6 +4,7 @@ Frozen injections are evidence of what was supplied, not evidence of an event.
 Missing historical card snapshots are explicitly labelled as current fallback.
 Only messages at or before this batch's cutoff are inspected.
 """
+
 import json
 
 from tavern.character.cards import lore_entries, normalize
@@ -19,12 +20,22 @@ def evidence_pool(history, document, start, end):
         if not str(text).strip():
             return
         key = digest([kind, identity, version, text])
-        pool.setdefault(key, {"id": key, "kind": kind, "text": str(text), "anchor": anchor,
-                              "identity": identity, "version": version, "historical": historical})
+        pool.setdefault(
+            key,
+            {
+                "id": key,
+                "kind": kind,
+                "text": str(text),
+                "anchor": anchor,
+                "identity": identity,
+                "version": version,
+                "historical": historical,
+            },
+        )
 
     # Include the start boundary as well as the end: a final state alone cannot
     # tell whether a transfer occurred, was reversed, or predated the batch.
-    for m in history[max(0, start - 1):end]:
+    for m in history[max(0, start - 1) : end]:
         snap = m.get("snapshot", {})
         historical = (snap.get("content") or {}).get("document")
         doc = historical or document or {}
@@ -40,8 +51,13 @@ def evidence_pool(history, document, start, end):
                 add("lore", e.get("content", ""), m["id"], e["id"], version, historical is not None)
         if m is history[max(0, start - 1)] or m is history[end - 1]:
             for key, value in state_for_model(snap.get("state", {})).items():
-                add("state_reference_only", json.dumps({key: value}, ensure_ascii=False),
-                    m["id"], key, digest(value))
+                add(
+                    "state_reference_only",
+                    json.dumps({key: value}, ensure_ascii=False),
+                    m["id"],
+                    key,
+                    digest(value),
+                )
     return list(pool.values())
 
 
@@ -58,9 +74,11 @@ def select_evidence(pool, query, settings, *, exclude=()):
     if not candidates:
         return []
     index = BM25([tokenize(r["text"]) for r in candidates])
-    scores = index.score(tokenize(query), 1.2, .75)
-    ranked = sorted(range(len(candidates)), key=lambda i: (
-        -int(candidates[i]["kind"] == "frozen_lore"), -scores.get(i, 0), i))
+    scores = index.score(tokenize(query), 1.2, 0.75)
+    ranked = sorted(
+        range(len(candidates)),
+        key=lambda i: (-int(candidates[i]["kind"] == "frozen_lore"), -scores.get(i, 0), i),
+    )
     selected = []
     seen_text = set()
     for i in ranked:

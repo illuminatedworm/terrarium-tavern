@@ -128,26 +128,26 @@ function add() {
 }
 .provider-summary strong {
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 500;
 }
 .provider-summary small {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .provider-summary-status {
   color: var(--success);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .provider-summary-action {
   border: 1px solid var(--border-control);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   padding: 9px 14px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .official-provider {
   border: 1px solid var(--border-control);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   padding: 0 20px;
   margin: 18px 0 28px;
 }
@@ -156,10 +156,10 @@ function add() {
 }
 .settings-section-heading h3 {
   margin: 12px 0;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 500;
 }
-@media (max-width: 600px) {
+@media (max-width: 620px) {
   .provider-summary {
     flex-wrap: wrap;
     gap: 10px;

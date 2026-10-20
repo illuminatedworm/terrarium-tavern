@@ -1,4 +1,5 @@
 """Semantic setting edits: no document paths, scripts or bulk card reads."""
+
 import copy
 import re
 from html import unescape
@@ -12,8 +13,15 @@ from tavern.character.card_workflow import validate_document
 from tavern.character.cards import lore_entries
 from tavern.full_agent.protocol import ToolError
 
-SettingField = Literal["name", "description", "personality", "scenario", "mes_example",
-                       "system_prompt", "post_history_instructions"]
+SettingField = Literal[
+    "name",
+    "description",
+    "personality",
+    "scenario",
+    "mes_example",
+    "system_prompt",
+    "post_history_instructions",
+]
 CHARACTER_FIELDS = get_args(SettingField)
 
 
@@ -22,16 +30,24 @@ class ContentArguments(BaseModel):
 
 
 class CharacterRead(ContentArguments):
-    ref: SettingField = Field(description="One allowed character setting field. No whole card, worldbook, extensions, opening or paths.")
+    ref: SettingField = Field(
+        description="One allowed character setting field. No whole card, worldbook, extensions, opening or paths."
+    )
 
 
 class LoreRead(ContentArguments):
-    ref: str = Field(pattern=r"^L[1-9]\d*$", description="Exact L handle for one ordinary narrative worldbook entry. No IDs, indices or wildcard.")
+    ref: str = Field(
+        pattern=r"^L[1-9]\d*$",
+        description="Exact L handle for one ordinary narrative worldbook entry. No IDs, indices or wildcard.",
+    )
 
 
 class EntryValues(ContentArguments):
     title: str = Field(min_length=1, description="Complete entry title.")
-    content: str = Field(min_length=1, description="Complete narrative setting text; no executable scripts or variable initialization/rules.")
+    content: str = Field(
+        min_length=1,
+        description="Complete narrative setting text; no executable scripts or variable initialization/rules.",
+    )
     keys: list[str] = Field(default_factory=list, description="Primary trigger keywords.")
     secondary_keys: list[str] = Field(default_factory=list, description="Secondary trigger keywords.")
     enabled: bool = Field(default=True, description="Whether this narrative entry is enabled.")
@@ -45,9 +61,13 @@ class EntryValues(ContentArguments):
 
 class EntryChanges(ContentArguments):
     title: str | None = Field(default=None, min_length=1, description="New complete title; omit to preserve.")
-    content: str | None = Field(default=None, min_length=1, description="New complete narrative text; omit to preserve.")
+    content: str | None = Field(
+        default=None, min_length=1, description="New complete narrative text; omit to preserve."
+    )
     keys: list[str] | None = Field(default=None, description="New primary keywords; omit to preserve.")
-    secondary_keys: list[str] | None = Field(default=None, description="New secondary keywords; omit to preserve.")
+    secondary_keys: list[str] | None = Field(
+        default=None, description="New secondary keywords; omit to preserve."
+    )
     enabled: bool | None = Field(default=None, description="New enabled state; omit to preserve.")
 
     @model_validator(mode="after")
@@ -63,18 +83,26 @@ class EntryChanges(ContentArguments):
 class SetCharacter(ContentArguments):
     op: Literal["set_character"] = Field(description="Set one allowed character setting.")
     field: SettingField = Field(description="Allowed character setting field to update.")
-    value: str = Field(description="Complete updated text; empty clears an optional setting. Name must remain nonempty.")
+    value: str = Field(
+        description="Complete updated text; empty clears an optional setting. Name must remain nonempty."
+    )
 
 
 class AddLore(ContentArguments):
-    op: Literal["add_lore"] = Field(description="Append one ordinary narrative setting entry; no prior bulk read needed.")
-    entry: EntryValues = Field(description="New entry's narrative settings. Runtime supplies its identity and preserves the worldbook.")
+    op: Literal["add_lore"] = Field(
+        description="Append one ordinary narrative setting entry; no prior bulk read needed."
+    )
+    entry: EntryValues = Field(
+        description="New entry's narrative settings. Runtime supplies its identity and preserves the worldbook."
+    )
 
 
 class UpdateLore(ContentArguments):
     op: Literal["update_lore"] = Field(description="Update one ordinary narrative entry.")
     ref: str = Field(pattern=r"^L[1-9]\d*$", description="L handle returned for this entry.")
-    changes: EntryChanges = Field(description="Only changed narrative properties; omitted properties and runtime configuration remain intact.")
+    changes: EntryChanges = Field(
+        description="Only changed narrative properties; omitted properties and runtime configuration remain intact."
+    )
 
 
 class RemoveLore(ContentArguments):
@@ -86,15 +114,23 @@ ContentOperation = Annotated[SetCharacter | AddLore | UpdateLore | RemoveLore, F
 
 
 class ContentRevision(ContentArguments):
-    operations: list[ContentOperation] = Field(min_length=1, max_length=100,
-        description="Atomic setting actions: set_character, add_lore, update_lore, remove_lore. No JSON Patch paths, IDs, card roots or extensions.")
-    comment: str = Field(min_length=1, max_length=1000, description="Brief user-facing comment about this operation.")
+    operations: list[ContentOperation] = Field(
+        min_length=1,
+        max_length=100,
+        description="Atomic setting actions: set_character, add_lore, update_lore, remove_lore. No JSON Patch paths, IDs, card roots or extensions.",
+    )
+    comment: str = Field(
+        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+    )
 
 
-CODE = re.compile(r"<(?:script|initvar|JSONPatch|UpdateVariable)\b|"
-                  r"\b_\.(?:set|add|insert|delete|move)\s*\(|"
-                  r"\{\{\s*(?:setvar|addvar|incvar|decvar|setglobalvar|addglobalvar)::|"
-                  r"```\s*(?:javascript|typescript|js|ts)\b", re.I)
+CODE = re.compile(
+    r"<(?:script|initvar|JSONPatch|UpdateVariable)\b|"
+    r"\b_\.(?:set|add|insert|delete|move)\s*\(|"
+    r"\{\{\s*(?:setvar|addvar|incvar|decvar|setglobalvar|addglobalvar)::|"
+    r"```\s*(?:javascript|typescript|js|ts)\b",
+    re.I,
+)
 SCRIPT_KEYS = {"scripts", "script", "regex_scripts", "tavern_helper", "tavernhelper_scripts", "javascript"}
 
 
@@ -108,8 +144,13 @@ class ExecutionHTML(HTMLParser):
             self.executable = True
         for key, value in attrs:
             clean = re.sub(r"[\s\x00-\x20]+", "", unescape(value or "")).lower()
-            if (key.startswith("on") or key == "srcdoc"
-                    or clean.startswith(("javascript:", "vbscript:", "data:text/html", "data:application/javascript"))):
+            if (
+                key.startswith("on")
+                or key == "srcdoc"
+                or clean.startswith(
+                    ("javascript:", "vbscript:", "data:text/html", "data:application/javascript")
+                )
+            ):
                 self.executable = True
 
     handle_startendtag = handle_starttag
@@ -158,14 +199,21 @@ def lore_references(document, state):
 
 def editable_entry(raw, entry):
     title = entry.get("comment") or entry.get("name") or ""
-    return (entry.get("terrarium", {}).get("audience", "writer") == "writer"
-            and "[initvar]" not in title.casefold() and not runtime_code(raw))
+    return (
+        entry.get("terrarium", {}).get("audience", "writer") == "writer"
+        and "[initvar]" not in title.casefold()
+        and not runtime_code(raw)
+    )
 
 
 def entry_view(entry):
-    return {"title": entry.get("comment") or entry.get("name") or "世界书",
-            "content": entry.get("content", ""), "keys": entry.get("keys", []),
-            "secondary_keys": entry.get("secondary_keys", []), "enabled": bool(entry.get("enabled", True))}
+    return {
+        "title": entry.get("comment") or entry.get("name") or "世界书",
+        "content": entry.get("content", ""),
+        "keys": entry.get("keys", []),
+        "secondary_keys": entry.get("secondary_keys", []),
+        "enabled": bool(entry.get("enabled", True)),
+    }
 
 
 class ContentEditor:
@@ -175,7 +223,9 @@ class ContentEditor:
     def character(self, field):
         value = card_data(self.owner.document).get(field)
         if runtime_code(value):
-            raise ToolError("PROTECTED_TARGET", "该设定字段含执行脚本或变量指令，不能通过设定编辑工具读取或修改")
+            raise ToolError(
+                "PROTECTED_TARGET", "该设定字段含执行脚本或变量指令，不能通过设定编辑工具读取或修改"
+            )
         return value
 
     def resolve(self, ref, *, document=None, refs=None):
@@ -186,17 +236,26 @@ class ContentEditor:
         if row is None:
             raise ToolError("INVALID_REFERENCE", "世界书引用无效或条目已删除；请重新定位目标条目")
         if not editable_entry(row[1], row[2]):
-            raise ToolError("PROTECTED_TARGET", "该条目属于变量规则、初始化或脚本，不能通过设定编辑工具读取或修改")
+            raise ToolError(
+                "PROTECTED_TARGET", "该条目属于变量规则、初始化或脚本，不能通过设定编辑工具读取或修改"
+            )
         return row
 
     def rows(self):
-        refs = {identity: ref for ref, identity in lore_references(self.owner.document, self.owner.state).items()}
-        return [{"ref": refs[entry["id"]], **entry_view(entry)}
-                for _, raw, entry in entry_rows(self.owner.document) if editable_entry(raw, entry)]
+        refs = {
+            identity: ref for ref, identity in lore_references(self.owner.document, self.owner.state).items()
+        }
+        return [
+            {"ref": refs[entry["id"]], **entry_view(entry)}
+            for _, raw, entry in entry_rows(self.owner.document)
+            if editable_entry(raw, entry)
+        ]
 
     def revise(self, arguments):
         owner = self.owner
-        operations = owner.model_view.restore([op.model_dump(exclude_unset=True) for op in arguments.operations])
+        operations = owner.model_view.restore(
+            [op.model_dump(exclude_unset=True) for op in arguments.operations]
+        )
         comment = owner.model_view.restore(arguments.comment)
         edits_lore = any(operation["op"] != "set_character" for operation in operations)
         refs = copy.deepcopy(owner.state.get("lore_references", {}))
@@ -234,7 +293,9 @@ class ContentEditor:
                 values = {"keys": [], "secondary_keys": [], "enabled": True, **operation["entry"]}
                 raw = {"id": uuid4().hex, "comment": values.pop("title"), **values}
                 if not editable_entry(raw, raw):
-                    raise ToolError("PROTECTED_TARGET", "只能新增普通叙事设定，不能引入初始化、变量规则或脚本")
+                    raise ToolError(
+                        "PROTECTED_TARGET", "只能新增普通叙事设定，不能引入初始化、变量规则或脚本"
+                    )
                 if isinstance(entries, dict):
                     entries[raw["id"]] = raw
                 else:
@@ -248,7 +309,12 @@ class ContentEditor:
             for field, value in operation["changes"].items():
                 # Keep the effective storage location of legacy aliases/overrides.
                 key = {"title": "comment"}.get(field, field)
-                alias = {"comment": "name", "keys": "key", "secondary_keys": "keysecondary", "enabled": "disable"}.get(key)
+                alias = {
+                    "comment": "name",
+                    "keys": "key",
+                    "secondary_keys": "keysecondary",
+                    "enabled": "disable",
+                }.get(key)
                 extension = raw.get("extensions", {})
                 if key in extension:
                     extension[key] = value
@@ -266,18 +332,30 @@ class ContentEditor:
         validate_document(revised)
         current_refs = lore_references(revised, {"lore_references": refs}) if edits_lore else refs
         reverse = {identity: ref for ref, identity in current_refs.items()}
-        final_entries = [(raw, entry) for _, raw, entry in entry_rows(revised)
-                         if entry["id"] in changed or entry["id"] in added] if edits_lore else []
+        final_entries = (
+            [
+                (raw, entry)
+                for _, raw, entry in entry_rows(revised)
+                if entry["id"] in changed or entry["id"] in added
+            ]
+            if edits_lore
+            else []
+        )
         present = {reverse[entry["id"]] for _, entry in final_entries}
         removed_refs = sorted(affected_refs - present)
         # Return the complete final view once per target, then register that exact
         # content as observed. No intermediate batch version grants a read record.
-        result = owner.model_view.expose({
-            "saved_to_draft": True, "added_refs": [reverse[identity] for identity in added],
-            "characters": [{"ref": field, "text": card_data(revised).get(field)} for field in sorted(fields)],
-            "entries": [{"ref": reverse[entry["id"]], **entry_view(entry)} for _, entry in final_entries],
-            "removed_refs": removed_refs,
-        })
+        result = owner.model_view.expose(
+            {
+                "saved_to_draft": True,
+                "added_refs": [reverse[identity] for identity in added],
+                "characters": [
+                    {"ref": field, "text": card_data(revised).get(field)} for field in sorted(fields)
+                ],
+                "entries": [{"ref": reverse[entry["id"]], **entry_view(entry)} for _, entry in final_entries],
+                "removed_refs": removed_refs,
+            }
+        )
         owner.document = revised
         # The shared content snapshot keeps its storage field across agent modes.
         owner.snapshot["content"] = {"document": revised, "reason": comment, "turn": owner.tid}
@@ -289,8 +367,9 @@ class ContentEditor:
         if edits_lore:
             owner.state["lore_references"] = current_refs
         if changed:
-            owner.snapshot["lore_injections"] = [record for record in owner.snapshot.get("lore_injections", [])
-                                                if record["id"] not in changed]
+            owner.snapshot["lore_injections"] = [
+                record for record in owner.snapshot.get("lore_injections", []) if record["id"] not in changed
+            ]
         for identity in changed:
             owner.snapshot.get("lore", {}).pop(identity, None)
         if hasattr(owner, "exiting"):

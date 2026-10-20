@@ -57,7 +57,7 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
   color: var(--accent-hover);
 }
 .card-skills header h2 {
-  font: 600 22px/1.4 var(--font-ui);
+  font: 600 var(--fs-title) / 1.4 var(--font-ui);
   color: var(--text-primary);
   margin: 0;
 }
@@ -67,39 +67,39 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
 }
 .skills-intro {
   color: var(--text-secondary);
-  font: 14px/1.8 var(--font-ui);
+  font: var(--fs-base) / 1.8 var(--font-ui);
   margin: 12px 0 24px;
 }
 .card-skills label {
   display: flex;
   align-items: center;
   gap: 14px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 .card-skills label select {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .skill-choice {
   padding: 20px 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 .skill-choice h3 {
-  font: 600 16px/1.5 var(--font-ui);
+  font: 600 var(--fs-lg) / 1.5 var(--font-ui);
   margin: 0 0 9px;
 }
 .skill-choice p {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.8;
   color: var(--text-secondary);
 }
 .skill-choice .skill-scope,
 .skill-choice .skill-outcome {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .skill-choice button {
   display: flex;
@@ -110,7 +110,7 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
   background: transparent;
   border-color: var(--border-control);
   padding: 7px 11px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .skill-choice button svg {
   width: 14px;
@@ -118,18 +118,18 @@ defineEmits<{ select: [ref: string]; use: [preset: EditorSkillPreset]; reference
   transform: rotate(45deg);
 }
 .card-skills footer {
-  font: 12px/1.8 var(--font-ui);
+  font: var(--fs-sm) / 1.8 var(--font-ui);
   color: var(--text-muted);
   padding-top: 20px;
 }
 .skills-reference {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.8;
 }
 .skills-reference button {
   display: block;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 </style>

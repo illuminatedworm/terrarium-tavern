@@ -25,10 +25,15 @@ def png_image(color, document=None):
 async def test_portrait_survives_card_edits_deletion_and_session_fork(tmp_path, container):
     app = create_app(tmp_path)
     store = app.state.store
-    document = {"spec": "chara_card_v3", "spec_version": "3.0", "data": {
-        "name": "有头像的角色", "first_mes": "故事开始。",
-        "assets": [{"type": "icon", "uri": "embeded://assets/portrait.png"}],
-    }}
+    document = {
+        "spec": "chara_card_v3",
+        "spec_version": "3.0",
+        "data": {
+            "name": "有头像的角色",
+            "first_mes": "故事开始。",
+            "assets": [{"type": "icon", "uri": "embeded://assets/portrait.png"}],
+        },
+    }
     expected = png_image("teal", document if container == "png" else None)
     replacement = png_image("coral")
     original = expected

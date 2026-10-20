@@ -164,7 +164,7 @@ function save() {
 .cache-connection {
   margin-bottom: 18px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -173,7 +173,7 @@ function save() {
 }
 .cache-panel h2 {
   margin: 0 0 12px;
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1.4;
 }
 .cache-panel form + h2,
@@ -192,7 +192,7 @@ form label {
   align-items: center;
   gap: 12px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 .cache-follow-fields {
@@ -206,7 +206,7 @@ select {
   min-height: 34px;
   margin: 0;
   padding: 6px 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 select {
@@ -219,7 +219,7 @@ input {
 .cache-panel .inspector-note,
 .cache-panel .error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 .cache-panel > h2 + .inspector-note {
@@ -229,7 +229,7 @@ input {
   width: fit-content;
   min-height: 34px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 form > button {
@@ -240,7 +240,7 @@ form > button {
   border-top: 1px solid var(--border-subtle);
   margin-top: 18px;
   padding-top: 14px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 .cache-plan-state small,
@@ -250,10 +250,10 @@ form > button {
 .cache-plan-state small {
   color: var(--text-muted);
   margin-bottom: 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .cache-plan-state strong {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
 }
 .cache-plan-state p {

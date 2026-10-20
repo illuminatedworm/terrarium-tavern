@@ -4,6 +4,7 @@ Optional build tool: fonttools 4.61.1. The checked-in TTF needs no runtime depen
 These geometric outlines are original project assets, not extracted from a font.
 Text values and clipboard content retain their original Unicode characters.
 """
+
 from pathlib import Path
 
 from fontTools.fontBuilder import FontBuilder
@@ -15,6 +16,7 @@ def quotation(offsets, *, closing=False):
     pen = TTGlyphPen(None)
 
     for offset in offsets:
+
         def point(x, y):
             # Rotate closing marks so their heads sit above the descending tails.
             if closing:
@@ -41,19 +43,29 @@ glyphs = {
 }
 builder = FontBuilder(1000, isTTF=True)
 builder.setupGlyphOrder(list(glyphs))
-builder.setupCharacterMap({
-    0x2018: "openSingle", 0x2019: "closeSingle",
-    0x201C: "openDouble", 0x201D: "closeDouble",
-})
+builder.setupCharacterMap(
+    {
+        0x2018: "openSingle",
+        0x2019: "closeSingle",
+        0x201C: "openDouble",
+        0x201D: "closeDouble",
+    }
+)
 builder.setupGlyf(glyphs)
-builder.setupHorizontalMetrics({
-    name: (340 if name.endswith("Single") else 600, 0 if name == ".notdef" else 70)
-    for name in glyphs
-})
+builder.setupHorizontalMetrics(
+    {name: (340 if name.endswith("Single") else 600, 0 if name == ".notdef" else 70) for name in glyphs}
+)
 builder.setupHorizontalHeader(ascent=880, descent=-120)
-builder.setupNameTable({"familyName": "Tavern Quote Marks", "styleName": "Regular",
-                        "uniqueFontIdentifier": "TavernQuoteMarks-2", "fullName": "Tavern Quote Marks",
-                        "psName": "TavernQuoteMarks", "version": "Version 2.0"})
+builder.setupNameTable(
+    {
+        "familyName": "Tavern Quote Marks",
+        "styleName": "Regular",
+        "uniqueFontIdentifier": "TavernQuoteMarks-2",
+        "fullName": "Tavern Quote Marks",
+        "psName": "TavernQuoteMarks",
+        "version": "Version 2.0",
+    }
+)
 builder.setupOS2(sTypoAscender=880, sTypoDescender=-120, usWinAscent=880, usWinDescent=120)
 builder.setupPost()
 builder.setupMaxp()

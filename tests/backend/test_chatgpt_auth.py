@@ -38,7 +38,11 @@ async def test_browser_registration_callback_verification_and_protected_restart(
         assert params["ext_agent_host_id"].startswith("urn:uuid:")
         assert params["resource"] == API_ROOT and PLAN_SCOPE in params["scope"]
         assert params["redirect_uri"].startswith("http://127.0.0.1:")
-        expected = base64.urlsafe_b64encode(hashlib.sha256(service.attempt["verifier"].encode()).digest()).decode().rstrip("=")
+        expected = (
+            base64.urlsafe_b64encode(hashlib.sha256(service.attempt["verifier"].encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
         assert params["code_challenge"] == expected
         assert not {"state", "nonce", "verifier", "client_id"} & attempt.keys()
         result = await callback(service, identity)
@@ -60,7 +64,9 @@ async def test_browser_registration_callback_verification_and_protected_restart(
             assert stat.S_IMODE(service.vault.path.stat().st_mode) == 0o600
             assert stat.S_IMODE(service.vault.directory.stat().st_mode) == 0o700
         public = json.dumps(service.public())
-        assert all(secret not in public for secret in (ACCESS, REFRESH, account["tokens"]["id_token"], CLIENT))
+        assert all(
+            secret not in public for secret in (ACCESS, REFRESH, account["tokens"]["id_token"], CLIENT)
+        )
         again = await service.start_login(account_id=account_id)
         assert identity.params["client_id"] == CLIENT
         assert identity.params["ext_agent_host_id"] == params["ext_agent_host_id"]
@@ -74,7 +80,9 @@ async def test_browser_registration_callback_verification_and_protected_restart(
         await service.close()
 
 
-@pytest.mark.parametrize("fault", ["nonce", "aud", "iss", "exp", "signature", "missing_client", "dynamic_client"])
+@pytest.mark.parametrize(
+    "fault", ["nonce", "aud", "iss", "exp", "signature", "missing_client", "dynamic_client"]
+)
 async def test_invalid_identity_or_registration_never_saves_account(tmp_path, identity, fault):
     service = identity.service(tmp_path)
     try:
@@ -85,7 +93,13 @@ async def test_invalid_identity_or_registration_never_saves_account(tmp_path, id
             identity.claim_overrides[fault] = "wrong"
         elif fault == "exp":
             identity.claim_overrides["exp"] = int(time.time()) - 60
-        client_id = None if fault == "missing_client" else "dynamic_agent_client" if fault == "dynamic_client" else CLIENT
+        client_id = (
+            None
+            if fault == "missing_client"
+            else "dynamic_agent_client"
+            if fault == "dynamic_client"
+            else CLIENT
+        )
         assert (await callback(service, identity, client_id=client_id)).status_code == 400
         assert service.public()["accounts"] == []
         assert service.attempt["status"] == "failed"
@@ -129,11 +143,13 @@ async def test_cancel_expire_and_single_pending_attempt(tmp_path, identity):
 async def test_callback_replay_and_cancel_during_exchange_never_activate_twice(tmp_path, identity, ending):
     service = identity.service(tmp_path)
     exchanging, release = asyncio.Event(), asyncio.Event()
+
     async def delayed(request):
         if str(request.url) == META["token_endpoint"]:
             exchanging.set()
             await release.wait()
         return await identity(request)
+
     service.http_transport = httpx.MockTransport(delayed)
     try:
         started = await service.start_login()
@@ -163,6 +179,7 @@ async def test_callback_replay_and_cancel_during_exchange_never_activate_twice(t
 async def test_unavailable_callback_listener_does_not_open_browser(tmp_path, identity, monkeypatch):
     async def unavailable(*args, **kwargs):
         raise OSError("fixture port unavailable")
+
     monkeypatch.setattr(asyncio, "start_server", unavailable)
     service = identity.service(tmp_path)
     with pytest.raises(ChatGPTError, match="callback_unavailable"):
@@ -209,7 +226,9 @@ async def test_declined_plan_keeps_identity_and_reconsent_is_explicit(tmp_path, 
 
 
 async def test_identity_only_result_without_inference_credentials_is_retained(tmp_path, identity):
-    identity.token_overrides.update(scope="openid profile email", access_token="", refresh_token="", token_type="", expires_in=0)
+    identity.token_overrides.update(
+        scope="openid profile email", access_token="", refresh_token="", token_type="", expires_in=0
+    )
     service = identity.service(tmp_path)
     try:
         await service.start_login()
@@ -223,7 +242,9 @@ async def test_identity_only_result_without_inference_credentials_is_retained(tm
         await service.close()
 
 
-async def test_same_issued_registration_is_reused_and_completed_retry_is_not_reused_for_new_account(tmp_path, identity):
+async def test_same_issued_registration_is_reused_and_completed_retry_is_not_reused_for_new_account(
+    tmp_path, identity
+):
     service = identity.service(tmp_path)
     try:
         await service.start_login()
@@ -242,7 +263,9 @@ async def test_same_issued_registration_is_reused_and_completed_retry_is_not_reu
         await service.close()
 
 
-async def test_same_email_different_registration_and_mismatching_returning_client_or_subject(tmp_path, identity):
+async def test_same_email_different_registration_and_mismatching_returning_client_or_subject(
+    tmp_path, identity
+):
     service = identity.service(tmp_path)
     try:
         await service.start_login()
@@ -264,7 +287,9 @@ async def test_same_email_different_registration_and_mismatching_returning_clien
         await service.close()
 
 
-async def test_invalid_grant_reuses_issued_registration_without_saving_unverified_identity(tmp_path, identity):
+async def test_invalid_grant_reuses_issued_registration_without_saving_unverified_identity(
+    tmp_path, identity
+):
     service = identity.service(tmp_path)
     try:
         await service.start_login()
@@ -283,11 +308,13 @@ async def test_concurrent_refreshes_share_rotation_and_keep_generation(tmp_path,
     first, second = identity.service(tmp_path), identity.service(tmp_path)
     account_id, account = seed_account(first, expires_at=time.time() - 1)
     refreshing, release = asyncio.Event(), asyncio.Event()
+
     async def delayed(request):
         if str(request.url) == META["token_endpoint"]:
             refreshing.set()
             await release.wait()
         return await identity(request)
+
     first.http_transport = second.http_transport = httpx.MockTransport(delayed)
     one = asyncio.create_task(first.access(account_id))
     await refreshing.wait()
@@ -299,11 +326,19 @@ async def test_concurrent_refreshes_share_rotation_and_keep_generation(tmp_path,
     assert identity.refresh_count == 1
     assert all(item["tokens"]["refresh_token"] == "fixture-refresh-1" for item in refreshed)
     assert all(item["generation"] == account["generation"] for item in refreshed)
-    data = parse_qs(next(request.content.decode() for request in identity.requests if str(request.url) == META["token_endpoint"]))
+    data = parse_qs(
+        next(
+            request.content.decode()
+            for request in identity.requests
+            if str(request.url) == META["token_endpoint"]
+        )
+    )
     assert data["client_id"] == [CLIENT] and data["resource"] == [API_ROOT] and "scope" not in data
 
 
-@pytest.mark.parametrize("code,cleared", [("invalid_grant", True), ("refresh_token_reused", True), ("invalid_client", False)])
+@pytest.mark.parametrize(
+    "code,cleared", [("invalid_grant", True), ("refresh_token_reused", True), ("invalid_client", False)]
+)
 async def test_refresh_failure_does_not_destroy_recoverable_credentials(tmp_path, identity, code, cleared):
     service = identity.service(tmp_path)
     account_id, account = seed_account(service, expires_at=time.time() - 1)
@@ -329,8 +364,10 @@ async def test_refresh_window_and_network_failures_keep_account(tmp_path, identi
         value = service.vault.load()
         value["accounts"][account_id]["tokens"]["earliest_refresh_at"] = 0
         service.vault.save(value)
+
     def unavailable(request):
         raise httpx.ConnectError("fixture offline", request=request)
+
     service.http_transport = httpx.MockTransport(unavailable)
     with pytest.raises(ChatGPTError, match="refresh_unavailable"):
         await service.access(account_id)
@@ -338,11 +375,14 @@ async def test_refresh_window_and_network_failures_keep_account(tmp_path, identi
 
 
 @pytest.mark.parametrize("remote_status", [200, 503])
-async def test_logout_cancels_active_work_clears_secrets_and_preserves_registration(tmp_path, identity, remote_status):
+async def test_logout_cancels_active_work_clears_secrets_and_preserves_registration(
+    tmp_path, identity, remote_status
+):
     identity.revocation_status = remote_status
     service = identity.service(tmp_path)
     account_id, original = seed_account(service)
     ready = asyncio.Event()
+
     async def work():
         owner = service.attach(account_id, original["generation"])
         ready.set()
@@ -350,21 +390,28 @@ async def test_logout_cancels_active_work_clears_secrets_and_preserves_registrat
             await asyncio.Event().wait()
         finally:
             service.detach(account_id, owner)
+
     task = asyncio.create_task(work())
     await ready.wait()
     result = await service.logout(account_id)
     assert task.cancelled()
     assert result["revocation_confirmed"] == (remote_status == 200)
     saved = service._read(account_id)
-    assert saved["tokens"] is None and saved["client_id"] == CLIENT and saved["generation"] != original["generation"]
+    assert (
+        saved["tokens"] is None
+        and saved["client_id"] == CLIENT
+        and saved["generation"] != original["generation"]
+    )
     with pytest.raises(ChatGPTError, match="sign_in_required"):
         await service.access(account_id)
 
 
 async def test_untrusted_discovery_and_browser_failure_do_not_start_login(tmp_path, identity):
     service = identity.service(tmp_path)
+
     def evil(request):
         return httpx.Response(200, json={**META, "token_endpoint": "https://example.invalid/steal"})
+
     service.http_transport = httpx.MockTransport(evil)
     with pytest.raises(ChatGPTError):
         await service.start_login()

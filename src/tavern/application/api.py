@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from tavern.application.modes import ModeRuntime
 from tavern.character.cards import append_lorebook, export_card, normalize
 from tavern.conversation.context import compile_context
+from tavern.core.errors import NotFound
 from tavern.core.models import (
     ContentEdit,
     ContextRecipe,
@@ -31,22 +32,31 @@ from tavern.core.models import (
 )
 from tavern.storage.store import Conflict, Store, dump
 
+# Application version; bump together with the locations listed in .agents/VERSIONING.md.
+VERSION = "0.6.0"
+
 
 def create_app(data_dir=None):
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
     service = ModeRuntime(store)
     from tavern.character.card_author import CardAuthorService
+
     editor = CardAuthorService(store)
     from tavern.advisor.runtime import AdvisorService
+
     advisor = AdvisorService(store, service.full.retrieval)
 
     @asynccontextmanager
     async def lifespan(app):
         store.recover()
+
         async def maintain():
             from tavern.storage.maintenance import cleanup
+
             while True:
-                if not any(not t.done() for t in service.tasks.values()) and not any(not t.done() for t in service.local_models.tasks.values()):
+                if not any(not t.done() for t in service.tasks.values()) and not any(
+                    not t.done() for t in service.local_models.tasks.values()
+                ):
                     try:
                         cleanup(store)
                         service.retrieval.cache.clear()
@@ -54,6 +64,7 @@ def create_app(data_dir=None):
                     except (OSError, Conflict):
                         pass  # In-use files are retried at the next idle pass.
                 await asyncio.sleep(3600)
+
         maintenance = asyncio.create_task(maintain())
         try:
             yield
@@ -65,27 +76,33 @@ def create_app(data_dir=None):
             await service.close()
             await store.chatgpt.close()
 
-    app = FastAPI(title="Terrarium Tavern", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="Terrarium Tavern", version=VERSION, lifespan=lifespan)
     app.state.store, app.state.service = store, service
     app.state.shutdown_callback = None
     app.state.editor = editor
     app.state.advisor = advisor
     from tavern.advisor.api import register_routes as register_advisor_routes
+
     register_advisor_routes(app, advisor)
     from tavern.chatgpt.api import register_chatgpt_routes
     from tavern.chatgpt.errors import ChatGPTError
+
     register_chatgpt_routes(app, store)
 
     @app.exception_handler(ChatGPTError)
     async def chatgpt_error(request, error):
         return JSONResponse(error.public(), status_code=400)
+
     from tavern.character.card_author_api import register_editor_routes
+
     register_editor_routes(app, editor)
     from tavern.application.context_api import register_context_routes
     from tavern.full_agent.api import register_full_agent_routes
+
     register_context_routes(app, store, service.context_operations)
     register_full_agent_routes(app, store, service.context_operations)
     from tavern.application.image_api import register_image_routes
+
     register_image_routes(app, store, service.dependencies)
 
     @app.post("/api/shutdown")
@@ -99,8 +116,8 @@ def create_app(data_dir=None):
 
     @app.middleware("http")
     async def local_boundary(request, call_next):
-        host = request.headers.get("host", "").split(":")[0]
-        if host not in {"127.0.0.1", "localhost", "testserver"}:
+        # hostname parses the Host header, including bracketed IPv6 loopback.
+        if request.url.hostname not in {"127.0.0.1", "localhost", "::1", "testserver"}:
             return JSONResponse({"detail": "仅允许本地访问"}, status_code=403)
         origin = request.headers.get("origin")
         if (
@@ -118,22 +135,25 @@ def create_app(data_dir=None):
     async def bad_value(request, error):
         return JSONResponse({"detail": str(error)}, status_code=409 if isinstance(error, Conflict) else 400)
 
-    @app.exception_handler(KeyError)
+    # Only explicit NotFound is a 404; a bare KeyError is a bug and surfaces as 500.
+    @app.exception_handler(NotFound)
     async def not_found(request, error):
         return JSONResponse({"detail": str(error)}, status_code=404)
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "runtime": "KohakuTerrarium", "version": "0.6.0"}
+        return {"ok": True, "runtime": "KohakuTerrarium", "version": VERSION}
 
     @app.get("/api/storage")
     async def storage():
         from tavern.storage.maintenance import storage_report
+
         return storage_report(store)
 
     @app.post("/api/storage/cleanup")
     async def storage_cleanup(payload: dict):
         from tavern.storage.maintenance import cleanup
+
         if any(not t.done() for t in service.local_models.tasks.values()):
             raise Conflict("请先结束本地模型或索引任务")
         cleanup(store, vacuum=payload.get("vacuum") is True)
@@ -142,15 +162,20 @@ def create_app(data_dir=None):
         return await storage()
 
     from tavern.application.settings_api import register_settings_routes
+
     register_settings_routes(app, store)
     from tavern.application.transfer_api import register_transfer_routes
+
     register_transfer_routes(app, store)
     from tavern.application.message_adapter_api import register_message_adapter_routes
+
     register_message_adapter_routes(app, store)
 
     from tavern.application.provider_models import register_model_routes
+
     register_model_routes(app, store)
     from tavern.application.model_selection_api import register_model_selection_routes
+
     register_model_selection_routes(app, store, editor)
 
     @app.get("/api/local-models")
@@ -158,21 +183,25 @@ def create_app(data_dir=None):
         return service.local_models.status(store.settings())
 
     @app.post("/api/local-models/{purpose}/{action}")
-    async def local_model_action(purpose: Literal["embedding", "reranker"], action: Literal["download", "warmup"]):
+    async def local_model_action(
+        purpose: Literal["embedding", "reranker"], action: Literal["download", "warmup"]
+    ):
         config = store.settings()
         if action == "download":
             return service.local_models.download(purpose, config)
+
         async def warm(record):
             await service.local_models.warmup(purpose, config)
             record["phase"] = "preparing"
             service.retrieval.cache.clear()
+
         return service.local_models.job("warmup:" + purpose, warm)
 
     @app.post("/api/local-models/jobs/{jid}/cancel")
     async def cancel_model_job(jid: str):
         task = service.local_models.tasks.get(jid)
         if task is None:
-            raise KeyError("模型任务不存在")
+            raise NotFound("模型任务不存在")
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         return service.local_models.jobs[jid]
@@ -180,47 +209,79 @@ def create_app(data_dir=None):
     @app.get("/api/retrieval/indexes")
     async def retrieval_indexes():
         with store.connection() as db:
-            return {"cached_entries": db.execute("SELECT count(*) FROM retrieval_vectors").fetchone()[0],
-                    "jobs": [job for job in service.local_models.jobs.values() if job["kind"] == "index"]}
+            return {
+                "cached_entries": db.execute("SELECT count(*) FROM retrieval_vectors").fetchone()[0],
+                "jobs": [job for job in service.local_models.jobs.values() if job["kind"] == "index"],
+            }
 
     @app.post("/api/sessions/{sid}/retrieval/rebuild")
     async def rebuild_retrieval(sid: str):
         session = store.session(sid)
-        document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
+        document = (session["snapshot"].get("content") or {}).get(
+            "document", store.session_card(sid)["document"]
+        )
+
         async def rebuild(record):
             config = store.session_settings(session)
-            if "embedding" in config.retrieval.channels and not service.local_models.status(config)["models"]["embedding"]["ready"]:
+            if (
+                "embedding" in config.retrieval.channels
+                and not service.local_models.status(config)["models"]["embedding"]["ready"]
+            ):
                 raise ValueError("请先下载并预热 Embedding 模型，再准备向量索引")
             record["phase"] = "preparing"
             service.retrieval.cache.clear()
             engine = service.full.retrieval if session["agent_mode"] == "full_agent" else service.retrieval
-            await engine.prepare(document, session["messages"], "", session["snapshot"],
-                                            config, session, "rebuild", index_only=True)
-            jobs = [task for jid, task in service.local_models.tasks.items()
-                    if service.local_models.jobs[jid]["kind"] == "index" and not task.done()]
+            await engine.prepare(
+                document,
+                session["messages"],
+                "",
+                session["snapshot"],
+                config,
+                session,
+                "rebuild",
+                index_only=True,
+            )
+            jobs = [
+                task
+                for jid, task in service.local_models.tasks.items()
+                if service.local_models.jobs[jid]["kind"] == "index" and not task.done()
+            ]
             if jobs:
                 await asyncio.gather(*jobs)
-                failed = [service.local_models.jobs[jid] for jid, task in service.local_models.tasks.items()
-                          if task in jobs and service.local_models.jobs[jid]["status"] != "complete"]
+                failed = [
+                    service.local_models.jobs[jid]
+                    for jid, task in service.local_models.tasks.items()
+                    if task in jobs and service.local_models.jobs[jid]["status"] != "complete"
+                ]
                 if failed:
                     raise ValueError(failed[0].get("error", "索引任务未完成"))
-            record["message"] = "世界书索引准备完成" if "embedding" in config.retrieval.channels else "关键词 / BM25 索引已准备；未启用向量通道，不生成向量条目"
+            record["message"] = (
+                "世界书索引准备完成"
+                if "embedding" in config.retrieval.channels
+                else "关键词 / BM25 索引已准备；未启用向量通道，不生成向量条目"
+            )
+
         return service.local_models.job("rebuild", rebuild)
 
     @app.post("/api/settings/probe")
-    async def probe(role: Literal["foreground", "background", "card_author", "full_agent", "advisor"] = "foreground",
-                    channel: Literal["standard", "chatgpt"] | None = None):
+    async def probe(
+        role: Literal["foreground", "background", "card_author", "full_agent", "advisor"] = "foreground",
+        channel: Literal["standard", "chatgpt"] | None = None,
+    ):
         from tavern.scripting.agent import make_provider
 
         saved_config = store.settings("full_agent" if role == "full_agent" else "half_agent", channel)
         if role == "advisor":
             advisor_config = store.settings_document().shared.advisor
-            saved_config.advisor = advisor_config.official_model if channel == "chatgpt" else advisor_config.model
+            saved_config.advisor = (
+                advisor_config.official_model if channel == "chatgpt" else advisor_config.model
+            )
             if saved_config.advisor is None:
                 raise ValueError("请先配置此渠道的参谋 agent 模型")
         config = saved_config.for_role(role)
         captured = []
         from tavern.scripting.cloud_cache import reset_capability
+
         reset_capability(config, config.api_key or os.environ.get("TAVERN_API_KEY", ""))
         provider = await make_provider(config, captured.append)
         try:
@@ -236,15 +297,21 @@ def create_app(data_dir=None):
                     {"role": "user", "content": "State the current scene marker."},
                 ]
             )
-            preserved = bool(captured and (config.api_mode in ("anthropic", "gemini") or
-                             captured[-1]["messages"][3]["role"] == (
-                                 "developer" if config.auth_mode == "chatgpt_subscription" else "system")))
+            preserved = bool(
+                captured
+                and (
+                    config.api_mode in ("anthropic", "gemini")
+                    or captured[-1]["messages"][3]["role"]
+                    == ("developer" if config.auth_mode == "chatgpt_subscription" else "system")
+                )
+            )
             config.capability = (
                 "accepted" if preserved and "TAVERN_MID_42" in result.content else "unsupported"
             )
             mode_key = config.api_mode.replace("_", "-")
             config.capability_key = f"{config.base_url.rstrip('/')}|{config.model}|{mode_key}"
             from tavern.application.settings_api import save_probe
+
             save_probe(store, role, config, saved_config)
             return {
                 "capability": config.capability,
@@ -281,7 +348,10 @@ def create_app(data_dir=None):
     async def permission(cid: str, payload: dict):
         store.card(cid)
         with store.connection() as db:
-            db.execute("UPDATE cards SET permission=?,revision=revision+1 WHERE id=?", (bool(payload.get("enabled")), cid))
+            db.execute(
+                "UPDATE cards SET permission=?,revision=revision+1 WHERE id=?",
+                (bool(payload.get("enabled")), cid),
+            )
         return store.card(cid)
 
     @app.post("/api/cards/{cid}/dependencies")
@@ -392,7 +462,12 @@ def create_app(data_dir=None):
             await service.dependencies.resolve(card)
             for message in result["messages"]:
                 if "<" in message.get("display", ""):
-                    source = {**card, "document": (message["snapshot"].get("content") or {}).get("document", card["document"])}
+                    source = {
+                        **card,
+                        "document": (message["snapshot"].get("content") or {}).get(
+                            "document", card["document"]
+                        ),
+                    }
                     message["display"] = service.dependencies.markup(source, message["display"])
         service.prepare_indexes(sid)
         return result
@@ -403,9 +478,14 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/cache-breakpoint")
     async def session_cache_breakpoint(sid: str, payload: SessionCacheBreakpoint):
-        return store.set_cache_breakpoint(sid, payload.expected_revision,
-                                          payload.automatic, payload.message_id,
-                                          payload.follow_interval, payload.reply_offset)
+        return store.set_cache_breakpoint(
+            sid,
+            payload.expected_revision,
+            payload.automatic,
+            payload.message_id,
+            payload.follow_interval,
+            payload.reply_offset,
+        )
 
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
@@ -435,7 +515,9 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/messages/{mid}")
     async def edit_message(sid: str, mid: str, edit: MessageEdit):
-        return await service.edit_message(sid, mid, edit.text, edit.expected_revision, notify_ai=edit.notify_ai)
+        return await service.edit_message(
+            sid, mid, edit.text, edit.expected_revision, notify_ai=edit.notify_ai
+        )
 
     @app.put("/api/sessions/{sid}/messages/{mid}/version")
     async def switch_message_version(sid: str, mid: str, change: RevisionRequest):
@@ -454,12 +536,20 @@ def create_app(data_dir=None):
             raise ValueError("缺少对话版本")
         session = store.session(sid)
         import copy
-        document = copy.deepcopy((session["snapshot"].get("content") or {}).get(
-            "document", store.session_card(sid)["document"]))
-        document.get("data", document)["character_book"] = normalize(change.document).get("character_book", {})
+
+        document = copy.deepcopy(
+            (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
+        )
+        document.get("data", document)["character_book"] = normalize(change.document).get(
+            "character_book", {}
+        )
         validate_document(document)
-        req = TurnRequest(text="编辑对话世界书", expected_revision=change.expected_revision,
-                          operation_id=change.operation_id or uid(), allow_content_edit=True)
+        req = TurnRequest(
+            text="编辑对话世界书",
+            expected_revision=change.expected_revision,
+            operation_id=change.operation_id or uid(),
+            allow_content_edit=True,
+        )
         tid, created = store.create_turn(sid, req)
         if not created:
             return store.session(sid)
@@ -468,9 +558,9 @@ def create_app(data_dir=None):
             snapshot = copy.deepcopy(session["snapshot"])
             snapshot["content"] = {"document": document, "reason": "手工编辑对话世界书", "turn": tid}
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
-            pending = {"messages": [message],
-                       "before": session["snapshot"], "reason": "手工编辑对话世界书"}
+            pending = {"messages": [message], "before": session["snapshot"], "reason": "手工编辑对话世界书"}
             from tavern.conversation.update_review import finish_turn
+
             finish_turn(store, tid, session, pending, snapshot)
         except Exception as error:
             store.set_turn(tid, status="error", error=str(error))
@@ -496,11 +586,16 @@ def create_app(data_dir=None):
     async def recipe(sid: str, payload: dict):
         if store.session(sid)["agent_mode"] == "full_agent":
             raise ValueError("Full Agent 使用独立工作窗口，不使用 Half Agent 上下文配方")
-        validated = (store.settings().context_recipe.model_copy(deep=True) if payload.get("use_global")
-                     else ContextRecipe.model_validate(payload["recipe"]))
+        validated = (
+            store.settings().context_recipe.model_copy(deep=True)
+            if payload.get("use_global")
+            else ContextRecipe.model_validate(payload["recipe"])
+        )
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
-    def compile_preview(sid: str, text: str, update_variables: bool = False, allow_content_edit: bool = False):
+    def compile_preview(
+        sid: str, text: str, update_variables: bool = False, allow_content_edit: bool = False
+    ):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
         s = store.session(sid)
@@ -510,32 +605,63 @@ def create_app(data_dir=None):
             from tavern.core.message_adapter import bind_adapter
             from tavern.full_agent.context import compile_window, load_trace
             from tavern.full_agent.tools import tool_definitions
-            full_settings = bind_adapter(store.session_settings(s).for_role("full_agent"), store, "story", sid)
-            preview_request = TurnRequest(operation_id="preview", expected_revision=s["revision"],
-                                          update_variables=update_variables, allow_content_edit=allow_content_edit)
-            result = compile_window(document, s, s["messages"], s["snapshot"], text,
+
+            full_settings = bind_adapter(
+                store.session_settings(s).for_role("full_agent"), store, "story", sid
+            )
+            preview_request = TurnRequest(
+                operation_id="preview",
+                expected_revision=s["revision"],
+                update_variables=update_variables,
+                allow_content_edit=allow_content_edit,
+            )
+            result = compile_window(
+                document,
+                s,
+                s["messages"],
+                s["snapshot"],
+                text,
                 full_settings,
-                tool_definitions(preview_request, s,
-                                 full_settings.full_agent_config, settings=full_settings, document=document),
-                trace=load_trace(store, sid, s["messages"]), require_state_patch=update_variables,
-                allow_content_edit=allow_content_edit)
+                tool_definitions(
+                    preview_request,
+                    s,
+                    full_settings.full_agent_config,
+                    settings=full_settings,
+                    document=document,
+                ),
+                trace=load_trace(store, sid, s["messages"]),
+                require_state_patch=update_variables,
+                allow_content_edit=allow_content_edit,
+            )
             return result, s
         from tavern.conversation.half_context import load_trace as load_half_trace
         from tavern.core.message_adapter import bind_adapter
+
         writer_settings = bind_adapter(store.session_settings(s).for_role("foreground"), store, "story", sid)
         result = compile_context(
-            document, s, s["messages"], s["snapshot"], text, writer_settings, "preview",
+            document,
+            s,
+            s["messages"],
+            s["snapshot"],
+            text,
+            writer_settings,
+            "preview",
             replay_records=load_half_trace(store, sid, s["messages"]),
             read_only=True,
         )
         from tavern.conversation.cache_breakpoint import prepare_context
+
         prepare_context(result, s, s["messages"], s["snapshot"], writer_settings)
         return result, s
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
-        result, s = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True,
-                                    payload.get("allow_content_edit") is True)
+        result, s = compile_preview(
+            sid,
+            payload.get("text", ""),
+            payload.get("update_variables") is True,
+            payload.get("allow_content_edit") is True,
+        )
         result["usage"] = store.latest_usage(sid)
         result["cache_usage"] = store.session_cache_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
@@ -543,8 +669,12 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/messages-preview")
     def messages_preview(sid: str, payload: dict):
-        result, _ = compile_preview(sid, payload.get("text", ""), payload.get("update_variables") is True,
-                                    payload.get("allow_content_edit") is True)
+        result, _ = compile_preview(
+            sid,
+            payload.get("text", ""),
+            payload.get("update_variables") is True,
+            payload.get("allow_content_edit") is True,
+        )
         return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)
@@ -554,7 +684,6 @@ def create_app(data_dir=None):
     @app.post("/api/sessions/{sid}/scene/{kind}/regenerate", status_code=202)
     async def regenerate_scene(sid: str, kind: Literal["memory"], req: SceneRefreshRequest):
         return service.submit(sid, TurnRequest(**req.model_dump(), scene_refresh=kind))
-
 
     from tavern.memories.memory_records import RecordEdit
 
@@ -570,14 +699,26 @@ def create_app(data_dir=None):
             raise ValueError("Full Agent 由模型管理笔记，不使用后台记忆重建")
         from tavern.memories.memory_engine import estimate_batches
         from tavern.memories.memory_records import read_memory
+
         session = store.session(sid)
         cfg = store.session_settings(session).for_role("background")
-        document = (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
-        base = {"version": 1, "records": [r for r in read_memory(session["snapshot"])["records"] if r.get("manual")]}
+        document = (session["snapshot"].get("content") or {}).get(
+            "document", store.session_card(sid)["document"]
+        )
+        base = {
+            "version": 1,
+            "records": [r for r in read_memory(session["snapshot"])["records"] if r.get("manual")],
+        }
         import asyncio
-        count = await asyncio.to_thread(estimate_batches, session["messages"], base, document, session["persona"], cfg)
-        return {"estimated_batches": count, "review_max_calls": 1 if cfg.memory_review_enabled else 0,
-                "message": "按现有手工记忆估算；新增记忆可能增加批次数，完成前可取消，全部成功后替换。"}
+
+        count = await asyncio.to_thread(
+            estimate_batches, session["messages"], base, document, session["persona"], cfg
+        )
+        return {
+            "estimated_batches": count,
+            "review_max_calls": 1 if cfg.memory_review_enabled else 0,
+            "message": "按现有手工记忆估算；新增记忆可能增加批次数，完成前可取消，全部成功后替换。",
+        }
 
     @app.post("/api/sessions/{sid}/interaction")
     async def interaction(sid: str, payload: dict):
@@ -592,7 +733,9 @@ def create_app(data_dir=None):
         return store.work_turns(sid, before, limit)
 
     @app.get("/api/sessions/{sid}/work-records/{tid}/events")
-    async def work_events(sid: str, tid: str, after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+    async def work_events(
+        sid: str, tid: str, after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)
+    ):
         return store.work_events(sid, tid, after, limit)
 
     @app.get("/api/sessions/{sid}/work-records/{tid}/events/{seq}")

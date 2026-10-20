@@ -1,4 +1,5 @@
 """Release regressions use invented lore, never the private playthrough."""
+
 import copy
 import json
 import sqlite3
@@ -12,22 +13,44 @@ from tavern.storage.store import Store
 
 
 def test_final_request_cannot_resurrect_rejected_lore():
-    document = {"name": "Test", "character_book": {"entries": [
-        {"id": "harbor", "keys": ["港口"], "content": "港口附近有钟塔。"},
-        {"id": "tower", "keys": ["钟塔"], "content": "钟塔的秘密与当前行动无关。"},
-    ]}}
-    session = {"id": "s", "persona": "用户", "recipe": ContextRecipe().model_dump(),
-               "lore_injection_mode": "conversation"}
+    document = {
+        "name": "Test",
+        "character_book": {
+            "entries": [
+                {"id": "harbor", "keys": ["港口"], "content": "港口附近有钟塔。"},
+                {"id": "tower", "keys": ["钟塔"], "content": "钟塔的秘密与当前行动无关。"},
+            ]
+        },
+    }
+    session = {
+        "id": "s",
+        "persona": "用户",
+        "recipe": ContextRecipe().model_dump(),
+        "lore_injection_mode": "conversation",
+    }
     history = [{"id": "g", "role": "assistant", "raw": "欢迎", "model": "欢迎"}]
-    retrieval = {"ids": ["harbor"], "query": "进入港口", "diagnostics": [],
-                 "rerank_scores": {"harbor": .9, "tower": .1}}
-    result = compile_context(document, session, history, {}, "进入港口", Settings(), "turn",
-                             retrieval=retrieval)
+    retrieval = {
+        "ids": ["harbor"],
+        "query": "进入港口",
+        "diagnostics": [],
+        "rerank_scores": {"harbor": 0.9, "tower": 0.1},
+    }
+    result = compile_context(
+        document, session, history, {}, "进入港口", Settings(), "turn", retrieval=retrieval
+    )
     assert [r["id"] for r in result["next_lore_injections"]] == ["harbor"]
     snapshot = {"lore": result["next_lore"], "lore_injections": result["next_lore_injections"]}
     original = copy.deepcopy(snapshot)
-    result = compile_context(document, session, history, snapshot, "静静等待", Settings(), "next",
-                             retrieval={"ids": [], "query": "静静等待", "diagnostics": []})
+    result = compile_context(
+        document,
+        session,
+        history,
+        snapshot,
+        "静静等待",
+        Settings(),
+        "next",
+        retrieval={"ids": [], "query": "静静等待", "diagnostics": []},
+    )
     assert [r["id"] for r in result["next_lore_injections"]] == ["harbor"]
     assert snapshot == original
 
@@ -59,7 +82,7 @@ async def test_recursive_admission_and_degradation_use_original_query(tmp_path, 
             if reranker == "failed":
                 raise TimeoutError("fixture offline")
             assert all(query == "港口" for query, _ in pairs)
-            return [.9 if "港口" in content else .1 for _, content in pairs]
+            return [0.9 if "港口" in content else 0.1 for _, content in pairs]
 
     entries = [
         {"id": "port", "keys": ["港口"], "content": "港口连接钟塔和沙漠。"},
@@ -70,8 +93,9 @@ async def test_recursive_admission_and_degradation_use_original_query(tmp_path, 
     cfg = Settings(retrieval={"channels": ["keyword"]})
     cfg.local_models.reranker_enabled = True
     engine = RetrievalEngine(Store(tmp_path), Models())
-    result = await engine.prepare({"character_book": {"entries": entries}}, [], "港口", {}, cfg,
-                                  {"id": "test"}, "turn")
+    result = await engine.prepare(
+        {"character_book": {"entries": entries}}, [], "港口", {}, cfg, {"id": "test"}, "turn"
+    )
     assert result["ids"] == (["port", "tower"] if reranker == "ready" else ["port"])
     assert "desert" not in result["ids"]
     assert any("递归" in d["reason"] for d in result["diagnostics"])
@@ -83,7 +107,9 @@ def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_pa
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
-    old, _ = store.create_turn(session["id"], TurnRequest(text="过去", operation_id="old", expected_revision=0))
+    old, _ = store.create_turn(
+        session["id"], TurnRequest(text="过去", operation_id="old", expected_revision=0)
+    )
     store.set_turn(old, status="committed", draft="duplicate", preview="{}")
     with store.connection() as db:
         db.execute("UPDATE turns SET created=? WHERE id=?", (time.time() - 20 * 86400, old))
@@ -92,7 +118,9 @@ def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_pa
     runs = tmp_path / "runs" / f"{old}.kohakutr.drives"
     runs.mkdir(parents=True)
     (runs / "nested-log").write_text("private")
-    failed, _ = store.create_turn(session["id"], TurnRequest(text="重试", operation_id="failed", expected_revision=0))
+    failed, _ = store.create_turn(
+        session["id"], TurnRequest(text="重试", operation_id="failed", expected_revision=0)
+    )
     store.set_turn(failed, status="error", draft="recoverable")
     store.event(failed, "provider_request", {"messages": ["recoverable"]})
     with store.connection() as db:

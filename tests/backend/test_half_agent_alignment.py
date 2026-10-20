@@ -1,4 +1,5 @@
 """Half Agent request history, opaque replay and compatibility boundaries (offline)."""
+
 import copy
 import json
 from uuid import UUID, uuid4
@@ -25,12 +26,25 @@ from tests.backend.test_history_recall import request as recall_request
 
 class Story:
     def __init__(self, api="anthropic"):
-        self.cfg = Settings(api_mode=api, model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
-                            api_key="fixture-secret", base_url="https://fixture.test/v1", use_proxy=False,
-                            cache={"mode": "runtime", "retention": "1h" if api == "anthropic" else "default"})
-        self.session = {"id": uuid4().hex, "recipe": ContextRecipe().model_dump(), "persona": "用户",
-                        "lore_injection_mode": "conversation"}
-        self.document = {"name": "测试", "description": "固定设定", "post_history_instructions": "角色后置要求"}
+        self.cfg = Settings(
+            api_mode=api,
+            model="claude-opus-5-5" if api == "anthropic" else "gpt-6-sol",
+            api_key="fixture-secret",
+            base_url="https://fixture.test/v1",
+            use_proxy=False,
+            cache={"mode": "runtime", "retention": "1h" if api == "anthropic" else "default"},
+        )
+        self.session = {
+            "id": uuid4().hex,
+            "recipe": ContextRecipe().model_dump(),
+            "persona": "用户",
+            "lore_injection_mode": "conversation",
+        }
+        self.document = {
+            "name": "测试",
+            "description": "固定设定",
+            "post_history_instructions": "角色后置要求",
+        }
         self.snapshot = {"state": {"stat_data": {"hp": 3}}, "memory_document": {"version": 1, "records": []}}
         self.history = [{"id": "opening", "role": "assistant", "raw": "开场", "model": "开场"}]
         self.records = {}
@@ -39,13 +53,27 @@ class Story:
     def compile(self, **kwargs):
         self.input_id = f"input-{len(self.history)}"
         gen = kwargs.pop("generate", {"overrides": {"chat_history": {"author_note": self.note}}})
-        return compile_context(self.document, self.session, self.history, self.snapshot, "继续", self.cfg,
-                               "fixture", generate=gen, replay_records=self.records,
-                               input_message_id=self.input_id, **kwargs)
+        return compile_context(
+            self.document,
+            self.session,
+            self.history,
+            self.snapshot,
+            "继续",
+            self.cfg,
+            "fixture",
+            generate=gen,
+            replay_records=self.records,
+            input_message_id=self.input_id,
+            **kwargs,
+        )
 
     def commit(self, context, text="正文", native=None, model=None):
-        output = {"id": f"output-{len(self.history)}", "role": "assistant", "raw": text,
-                  "model": text if model is None else model}
+        output = {
+            "id": f"output-{len(self.history)}",
+            "role": "assistant",
+            "raw": text,
+            "model": text if model is None else model,
+        }
         self.records[output["id"]] = finalize_record(context["half_agent_record"], native, text, output)
         self.history.extend([{"id": self.input_id, "role": "user", "raw": "继续", "model": "继续"}, output])
         return output
@@ -53,11 +81,19 @@ class Story:
 
 def blocks(api, text):
     if api == "anthropic":
-        return [{"type": "thinking", "thinking": "思考", "signature": "signed-opaque"},
-                {"type": "text", "text": text}]
-    return [{"type": "reasoning", "id": "rs_opaque", "summary": [], "encrypted_content": "encrypted"},
-            {"type": "message", "id": "msg_opaque", "role": "assistant", "content": [
-                {"type": "output_text", "text": text, "annotations": []}]}]
+        return [
+            {"type": "thinking", "thinking": "思考", "signature": "signed-opaque"},
+            {"type": "text", "text": text},
+        ]
+    return [
+        {"type": "reasoning", "id": "rs_opaque", "summary": [], "encrypted_content": "encrypted"},
+        {
+            "type": "message",
+            "id": "msg_opaque",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text, "annotations": []}],
+        },
+    ]
 
 
 def sse(api, payload):
@@ -68,23 +104,52 @@ def sse(api, payload):
             if part["type"] not in ("text", "thinking"):
                 events.append({"type": "content_block_start", "index": index, "content_block": part})
                 continue
-            events.append({"type": "content_block_start", "index": index, "content_block": {
-                **part, **({"text": ""} if part["type"] == "text" else {"thinking": "", "signature": ""})}})
+            events.append(
+                {
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        **part,
+                        **({"text": ""} if part["type"] == "text" else {"thinking": "", "signature": ""}),
+                    },
+                }
+            )
             if part["type"] == "text":
-                events.append({"type": "content_block_delta", "index": index,
-                               "delta": {"type": "text_delta", "text": part["text"]}})
+                events.append(
+                    {
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {"type": "text_delta", "text": part["text"]},
+                    }
+                )
             else:
                 for field in ("thinking", "signature"):
-                    events.append({"type": "content_block_delta", "index": index,
-                                   "delta": {"type": field + "_delta", field: part[field]}})
-        events.extend([{"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": payload["usage"]},
-                       {"type": "message_stop"}])
+                    events.append(
+                        {
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": {"type": field + "_delta", field: part[field]},
+                        }
+                    )
+        events.extend(
+            [
+                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": payload["usage"]},
+                {"type": "message_stop"},
+            ]
+        )
     else:
-        text = "".join(p["text"] for item in payload["output"] if item["type"] == "message" for p in item["content"])
-        events = [{"type": "response.output_text.delta", "delta": text},
-                  {"type": "response.completed", "response": payload}]
-    return httpx.Response(200, content="".join("data: " + json.dumps(e) + "\n\n" for e in events),
-                          headers={"content-type": "text/event-stream", "x-codex-turn-state": "routing"})
+        text = "".join(
+            p["text"] for item in payload["output"] if item["type"] == "message" for p in item["content"]
+        )
+        events = [
+            {"type": "response.output_text.delta", "delta": text},
+            {"type": "response.completed", "response": payload},
+        ]
+    return httpx.Response(
+        200,
+        content="".join("data: " + json.dumps(e) + "\n\n" for e in events),
+        headers={"content-type": "text/event-stream", "x-codex-turn-state": "routing"},
+    )
 
 
 def test_kemini_order_survives_projection_and_turn_replay():
@@ -92,8 +157,9 @@ def test_kemini_order_survives_projection_and_turn_replay():
     story.cfg.kemini.enabled = True
     story.cfg.kemini.normal_disclaimer_enabled = True
     story.cfg.kemini.filler_text = "小说填充必须最前"
-    story.cfg.message_adapter = MessageAdapterConfig(mappings={"gemini": {
-        "state": {"role": "system", "wrap": True}}})
+    story.cfg.message_adapter = MessageAdapterConfig(
+        mappings={"gemini": {"state": {"role": "system", "wrap": True}}}
+    )
     # Even an insertion deeper than all history remains behind the absolute prefix.
     generate = {"injects": [{"role": "system", "content": "最深注入", "depth": 999}]}
     first = story.compile(generate=generate)
@@ -105,10 +171,23 @@ def test_kemini_order_survives_projection_and_turn_replay():
     assert not any("insertion_depth" in row for row in rows[:4])
     expected_prefix = [{"role": "user", "content": row["content"]} for row in prefix_frames(story.cfg.kemini)]
     assert first["messages"][:4] == expected_prefix
-    assert sources.index("input") < sources.index("kemini_roleplay") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
-    assert next(row for row in rows if row["source"] == "kemini_roleplay")["content"] == story.cfg.kemini.roleplay_prompt
-    assert next(row for row in rows if row["source"] == "kemini_acknowledgement")["content"] == story.cfg.kemini.acknowledgement
-    assert next(row for row in rows if row["source"] == "kemini_control")["content"] == control_text(story.cfg.kemini)
+    assert (
+        sources.index("input")
+        < sources.index("kemini_roleplay")
+        < sources.index("kemini_acknowledgement")
+        < sources.index("kemini_control")
+    )
+    assert (
+        next(row for row in rows if row["source"] == "kemini_roleplay")["content"]
+        == story.cfg.kemini.roleplay_prompt
+    )
+    assert (
+        next(row for row in rows if row["source"] == "kemini_acknowledgement")["content"]
+        == story.cfg.kemini.acknowledgement
+    )
+    assert next(row for row in rows if row["source"] == "kemini_control")["content"] == control_text(
+        story.cfg.kemini
+    )
     assert all(row["role"] != "system" for row in rows)
     wire, ordered, diagnostics = adapt_messages(first["runtime_messages"], story.cfg, managed=False)
     assert [row["message_type"] for row in ordered] == [row["message_type"] for row in rows]
@@ -121,7 +200,7 @@ def test_kemini_order_survives_projection_and_turn_replay():
     assert [row["source"] for row in second["trace"]].count("kemini_roleplay") == 1
     assert [row["source"] for row in second["trace"]].count("kemini_acknowledgement") == 1
     assert [row["source"] for row in second["trace"]].count("kemini_control") == 1
-    assert second["messages"][:sources.index("history")] == first["messages"][:sources.index("history")]
+    assert second["messages"][: sources.index("history")] == first["messages"][: sources.index("history")]
     story.cfg.kemini.filler_text = ""
     unfilled = story.compile()
     assert unfilled["messages"][0]["role"] == "system"
@@ -136,15 +215,18 @@ def test_kemini_order_survives_projection_and_turn_replay():
 def test_dynamic_sources_retain_prefix_and_compare_current_versions():
     story = Story()
     first = story.compile()
-    for source, tag in (("author_note", "author_note"), ("post", "card_post_history_instructions"),
-                        ("state", "tavern_state")):
+    for source, tag in (
+        ("author_note", "author_note"),
+        ("post", "card_post_history_instructions"),
+        ("state", "tavern_state"),
+    ):
         content = next(m["content"] for m in first["trace"] if m["source"] == source)
         assert content.startswith(f"<{tag}>\n[当前") and content.endswith(f"\n</{tag}>")
         assert content.count(f"<{tag}>") == content.count(f"</{tag}>") == 1
     story.commit(first)
     second = story.compile()
     assert second["context_ledger"]["rebuild_reason"] is None
-    assert second["messages"][:len(first["messages"])] == first["messages"]
+    assert second["messages"][: len(first["messages"])] == first["messages"]
     assert second["context_ledger"]["updates"] == []
     story.commit(second)
     for note in ("作者注 B", "作者注 A", ""):
@@ -199,7 +281,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         assert frames[-1].startswith("<tavern_state>\n[此前剧情状态")
         assert frames[-1].endswith("已撤销；旧版本不再作为当前要求或状态。]\n</tavern_state>")
         rows = request_rows(closed)
-        assert rows[:len(prefix)] == prefix
+        assert rows[: len(prefix)] == prefix
         assert "已撤销" in json.dumps(rows[-1], ensure_ascii=False)
         assert json.dumps(rows, ensure_ascii=False).count("已撤销") == 1
         story.commit(closed)
@@ -208,7 +290,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
             still_closed = story.compile()
             assert still_closed["context_ledger"]["updates"] == []
             later = request_rows(still_closed)
-            assert later[:len(rows)] == rows
+            assert later[: len(rows)] == rows
             assert json.dumps(later, ensure_ascii=False).count("已撤销") == 1
             rows = later
             story.commit(still_closed)
@@ -220,7 +302,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         assert reopened["context_ledger"]["rebuild_reason"] is None
         assert reopened["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
         later = request_rows(reopened)
-        assert later[:len(rows)] == rows
+        assert later[: len(rows)] == rows
         assert json.dumps({"stat_data": {"hp": 3}}) in reopened["messages"][-1]["content"]
         assert "当前剧情状态" in json.dumps(later[-1], ensure_ascii=False)
         assert "已撤销" not in json.dumps(later[-1], ensure_ascii=False)
@@ -254,13 +336,13 @@ async def test_empty_state_replaces_prior_values_and_restoring_appends_once(api,
         assert content.endswith(json.dumps(empty_state) + "\n</tavern_state>")
         assert "hp" not in content
         rows = request_rows(cleared)
-        assert rows[:len(prefix)] == prefix
+        assert rows[: len(prefix)] == prefix
         assert "hp" not in json.dumps(rows[-1], ensure_ascii=False)
         story.commit(cleared)
 
         unchanged = story.compile()
         assert unchanged["context_ledger"]["updates"] == []
-        assert request_rows(unchanged)[:len(rows)] == rows
+        assert request_rows(unchanged)[: len(rows)] == rows
         story.commit(unchanged)
         story.snapshot["state"] = original
         restored = story.compile()
@@ -294,7 +376,11 @@ def test_rebuild_preserves_compiler_positions_and_drops_obsolete_frames(change):
                 frame["content"] = "OLD_UNTAGGED_FRAME"
     else:
         from tavern.memories.memory import fingerprint as history_hash
-        story.snapshot["context_window"] = {"covered_count": 1, "fingerprint": history_hash(story.history[:1])}
+
+        story.snapshot["context_window"] = {
+            "covered_count": 1,
+            "fingerprint": history_hash(story.history[:1]),
+        }
     current = story.compile(**options)
     assert current["context_ledger"]["rebuild_reason"]
     assert all("OLD_UNTAGGED_FRAME" not in m["content"] for m in current["messages"])
@@ -331,19 +417,40 @@ def test_native_footer_projection_edits_and_model_switch_do_not_resurrect(api):
 
 def test_inflight_tool_updates_append_after_results_without_rewriting_old_prefix():
     story = Story()
-    context = compile_context(story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one")
-    first = apply_context(context, {}, story.session, story.history, story.snapshot, story.cfg, purpose="maintenance")
+    context = compile_context(
+        story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one"
+    )
+    first = apply_context(
+        context, {}, story.session, story.history, story.snapshot, story.cfg, purpose="maintenance"
+    )
     prefix = copy.deepcopy(first["messages"])
     previous, sent = copy.deepcopy(first["half_agent_record"]), copy.deepcopy(first["trace"])
-    continuation = [{"role": "assistant", "content": "调用", "tool_calls": [
-        {"id": "call1", "function": {"name": "write_memory", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "call1", "content": "成功"}]
+    continuation = [
+        {
+            "role": "assistant",
+            "content": "调用",
+            "tool_calls": [{"id": "call1", "function": {"name": "write_memory", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "call1", "content": "成功"},
+    ]
     story.snapshot["state"]["stat_data"]["hp"] = 8
-    fresh = compile_context(story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one")
-    second = apply_context(fresh, {}, story.session, story.history, story.snapshot, story.cfg, purpose="maintenance",
-                           previous_record=previous, sent=sent, continuation=continuation)
-    assert second["messages"][:len(prefix)] == prefix
-    assert second["messages"][len(prefix):len(prefix) + 2] == continuation
+    fresh = compile_context(
+        story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one"
+    )
+    second = apply_context(
+        fresh,
+        {},
+        story.session,
+        story.history,
+        story.snapshot,
+        story.cfg,
+        purpose="maintenance",
+        previous_record=previous,
+        sent=sent,
+        continuation=continuation,
+    )
+    assert second["messages"][: len(prefix)] == prefix
+    assert second["messages"][len(prefix) : len(prefix) + 2] == continuation
     assert second["messages"][-1]["content"].endswith('{"stat_data": {"hp": 8}}\n</tavern_state>')
 
 
@@ -357,6 +464,7 @@ def test_memory_macro_conditions_and_turn_scoping_are_independent():
     assert second["context_ledger"]["updates"] == [{"source": "turn_instruction", "cleared": False}]
     story.commit(second)
     from tests.support.memory_fixtures import memory_snapshot
+
     story.snapshot.update(memory_snapshot("新记忆"))
     third = story.compile()
     assert {u["source"] for u in third["context_ledger"]["updates"]} == {"memory", "turn_instruction"}
@@ -373,7 +481,9 @@ def test_processed_model_text_retires_native_without_losing_current_text(edited)
     story = Story()
     first = story.compile()
     clean = "正文 {{user}}" if edited == "macro" else "正文"
-    native = attachment(reply("anthropic", blocks("anthropic", clean)), response_origin(story.cfg), {"content": clean})
+    native = attachment(
+        reply("anthropic", blocks("anthropic", clean)), response_origin(story.cfg), {"content": clean}
+    )
     output = story.commit(first, clean, native, model="正则修改正文" if edited == "model" else None)
     if edited == "script":
         output["raw"] = output["model"] = "脚本改写正文"
@@ -384,21 +494,51 @@ def test_processed_model_text_retires_native_without_losing_current_text(edited)
 
 async def test_durable_record_commits_only_with_story_and_survives_backup(tmp_path):
     from tavern.storage.backup import backup, restore
+
     store = Store(tmp_path / "game")
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"], policy="preview"))
     service = RoleplayRuntime(store)
 
     def staged(operation):
-        tid, _ = store.create_turn(session["id"], TurnRequest(text="继续", operation_id=operation, expected_revision=0))
+        tid, _ = store.create_turn(
+            session["id"], TurnRequest(text="继续", operation_id=operation, expected_revision=0)
+        )
         uid, aid = uuid4().hex, uuid4().hex
-        context = compile_context(store.session_card(session["id"])["document"], session, session["messages"],
-                                  session["snapshot"], "继续", store.settings(), tid, input_message_id=uid, replay_records={})
-        user = {"id": uid, "parent": session["head"], "role": "user", "raw": "继续", "model": "继续",
-                "display": "继续", "snapshot": session["snapshot"]}
-        output = {**user, "id": aid, "parent": uid, "role": "assistant", "raw": "正文", "model": "正文", "display": "正文"}
-        pending = {"messages": [user, output], "before": session["snapshot"],
-                   "half_agent_record": finalize_record(context["half_agent_record"], None, "正文", output)}
+        context = compile_context(
+            store.session_card(session["id"])["document"],
+            session,
+            session["messages"],
+            session["snapshot"],
+            "继续",
+            store.settings(),
+            tid,
+            input_message_id=uid,
+            replay_records={},
+        )
+        user = {
+            "id": uid,
+            "parent": session["head"],
+            "role": "user",
+            "raw": "继续",
+            "model": "继续",
+            "display": "继续",
+            "snapshot": session["snapshot"],
+        }
+        output = {
+            **user,
+            "id": aid,
+            "parent": uid,
+            "role": "assistant",
+            "raw": "正文",
+            "model": "正文",
+            "display": "正文",
+        }
+        pending = {
+            "messages": [user, output],
+            "before": session["snapshot"],
+            "half_agent_record": finalize_record(context["half_agent_record"], None, "正文", output),
+        }
         store.set_turn(tid, status="awaiting_review", pending=json.dumps(pending))
         return tid
 
@@ -440,8 +580,17 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
     settings.half_agent.chunk_mode = "off"
     settings.half_agent.memory_interval_turns = 100
     store.save_settings(settings)
-    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场", "description": "固定",
-                                        "post_history_instructions": "后置规则"}).encode(), "card.json")
+    card = store.import_card(
+        json.dumps(
+            {
+                "name": "测试",
+                "first_mes": "开场",
+                "description": "固定",
+                "post_history_instructions": "后置规则",
+            }
+        ).encode(),
+        "card.json",
+    )
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     requests = []
@@ -452,27 +601,37 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
     def route(request):
         requests.append(request)
         if fail:
-            return httpx.Response(200, content='data: {"type":"ping"}\n\n',
-                                  headers={"content-type": "text/event-stream"})
+            return httpx.Response(
+                200, content='data: {"type":"ping"}\n\n', headers={"content-type": "text/event-stream"}
+            )
         return sse(api, reply(api, parts))
 
     async def factory(cfg, capture=None, **kwargs):
-        return ModelTransport(cfg, cfg.api_key, capture,
-                              http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+        return ModelTransport(
+            cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+        )
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
         for number in range(2):
-            turn = service.submit(session["id"], TurnRequest(text="继续", operation_id=str(number),
-                                  expected_revision=session["revision"]))
+            turn = service.submit(
+                session["id"],
+                TurnRequest(text="继续", operation_id=str(number), expected_revision=session["revision"]),
+            )
             await service.tasks[turn["id"]]
             assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])["error"]
             session = store.session(session["id"])
         assert all(m["model"] == m["raw"] == "完整正文" for m in session["messages"][2::2])
         body = json.loads(requests[-1].content)
         if api == "anthropic":
-            assert next(m["content"] for m in body["messages"] if m["role"] == "assistant" and
-                        any(p.get("type") == "thinking" for p in m["content"])) == parts
+            assert (
+                next(
+                    m["content"]
+                    for m in body["messages"]
+                    if m["role"] == "assistant" and any(p.get("type") == "thinking" for p in m["content"])
+                )
+                == parts
+            )
         else:
             assert [i for i in body["input"] if i.get("id") in ("rs_opaque", "msg_opaque")] == parts
         header = "x-claude-code-session-id" if api == "anthropic" else "session-id"
@@ -486,20 +645,35 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         assert all(r["window"] == "forked" for r in cloned.values())
         assert OperationContexts(store, fork["id"], "turn").new().session_id != requests[-1].headers[header]
         cfg = store.settings().for_role("foreground")
-        preview = compile_context(store.session_card(session["id"])["document"], session, session["messages"],
-                                  session["snapshot"], "继续", cfg, "preview", replay_records=record)
+        preview = compile_context(
+            store.session_card(session["id"])["document"],
+            session,
+            session["messages"],
+            session["snapshot"],
+            "继续",
+            cfg,
+            "preview",
+            replay_records=record,
+        )
         assert preview["context_ledger"]["rebuild_reason"] is None
         assert sum("后置规则" in m["content"] for m in preview["messages"]) == 1
         fail = True
-        failed = service.submit(session["id"], TurnRequest(text="继续", operation_id="failed",
-                                 expected_revision=session["revision"]))
+        failed = service.submit(
+            session["id"],
+            TurnRequest(text="继续", operation_id="failed", expected_revision=session["revision"]),
+        )
         await service.tasks[failed["id"]]
         assert store.turn(failed["id"])["status"] == "error"
         assert store.session(session["id"])["head"] == session["head"]
         assert load_trace(store, session["id"], session["messages"]) == record
         store.delete_session(fork["id"])
         with store.connection() as db:
-            assert db.execute("SELECT count(*) FROM half_agent_trace WHERE session=?", (fork["id"],)).fetchone()[0] == 0
+            assert (
+                db.execute("SELECT count(*) FROM half_agent_trace WHERE session=?", (fork["id"],)).fetchone()[
+                    0
+                ]
+                == 0
+            )
         # The global switch only permits Kemini conversations; ordinary ones stay
         # untouched. A Kemini final call never enters the opaque-replay path.
         settings.shared.kemini.enabled = True
@@ -512,23 +686,52 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         fail = False
         carried = "<thinking>实验辅助内容</thinking>实验正文<disclaimer>附加声明</disclaimer><tavern_retrieval>线索</tavern_retrieval>"
         if api == "anthropic":
-            parts = [{"type": "tool_use", "id": "reply_call", "name": "kemini_emit_story", "input": {"content": carried}}]
+            parts = [
+                {
+                    "type": "tool_use",
+                    "id": "reply_call",
+                    "name": "kemini_emit_story",
+                    "input": {"content": carried},
+                }
+            ]
         else:
-            parts = [{"type": "function_call", "id": "reply_item", "call_id": "reply_call", "name": "kemini_emit_story",
-                      "arguments": json.dumps({"content": carried})}]
-        experimental = service.submit(session["id"], TurnRequest(text="继续", operation_id="kemini",
-                                       expected_revision=session["revision"]))
+            parts = [
+                {
+                    "type": "function_call",
+                    "id": "reply_item",
+                    "call_id": "reply_call",
+                    "name": "kemini_emit_story",
+                    "arguments": json.dumps({"content": carried}),
+                }
+            ]
+        experimental = service.submit(
+            session["id"],
+            TurnRequest(text="继续", operation_id="kemini", expected_revision=session["revision"]),
+        )
         await service.tasks[experimental["id"]]
-        assert store.turn(experimental["id"])["status"] == "committed", store.turn(experimental["id"])["error"]
+        assert store.turn(experimental["id"])["status"] == "committed", store.turn(experimental["id"])[
+            "error"
+        ]
         session = store.session(session["id"])
         final = session["messages"][-1]
         assert final["raw"] == final["model"] == "实验正文"
-        assert final["auxiliary"] == [{"kind": "thinking", "text": "实验辅助内容"}, {"kind": "disclaimer", "text": "附加声明"}]
+        assert final["auxiliary"] == [
+            {"kind": "thinking", "text": "实验辅助内容"},
+            {"kind": "disclaimer", "text": "附加声明"},
+        ]
         record = load_trace(store, session["id"], session["messages"])
         assert "response" not in record[final["id"]]
         cfg = store.settings().for_role("foreground")
-        preview = compile_context(store.session_card(session["id"])["document"], session, session["messages"],
-                                  session["snapshot"], "继续", cfg, "preview", replay_records=record)
+        preview = compile_context(
+            store.session_card(session["id"])["document"],
+            session,
+            session["messages"],
+            session["snapshot"],
+            "继续",
+            cfg,
+            "preview",
+            replay_records=record,
+        )
         assert "实验辅助内容" not in str(preview["messages"])
         cloned = store.fork_session(session["id"], session["head"], session["revision"])
         assert cloned["messages"][-1]["auxiliary"] == final["auxiliary"]
@@ -547,22 +750,40 @@ async def test_background_native_tool_loop_routes_only_within_operation(tmp_path
     requests, events = [], []
     name = HISTORY_TOOL["function"]["name"]
     parts = blocks(api, "核对")
-    call = ({"type": "tool_use", "id": "tool1", "name": name, "input": {"query": "银戒"}}
-            if api == "anthropic" else {"type": "function_call", "id": "fc1", "call_id": "tool1",
-                                       "name": name, "arguments": '{"query":"银戒"}'})
+    call = (
+        {"type": "tool_use", "id": "tool1", "name": name, "input": {"query": "银戒"}}
+        if api == "anthropic"
+        else {
+            "type": "function_call",
+            "id": "fc1",
+            "call_id": "tool1",
+            "name": name,
+            "arguments": '{"query":"银戒"}',
+        }
+    )
     parts.insert(1, call)
 
     def route(request):
         requests.append(request)
-        return httpx.Response(200, json=reply(api, parts if len(requests) == 1 else blocks(api, "完成")),
-                              headers={"x-codex-turn-state": "memory-route"})
+        return httpx.Response(
+            200,
+            json=reply(api, parts if len(requests) == 1 else blocks(api, "完成")),
+            headers={"x-codex-turn-state": "memory-route"},
+        )
 
-    provider = ModelTransport(story.cfg, story.cfg.api_key,
-                              http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    provider = ModelTransport(
+        story.cfg, story.cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
     configure_operation(provider, context, lambda k, p: events.append((k, p)), "memory")
     try:
-        result = await complete_with_recall(provider, recall_request(), history=recall_history(),
-                                            settings=story.cfg, budget=HistoryBudget(), phase="memory")
+        result = await complete_with_recall(
+            provider,
+            recall_request(),
+            history=recall_history(),
+            settings=story.cfg,
+            budget=HistoryBudget(),
+            phase="memory",
+        )
         assert str(result) == "完成"
         body = json.loads(requests[-1].content)
         if api == "anthropic":
@@ -582,6 +803,7 @@ async def test_background_native_tool_loop_routes_only_within_operation(tmp_path
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
 async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_identity(tmp_path, api):
     from tavern.scripting.agent import Writer
+
     store = Store(tmp_path)
     cfg = Story(api).cfg
     settings = store.settings_document()
@@ -597,25 +819,48 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
     store.save_settings(settings)
     card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
-    req = TurnRequest(text="查看资料", operation_id="maintenance", expected_revision=0, allow_content_edit=True)
+    req = TurnRequest(
+        text="查看资料", operation_id="maintenance", expected_revision=0, allow_content_edit=True
+    )
     tid, _ = store.create_turn(session["id"], req)
     store.set_turn(tid, status="running")
-    writer = Writer(store, tid, card["document"], session, session["messages"], copy.deepcopy(session["snapshot"]),
-                    req, None)
+    writer = Writer(
+        store,
+        tid,
+        card["document"],
+        session,
+        session["messages"],
+        copy.deepcopy(session["snapshot"]),
+        req,
+        None,
+    )
     requests = []
     parts = blocks(api, "先查资料")
-    tool = ({"type": "tool_use", "id": "tool1", "name": "read_character", "input": {"field": "name"}}
-            if api == "anthropic" else {"type": "function_call", "id": "fc1", "call_id": "tool1",
-                                       "name": "read_character", "arguments": '{"field":"name"}'})
+    tool = (
+        {"type": "tool_use", "id": "tool1", "name": "read_character", "input": {"field": "name"}}
+        if api == "anthropic"
+        else {
+            "type": "function_call",
+            "id": "fc1",
+            "call_id": "tool1",
+            "name": "read_character",
+            "arguments": '{"field":"name"}',
+        }
+    )
     parts.insert(1, tool)
 
     def route(request):
         requests.append(request)
         payload = reply(api, parts if len(requests) == 1 else blocks(api, "维护完成"))
-        return sse(api, payload) if json.loads(request.content).get("stream") else httpx.Response(200, json=payload)
+        return (
+            sse(api, payload)
+            if json.loads(request.content).get("stream")
+            else httpx.Response(200, json=payload)
+        )
 
-    provider = ModelTransport(cfg, cfg.api_key,
-                              http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    provider = ModelTransport(
+        cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
     try:
         assert await writer._run(provider, maintenance=True) == "维护完成"
         assert len(requests) == 2

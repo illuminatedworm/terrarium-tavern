@@ -10,6 +10,17 @@ interface WarmupJob {
   status: 'queued' | 'running' | 'complete' | 'error' | 'cancelled';
   error?: string;
 }
+/** `GET /local-models`. */
+export interface LocalModelStatus {
+  startup_id: string;
+  models: Record<
+    LocalModelPurpose,
+    { downloaded: boolean; ready: boolean; model: string; quantization: string }
+  >;
+  jobs: WarmupJob[];
+}
+/** The status the startup dialog was opened with, and the enabled models it offers to warm. */
+export type StartupModels = LocalModelStatus & { enabled: LocalModelPurpose[] };
 export const localModelLabels: Record<string, string> = {
   embedding: 'Embedding',
   reranker: 'Reranker',

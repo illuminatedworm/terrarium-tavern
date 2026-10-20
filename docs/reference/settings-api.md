@@ -49,7 +49,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 两种模式的 `policy` 仅控制保存：`automatic` 自动保存，`review` 在实际变量、角色设定或世界书有变化时审核整轮。记忆和运行记录不触发审核。旧 `directed`／`evolving` 读取为 `automatic`，旧 `preview` 读取为 `review`；会话级 `policy: null` 沿用全局。设定写入只由请求的 `allow_content_edit` 授权，变量任务由 `update_variables` 开启，授权与保存方式分别校验。
 
-`PUT /api/sessions/{sid}/options` 接受 `expected_revision` 及需修改的会话字段，省略的字段保持原值。`update_variables` 是对话级布尔偏好，默认 `false`，由输入框勾选时立即保存，分支和个人数据包保留；回合请求仍显式传入当轮的 `update_variables`。偏好列由 schema 5 引入，schema 4 数据库升级前自动生成 `before-variable-preference-*.sqlite3` 备份，不从历史回合推断用户选择。
+`PUT /api/sessions/{sid}/options` 接受 `expected_revision` 及需修改的会话字段，省略的字段保持原值。`update_variables` 是对话级布尔偏好，默认 `false`，由输入框勾选时立即保存，分支和个人数据包保留；回合请求仍显式传入当轮的 `update_variables`。偏好列由 schema 5 引入，升级前的数据库备份见[数据库与设置迁移](#数据库与设置迁移)，不从历史回合推断用户选择。
 
 每个范围有自己的 `revisions` 值。更新共享提供商可能使其他范围中的模型能力检查失效，因此一次响应可能包含多个范围的新修订号。客户端应合并响应中的实际值，不能只递增提交范围的本地计数。
 
@@ -147,8 +147,10 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | 状态 | 典型原因 | 客户端处理 |
 |---|---|---|
 | 400 | 未知字段、非法关联、试图写入能力检查字段 | 保留草稿并显示校验信息 |
+| 404 | 请求的记录不存在（服务端显式抛出 `NotFound`） | 显示 `detail` 原文并刷新列表 |
 | 409 | 修订冲突、编辑会话过期、撤回会覆盖外部修改 | 重新读取设置或重新打开编辑会话 |
 | 422 | 请求体或路径参数不符合接口类型 | 修正请求结构 |
+| 500 | 程序缺陷，包括未声明的字典缺键 | 报告问题；不会伪装成 404 |
 
 错误信息不回显提交的密钥。冲突后的重试必须先取得新版本，不能盲目替换 `expected_revision` 后覆盖其他修改。
 
@@ -156,9 +158,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 当前数据库为 **schema 8**，设置文档为 **version 7**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
 
-存储层接受 schema 1–8，先只读核对版本与设置。schema 1–3 升级前生成 `before-advisor-v4-*.sqlite3` 备份，参谋数据表初始化后写入 schema 4；schema 4 升级前生成 `before-variable-preference-*.sqlite3` 备份，添加 `sessions.update_variables` 后写入 schema 5；schema 1–5 升级前生成 `before-card-author-v6-*.sqlite3` 备份，原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变，随后写入 schema 6。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。schema 1/2 另有 `before-card-editor-v3-*.sqlite3` 备份，schema 1 的设置迁移另有 `settings-before-v2-*.sqlite3` 备份；旧编辑对话保留原身份。其他数据库版本在写入前报错。
+存储层接受 schema 1–8，先只读核对版本与设置。数据库版本低于 8、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。全部步骤完成后写入 schema 8；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
 
-升级至 schema 8 / 设置 version 5 前生成 `before-kemini-v8-*.sqlite3` 备份，添加消息的独立辅助记录、会话的 `kemini` 标记（已有对话为普通对话）以及默认关闭的实验设置。原有提供商连接与故事正文保持原样；此前 schema 7 / 设置 version 4 引入的按提供商连接记录继续保留。设置导入接受旧版并使用相同迁移规则；旧程序不能直接打开新版数据库。
+schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemini` 标记（已有对话为普通对话）以及默认关闭的实验设置。原有提供商连接与故事正文保持原样；此前 schema 7 / 设置 version 4 引入的按提供商连接记录继续保留。设置导入接受旧版并使用相同迁移规则；旧程序不能直接打开新版数据库。
 
 迁移按升级前的实际生效值创建独立设置：继承 Writer 的 Full Agent 模型、继承 Tracker 的制卡 agent 模型会被复制为明确配置；共用运行参数复制到两种模式。已有提供商、密钥和自定义文本保留。旧程序回退应使用迁移前备份，不能直接打开已升级数据库。迁移覆盖已实现的设置和数据库格式转换，历史行为按对应版本记录核对。
 
@@ -167,11 +169,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - 旧记忆与设定维护提示词中的自定义原则按用途合并到 `tracker_system_prompt`；默认提示词由程序更新。
 - 旧提供商中的协议和路径迁移到引用它的模型；模型独立保存接入方式。
 - 已保存应用提示词中的“玩家”和英文 `player` 规范为“用户”；角色卡、用户角色名称和剧情原文不参与替换。实际发生变化的范围才增加修订号。
-- 缺少缓存模式的配置在迁移前保存数据库备份，正文使用本地控制，Tracker 和制卡 agent 使用云端策略；已有会话的手动断点及跟进参数保留。
+- 缺少缓存模式的配置迁移后，正文使用本地控制，Tracker 和制卡 agent 使用云端策略；已有会话的手动断点及跟进参数保留。
 
-设置 version 5 → 6 为 `shared.kemini` 增加 `clear_prompt`、`info_prompt`、`transport_prompt`、`tool_description` 和 `content_description`。升级前生成 `before-kemini-prompts-v6-*.sqlite3` 备份，新增字段写入其可见默认值，已有文本与开关原样保留。Kemini 文本统一从共享设置读取并支持本页撤回及导入导出；不再返回另一份只读 `kemini_protocol`。
+设置 version 5 → 6 为 `shared.kemini` 增加 `clear_prompt`、`info_prompt`、`transport_prompt`、`tool_description` 和 `content_description`。新增字段写入其可见默认值，已有文本与开关原样保留。Kemini 文本统一从共享设置读取并支持本页撤回及导入导出；不再返回另一份只读 `kemini_protocol`。
 
-设置 version 6 → 7 增加 `roleplay_prompt`、`content_prompt`、`output_prompt`，对应角色扮演追加要求、正文约束和末尾输出提示。升级前生成 `before-kemini-tail-v7-*.sqlite3` 备份；仅当 CLEAR、资料起始、自检文本完全匹配旧默认值时，替换其中的独立边界标签、Interleaving 包装及相关引用。小说填充、全部自定义文本和开关原样保留；十三项文本均以数据库中的保存值为准。
+设置 version 6 → 7 增加 `roleplay_prompt`、`content_prompt`、`output_prompt`，对应角色扮演追加要求、正文约束和末尾输出提示。仅当 CLEAR、资料起始、自检文本完全匹配旧默认值时，替换其中的独立边界标签、Interleaving 包装及相关引用。小说填充、全部自定义文本和开关原样保留；十三项文本均以数据库中的保存值为准。
 
 迁移重复执行不覆盖已迁移的配置。升级操作与恢复步骤见[安装与维护](../guides/maintenance.md#备份升级与回退)。
 

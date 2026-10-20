@@ -1,4 +1,5 @@
 """Exclude retired broad card tools from model replay while preserving stored audit rows."""
+
 import copy
 import json
 
@@ -25,7 +26,8 @@ def retired_content_call(message, call):
         return args.get("ref") not in CHARACTER_FIELDS
     operations = args.get("operations")
     return not isinstance(operations, list) or any(
-        not isinstance(op, dict) or op.get("op") not in CONTENT_ACTIONS for op in operations)
+        not isinstance(op, dict) or op.get("op") not in CONTENT_ACTIONS for op in operations
+    )
 
 
 def content_history(messages):

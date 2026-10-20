@@ -1,4 +1,5 @@
 """Independent Card Author service and durable, explicitly resumed operations."""
+
 import asyncio
 import json
 import time
@@ -29,13 +30,19 @@ class CardAuthorService:
         payload["_legacy"] = legacy
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            prior = db.execute("SELECT id FROM card_edit_runs WHERE workspace=? AND operation=?", (wid, request.operation_id)).fetchone()
+            prior = db.execute(
+                "SELECT id FROM card_edit_runs WHERE workspace=? AND operation=?", (wid, request.operation_id)
+            ).fetchone()
             if prior:
                 return self.edits.run(prior[0])
             workspace = self.edits.check(db, wid, request.expected_revision, idle=False)
-            if db.execute("SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)).fetchone():
+            if db.execute(
+                "SELECT 1 FROM card_edit_runs WHERE workspace=? AND status IN ('queued','running')", (wid,)
+            ).fetchone():
                 raise Conflict("当前已有运行中的编辑任务")
-            pending = db.execute("SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)).fetchone()
+            pending = db.execute(
+                "SELECT run,payload FROM card_author_progress WHERE workspace=?", (wid,)
+            ).fetchone()
             if request.resume_run_id:
                 if not pending or pending[0] != request.resume_run_id:
                     raise Conflict("只能继续当前对话最新的未完成进度")
@@ -60,8 +67,10 @@ class CardAuthorService:
                         payload["_file_refs"].append(file["ref"])
                 if payload["_file_refs"]:
                     self.edits.write(db, workspace, increment=False)
-            db.execute("INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",
-                       (rid, wid, request.operation_id, dump(payload), now))
+            db.execute(
+                "INSERT INTO card_edit_runs(id,workspace,operation,request,status,created) VALUES (?,?,?,?,'queued',?)",
+                (rid, wid, request.operation_id, dump(payload), now),
+            )
             db.execute("UPDATE card_author_conversations SET updated=? WHERE id=?", (time.time(), wid))
         # A queued task can be stopped before its coroutine runs. Persist its
         # baseline now so shutdown/immediate cancellation remains resumable.
@@ -84,7 +93,10 @@ class CardAuthorService:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         with self.store.connection() as db:
-            changed = db.execute("UPDATE card_edit_runs SET status='cancelled',error='已停止，可继续或丢弃本轮' WHERE id=? AND status IN ('queued','running')", (rid,)).rowcount
+            changed = db.execute(
+                "UPDATE card_edit_runs SET status='cancelled',error='已停止，可继续或丢弃本轮' WHERE id=? AND status IN ('queued','running')",
+                (rid,),
+            ).rowcount
         if changed:
             self.edits.event(rid, "cancelled", {})
         return self.edits.run(rid)
@@ -101,23 +113,39 @@ class CardAuthorService:
             def capture_request(payload):
                 # The HTTP body is unchanged; diagnostics must not persist a
                 # second copy of every image on every tool continuation.
-                self.edits.event(rid, "provider_request", {
-                    **request_preview(payload), **owner.context.image_stats(),
-                    "image_payloads_omitted": bool(owner.context.image_stats()["image_count"])})
+                self.edits.event(
+                    rid,
+                    "provider_request",
+                    {
+                        **request_preview(payload),
+                        **owner.context.image_stats(),
+                        "image_payloads_omitted": bool(owner.context.image_stats()["image_count"]),
+                    },
+                )
 
-            provider = self.provider_factory() if self.provider_factory else await make_provider(owner.cfg,
-                capture_request)
+            provider = (
+                self.provider_factory()
+                if self.provider_factory
+                else await make_provider(owner.cfg, capture_request)
+            )
             await owner.run(provider)
         except asyncio.CancelledError:
             with self.store.connection() as db:
-                db.execute("UPDATE card_edit_runs SET status='cancelled',error='已停止，未提交进度保留，可继续或丢弃' WHERE id=?", (rid,))
+                db.execute(
+                    "UPDATE card_edit_runs SET status='cancelled',error='已停止，未提交进度保留，可继续或丢弃' WHERE id=?",
+                    (rid,),
+                )
             self.edits.event(rid, "cancelled", {})
         except Exception as error:
             # Transport timeouts/disconnects can stringify to "", which would
             # leave the failed run without any visible reason.
             detail = str(error) or f"运行中断（{type(error).__name__}），本轮进度已保留"
-            if (isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (400, 413, 415, 422)
-                    and owner and owner.context.image_stats()["image_count"]):
+            if (
+                isinstance(error, httpx.HTTPStatusError)
+                and error.response.status_code in (400, 413, 415, 422)
+                and owner
+                and owner.context.image_stats()["image_count"]
+            ):
                 detail += "\n请求包含图片，请确认所选模型支持图片输入，并符合服务商的尺寸与请求大小限制。原图与本轮进度已保留。"
             with self.store.connection() as db:
                 db.execute("UPDATE card_edit_runs SET status='error',error=? WHERE id=?", (detail, rid))

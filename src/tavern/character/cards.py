@@ -94,8 +94,10 @@ def parse_card(blob: bytes, filename: str):
         raise ValueError("角色卡 extensions 必须为对象")
     project = view.get("extensions", {}).get("terrarium", {})
     if isinstance(project, dict) and "workflow" in project:
-        raise ValueError("角色卡含已移除的独立开场初始化扩展；请核对世界书 [InitVar] 或开场 <initvar> 中的初值，"
-                         "保留需要的数据后删除 extensions.terrarium.workflow")
+        raise ValueError(
+            "角色卡含已移除的独立开场初始化扩展；请核对世界书 [InitVar] 或开场 <initvar> 中的初值，"
+            "保留需要的数据后删除 extensions.terrarium.workflow"
+        )
     if view.get("character_book") is not None:
         book = view["character_book"]
         if not isinstance(book, dict) or not isinstance(book.get("entries", []), (dict, list)):
@@ -151,8 +153,11 @@ def lore_entries(document, audience=None):
 def variable_rule_entries(document):
     # InitVar may carry legacy [value, description] rules. Its disabled switch
     # must not hide those rules once the author explicitly selects Tracker.
-    return [entry for entry in lore_entries(document, "tracker_mvu")
-            if entry["enabled"] or "[initvar]" in entry.get("comment", "").lower()]
+    return [
+        entry
+        for entry in lore_entries(document, "tracker_mvu")
+        if entry["enabled"] or "[initvar]" in entry.get("comment", "").lower()
+    ]
 
 
 def append_lorebook(current, imported):
@@ -160,11 +165,19 @@ def append_lorebook(current, imported):
     if not isinstance(imported, dict) or not isinstance(imported.get("entries"), (dict, list)):
         raise ValueError("世界书 entries 无效")
     incoming = imported["entries"]
-    if any(not isinstance(entry, dict) for entry in (incoming.values() if isinstance(incoming, dict) else incoming)):
+    if any(
+        not isinstance(entry, dict)
+        for entry in (incoming.values() if isinstance(incoming, dict) else incoming)
+    ):
         raise ValueError("世界书条目及其扩展必须为对象")
-    book = copy.deepcopy(current if current is not None else {
-        **imported, "entries": {} if isinstance(incoming, dict) else [],
-    })
+    book = copy.deepcopy(
+        current
+        if current is not None
+        else {
+            **imported,
+            "entries": {} if isinstance(incoming, dict) else [],
+        }
+    )
     entries = book.setdefault("entries", [])
     used = {entry["id"] for entry in lore_entries({"character_book": book})}
     rows = incoming.items() if isinstance(incoming, dict) else enumerate(incoming)

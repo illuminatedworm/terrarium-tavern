@@ -1,4 +1,5 @@
 """Configuration isolation is asserted at persistence, runtime and API boundaries."""
+
 import json
 import sqlite3
 from copy import deepcopy
@@ -24,21 +25,33 @@ async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
         assert pages.index("preference_presets") == pages.index("editor") + 1
         revision = original["revisions"]["shared"]
         for shortcut in ("ctrl_enter", "shift_enter", "button_only"):
-            response = await client.patch("/api/settings/shared", json={
-                "expected_revision": revision, "edit_session": opened["id"],
-                "changes": {"send_shortcut": shortcut},
-            })
+            response = await client.patch(
+                "/api/settings/shared",
+                json={
+                    "expected_revision": revision,
+                    "edit_session": opened["id"],
+                    "changes": {"send_shortcut": shortcut},
+                },
+            )
             assert response.status_code == 200, response.text
             revision = response.json()["revisions"]["shared"]
             assert Store(tmp_path).settings_document().shared.send_shortcut == shortcut
-        invalid = await client.patch("/api/settings/shared", json={
-            "expected_revision": revision, "changes": {"send_shortcut": "unknown"},
-        })
+        invalid = await client.patch(
+            "/api/settings/shared",
+            json={
+                "expected_revision": revision,
+                "changes": {"send_shortcut": "unknown"},
+            },
+        )
         assert invalid.status_code == 400
         assert app.state.store.settings_document().shared.send_shortcut == "button_only"
-        undo = await client.post(f"/api/settings/edit-sessions/{opened['id']}/undo", json={
-            "page": "shared.misc", "expected_revision": revision,
-        })
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{opened['id']}/undo",
+            json={
+                "page": "shared.misc",
+                "expected_revision": revision,
+            },
+        )
         assert undo.status_code == 200, undo.text
         assert undo.json()["shared"]["send_shortcut"] == "enter"
         assert undo.json()["half_agent"] == original["half_agent"]
@@ -52,8 +65,10 @@ async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_p
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         before = (await client.get("/api/settings")).json()
         assert before[scope][path]["cache"]["retention"] == "default"
-        payload = {"expected_revision": before["revisions"][scope],
-                   "changes": {f"{path}.cache.retention": "1h"}}
+        payload = {
+            "expected_revision": before["revisions"][scope],
+            "changes": {f"{path}.cache.retention": "1h"},
+        }
         changed = await client.patch(f"/api/settings/{scope}", json=payload)
         assert changed.status_code == 200
         after = changed.json()
@@ -71,7 +86,9 @@ async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_p
 
 def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_data(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode(), "card.json")
+    card = store.import_card(
+        json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode(), "card.json"
+    )
     session = store.new_session(SessionCreate(card_id=card["id"], persona="玩家甲"))
     raw = store.settings_document().model_dump()
     raw["revisions"] = {"full_agent": 3, "half_agent": 8, "shared": 7}
@@ -119,11 +136,15 @@ def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
     doc = store.settings_document()
     assert doc.full_agent.model.model == doc.half_agent.foreground.model == "writer-before"
     assert doc.shared.card_author.model == "background-before"
-    assert doc.full_agent.local_runtime.instruction_prompt == doc.half_agent.local_runtime.instruction_prompt == "custom-local"
+    assert (
+        doc.full_agent.local_runtime.instruction_prompt
+        == doc.half_agent.local_runtime.instruction_prompt
+        == "custom-local"
+    )
     assert doc.shared.providers[0].api_key == "migration-secret"
     assert doc.full_agent.system_prompt == "custom-full"
     assert doc.half_agent.system_prompt == "custom-half"
-    backups = list(tmp_path.glob("settings-before-v2-*.sqlite3"))
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "1"
@@ -132,7 +153,7 @@ def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
     reopened = Store(tmp_path).settings_document()
     assert reopened.full_agent.retrieval.chunk_tokens == 1024
     assert reopened.half_agent.retrieval.chunk_tokens == 768
-    assert len(list(tmp_path.glob("settings-before-v2-*.sqlite3"))) == 1
+    assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
 def test_explicit_full_model_and_operation_snapshot_are_independent():
@@ -166,11 +187,22 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
         opened = (await client.post("/api/settings/edit-sessions", json={})).json()
         token, original = opened["id"], opened["settings"]
         assert "old-secret" not in json.dumps(opened)
+
         async def patch(scope, changes, revision=None):
             current = (await client.get("/api/settings")).json()
-            return await client.patch(f"/api/settings/{scope}", json={"changes": changes, "edit_session": token,
-                "expected_revision": current["revisions"][scope] if revision is None else revision})
-        response = await patch("full_agent", {"model.model": "new-full", "lore_max_entries": 9, "system_prompt": "new-full-prompt"})
+            return await client.patch(
+                f"/api/settings/{scope}",
+                json={
+                    "changes": changes,
+                    "edit_session": token,
+                    "expected_revision": current["revisions"][scope] if revision is None else revision,
+                },
+            )
+
+        response = await patch(
+            "full_agent",
+            {"model.model": "new-full", "lore_max_entries": 9, "system_prompt": "new-full-prompt"},
+        )
         assert response.status_code == 200, response.text
         saved = response.json()
         assert saved["half_agent"] == original["half_agent"]
@@ -181,24 +213,30 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
         assert (await client.get("/api/settings")).json() == saved
         stale = await patch("full_agent", {"model.model": "stale"}, revision=0)
         assert stale.status_code == 409
-        undo = await client.post(f"/api/settings/edit-sessions/{token}/undo", json={"page":"full_agent.model", "expected_revision":saved["revisions"]["full_agent"]})
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{token}/undo",
+            json={"page": "full_agent.model", "expected_revision": saved["revisions"]["full_agent"]},
+        )
         assert undo.status_code == 200, undo.text
         assert undo.json()["full_agent"]["model"] == original["full_agent"]["model"]
         assert undo.json()["full_agent"]["system_prompt"] == "new-full-prompt"
         providers = deepcopy(original["shared"]["providers"])
         providers[0].update(name="changed-name", api_key="")
-        assert (await patch("shared", {"providers":providers})).status_code == 200
+        assert (await patch("shared", {"providers": providers})).status_code == 200
         assert app.state.store.settings_document().shared.providers[0].api_key == "old-secret"
         providers[0]["api_key"] = "new-secret"
-        result = await patch("shared", {"providers":providers})
+        result = await patch("shared", {"providers": providers})
         assert result.status_code == 200
         assert "new-secret" not in result.text
-        undo = await client.post(f"/api/settings/edit-sessions/{token}/undo", json={"page":"shared.providers", "expected_revision":result.json()["revisions"]["shared"]})
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{token}/undo",
+            json={"page": "shared.providers", "expected_revision": result.json()["revisions"]["shared"]},
+        )
         assert undo.status_code == 200, undo.text
         assert app.state.store.settings_document().shared.providers[0].api_key == "old-secret"
         assert "old-secret" not in undo.text
         await client.delete(f"/api/settings/edit-sessions/{token}")
-        assert (await patch("full_agent", {"model.model":"expired"})).status_code == 409
+        assert (await patch("full_agent", {"model.model": "expired"})).status_code == 409
         assert (await client.put("/api/settings", json={})).status_code == 405
 
 
@@ -207,11 +245,24 @@ async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         a = (await client.post("/api/settings/edit-sessions", json={})).json()
         b = (await client.post("/api/settings/edit-sessions", json={})).json()
-        result = await client.patch("/api/settings/full_agent", json={"expected_revision":0,"edit_session":b["id"],"changes":{"model.model":"other-window"}})
+        result = await client.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": 0,
+                "edit_session": b["id"],
+                "changes": {"model.model": "other-window"},
+            },
+        )
         assert result.status_code == 200
-        undo = await client.post(f"/api/settings/edit-sessions/{a['id']}/undo", json={"page":"full_agent.model","expected_revision":1})
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{a['id']}/undo",
+            json={"page": "full_agent.model", "expected_revision": 1},
+        )
         assert undo.status_code == 409
-        fake = await client.patch("/api/settings/full_agent", json={"expected_revision":1,"changes":{"model.capability":"accepted"}})
+        fake = await client.patch(
+            "/api/settings/full_agent",
+            json={"expected_revision": 1, "changes": {"model.capability": "accepted"}},
+        )
         assert fake.status_code == 400
         assert app.state.store.settings("full_agent").model == "other-window"
 

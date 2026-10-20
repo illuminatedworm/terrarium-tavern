@@ -40,12 +40,13 @@ def window_valid(window, history):
 
 def window_history(history, snapshot, *, enabled=True):
     window = snapshot.get("context_window")
-    visible = history[window["covered_count"]:] if enabled and window_valid(window, history) else history
+    visible = history[window["covered_count"] :] if enabled and window_valid(window, history) else history
     return visible, ""
 
 
 def render_memory(snapshot, history=None):
     from tavern.memories.memory_records import read_memory, render_document, with_source_status
+
     memory = read_memory(snapshot)
     text = render_document(with_source_status(memory, history) if history is not None else memory)
     return "<tavern_memory>\n" + text + "\n</tavern_memory>" if text else ""
@@ -61,11 +62,22 @@ class Tracker:
     async def maintain(self, turn_agent, provider=None):
         """Compatibility adapter; Tracker never uses the Writer compiler."""
         from tavern.tracker.task import TrackerTask
-        task = TrackerTask(self.store, turn_agent.tid, turn_agent.settings, turn_agent.session,
-            turn_agent.document, turn_agent.history, turn_agent.snapshot, phase="pre",
-            user_input=turn_agent.request.text, content=turn_agent.request.allow_content_edit,
-            provider=provider, history_budget=turn_agent.history_recall_budget,
-            contexts=turn_agent.operation_contexts)
+
+        task = TrackerTask(
+            self.store,
+            turn_agent.tid,
+            turn_agent.settings,
+            turn_agent.session,
+            turn_agent.document,
+            turn_agent.history,
+            turn_agent.snapshot,
+            phase="pre",
+            user_input=turn_agent.request.text,
+            content=turn_agent.request.allow_content_edit,
+            provider=provider,
+            history_budget=turn_agent.history_recall_budget,
+            contexts=turn_agent.operation_contexts,
+        )
         await task.run()
         turn_agent.document = task.document
         turn_agent.snapshot.clear()
@@ -75,8 +87,21 @@ class Tracker:
     def __init__(self, store):
         self.store = store
 
-    async def prepare(self, tid, document, session, history, snapshot, request, settings, summarize,
-                      *, retrieval=None, periodic=True, call_budget=None):
+    async def prepare(
+        self,
+        tid,
+        document,
+        session,
+        history,
+        snapshot,
+        request,
+        settings,
+        summarize,
+        *,
+        retrieval=None,
+        periodic=True,
+        call_budget=None,
+    ):
         from tavern.conversation.half_compaction import local_window_enabled
         from tavern.conversation.window import plan_window
         from tavern.memories.memory_engine import CallBudget, consolidate
@@ -98,8 +123,18 @@ class Tracker:
         old_count = window["covered_count"] if window and local_window_enabled(settings) else 0
         rounds = completed_rounds(history)
         from tavern.conversation.half_context import load_trace
-        count, _ = plan_window(document, session, history, draft, request.text, settings, tid, retrieval,
-                               replay_records=load_trace(self.store, session["id"], history))
+
+        count, _ = plan_window(
+            document,
+            session,
+            history,
+            draft,
+            request.text,
+            settings,
+            tid,
+            retrieval,
+            replay_records=load_trace(self.store, session["id"], history),
+        )
         trimming = count > old_count
         eligible = len(history) - 4
         while eligible > 0 and history[eligible - 1]["role"] != "assistant":
@@ -108,27 +143,33 @@ class Tracker:
         # cover all completed exchanges because they cannot move the window.
         if not local_window_enabled(settings):
             eligible = len(history)
-        for kind, key, interval in (
-            ("memory", "memory_archive", settings.memory_interval_turns),
-        ):
+        for kind, key, interval in (("memory", "memory_archive", settings.memory_interval_turns),):
             archive = draft.get(key)
             covered = archive.get("covered_count", 0) if archive else 0
             due = periodic and rounds - (archive or {}).get("last_round", 0) >= interval
-            target = max(count if trimming else 0, (len(history) if kind == "memory" else eligible) if due else 0)
+            target = max(
+                count if trimming else 0, (len(history) if kind == "memory" else eligible) if due else 0
+            )
             # Existing tool memories may cite recent protected messages. Include
             # those sources without allowing the archive to move the window.
             if kind == "memory" and target > covered:
                 positions = {m["id"]: i + 1 for i, m in enumerate(history)}
                 remembered_count = max(
-                    (positions.get(source["message_id"], 0)
-                     for m in draft.get("memory_document", {}).get("records", []) for source in m.get("sources", [])),
+                    (
+                        positions.get(source["message_id"], 0)
+                        for m in draft.get("memory_document", {}).get("records", [])
+                        for source in m.get("sources", [])
+                    ),
                     default=0,
                 )
                 target = max(target, remembered_count)
             if target <= covered:
                 continue
-            self.store.event(tid, "archive_started", {"kind": kind, "from": covered, "to": target,
-                                                     "forced": trimming and covered < count})
+            self.store.event(
+                tid,
+                "archive_started",
+                {"kind": kind, "from": covered, "to": target, "forced": trimming and covered < count},
+            )
             try:
                 usage = {}
 
@@ -137,36 +178,63 @@ class Tracker:
                     begun = time.perf_counter()
                     result, usage = await summarize(messages, phase=phase, output_tokens=output_tokens)
                     if usage is not None:
-                        self.store.event(tid, "usage", {"purpose": phase, "usage": usage_fields(usage),
-                                                       "duration_s": time.perf_counter() - begun, "calls": 1})
+                        self.store.event(
+                            tid,
+                            "usage",
+                            {
+                                "purpose": phase,
+                                "usage": usage_fields(usage),
+                                "duration_s": time.perf_counter() - begun,
+                                "calls": 1,
+                            },
+                        )
                     return result
 
                 cfg = settings.for_role("background")
-                result = await consolidate(history[:target], cfg, generate,
-                    memory=with_source_status(read_memory(draft), history), start=covered, document=document,
-                    persona=session["persona"], budget=call_budget or CallBudget(),
-                    event=lambda kind, payload: self.store.event(tid, kind, payload))
+                result = await consolidate(
+                    history[:target],
+                    cfg,
+                    generate,
+                    memory=with_source_status(read_memory(draft), history),
+                    start=covered,
+                    document=document,
+                    persona=session["persona"],
+                    budget=call_budget or CallBudget(),
+                    event=lambda kind, payload: self.store.event(tid, kind, payload),
+                )
                 install_memory(draft, result)
-                draft[key] = {"fingerprint": fingerprint(history[:target]), "covered_count": target,
-                              "last_round": rounds}
+                draft[key] = {
+                    "fingerprint": fingerprint(history[:target]),
+                    "covered_count": target,
+                    "last_round": rounds,
+                }
                 draft.pop("memory_warning", None)
                 cached = False
-                self.store.event(tid, "memory_ready",
-                                 {"kind": kind, "covered_count": target, "cached": bool(cached), "result": result})
+                self.store.event(
+                    tid,
+                    "memory_ready",
+                    {"kind": kind, "covered_count": target, "cached": bool(cached), "result": result},
+                )
             except Exception as error:
                 message = str(error).strip()
                 if not message:
-                    message = (f"记忆模型请求超过 {settings.memory_timeout} 秒未完成"
-                               if isinstance(error, TimeoutError) else type(error).__name__)
+                    message = (
+                        f"记忆模型请求超过 {settings.memory_timeout} 秒未完成"
+                        if isinstance(error, TimeoutError)
+                        else type(error).__name__
+                    )
                 draft["memory_warning"] = message
-                self.store.event(tid, "memory_failed",
-                                 {"message": message, "kept_original": True})
+                self.store.event(tid, "memory_failed", {"message": message, "kept_original": True})
         from tavern.memories.memory_records import install_memory, read_memory
         from tavern.memories.memory_retention import retain_memory
 
         try:
-            retained = retain_memory(read_memory(draft), history, settings.for_role("background"),
-                event=lambda kind, payload: self.store.event(tid, kind, payload))
+            retained = retain_memory(
+                read_memory(draft),
+                history,
+                settings.for_role("background"),
+                event=lambda kind, payload: self.store.event(tid, kind, payload),
+            )
             install_memory(draft, retained)
         except ValueError as error:
             draft["memory_warning"] = str(error)
@@ -175,9 +243,13 @@ class Tracker:
             if any(draft.get(key, {}).get("covered_count", 0) < count for key in ("memory_archive",)):
                 raise ValueError("裁剪前的记忆整理失败，原窗口已保留；请重试或调整窗口与维护预算")
             draft["context_window"] = {
-                "fingerprint": fingerprint(history[:count]), "covered_count": count,
+                "fingerprint": fingerprint(history[:count]),
+                "covered_count": count,
             }
-            self.store.event(tid, "memory_chunk", {"from": old_count, "to": count,
-                                                   "source_ids": [m["id"] for m in history[old_count:count]]})
+            self.store.event(
+                tid,
+                "memory_chunk",
+                {"from": old_count, "to": count, "source_ids": [m["id"] for m in history[old_count:count]]},
+            )
         snapshot.clear()
         snapshot.update(draft)

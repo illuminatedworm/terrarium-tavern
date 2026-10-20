@@ -43,14 +43,14 @@ function move(event: KeyboardEvent, channel: Channel) {
   border-radius: 0;
   padding: 12px 18px;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .channel-switch button.selected {
   color: var(--accent-hover);
   border-bottom-color: var(--accent);
   background: transparent;
 }
-@media (max-width: 600px) {
+@media (max-width: 620px) {
   .channel-switch button {
     flex: 1;
     padding: 12px 8px;

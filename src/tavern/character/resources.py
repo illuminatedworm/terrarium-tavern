@@ -21,16 +21,25 @@ def prune_card_assets(store, card, manifest):
         survivors = [dict(row) for row in db.execute("SELECT original,resources,id FROM cards")]
         for survivor in survivors:
             survivor["resources"] = json.loads(survivor["resources"])
-        survivors.extend(json.loads(row[0]) for row in db.execute("SELECT card_data FROM sessions WHERE card_data IS NOT NULL"))
+        survivors.extend(
+            json.loads(row[0])
+            for row in db.execute("SELECT card_data FROM sessions WHERE card_data IS NOT NULL")
+        )
         for table in ("card_author_conversations", "card_author_progress"):
             for row in db.execute(f"SELECT payload FROM {table}"):
                 value = json.loads(row[0])
-                survivors.extend(c.get("source", {}) for c in value.get("cards", value.get("working", {}).get("cards", [])))
-        survivors.extend(json.loads(row[0]).get("source", {}) for row in db.execute(
-            "SELECT snapshot FROM card_edit_versions WHERE snapshot IS NOT NULL"))
+                survivors.extend(
+                    c.get("source", {}) for c in value.get("cards", value.get("working", {}).get("cards", []))
+                )
+        survivors.extend(
+            json.loads(row[0]).get("source", {})
+            for row in db.execute("SELECT snapshot FROM card_edit_versions WHERE snapshot IS NOT NULL")
+        )
         retained, retained_sources = set(), set()
         for survivor in survivors:
-            current_manifest = store.card_manifest(survivor) if survivor.get("id") or survivor.get("session_id") else {}
+            current_manifest = (
+                store.card_manifest(survivor) if survivor.get("id") or survivor.get("session_id") else {}
+            )
             for current in (current_manifest, survivor.get("dependencies", {})):
                 blobs, scripts = references(survivor, current)
                 retained.update(blobs)

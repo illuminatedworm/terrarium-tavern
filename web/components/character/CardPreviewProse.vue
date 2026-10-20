@@ -56,7 +56,7 @@ const html = computed(() => {
 <style scoped>
 .card-preview-prose {
   color: var(--text-story);
-  font: 14px/1.85 var(--font-ui);
+  font: var(--fs-base) / 1.85 var(--font-ui);
   overflow-wrap: anywhere;
 }
 .card-preview-prose :deep(:first-child) {
@@ -72,7 +72,7 @@ const html = computed(() => {
 .card-preview-prose :deep(h2),
 .card-preview-prose :deep(h3),
 .card-preview-prose :deep(h4) {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-primary);
   margin: 18px 0 8px;
@@ -84,7 +84,7 @@ const html = computed(() => {
 .card-preview-prose :deep(pre) {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 12px/1.75 monospace;
+  font: var(--fs-sm) / 1.75 monospace;
 }
 .card-preview-prose :deep(table) {
   width: 100%;

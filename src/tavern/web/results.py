@@ -1,4 +1,5 @@
 """Bound external results before they become durable model-visible tool records."""
+
 import re
 
 READ_DEFAULT_LIMIT = 12_000
@@ -24,14 +25,17 @@ def exa_search_rows(text: str) -> list[dict]:
     if text.strip() == "No search results found. Please try a different query.":
         return []
     text = text.replace("\r\n", "\n")
-    matches = list(re.finditer(
-        r"(?m)^(?:Title: ([^\n]*)\n((?:(?!Title: |URL: )[^\n]*\n)*))?URL: (https?://\S+)[ \t]*$", text))
+    matches = list(
+        re.finditer(
+            r"(?m)^(?:Title: ([^\n]*)\n((?:(?!Title: |URL: )[^\n]*\n)*))?URL: (https?://\S+)[ \t]*$", text
+        )
+    )
     if not matches:
         raise ValueError("Exa 搜索条目格式无法识别，不能确认结果数量或来源")
     rows = []
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        snippet = ((match[2] or "") + text[match.end():end]).strip().removesuffix("---").rstrip()
+        snippet = ((match[2] or "") + text[match.end() : end]).strip().removesuffix("---").rstrip()
         rows.append({"url": match[3], "title": (match[1] or "").strip(), "snippet": snippet})
     return rows
 
@@ -53,17 +57,28 @@ def search_result(result: dict, limit: int) -> dict:
         if len(url) > remaining:
             break
         remaining -= len(url)
-        short_title = title[:min(MAX_TITLE_CHARS, remaining)]
+        short_title = title[: min(MAX_TITLE_CHARS, remaining)]
         remaining -= len(short_title)
-        short_snippet = snippet[:min(MAX_SNIPPET_CHARS, remaining)]
+        short_snippet = snippet[: min(MAX_SNIPPET_CHARS, remaining)]
         remaining -= len(short_snippet)
-        selected.append({"url": url, "title": short_title, "snippet": short_snippet,
-                         **({"title_truncated": True} if short_title != title else {}),
-                         **({"snippet_truncated": True} if short_snippet != snippet else {})})
-    return {"query": result["query"], "results": selected, "returned_results": len(selected),
-            "available_results": len(rows), "results_truncated": len(selected) < len(rows),
-            "content_truncated": any(r.get("title_truncated") or r.get("snippet_truncated") for r in selected),
-            "notice": SEARCH_NOTICE}
+        selected.append(
+            {
+                "url": url,
+                "title": short_title,
+                "snippet": short_snippet,
+                **({"title_truncated": True} if short_title != title else {}),
+                **({"snippet_truncated": True} if short_snippet != snippet else {}),
+            }
+        )
+    return {
+        "query": result["query"],
+        "results": selected,
+        "returned_results": len(selected),
+        "available_results": len(rows),
+        "results_truncated": len(selected) < len(rows),
+        "content_truncated": any(r.get("title_truncated") or r.get("snippet_truncated") for r in selected),
+        "notice": SEARCH_NOTICE,
+    }
 
 
 def read_result(result: dict, offset: int, limit: int) -> dict:
@@ -72,10 +87,18 @@ def read_result(result: dict, offset: int, limit: int) -> dict:
         raise ValueError("提取来源网址无效或超过 8192 字符")
     if not isinstance(text, str) or not isinstance(title, str):
         raise ValueError("网页提取文本格式无效")
-    page = text[offset:offset + limit]
+    page = text[offset : offset + limit]
     has_more = offset + len(page) < len(text)
-    return {"url": url, "title": title[:MAX_TITLE_CHARS], "text": page,
-            "offset": offset, "returned_chars": len(page), "total_chars": len(text),
-            "has_more": has_more, "next_offset": offset + len(page) if has_more else None,
-            "source_truncated": result.get("source_truncated"),
-            **({"title_truncated": True} if len(title) > MAX_TITLE_CHARS else {}), "notice": READ_NOTICE}
+    return {
+        "url": url,
+        "title": title[:MAX_TITLE_CHARS],
+        "text": page,
+        "offset": offset,
+        "returned_chars": len(page),
+        "total_chars": len(text),
+        "has_more": has_more,
+        "next_offset": offset + len(page) if has_more else None,
+        "source_truncated": result.get("source_truncated"),
+        **({"title_truncated": True} if len(title) > MAX_TITLE_CHARS else {}),
+        "notice": READ_NOTICE,
+    }

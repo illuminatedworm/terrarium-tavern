@@ -1,4 +1,5 @@
 """Cross-channel isolation, snapshot conflicts, compaction and portable storage."""
+
 import copy
 import time
 
@@ -20,27 +21,46 @@ from tests.backend.test_card_author import ToolLLM
 def test_independent_models_but_immutable_channel(tmp_path):
     _, store, session, advisor = setup(tmp_path)
     settings = store.settings_document()
-    settings.shared.providers += [Provider(id="independent", name="独立供应商"), Provider(id="official", name="官方", auth_mode="chatgpt_subscription")]
+    settings.shared.providers += [
+        Provider(id="independent", name="独立供应商"),
+        Provider(id="official", name="官方", auth_mode="chatgpt_subscription"),
+    ]
     settings.shared.advisor.model = ModelProfile(provider_id="independent", model="different-model")
     settings.shared.advisor.model.api_mode = "gemini"
     settings.shared.advisor.model.api_path = "proxy/v1beta"
     settings.shared.advisor.model.provider_connections["default"] = ModelConnection(
-        api_mode="responses", api_path="other/v2", model="other-model")
+        api_mode="responses", api_path="other/v2", model="other-model"
+    )
     settings.shared.advisor.official_model = ModelProfile(provider_id="official", model="official-model")
     store.save_settings(settings)
     cfg, _ = runtime_config(store, session, {})
     assert cfg.model == "different-model"
     with pytest.raises(ValueError, match="渠道"):
-        advisor.options(session["id"], OptionsRequest(expected_revision=0, model_selection=ModelSelection(provider_id="official", model="official-model")))
+        advisor.options(
+            session["id"],
+            OptionsRequest(
+                expected_revision=0,
+                model_selection=ModelSelection(provider_id="official", model="official-model"),
+            ),
+        )
     with pytest.raises(ValueError, match="官方"):
         advisor.options(session["id"], OptionsRequest(expected_revision=0, context_strategy="openai_compact"))
-    selected = advisor.options(session["id"], OptionsRequest(expected_revision=0,
-        model_selection=ModelSelection(provider_id="default", model="my-model")))
+    selected = advisor.options(
+        session["id"],
+        OptionsRequest(
+            expected_revision=0, model_selection=ModelSelection(provider_id="default", model="my-model")
+        ),
+    )
     assert selected["effective"]["model_selection"]["provider_models"] == {"independent": "different-model"}
     cfg, _ = runtime_config(store, session, selected["options"])
     assert (cfg.model, cfg.api_mode, cfg.api_path) == ("my-model", "responses", "other/v2")
-    selected = advisor.options(session["id"], OptionsRequest(expected_revision=1,
-        model_selection=ModelSelection(provider_id="independent", model="different-model")))
+    selected = advisor.options(
+        session["id"],
+        OptionsRequest(
+            expected_revision=1,
+            model_selection=ModelSelection(provider_id="independent", model="different-model"),
+        ),
+    )
     assert selected["effective"]["model_selection"]["provider_models"] == {"default": "my-model"}
     cfg, _ = runtime_config(store, session, selected["options"])
     assert (cfg.model, cfg.api_mode, cfg.api_path) == ("different-model", "gemini", "proxy/v1beta")
@@ -48,7 +68,9 @@ def test_independent_models_but_immutable_channel(tmp_path):
 
 class ConcurrentEdit(ToolLLM):
     def __init__(self, store, sid):
-        super().__init__([("update_turn_preference", {"action": "replace", "content": "模型提案", "request_ref": "Q1"})])
+        super().__init__(
+            [("update_turn_preference", {"action": "replace", "content": "模型提案", "request_ref": "Q1"})]
+        )
         self.store, self.sid = store, sid
 
     async def chat(self, messages, **kwargs):
@@ -94,7 +116,9 @@ async def test_local_compaction_keeps_recent_originals_and_story_intact(tmp_path
     before = copy.deepcopy(store.session(session["id"]))
     model = ScriptedLLM(["咨询摘要：问题0、问题1讨论了不同可能，尚未发生。"])
     advisor.provider_factory = lambda: model
-    run = advisor.submit(session["id"], ConsultationRequest(expected_revision=3, operation_id=uid(), compact=True))
+    run = advisor.submit(
+        session["id"], ConsultationRequest(expected_revision=3, operation_id=uid(), compact=True)
+    )
     await advisor.tasks[run["id"]]
     assert advisor.data.run(run["id"])["status"] == "completed", advisor.data.run(run["id"])
     state = advisor.data.get(session["id"])
@@ -104,9 +128,13 @@ async def test_local_compaction_keeps_recent_originals_and_story_intact(tmp_path
     assert preview["context_valid"]
     assert "问题2" in dump(preview["messages"])
     assert before["snapshot"] == store.session(session["id"])["snapshot"]
-    assert all(any(text in dump(model.call_log) for text in (e["user_text"],)) for e in state["exchanges"][:2])
+    assert all(
+        any(text in dump(model.call_log) for text in (e["user_text"],)) for e in state["exchanges"][:2]
+    )
     with store.connection() as db:
-        db.execute("UPDATE messages SET model='改写后的开场',raw='改写后的开场' WHERE id=?", (session["head"],))
+        db.execute(
+            "UPDATE messages SET model='改写后的开场',raw='改写后的开场' WHERE id=?", (session["head"],)
+        )
     preview = advisor.preview(session["id"])
     assert not preview["context_valid"] and not preview["summary"]
     assert "问题0" in dump(preview["messages"])
@@ -119,6 +147,7 @@ async def test_only_full_backup_preserves_disposable_consultation(tmp_path):
     target = Store(tmp_path / "target")
     result = import_package(target, *read_package(archived, target))
     from tavern.advisor.storage import AdvisorStore
+
     restored = AdvisorStore(target).get(result["sessions"][0])
     assert not restored["exchanges"] and not restored["context"]
     with store.connection() as db:
@@ -138,21 +167,55 @@ async def test_clear_removes_all_consultation_state_and_rejects_stale_requests(t
     app, store, session, advisor = setup(tmp_path)
     sid = session["id"]
     advisor.options(sid, OptionsRequest(expected_revision=0, recent_exchanges=7))
-    completed = await ask(advisor, sid, ToolLLM([("update_turn_preference", {
-        "action": "replace", "content": "保留已保存偏好", "request_ref": "Q1",
-    })]), "保存偏好")
+    completed = await ask(
+        advisor,
+        sid,
+        ToolLLM(
+            [
+                (
+                    "update_turn_preference",
+                    {
+                        "action": "replace",
+                        "content": "保留已保存偏好",
+                        "request_ref": "Q1",
+                    },
+                )
+            ]
+        ),
+        "保存偏好",
+    )
     other = store.fork_session(sid, session["head"], store.session(sid)["revision"])
     await ask(advisor, other["id"], ToolLLM([]), "另一个故事的咨询")
-    failed = await ask(advisor, sid, Failure([("update_turn_preference", {
-        "action": "replace", "content": "不能复活的草稿", "request_ref": "Q1",
-    })]), "替换偏好")
+    failed = await ask(
+        advisor,
+        sid,
+        Failure(
+            [
+                (
+                    "update_turn_preference",
+                    {
+                        "action": "replace",
+                        "content": "不能复活的草稿",
+                        "request_ref": "Q1",
+                    },
+                )
+            ]
+        ),
+        "替换偏好",
+    )
     with store.connection() as db:
-        db.execute("UPDATE advisor_conversations SET context=? WHERE session=?", (dump({"summary": "旧摘要", "opaque": "旧密文"}), sid))
+        db.execute(
+            "UPDATE advisor_conversations SET context=? WHERE session=?",
+            (dump({"summary": "旧摘要", "opaque": "旧密文"}), sid),
+        )
     before = copy.deepcopy(store.session(sid))
     revision = advisor.data.get(sid)["revision"]
     from httpx import ASGITransport, AsyncClient
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
-        response = await client.post(f"/api/sessions/{sid}/advisor/clear", json={"expected_revision": revision})
+        response = await client.post(
+            f"/api/sessions/{sid}/advisor/clear", json={"expected_revision": revision}
+        )
         assert response.status_code == 200, response.text
         assert response.json()["effective"]["recent_exchanges"] == 7
         stale = await client.post(f"/api/sessions/{sid}/advisor/clear", json={"expected_revision": revision})
@@ -163,10 +226,17 @@ async def test_clear_removes_all_consultation_state_and_rejects_stale_requests(t
     assert store.session(sid) == before
     assert len(advisor.data.get(other["id"])["exchanges"]) == 1
     with store.connection() as db:
-        assert db.execute("SELECT count(*) FROM advisor_conversations WHERE session=?", (sid,)).fetchone()[0] == 1
-        assert not db.execute("SELECT 1 FROM advisor_events WHERE run IN (?,?)", (completed["id"], failed["id"])).fetchone()
+        assert (
+            db.execute("SELECT count(*) FROM advisor_conversations WHERE session=?", (sid,)).fetchone()[0]
+            == 1
+        )
+        assert not db.execute(
+            "SELECT 1 FROM advisor_events WHERE run IN (?,?)", (completed["id"], failed["id"])
+        ).fetchone()
     with pytest.raises(Conflict, match="对话已改变"):
-        advisor.submit(sid, ConsultationRequest(text="旧标签页请求", expected_revision=revision, operation_id=uid()))
+        advisor.submit(
+            sid, ConsultationRequest(text="旧标签页请求", expected_revision=revision, operation_id=uid())
+        )
     with pytest.raises(Conflict, match="只能继续最新进度"):
         await ask(advisor, sid, ToolLLM([]), "", failed["id"])
     result = await ask(advisor, sid, ToolLLM([]), "新的咨询")
@@ -186,5 +256,6 @@ async def test_clear_requires_stopping_active_run_and_cannot_restore_progress(tm
     reopened = Store(tmp_path)
     reopened.recover()
     from tavern.advisor.storage import AdvisorStore
+
     state = AdvisorStore(reopened).get(sid)
     assert state["run"] is None and not state["exchanges"] and not state["context"]

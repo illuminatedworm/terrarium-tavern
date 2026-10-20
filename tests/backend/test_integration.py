@@ -35,10 +35,18 @@ async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_
     store = app.state.store
     document = json.loads(Path("samples/雾港来信.json").read_text(encoding="utf-8"))
     document["data"]["extensions"]["regex_scripts"] = [
-        {"findRegex": r"/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/g",
-         "replaceString": "", "placement": [2], "markdownOnly": True},
-        {"findRegex": r"/<secret>[\s\S]*?<\/secret>/g",
-         "replaceString": "", "placement": [2], "promptOnly": True},
+        {
+            "findRegex": r"/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/g",
+            "replaceString": "",
+            "placement": [2],
+            "markdownOnly": True,
+        },
+        {
+            "findRegex": r"/<secret>[\s\S]*?<\/secret>/g",
+            "replaceString": "",
+            "placement": [2],
+            "promptOnly": True,
+        },
     ]
     card = store.import_card(json.dumps(document).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -75,14 +83,37 @@ async def test_message_edits_only_accept_last_round_on_current_branch(tmp_path, 
     opening = session["head"]
     previous_input, previous_reply, input_id, reply_id = (uid() for _ in range(4))
     for index, (user, reply) in enumerate(((previous_input, previous_reply), (input_id, reply_id))):
-        tid, _ = store.create_turn(session["id"], TurnRequest(text="input", operation_id=f"setup-{index}", expected_revision=session["revision"]))
+        tid, _ = store.create_turn(
+            session["id"],
+            TurnRequest(text="input", operation_id=f"setup-{index}", expected_revision=session["revision"]),
+        )
         store.set_turn(tid, status="running")
-        store.commit_turn(tid, {"before": session["snapshot"], "messages": [
-            {"id": user, "parent": session["head"], "role": "user", "raw": "input", "model": "input",
-             "display": "input", "snapshot": session["snapshot"]},
-            {"id": reply, "parent": user, "role": "assistant", "raw": "reply", "model": "reply",
-             "display": "reply", "snapshot": session["snapshot"]},
-        ]})
+        store.commit_turn(
+            tid,
+            {
+                "before": session["snapshot"],
+                "messages": [
+                    {
+                        "id": user,
+                        "parent": session["head"],
+                        "role": "user",
+                        "raw": "input",
+                        "model": "input",
+                        "display": "input",
+                        "snapshot": session["snapshot"],
+                    },
+                    {
+                        "id": reply,
+                        "parent": user,
+                        "role": "assistant",
+                        "raw": "reply",
+                        "model": "reply",
+                        "display": "reply",
+                        "snapshot": session["snapshot"],
+                    },
+                ],
+            },
+        )
         session = store.session(session["id"])
     runtime_open = app.state.service.half.runtime.open
 
@@ -95,30 +126,44 @@ async def test_message_edits_only_accept_last_round_on_current_branch(tmp_path, 
             for mid in (opening, previous_input, previous_reply):
                 with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
                     store.edit_message(session["id"], mid, "changed", session["revision"])
-                rejected = await api.put(f"/api/sessions/{session['id']}/messages/{mid}", json={
-                    "text": "changed", "expected_revision": session["revision"]})
+                rejected = await api.put(
+                    f"/api/sessions/{session['id']}/messages/{mid}",
+                    json={"text": "changed", "expected_revision": session["revision"]},
+                )
                 assert rejected.status_code == 400
                 assert rejected.json()["detail"] == "只能编辑当前分支最后一轮的用户消息或 AI 回复"
                 assert store.session(session["id"]) == session
             monkeypatch.setattr(app.state.service.half.runtime, "open", runtime_open)
-            accepted_input = await api.put(f"/api/sessions/{session['id']}/messages/{input_id}", json={
-                "text": "latest input edited", "expected_revision": session["revision"]})
+            accepted_input = await api.put(
+                f"/api/sessions/{session['id']}/messages/{input_id}",
+                json={"text": "latest input edited", "expected_revision": session["revision"]},
+            )
             assert accepted_input.status_code == 200, accepted_input.text
             edited_input = accepted_input.json()
             assert edited_input["head"] == reply_id and edited_input["revision"] == session["revision"] + 1
             assert edited_input["messages"][-1]["raw"] == "reply"
             assert edited_input["messages"][-1]["snapshot"]["state"] == session["snapshot"]["state"]
-            accepted = await api.put(f"/api/sessions/{session['id']}/messages/{reply_id}", json={
-                "text": "latest edited", "expected_revision": edited_input["revision"]})
+            accepted = await api.put(
+                f"/api/sessions/{session['id']}/messages/{reply_id}",
+                json={"text": "latest edited", "expected_revision": edited_input["revision"]},
+            )
             assert accepted.status_code == 200, accepted.text
             edited = accepted.json()
             assert edited["head"] == reply_id and edited["revision"] == session["revision"] + 2
-            assert [m["raw"] for m in edited["messages"]] == ["opening", "input", "reply", "latest input edited", "latest edited"]
+            assert [m["raw"] for m in edited["messages"]] == [
+                "opening",
+                "input",
+                "reply",
+                "latest input edited",
+                "latest edited",
+            ]
             for mid in (input_id, reply_id):
                 with pytest.raises(Conflict):
                     store.edit_message(session["id"], mid, "stale", session["revision"])
-            active_id, _ = store.create_turn(session["id"], TurnRequest(
-                text="next", operation_id="active", expected_revision=edited["revision"]))
+            active_id, _ = store.create_turn(
+                session["id"],
+                TurnRequest(text="next", operation_id="active", expected_revision=edited["revision"]),
+            )
             for status in ("running", "awaiting_review"):
                 store.set_turn(active_id, status=status)
                 for mid in (input_id, reply_id):
@@ -129,10 +174,14 @@ async def test_message_edits_only_accept_last_round_on_current_branch(tmp_path, 
             selected = store.update_session(session["id"], edited["revision"], head=previous_reply)
             with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
                 store.edit_message(session["id"], input_id, "off branch", selected["revision"])
-            selected = store.edit_message(session["id"], previous_input, "selected input", selected["revision"])
+            selected = store.edit_message(
+                session["id"], previous_input, "selected input", selected["revision"]
+            )
             assert selected["head"] == previous_reply and selected["messages"][-2]["raw"] == "selected input"
             selected = store.update_session(session["id"], selected["revision"], head=opening)
-            edited_opening = store.edit_message(session["id"], opening, "selected latest", selected["revision"])
+            edited_opening = store.edit_message(
+                session["id"], opening, "selected latest", selected["revision"]
+            )
             assert edited_opening["head"] == opening
             assert edited_opening["messages"][-1]["raw"] == "selected latest"
     finally:
@@ -195,7 +244,8 @@ async def test_real_kt_turn_and_branch_restore(tmp_path):
     service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/能量","value":4}]')
     try:
         t = service.submit(
-            session["id"], TurnRequest(text="走向观测窗", operation_id="a", expected_revision=0, update_variables=True)
+            session["id"],
+            TurnRequest(text="走向观测窗", operation_id="a", expected_revision=0, update_variables=True),
         )
         await service.tasks[t["id"]]
         final = store.turn(t["id"])
@@ -205,7 +255,8 @@ async def test_real_kt_turn_and_branch_restore(tmp_path):
         first_head = current["head"]
         assert "_.add" not in current["messages"][-1]["display"]
         t2 = service.submit(
-            session["id"], TurnRequest(mode="regenerate", operation_id="b", expected_revision=1, update_variables=True)
+            session["id"],
+            TurnRequest(mode="regenerate", operation_id="b", expected_revision=1, update_variables=True),
         )
         await service.tasks[t2["id"]]
         assert store.turn(t2["id"])["status"] == "committed", store.turn(t2["id"])["error"]
@@ -234,7 +285,10 @@ async def test_script_failure_rolls_back(tmp_path):
     service.provider_factory = lambda: ScriptedLLM(["草稿"])
     service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/能量","value":4}]')
     try:
-        t = service.submit(session["id"], TurnRequest(text="继续", operation_id="a", expected_revision=0, update_variables=True))
+        t = service.submit(
+            session["id"],
+            TurnRequest(text="继续", operation_id="a", expected_revision=0, update_variables=True),
+        )
         await service.tasks[t["id"]]
         assert store.turn(t["id"])["status"] == "error"
         assert "草稿" in store.turn(t["id"])["draft"]
@@ -247,7 +301,15 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path):
     app = create_app(tmp_path)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
         assert (await c.get("/api/health")).status_code == 200
-        assert (await c.patch("/api/settings/shared", json={"expected_revision":0,"changes":{"providers":[{"id":"default","api_key":"secret"}]}})).status_code == 200
+        assert (
+            await c.patch(
+                "/api/settings/shared",
+                json={
+                    "expected_revision": 0,
+                    "changes": {"providers": [{"id": "default", "api_key": "secret"}]},
+                },
+            )
+        ).status_code == 200
         response = await c.get("/api/settings")
         assert response.json()["shared"]["providers"][0]["has_api_key"]
         assert "secret" not in response.text
@@ -262,11 +324,20 @@ async def test_preview_edit_and_cancel_are_atomic(tmp_path):
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["first draft"])
     service.tracker_provider_factory = lambda: TrackerModel(
-        ("revise_content", {"operations": [{"op": "add", "path": "/description", "value": "New setting"}],
-                            "comment": "Explicit request"}), "done")
+        (
+            "revise_content",
+            {
+                "operations": [{"op": "add", "path": "/description", "value": "New setting"}],
+                "comment": "Explicit request",
+            },
+        ),
+        "done",
+    )
     try:
-        t = service.submit(s["id"], TurnRequest(text="hello", operation_id="one", expected_revision=0,
-                                               allow_content_edit=True))
+        t = service.submit(
+            s["id"],
+            TurnRequest(text="hello", operation_id="one", expected_revision=0, allow_content_edit=True),
+        )
         await service.tasks[t["id"]]
         assert store.turn(t["id"])["status"] == "awaiting_review"
         assert store.session(s["id"])["head"] == s["head"]
@@ -329,12 +400,24 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
         api_key="test", http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport))
     )
     store = Store(tmp_path)
-    document = {"name": "fixture", "description": "character", "first_mes": "opening",
-                "character_book": {"entries": [
-                    {"id": "1", "keys": ["marker"], "enabled": True, "constant": False,
-                     "comment": "场景标记", "content": "mid-scene",
-                     "extensions": {"position": 4, "depth": 2, "role": 0}},
-                ]}}
+    document = {
+        "name": "fixture",
+        "description": "character",
+        "first_mes": "opening",
+        "character_book": {
+            "entries": [
+                {
+                    "id": "1",
+                    "keys": ["marker"],
+                    "enabled": True,
+                    "constant": False,
+                    "comment": "场景标记",
+                    "content": "mid-scene",
+                    "extensions": {"position": 4, "depth": 2, "role": 0},
+                },
+            ]
+        },
+    }
     card = store.import_card(json.dumps(document).encode(), "fixture.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     # Constants are pinned at the top; use a triggered ST-depth entry for this wire test.
@@ -362,14 +445,19 @@ async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = TrackerModel(
         [("search_lore", {"query": "*"}), ("tavern_recall_history", {"turn": 1, "radius": 0})],
-        ("search_lore", {"query": "灯塔"}), "维护完成", "后置检查完成")
+        ("search_lore", {"query": "灯塔"}),
+        "维护完成",
+        "后置检查完成",
+    )
     writer = ScriptedLLM(["我们去灯塔。"])
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: writer
     service.tracker_provider_factory = lambda: provider
     try:
-        turn = service.submit(session["id"], TurnRequest(text="整理设定", operation_id="tools",
-                              expected_revision=0, allow_content_edit=True))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(text="整理设定", operation_id="tools", expected_revision=0, allow_content_edit=True),
+        )
         await service.tasks[turn["id"]]
         final = store.turn(turn["id"])
         assert final["status"] == "committed", final["error"]
@@ -506,15 +594,21 @@ async def test_reasoning_strength_is_serialized_without_silent_fallback():
 @pytest.mark.parametrize("invalid_evidence", [False, True])
 async def test_regeneration_reuses_the_committed_chunk_window(tmp_path, invalid_evidence):
     store = Store(tmp_path)
-    cfg = store.settings().model_copy(update={"history_message_cap": 8, "chunk_size": 2, "memory_interval_turns": 1})
+    cfg = store.settings().model_copy(
+        update={"history_message_cap": 8, "chunk_size": 2, "memory_interval_turns": 1}
+    )
     store.save_settings(cfg)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     s = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["剧情继续。"])
+
     def proposal(messages):
         payload = batch_payload(messages)
-        return memory_output([{"role": "system", "content": ""}, {"role": "user", "content": json.dumps(payload)}], invalid=invalid_evidence)
+        return memory_output(
+            [{"role": "system", "content": ""}, {"role": "user", "content": json.dumps(payload)}],
+            invalid=invalid_evidence,
+        )
 
     memory_model = MemoryModel([proposal])
     service.memory_provider_factory = lambda: memory_model
@@ -560,18 +654,27 @@ async def test_invalid_model_variable_update_keeps_state_and_can_retry(tmp_path)
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "变量校验", "first_mes": "欢迎"}).encode(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
-    state = {"stat_data": {"hp": 5}, "schema": {"type": "object", "extensible": False,
-             "properties": {"hp": {"type": "number"}}}}
+    state = {
+        "stat_data": {"hp": 5},
+        "schema": {"type": "object", "extensible": False, "properties": {"hp": {"type": "number"}}},
+    }
     with store.connection() as db:
         snapshot = session["snapshot"] | {"state": state}
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
     before = store.session(session["id"])
     service = RoleplayRuntime(store)
-    service.provider_factory = lambda: ScriptedLLM(['失败草稿'])
+    service.provider_factory = lambda: ScriptedLLM(["失败草稿"])
     service.variable_provider_factory = lambda: PatchModel('[{"op":"add","path":"/unknown","value":1}]')
     try:
-        failed = service.submit(session["id"], TurnRequest(
-            text="继续", operation_id="failed", expected_revision=before["revision"], update_variables=True))
+        failed = service.submit(
+            session["id"],
+            TurnRequest(
+                text="继续",
+                operation_id="failed",
+                expected_revision=before["revision"],
+                update_variables=True,
+            ),
+        )
         await service.tasks[failed["id"]]
         failed = store.turn(failed["id"])
         assert failed["status"] == "error"
@@ -582,8 +685,12 @@ async def test_invalid_model_variable_update_keeps_state_and_can_retry(tmp_path)
         assert unchanged["head"] == before["head"] and unchanged["snapshot"] == before["snapshot"]
         service.provider_factory = lambda: ScriptedLLM(["成功回复"])
         service.variable_provider_factory = lambda: PatchModel('[{"op":"replace","path":"/hp","value":6}]')
-        retried = service.submit(session["id"], TurnRequest(
-            **(failed["request"] | {"operation_id": "retry", "expected_revision": unchanged["revision"]})))
+        retried = service.submit(
+            session["id"],
+            TurnRequest(
+                **(failed["request"] | {"operation_id": "retry", "expected_revision": unchanged["revision"]})
+            ),
+        )
         await service.tasks[retried["id"]]
         assert store.turn(retried["id"])["status"] == "committed"
         after = store.session(session["id"])

@@ -22,9 +22,7 @@ defineProps<{
     仅支持普通 API 渠道，需在新建对话时选择 Kemini
     实验模式，创建后不可切换。关闭后暂停实验对话生成，普通对话不受影响。
   </p>
-  <p class="muted">
-    可在下方编辑创作提示与小说填充，保存后从下一次生成生效。
-  </p>
+  <p class="muted">可在下方编辑创作提示与小说填充，保存后从下一次生成生效。</p>
   <p v-if="value.kemini.enabled && !saved.kemini.filler_text.trim()" role="status" class="muted">
     未配置填充文本：头部省略填充，其余已保存提示仍生效。
   </p>

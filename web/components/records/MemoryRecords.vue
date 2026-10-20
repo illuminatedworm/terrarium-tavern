@@ -300,7 +300,7 @@ function toggleGroup(id: string) {
   width: 100%;
   min-height: 40px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .memory-help,
 .memory-source p {
@@ -318,13 +318,13 @@ function toggleGroup(id: string) {
   margin-bottom: 0;
   min-height: 44px;
   padding: 11px 2px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .memory-group small {
   float: right;
   color: var(--text-muted);
   font-weight: normal;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .memory-record {
   border-bottom: 1px solid var(--border-subtle);
@@ -345,7 +345,7 @@ function toggleGroup(id: string) {
 .memory-records-scroll > button {
   min-height: 38px;
   margin-top: 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .memory-actions button,
 .memory-source button {

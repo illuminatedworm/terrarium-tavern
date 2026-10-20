@@ -188,7 +188,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
   overflow-wrap: anywhere;
 }
 .tool-status {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   opacity: 0.75;
   margin: 6px 0;
 }
@@ -204,25 +204,25 @@ pre {
   margin: 10px 0;
   padding: 8px 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
 }
 .tool-result-options legend {
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 .tool-result-options label {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .tool-result-options small {
   flex-basis: 100%;
   color: var(--text-muted);
 }
 pre {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 summary {
   cursor: pointer;

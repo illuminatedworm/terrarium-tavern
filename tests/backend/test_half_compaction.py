@@ -1,4 +1,5 @@
 """Half Agent compact: real provider wire, independent memory, and durable sources."""
+
 import asyncio
 import copy
 import json
@@ -27,8 +28,10 @@ from tests.support.tracker_model import TrackerModel
 
 async def operate(service, session, kind):
     manager = service.context_operations
-    operation = manager.start(session["id"], ContextOperationRequest(
-        kind=kind, operation_id=uid(), expected_revision=session["revision"]))
+    operation = manager.start(
+        session["id"],
+        ContextOperationRequest(kind=kind, operation_id=uid(), expected_revision=session["revision"]),
+    )
     await manager.tasks[operation["id"]]
     return manager.get(operation["id"]), service.store.session(session["id"])
 
@@ -36,36 +39,76 @@ async def operate(service, session, kind):
 def append(store, session, text, reply, *, snapshot=None):
     before = copy.deepcopy(session["snapshot"])
     draft = copy.deepcopy(snapshot or before)
-    tid, _ = store.create_turn(session["id"], TurnRequest(text=text, operation_id=uid(), expected_revision=session["revision"]))
+    tid, _ = store.create_turn(
+        session["id"], TurnRequest(text=text, operation_id=uid(), expected_revision=session["revision"])
+    )
     store.set_turn(tid, status="running")
-    settings = bind_adapter(store.session_settings(session).for_role("foreground"), store, "story", session["id"])
+    settings = bind_adapter(
+        store.session_settings(session).for_role("foreground"), store, "story", session["id"]
+    )
     user_id, output_id = uid(), uid()
-    context = compile_context(store.session_card(session["id"])["document"], session, session["messages"], draft,
-                              text, settings, tid, input_message_id=user_id,
-                              replay_records=load_trace(store, session["id"], session["messages"]))
-    user = {"id": user_id, "parent": session["head"], "role": "user", "raw": text, "model": text,
-            "display": text, "snapshot": before}
+    context = compile_context(
+        store.session_card(session["id"])["document"],
+        session,
+        session["messages"],
+        draft,
+        text,
+        settings,
+        tid,
+        input_message_id=user_id,
+        replay_records=load_trace(store, session["id"], session["messages"]),
+    )
+    user = {
+        "id": user_id,
+        "parent": session["head"],
+        "role": "user",
+        "raw": text,
+        "model": text,
+        "display": text,
+        "snapshot": before,
+    }
     draft["lore"], draft["lore_injections"] = context["next_lore"], context["next_lore_injections"]
-    output = {**user, "id": output_id, "parent": user_id, "role": "assistant", "raw": reply,
-              "model": reply, "display": reply, "snapshot": draft}
-    store.commit_turn(tid, {"messages": [user, output], "before": before,
-                            "half_agent_record": finalize_record(context["half_agent_record"], None, reply, output)})
+    output = {
+        **user,
+        "id": output_id,
+        "parent": user_id,
+        "role": "assistant",
+        "raw": reply,
+        "model": reply,
+        "display": reply,
+        "snapshot": draft,
+    }
+    store.commit_turn(
+        tid,
+        {
+            "messages": [user, output],
+            "before": before,
+            "half_agent_record": finalize_record(context["half_agent_record"], None, reply, output),
+        },
+    )
     return store.session(session["id"])
 
 
 def checkpoint(context, settings):
     history = completed_context(context)
-    return {"version": 1, "origin": response_origin(settings), "signature": context["_compact_signature"],
-            "covered": hashes(history["_compact_body"]), "compressed_count": len(history["_compact_body"]),
-            "items": [{"type": "compaction", "encrypted_content": "opaque-fixture"}]}
+    return {
+        "version": 1,
+        "origin": response_origin(settings),
+        "signature": context["_compact_signature"],
+        "covered": hashes(history["_compact_body"]),
+        "compressed_count": len(history["_compact_body"]),
+        "items": [{"type": "compaction", "encrypted_content": "opaque-fixture"}],
+    }
 
 
 async def test_short_half_switches_do_not_create_provider_or_full_agent_state(tmp_path):
     store, _, _ = connected_store(tmp_path)
     _, session = story(store)
     service = ModeRuntime(store)
+
     def forbidden(settings):
         raise AssertionError("short switches must stay local")
+
     service.context_operations.provider_factory = forbidden
     try:
         for kind in ("enable_compact", "enable_local"):
@@ -95,6 +138,7 @@ async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, 
     service = ModeRuntime(store)
     wire = []
     text = "本轮新输入不可送给整理请求。" * 3000
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
@@ -114,12 +158,15 @@ async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, 
         else:
             assert "旧发言 0" in source
         return sse(completed("实际正文<tavern_retrieval>门口</tavern_retrieval>"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         result, session = await operate(service, session, "enable_compact")
         assert result["status"] == "completed" and not wire
         session = store.update_session(session["id"], session["revision"], compact_auto=int(automatic))
-        turn = service.submit(session["id"], TurnRequest(text=text, operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"], TurnRequest(text=text, operation_id=uid(), expected_revision=session["revision"])
+        )
         await service.tasks[turn["id"]]
         saved = store.turn(turn["id"])
         assert saved["status"] == "committed", saved.get("error")
@@ -144,17 +191,25 @@ async def test_failed_auto_compaction_never_sends_writer_or_commits(tmp_path):
     _, session = story(store)
     service = ModeRuntime(store)
     wire = []
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
         assert body.get("instructions")
         return sse(completed("OK without a checkpoint"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
-        turn = service.submit(session["id"], TurnRequest(text="Oversized pending input. " * 40000,
-            operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(
+                text="Oversized pending input. " * 40000,
+                operation_id=uid(),
+                expected_revision=session["revision"],
+            ),
+        )
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "error"
         assert "未生成压缩状态" in store.turn(turn["id"])["error"]
@@ -172,22 +227,29 @@ def test_checkpoint_reuse_current_state_updates_and_source_invalidations():
         scene.commit(scene.compile(), text=f"旧正文 {index}")
     full = scene.compile()
     # Ordinary conversations keep the pre-Kemini policy, so upgrades keep their epochs.
-    layout = [(b["id"], b["source"], b.get("depth"), b.get("message_type", ""))
-              for b in scene.session["recipe"]["blocks"]]
+    layout = [
+        (b["id"], b["source"], b.get("depth"), b.get("message_type", ""))
+        for b in scene.session["recipe"]["blocks"]
+    ]
     assert full["half_agent_record"]["policy"] == fingerprint(
-        [scene.cfg.reasoning_effort, scene.cfg.reasoning_format, "narrative", layout])
+        [scene.cfg.reasoning_effort, scene.cfg.reasoning_format, "narrative", layout]
+    )
     assert full["context_ledger"]["rebuild_reason"] is None
     install(scene.snapshot, checkpoint(full, scene.cfg), full, scene.history)
     projected = scene.compile()
     assert projected["compaction_opaque"]
     assert "旧正文" not in json.dumps(projected["messages"], ensure_ascii=False)
-    assert {"state", "post", "author_note"} <= {row["source"] for row in projected["half_agent_record"]["frames"]}
+    assert {"state", "post", "author_note"} <= {
+        row["source"] for row in projected["half_agent_record"]["frames"]
+    }
     scene.commit(projected, "压缩后的一次正文")
-    assert scene.compile()["half_agent_record"]["frames"] == [], "unchanged fields reassert only once per checkpoint"
+    assert scene.compile()["half_agent_record"]["frames"] == [], (
+        "unchanged fields reassert only once per checkpoint"
+    )
     scene.snapshot["state"]["stat_data"]["hp"] = 99
     current = scene.compile()
     assert current["compaction_opaque"]
-    assert any('99' in message["content"] for message in current["messages"])
+    assert any("99" in message["content"] for message in current["messages"])
     original = copy.deepcopy(scene.snapshot)
     scene.history[1]["model"] = "编辑后的历史"
     invalid = scene.compile()
@@ -202,6 +264,7 @@ async def test_manual_compact_preserves_dynamic_tail_and_reuses_it_next_turn(tmp
     session = append(store, session, "过去的问题", "过去的回答")
     service = ModeRuntime(store)
     wire = []
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
@@ -210,18 +273,28 @@ async def test_manual_compact_preserves_dynamic_tail_and_reuses_it_next_turn(tmp
         assert any(item.get("type") == "compaction" for item in body["input"])
         assert "过去的回答" not in json.dumps(body["input"], ensure_ascii=False)
         return sse(completed("新回复"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         result, session = await operate(service, session, "compact")
         assert result["status"] == "completed" and result["compacted"], result
-        turn = service.submit(session["id"], TurnRequest(text="下一个问题", operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(text="下一个问题", operation_id=uid(), expected_revision=session["revision"]),
+        )
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])
         assert len(wire) == 2
         _, current = await operate(service, store.session(session["id"]), "enable_local")
-        duplicate = service.context_operations.start(current["id"], ContextOperationRequest(
-            operation_id=result["operation"], expected_revision=result["expected_revision"], kind="compact"))
+        duplicate = service.context_operations.start(
+            current["id"],
+            ContextOperationRequest(
+                operation_id=result["operation"],
+                expected_revision=result["expected_revision"],
+                kind="compact",
+            ),
+        )
         assert duplicate["id"] == result["id"] and duplicate["status"] == "completed"
         assert len(wire) == 2
     finally:
@@ -231,9 +304,24 @@ async def test_manual_compact_preserves_dynamic_tail_and_reuses_it_next_turn(tmp
 def test_compressed_lore_cools_down_but_frozen_sources_survive_removal():
     scene = Story("responses")
     scene.cfg.context_strategy = "openai_compact"
-    scene.document["character_book"] = {"entries": [{"id": "harbor", "keys": ["港口"],
-        "content": "港口的完整旧设定。", "enabled": True, "cooldown": 2}]}
-    row = {"id": "harbor", "anchor_id": "opening", "content": "港口的完整旧设定。", "title": "港口", "source_ids": []}
+    scene.document["character_book"] = {
+        "entries": [
+            {
+                "id": "harbor",
+                "keys": ["港口"],
+                "content": "港口的完整旧设定。",
+                "enabled": True,
+                "cooldown": 2,
+            }
+        ]
+    }
+    row = {
+        "id": "harbor",
+        "anchor_id": "opening",
+        "content": "港口的完整旧设定。",
+        "title": "港口",
+        "source_ids": [],
+    }
     scene.snapshot["lore_injections"] = [row]
     scene.snapshot["lore"] = {"harbor": {"present": True}}
     scene.history[0]["snapshot"] = copy.deepcopy(scene.snapshot)
@@ -248,7 +336,9 @@ def test_compressed_lore_cools_down_but_frozen_sources_survive_removal():
     assert current["compaction_opaque"]
     assert current["next_lore_injections"] == []
     assert not current["next_lore"]["harbor"]["present"]
-    scene.history[0]["snapshot"]["lore_injections"] = [{"id": "harbor", "anchor_id": "opening", "manually_removed": True}]
+    scene.history[0]["snapshot"]["lore_injections"] = [
+        {"id": "harbor", "anchor_id": "opening", "manually_removed": True}
+    ]
     invalid = scene.compile()
     assert not invalid["compaction_opaque"]
     assert "港口的完整旧设定" not in json.dumps(invalid["messages"], ensure_ascii=False)
@@ -266,7 +356,7 @@ def test_pending_input_inside_history_cannot_split_an_exchange_for_compaction():
     content = json.dumps(replay, ensure_ascii=False)
     assert "首轮完整回复" in content
     assert "末轮完整回复" not in content
-    rows = compiled["_compact_rows"][:compiled["_replay_complete"]]
+    rows = compiled["_compact_rows"][: compiled["_replay_complete"]]
     assert rows[-1]["message_id"] == scene.history[2]["id"]
     assert scene.history[3]["id"] not in {row.get("message_id") for row in rows}
 
@@ -274,15 +364,19 @@ def test_pending_input_inside_history_cannot_split_an_exchange_for_compaction():
 def test_role_remapping_does_not_separate_lore_from_its_source_exchange():
     from tavern.conversation.compaction import replay_groups
     from tavern.core.message_adapter import MessageAdapterConfig
+
     scene = Story("responses")
     scene.cfg.context_strategy = "openai_compact"
-    scene.cfg.message_adapter = MessageAdapterConfig.model_validate({"mappings": {
-        "responses": {"lore_injected": {"role": "user", "wrap": False}}}})
-    scene.document["character_book"] = {"entries": [{"id": "place", "keys": ["港口"], "enabled": True,
-                                                     "content": "完整锚定资料"}]}
+    scene.cfg.message_adapter = MessageAdapterConfig.model_validate(
+        {"mappings": {"responses": {"lore_injected": {"role": "user", "wrap": False}}}}
+    )
+    scene.document["character_book"] = {
+        "entries": [{"id": "place", "keys": ["港口"], "enabled": True, "content": "完整锚定资料"}]
+    }
     scene.commit(scene.compile(), "首轮完整回复")
-    scene.snapshot["lore_injections"] = [{"id": "place", "anchor_id": scene.history[1]["id"],
-                                          "content": "完整锚定资料", "title": "地点"}]
+    scene.snapshot["lore_injections"] = [
+        {"id": "place", "anchor_id": scene.history[1]["id"], "content": "完整锚定资料", "title": "地点"}
+    ]
     scene.snapshot["lore"] = {"place": {"present": True}}
     scene.commit(scene.compile(), "末轮完整回复")
     compiled = completed_context(scene.compile())
@@ -296,8 +390,11 @@ def test_role_remapping_does_not_separate_lore_from_its_source_exchange():
 def test_reinjected_lore_gets_a_new_cooldown_on_its_next_compaction():
     scene = Story("responses")
     scene.cfg.context_strategy = "openai_compact"
-    scene.document["character_book"] = {"entries": [{"id": "place", "keys": ["港口"], "enabled": True,
-                                                     "content": "港口的现行设定", "cooldown": 0}]}
+    scene.document["character_book"] = {
+        "entries": [
+            {"id": "place", "keys": ["港口"], "enabled": True, "content": "港口的现行设定", "cooldown": 0}
+        ]
+    }
     old = {"id": "place", "anchor_id": "opening", "content": "港口的旧设定", "title": "港口"}
     scene.snapshot["lore_injections"] = [old]
     scene.snapshot["lore"] = {"place": {"present": True}}
@@ -320,8 +417,9 @@ def test_reinjected_lore_gets_a_new_cooldown_on_its_next_compaction():
 def test_removed_lore_reservation_exits_with_its_compressed_exchange():
     scene = Story("responses")
     scene.cfg.context_strategy = "openai_compact"
-    scene.document["character_book"] = {"entries": [{"id": "place", "keys": ["港口"], "enabled": True,
-                                                     "content": "不应恢复的旧注入"}]}
+    scene.document["character_book"] = {
+        "entries": [{"id": "place", "keys": ["港口"], "enabled": True, "content": "不应恢复的旧注入"}]
+    }
     removed = {"id": "place", "anchor_id": "opening", "manually_removed": True}
     scene.snapshot["lore_injections"] = [removed]
     scene.snapshot["lore"] = {"place": {"present": True}}
@@ -337,9 +435,20 @@ def test_removed_lore_reservation_exits_with_its_compressed_exchange():
 
 def test_history_edit_invalidates_frozen_trace_sources_as_well_as_snapshots(tmp_path):
     store, _, _ = connected_store(tmp_path)
-    card = store.import_card(json.dumps({"name": "Fixture", "first_mes": "开场", "character_book": {
-        "entries": [{"id": "place", "keys": ["港口"], "enabled": True, "content": "港口的完整设定"}]}
-    }).encode(), "card.json")
+    card = store.import_card(
+        json.dumps(
+            {
+                "name": "Fixture",
+                "first_mes": "开场",
+                "character_book": {
+                    "entries": [
+                        {"id": "place", "keys": ["港口"], "enabled": True, "content": "港口的完整设定"}
+                    ]
+                },
+            }
+        ).encode(),
+        "card.json",
+    )
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session = append(store, session, "前往港口", "抵达港口")
     records = load_trace(store, session["id"], session["messages"])
@@ -356,19 +465,29 @@ async def test_context_operation_cancellation_blocks_story_and_restores_original
     service = ModeRuntime(store)
     started = asyncio.Event()
     release = asyncio.Event()
+
     async def route(request):
         started.set()
         await release.wait()
         return sse(compact_response())
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
         manager = service.context_operations
-        operation = manager.start(session["id"], ContextOperationRequest(kind="compact", operation_id=uid(), expected_revision=session["revision"]))
+        operation = manager.start(
+            session["id"],
+            ContextOperationRequest(
+                kind="compact", operation_id=uid(), expected_revision=session["revision"]
+            ),
+        )
         await asyncio.wait_for(started.wait(), 10)
         with pytest.raises(Conflict):
-            service.submit(session["id"], TurnRequest(text="不能开始", operation_id=uid(), expected_revision=session["revision"]))
+            service.submit(
+                session["id"],
+                TurnRequest(text="不能开始", operation_id=uid(), expected_revision=session["revision"]),
+            )
         await manager.cancel(operation["id"])
         assert store.session(session["id"])["snapshot"] == before
         release.set()
@@ -394,11 +513,13 @@ async def test_switch_back_uses_tracker_coverage_and_keeps_manual_memory(tmp_pat
         session = append(store, session, f"交流 {i}", f"回复 {i}")
     service = ModeRuntime(store)
     models = []
+
     def tracker(settings):
         assert settings.model == "fixture-tracker"
         model = TrackerModel(("write_memory", {"operations": [], "questions": []}), "整理完成")
         models.append(model)
         return model
+
     service.context_operations.provider_factory = tracker
     try:
         before = copy.deepcopy(session["snapshot"]["memory_document"])
@@ -410,8 +531,10 @@ async def test_switch_back_uses_tracker_coverage_and_keeps_manual_memory(tmp_pat
         snapshot = session["snapshot"]
         assert snapshot["memory_archive"]["covered_count"] >= snapshot["context_window"]["covered_count"] > 0
         assert snapshot["context_window"]["covered_count"] <= len(session["messages"]) - 4
-        assert [{k: row[k] for k in old} for row, old in zip(
-            snapshot["memory_document"]["records"], before["records"], strict=True)] == before["records"]
+        assert [
+            {k: row[k] for k in old}
+            for row, old in zip(snapshot["memory_document"]["records"], before["records"], strict=True)
+        ] == before["records"]
         assert STATE not in snapshot and "full_agent" not in snapshot
         for model in models:
             assert model.closed
@@ -429,20 +552,29 @@ async def test_periodic_tracker_and_variables_still_run_in_compact_mode(tmp_path
     store.save_settings(config)
     _, session = story(store)
     service = ModeRuntime(store)
-    tracker = TrackerModel(("write_memory", {"operations": [], "questions": []}),
-                           ("patch_state", {"operations": [], "comment": "无需修改"}), "维护完成")
+    tracker = TrackerModel(
+        ("write_memory", {"operations": [], "questions": []}),
+        ("patch_state", {"operations": [], "comment": "无需修改"}),
+        "维护完成",
+    )
     service.half.tracker_provider_factory = lambda: tracker
     wire = []
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
         assert not body.get("context_management") and not body.get("tools")
         return sse(completed("本轮完整正文"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
-        turn = service.submit(session["id"], TurnRequest(text="继续", update_variables=True,
-            operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(
+                text="继续", update_variables=True, operation_id=uid(), expected_revision=session["revision"]
+            ),
+        )
         await service.tasks[turn["id"]]
         saved = store.turn(turn["id"])
         assert saved["status"] == "committed", saved.get("error")
@@ -461,19 +593,28 @@ async def test_regeneration_uses_original_input_snapshot_and_not_replaced_reply(
     session = append(store, session, "需要重写的问题", "必须排除的旧回复")
     service = ModeRuntime(store)
     wire = []
+
     def route(request):
         body = json.loads(request.content)
         wire.append(body)
         assert "必须排除的旧回复" not in json.dumps(body["input"], ensure_ascii=False)
         assert "需要重写的问题" in json.dumps(body["input"], ensure_ascii=False)
         return sse(completed("替代回复"))
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         original_user = session["messages"][-2]["id"]
         count = len(session["messages"])
-        turn = service.submit(session["id"], TurnRequest(mode="regenerate", message_id=session["head"],
-            operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(
+                mode="regenerate",
+                message_id=session["head"],
+                operation_id=uid(),
+                expected_revision=session["revision"],
+            ),
+        )
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed", store.turn(turn["id"])
         current = store.session(session["id"])
@@ -485,6 +626,7 @@ async def test_regeneration_uses_original_input_snapshot_and_not_replaced_reply(
 
 async def test_fork_import_and_log_cleanup_keep_replay_sources(tmp_path):
     from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+
     store, _, _ = connected_store(tmp_path)
     _, session = story(store)
     for index in range(3):
@@ -521,29 +663,62 @@ async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(
     config.half_agent.official_foreground.context_tokens = 8192
     config.half_agent.official_foreground.reply_tokens = 1024
     store.save_settings(config)
-    card = store.import_card(json.dumps({"name": "Fixture", "first_mes": "开场", "character_book": {
-        "entries": [{"id": "initial", "comment": "[InitVar]", "content": "hp: 5", "enabled": True, "keys": []}]}
-    }).encode(), "card.json")
+    card = store.import_card(
+        json.dumps(
+            {
+                "name": "Fixture",
+                "first_mes": "开场",
+                "character_book": {
+                    "entries": [
+                        {
+                            "id": "initial",
+                            "comment": "[InitVar]",
+                            "content": "hp: 5",
+                            "enabled": True,
+                            "keys": [],
+                        }
+                    ]
+                },
+            }
+        ).encode(),
+        "card.json",
+    )
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session = store.update_session(session["id"], session["revision"], policy="review")
     service = ModeRuntime(store)
-    tracker = TrackerModel(("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}],
-                                            "comment": "本轮变化"}), "完成")
+    tracker = TrackerModel(
+        ("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 3}], "comment": "本轮变化"}),
+        "完成",
+    )
     service.half.tracker_provider_factory = lambda: tracker
-    store.chatgpt.http_transport = httpx.MockTransport(lambda request: sse(
-        compact_response() if json.loads(request.content).get("instructions") else completed("待审核正文")))
+    store.chatgpt.http_transport = httpx.MockTransport(
+        lambda request: sse(
+            compact_response() if json.loads(request.content).get("instructions") else completed("待审核正文")
+        )
+    )
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
-        turn = service.submit(session["id"], TurnRequest(text="完整输入。" * 4000, update_variables=True,
-            operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(
+                text="完整输入。" * 4000,
+                update_variables=True,
+                operation_id=uid(),
+                expected_revision=session["revision"],
+            ),
+        )
         await service.tasks[turn["id"]]
         staged = store.turn(turn["id"])
         assert staged["status"] == "awaiting_review", staged.get("error")
         assert store.session(session["id"])["snapshot"] == before
         with pytest.raises(Conflict):
-            service.context_operations.start(session["id"], ContextOperationRequest(
-                operation_id=uid(), expected_revision=session["revision"], kind="enable_local"))
+            service.context_operations.start(
+                session["id"],
+                ContextOperationRequest(
+                    operation_id=uid(), expected_revision=session["revision"], kind="enable_local"
+                ),
+            )
         service.review(turn["id"], accept)
         saved = store.session(session["id"])
         if accept:
@@ -562,18 +737,24 @@ async def test_setting_change_during_compact_prevents_publish_and_stale_resume(t
     service = ModeRuntime(store)
     entered, release = asyncio.Event(), asyncio.Event()
     calls = []
+
     async def route(request):
         calls.append(request)
         entered.set()
         await release.wait()
         return sse(compact_response())
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
         manager = service.context_operations
-        operation = manager.start(session["id"], ContextOperationRequest(
-            operation_id=uid(), kind="compact", expected_revision=session["revision"]))
+        operation = manager.start(
+            session["id"],
+            ContextOperationRequest(
+                operation_id=uid(), kind="compact", expected_revision=session["revision"]
+            ),
+        )
         task = manager.tasks[operation["id"]]
         await asyncio.wait_for(entered.wait(), 10)
         config = store.settings_document()
@@ -597,16 +778,22 @@ async def test_cancel_during_automatic_compaction_keeps_committed_snapshot(tmp_p
     _, session = story(store)
     service = ModeRuntime(store)
     entered = asyncio.Event()
+
     async def route(request):
         assert json.loads(request.content).get("instructions")
         entered.set()
         await asyncio.Event().wait()
+
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
-        turn = service.submit(session["id"], TurnRequest(text="Long pending input. " * 40000,
-            operation_id=uid(), expected_revision=session["revision"]))
+        turn = service.submit(
+            session["id"],
+            TurnRequest(
+                text="Long pending input. " * 40000, operation_id=uid(), expected_revision=session["revision"]
+            ),
+        )
         await asyncio.wait_for(entered.wait(), 15)
         await service.cancel(turn["id"])
         assert store.turn(turn["id"])["status"] == "cancelled"

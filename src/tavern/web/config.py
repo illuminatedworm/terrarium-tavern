@@ -1,4 +1,5 @@
 """Visible web service settings and per-agent permission, independent of model vendors."""
+
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -34,7 +35,14 @@ class SearXNGConfig(ServiceConfig):
     def valid_endpoint(self):
         if self.endpoint:
             url = urlsplit(self.endpoint)
-            if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password or url.query or url.fragment:
+            if (
+                url.scheme not in {"http", "https"}
+                or not url.hostname
+                or url.username
+                or url.password
+                or url.query
+                or url.fragment
+            ):
                 raise ValueError("SearXNG 地址必须为无凭据、查询参数或片段的 HTTP(S) 地址")
         return self
 
@@ -60,10 +68,13 @@ def migrate_web_settings(shared):
     old = shared.get("advisor", {}).get("web", {})
     if "mode" in old or not old:
         return False
-    shared.setdefault("web", {
-        "timeout_seconds": old.get("timeout_seconds", 25),
-        "searxng": {"endpoint": old.get("endpoint", "")},
-    })
+    shared.setdefault(
+        "web",
+        {
+            "timeout_seconds": old.get("timeout_seconds", 25),
+            "searxng": {"endpoint": old.get("endpoint", "")},
+        },
+    )
     shared["advisor"]["web"] = {"mode": "auto" if old.get("enabled", True) else "off"}
     return True
 
@@ -78,6 +89,7 @@ def public_web(config):
 def merge_web_secrets(value, previous):
     """Omitted credentials preserve secrets; an explicit empty string clears them."""
     from copy import deepcopy
+
     result = deepcopy(value)
     for name in ("exa", "tavily"):
         if name in result and isinstance(result[name], dict):

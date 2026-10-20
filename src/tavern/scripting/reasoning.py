@@ -1,4 +1,5 @@
 """Protocol thinking capabilities shared by settings and request compilation."""
+
 import re
 from dataclasses import dataclass
 
@@ -39,9 +40,14 @@ ANTHROPIC_THINKING = {
 
 def anthropic_policy(model):
     name = model.lower().replace(".", "-")
-    return next((p for key, p in ANTHROPIC_THINKING.items()
-                 if re.search(r"claude-" + re.escape(key) + r"(?=$|:|-(?:[a-z]|\d{8}(?:$|[-:])))", name)),
-                AnthropicThinking(mode="effort", sampling=True))
+    return next(
+        (
+            p
+            for key, p in ANTHROPIC_THINKING.items()
+            if re.search(r"claude-" + re.escape(key) + r"(?=$|:|-(?:[a-z]|\d{8}(?:$|[-:])))", name)
+        ),
+        AnthropicThinking(mode="effort", sampling=True),
+    )
 
 
 GEMINI_BUDGETS = {"none": 0, "minimal": 128, "low": 1024, "medium": 4096, "high": 8192, "xhigh": 16384}
@@ -78,8 +84,11 @@ def reasoning_capabilities(api, model):
             levels += ["low", "medium", "high"]
             if policy.mode == "adaptive":
                 levels += (["xhigh"] if policy.xhigh else []) + ["max"]
-        note = ("此模型不支持文字思考档位；默认不发送思考参数。" if policy.mode == "unsupported" else
-                "思考档位按 Anthropic Messages 及当前模型匹配；默认不发送思考参数。")
+        note = (
+            "此模型不支持文字思考档位；默认不发送思考参数。"
+            if policy.mode == "unsupported"
+            else "思考档位按 Anthropic Messages 及当前模型匹配；默认不发送思考参数。"
+        )
     elif api == "gemini" or (api == "chat_completions" and "gemini" in model.lower()):
         levels = gemini_levels(model, native=api == "gemini")
         if api == "gemini" and not _gemini_thinking_level(model):
@@ -90,9 +99,14 @@ def reasoning_capabilities(api, model):
     else:
         levels = OPENAI_EFFORTS
         note = "思考档位按当前接口提供，具体模型支持范围由服务商决定；默认不发送思考参数。"
-    return {"id": model, "display_name": model,
-            "supported_reasoning_levels": [{"effort": effort, "description": descriptions.get(effort, "")}
-                                           for effort in levels], "note": note}
+    return {
+        "id": model,
+        "display_name": model,
+        "supported_reasoning_levels": [
+            {"effort": effort, "description": descriptions.get(effort, "")} for effort in levels
+        ],
+        "note": note,
+    }
 
 
 def anthropic_thinking(model, effort):

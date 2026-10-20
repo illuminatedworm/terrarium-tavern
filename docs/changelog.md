@@ -19,6 +19,15 @@
 | [v0.2.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.2.0) | 2026-09-28 | Half Agent 与 Full Agent 双模式 |
 | [v0.1.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.1.0) | 2026-09-22 | 初始基线 |
 
+## 未发布
+
+- 数据库升级为 schema 8，设置文档升级为 version 7：消息增加独立的实验辅助记录，会话增加 Kemini 对话标记（已有对话均为普通对话）；设置 version 5 增加默认关闭的 Kemini 式实验功能，version 6 补全绝对前缀与可编辑传输提示，version 7 补齐角色扮演追加要求、正文约束和末尾输出提示。
+- 升级时只生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份，取代此前按迁移步骤分别生成的多份备份。
+
+升级注意：
+
+- 设置 version 7 只将完全匹配旧默认值的 Kemini 边界标签与 Interleaving 包装改为 Markdown 分隔符，自定义文本与开关保留。回退旧程序时从升级前备份恢复。
+
 ## v0.6.0 — 2026-10-18
 
 - Card Author（制卡 agent）支持从零创作角色卡、一次写入初始正文及用图片附件设置头像；完善头像保存、撤销与未保存状态，草稿仍由用户审阅后加入书架。

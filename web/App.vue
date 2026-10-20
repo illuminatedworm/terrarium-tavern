@@ -13,10 +13,10 @@ import {
   watch,
 } from 'vue';
 import { useContextOperations } from './composables/useContextOperations';
-import { useStartupWarmup } from './composables/useStartupWarmup';
+import { useStartupWarmup, type LocalModelStatus, type StartupModels } from './composables/useStartupWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
-import type { ConversationModelSelection } from './lib/settingsDocument';
+import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
@@ -27,10 +27,7 @@ import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
-import SceneNotes from './components/story/SceneNotes.vue';
 import ContextPreview from './components/story/ContextPreview.vue';
-import FullAgentNotes from './components/story/FullAgentNotes.vue';
-import ContextStrategyControls from './components/story/ContextStrategyControls.vue';
 import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
@@ -42,14 +39,12 @@ import DialogueTools from './components/story/DialogueTools.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
-import StoryMessage from './components/story/StoryMessage.vue';
 import StoryProse from './components/story/StoryProse.vue';
 import ExperimentalRecords from './components/story/ExperimentalRecords.vue';
 import { latestAuxiliary } from './lib/kemini';
-import { defaultReadingLayout } from './lib/dataTransfer';
-import PreferencePresetPicker from './components/settings/PreferencePresetPicker.vue';
+import { clampRightWidth, defaultReadingLayout, type ReadingLayout } from './lib/dataTransfer';
+import ReadingLayoutPanel from './components/settings/ReadingLayoutPanel.vue';
 import ConversationModelControls from './components/settings/ConversationModelControls.vue';
-import PolicySelect from './components/settings/PolicySelect.vue';
 import TurnReview from './components/story/TurnReview.vue';
 import RecipeEditor from './components/settings/RecipeEditor.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
@@ -57,15 +52,42 @@ import CharacterPortrait from './components/character/CharacterPortrait.vue';
 import Icon from './components/common/Icon.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
+import MvuInspector from './components/story/MvuInspector.vue';
+import SceneInspector from './components/story/SceneInspector.vue';
+import SessionOptions, { type SessionOptionsDraft } from './components/story/SessionOptions.vue';
+import StoryStatePanel, { type StateTab } from './components/story/StoryStatePanel.vue';
+import MemoryRebuildConfirm from './components/story/MemoryRebuildConfirm.vue';
+import FullAgentWindowPanel from './components/story/FullAgentWindowPanel.vue';
+import ForkSelectPanel from './components/story/ForkSelectPanel.vue';
+import ForkConfirmPanel from './components/story/ForkConfirmPanel.vue';
+import DeleteCardConfirm from './components/character/DeleteCardConfirm.vue';
+import AboutPanel from './components/common/AboutPanel.vue';
+import HomeView from './components/story/HomeView.vue';
+import SessionList from './components/story/SessionList.vue';
+import CardList from './components/character/CardList.vue';
+import CardConversationList from './components/character/CardConversationList.vue';
 import StoryLoading from './components/story/StoryLoading.vue';
 import PersonaEditor from './components/settings/PersonaEditor.vue';
-import StateTree from './components/story/StateTree.vue';
 import WorkRecords from './components/records/WorkRecords.vue';
 import AppModal from './components/common/AppModal.vue';
 import StartupWarmup from './components/story/StartupWarmup.vue';
-import { observeTurn, turnDraft } from './lib/turnStream';
+import { observeTurn, turnDraft, type TraceEvent } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
 import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
+import type {
+  BranchMessage,
+  CardConversationSummary,
+  JsonObject,
+  CardRecord,
+  MemoryRebuildEstimate,
+  OrphanDraft,
+  PendingInput,
+  Session,
+  SessionSummary,
+  StoryContextPreview,
+  StoryMessageRecord,
+  TurnRecord,
+} from './lib/types';
 
 const SettingsPanel = defineAsyncComponent({
   loader: () => import('./components/settings/SettingsPanel.vue'),
@@ -89,30 +111,33 @@ const CardWorkspace = defineAsyncComponent({
   errorComponent: { render: () => h('p', { role: 'alert' }, '制卡界面加载失败，请刷新页面后重试。') },
 });
 
-const orphanDrafts = ref<any[]>([]);
-const cardConversations = ref<any[]>([]);
+const orphanDrafts = ref<OrphanDraft[]>([]);
+const cardConversations = ref<CardConversationSummary[]>([]);
 const editorConversationId = ref('');
 const deletingCardConversationId = ref('');
-const cards = ref<any[]>([]),
-  sessions = ref<any[]>([]),
-  session = ref<any>(null);
-const sessionCard = ref<any>(null);
+const cards = ref<CardRecord[]>([]),
+  sessions = ref<SessionSummary[]>([]),
+  session = ref<Session | null>(null);
+const sessionCard = ref<CardRecord | null>(null);
 const sessionPortraits = computed(() =>
   Object.fromEntries(sessions.value.map((s) => [s.id, sessionPortraitUrl(s)])),
 );
 const storyPortrait = computed(() => sessionPortraitUrl(session.value));
-// Home shows the newest stories first; the sidebar keeps the full list.
-const recentSessions = computed(() =>
-  [...sessions.value].sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 6),
-);
-const editingSessionTitleId = ref('');
-const sessionTitleDraft = ref('');
 const savingSessionTitle = ref(false);
-const sessionTitleInput = ref<HTMLInputElement | null>(null);
 const isFullAgent = computed(() => session.value?.agent_mode === 'full_agent');
+/** Turn actions are reachable only while a turn is shown. */
+function currentTurn(): TurnRecord {
+  if (!activeTurn.value) throw new Error('没有进行中的回合');
+  return activeTurn.value;
+}
+/** Story actions are reachable only from the open story view. */
+function openStory(): Session {
+  if (!session.value) throw new Error('没有打开的故事');
+  return session.value;
+}
 const advisorSeen = ref('');
-function applyFullSession(updated: any) {
-  if (session.value?.id === updated.id && updated.revision >= session.value.revision) {
+function applyFullSession(updated: Session) {
+  if (session.value?.id === updated.id && updated.revision >= openStory().revision) {
     session.value = updated;
     void refreshContextStats();
   }
@@ -126,7 +151,7 @@ async function classifyChannel(channel: Channel) {
   try {
     const updated = await api(
       `/sessions/${sid}/channel-origin`,
-      { channel_origin: channel, expected_revision: session.value.revision },
+      { channel_origin: channel, expected_revision: openStory().revision },
       'PUT',
     );
     applyFullSession(updated);
@@ -144,23 +169,25 @@ const readingMessageId = ref('');
 const messageIntervals = computed(() => historyMessageIntervals(session.value?.messages || []));
 const eligibleCacheReplies = computed(() => {
   const messages = session.value?.messages || [];
-  const roles = new Map(messages.map((message: any) => [message.id, message.role]));
+  const roles = new Map(messages.map((message) => [message.id, message.role]));
   return new Set(
     messages
-      .filter((message: any) => message.role === 'assistant' && roles.get(message.parent) === 'user')
-      .map((message: any) => message.id),
+      .filter(
+        (message) => message.role === 'assistant' && !!message.parent && roles.get(message.parent) === 'user',
+      )
+      .map((message) => message.id),
   );
 });
 const input = ref(''),
   error = ref(''),
   busy = ref(false),
-  activeTurn = ref<any>(null),
+  activeTurn = ref<TurnRecord | null>(null),
   draft = ref('');
 const panel = ref(''),
-  settings = ref<any>({}),
-  selected = ref<any>(null);
-const preview = ref<any>(null),
-  trace = ref<any[]>([]),
+  settings = ref<SettingsDocument | null>(null),
+  selected = ref<CardRecord | null>(null);
+const preview = ref<StoryContextPreview | null>(null),
+  trace = ref<TraceEvent[]>([]),
   savingRecipe = ref(false);
 const previewMessagesBusy = ref(false);
 const settingsPanel = ref<InstanceType<typeof SettingsPanel>>();
@@ -175,7 +202,14 @@ function managePreferencePresets() {
   settingsInitialPage.value = 'shared.preference_presets';
   panel.value = 'settings';
 }
-const activeSettings = computed(() => settings.value[isFullAgent.value ? 'full_agent' : 'half_agent'] || {});
+/** Views that read settings open only after `load()`. */
+function loadedSettings(): SettingsDocument {
+  if (!settings.value) throw new Error('设置尚未载入');
+  return settings.value;
+}
+const activeSettings = computed<SettingsObject>(
+  () => settings.value?.[isFullAgent.value ? 'full_agent' : 'half_agent'] ?? {},
+);
 const configuredModel = computed(
   () =>
     (isFullAgent.value
@@ -190,13 +224,13 @@ const activeModel = computed(() =>
 const modelSaving = ref(false);
 async function selectStoryModel(selection: ConversationModelSelection) {
   if (!session.value || modelSaving.value) return;
-  const sid = session.value.id;
+  const sid = openStory().id;
   const token = viewScope.current();
   modelSaving.value = true;
   try {
     const result = await viewApi(
       `/sessions/${sid}/model`,
-      { expected_revision: session.value.revision, selection },
+      { expected_revision: openStory().revision, selection },
       'PUT',
     );
     if (viewScope.owns(token) && session.value?.id === sid) {
@@ -209,7 +243,7 @@ async function selectStoryModel(selection: ConversationModelSelection) {
     modelSaving.value = false;
   }
 }
-const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value.shared?.providers));
+const activeSubscription = computed(() => usesChatGPT(activeModel.value, settings.value?.shared.providers));
 const channelModelsReady = computed(
   () =>
     !!activeModel.value.model &&
@@ -225,7 +259,7 @@ const trackerSubscription = computed(
       activeSettings.value[
         session.value?.channel_origin === 'chatgpt' ? 'official_background' : 'background'
       ],
-      settings.value.shared?.providers,
+      settings.value?.shared.providers,
     ),
 );
 const storySubscriptionLabel = computed(() =>
@@ -239,9 +273,9 @@ function closePanel() {
   if (panel.value === 'settings' && settingsPanel.value) void settingsPanel.value.requestClose();
   else panel.value = '';
 }
-const startupModels = ref<any>(null);
+const startupModels = ref<StartupModels | null>(null);
 const startupWarmup = useStartupWarmup(() => panel.value === 'warmup');
-const contextStats = ref<any>(null);
+const contextStats = ref<StoryContextPreview | null>(null);
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
 let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -316,18 +350,17 @@ watch(
     memoryDiscardNotice.value = '';
   },
 );
-const pendingInput = ref<any>(null);
+const pendingInput = ref<PendingInput | null>(null);
 // Finished turns are reopened without replaying SSE, so recover their input
 // from the persisted request. Regeneration reuses an already committed input.
-const visiblePendingInput = computed(() => {
+const visiblePendingInput = computed((): PendingInput | null => {
   if (pendingInput.value) return pendingInput.value;
   const request = activeTurn.value?.request;
   return request?.mode === 'send' && !request.scene_refresh && request.text ? { raw: request.text } : null;
 });
-const pendingLore = ref<any[]>([]);
+const pendingLore = ref<LoreRecord[]>([]);
 const pendingVisible = computed(
-  () =>
-    activeTurn.value && activeTurn.value.status !== 'committed' && !activeTurn.value.request?.scene_refresh,
+  () => activeTurn.value && currentTurn().status !== 'committed' && !currentTurn().request?.scene_refresh,
 );
 watch(
   () => session.value?.id,
@@ -338,8 +371,7 @@ watch(
 );
 const updateVariables = ref(false);
 const variablePreferenceSaving = ref(false);
-const allowEdit = ref(false),
-  importInput = ref<HTMLInputElement>();
+const allowEdit = ref(false);
 watch([updateVariables, () => allowEdit.value], () => {
   if (!busy.value) void refreshContextStats();
 });
@@ -354,30 +386,30 @@ watch(
   () => {
     // Running/reviewed turns show their captured permission; future turns use
     // the conversation preference, including after navigation or a reload.
-    const request = ['queued', 'running', 'awaiting_review'].includes(activeTurn.value?.status)
-      ? activeTurn.value.request
-      : null;
+    const turn = activeTurn.value;
+    const request =
+      turn && ['queued', 'running', 'awaiting_review'].includes(turn.status) ? turn.request : null;
     updateVariables.value =
       !!(request?.update_variables ?? session.value?.update_variables) &&
-      !(session.value?.agent_mode === 'full_agent' && session.value.disabled_tools?.includes('patch_state'));
+      !(session.value?.agent_mode === 'full_agent' && openStory().disabled_tools?.includes('patch_state'));
   },
 );
 async function saveUpdateVariables() {
-  const sid = session.value.id,
+  const sid = openStory().id,
     token = viewScope.current();
   variablePreferenceSaving.value = true;
   try {
     const updated = await viewApi(
       `/sessions/${sid}/options`,
-      { expected_revision: session.value.revision, update_variables: updateVariables.value },
+      { expected_revision: openStory().revision, update_variables: updateVariables.value },
       'PUT',
     );
-    // Preserve any unsaved fields in the conversation settings form.
-    session.value.update_variables = updated.update_variables;
-    session.value.revision = updated.revision;
+    // Patch in place; the conversation settings page keeps its own unsaved draft.
+    openStory().update_variables = updated.update_variables;
+    openStory().revision = updated.revision;
   } catch (e: any) {
     if (viewScope.owns(token)) {
-      updateVariables.value = !!session.value.update_variables;
+      updateVariables.value = !!openStory().update_variables;
       error.value = e.message;
     }
   } finally {
@@ -413,10 +445,10 @@ const savingMessageEdit = ref(false);
 let editingWasFollowing = false;
 const editNotice = ref('');
 const sceneSaving = ref<'memory' | null>(null);
-const memoryRebuildEstimate = ref<any>(null);
+const memoryRebuildEstimate = ref<MemoryRebuildEstimate | null>(null);
 const memoryProgress = computed(() => {
   if (sceneUpdating.value !== 'memory') return '';
-  const batch = [...trace.value].reverse().find((e: any) => e.kind === 'memory_batch');
+  const batch = [...trace.value].reverse().find((e) => e.kind === 'memory_batch');
   return batch
     ? `正在整理第 ${batch.payload.primary_calls} 批，已提交的旧记忆保持不变。`
     : '正在准备重建记忆…';
@@ -451,7 +483,7 @@ const cacheRequestState = computed(
     [...trace.value]
       .reverse()
       .find(
-        (event: any) =>
+        (event) =>
           event.kind === 'provider_request' &&
           event.payload?.cache &&
           ['full_agent', 'narrative'].includes(event.payload.purpose),
@@ -459,13 +491,13 @@ const cacheRequestState = computed(
 );
 const cacheBreakpointId = computed(() => {
   const planned = contextStats.value?.cache;
-  return planned?.scope === session.value?.id && planned?.revision === session.value?.revision
+  return planned && planned.scope === session.value?.id && planned.revision === session.value?.revision
     ? planned.message_id || null
     : session.value?.cache_breakpoint_effective_id || null;
 });
 const sentCacheLabel = computed(() => {
   const cache = cacheRequestState.value;
-  const at = session.value?.messages.findIndex((m: any) => m.id === cache?.message_id) ?? -1;
+  const at = session.value?.messages.findIndex((m) => m.id === cache?.message_id) ?? -1;
   return at >= 0 ? `历史 H${at + 1}` : contextLabel(cache?.source || '固定前缀');
 });
 const sceneSubmitting = ref<'memory' | null>(null);
@@ -490,7 +522,12 @@ const sidebarSection = ref(
     ? localStorage.getItem('tavern-sidebar-section')!
     : 'sessions',
 );
-const deleteBubble = ref<any>(null);
+type DeleteTarget =
+  | { kind: 'session'; item: SessionSummary }
+  | { kind: 'editor'; item: CardConversationSummary };
+const deleteBubble = ref<
+  (DeleteTarget & { title: string; above: boolean; left: number; arrowLeft: number; top: number }) | null
+>(null);
 const inspectorTab = ref('mvu'),
   optionsNotice = ref('');
 const inspectorPages = computed(() =>
@@ -525,18 +562,18 @@ function showOptionsNotice(message: string) {
   optionsNotice.value = message;
   optionsNoticeTimer = setTimeout(clearOptionsNotice, 2000);
 }
-const deletingCard = ref<any>(null),
+const deletingCard = ref<CardRecord | null>(null),
   deletingCardBusy = ref(false);
-const forkMessage = ref<any>(null),
+const forkMessage = ref<BranchMessage | null>(null),
   creatingFork = ref(false);
-const forkPoints = ref<any[]>([]),
+const forkPoints = ref<BranchMessage[]>([]),
   forkFromPicker = ref(false);
 const regeneratingId = computed(() =>
-  busy.value && activeTurn.value?.request?.mode === 'regenerate' ? activeTurn.value.request.message_id : null,
+  busy.value && activeTurn.value?.request?.mode === 'regenerate' ? currentTurn().request.message_id : null,
 );
 let deleteTrigger: HTMLElement | null = null;
 watch(sidebarSection, (value) => localStorage.setItem('tavern-sidebar-section', value));
-const layout = ref({
+const layout = ref<ReadingLayout>({
   ...defaultReadingLayout(window.innerWidth),
   ...JSON.parse(localStorage.getItem('tavern-layout') || '{}'),
 });
@@ -601,13 +638,9 @@ const readingStyle = computed(() => ({
       ? '"Noto Serif SC", "SimSun", Georgia, serif'
       : '"Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif',
 }));
-function normalizeLayoutNumber(key: string, min: number, max: number) {
-  const value = Number(layout.value[key]);
-  layout.value[key] = Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min;
-}
 let stopRightResize: undefined | (() => void);
 function resizeRightBy(delta: number) {
-  layout.value.rightWidth = Math.min(640, Math.max(240, layout.value.rightWidth + delta));
+  layout.value.rightWidth = clampRightWidth(layout.value.rightWidth + delta);
 }
 function startRightResize(event: PointerEvent) {
   if (layout.value.rightCollapsed || window.innerWidth <= 760) return;
@@ -616,7 +649,7 @@ function startRightResize(event: PointerEvent) {
   const startX = event.clientX,
     startWidth = layout.value.rightWidth;
   const move = (e: PointerEvent) => {
-    layout.value.rightWidth = Math.min(640, Math.max(240, startWidth + startX - e.clientX));
+    layout.value.rightWidth = clampRightWidth(startWidth + startX - e.clientX);
   };
   const stop = () => {
     window.removeEventListener('pointermove', move);
@@ -645,6 +678,10 @@ watch(panel, async (value) => {
   }
 });
 
+// Story-changing controls wait for the running turn, an open message edit and any review.
+const storyLocked = computed(
+  () => busy.value || !!editingMessageId.value || activeTurn.value?.status === 'awaiting_review',
+);
 const retryableTurn = computed(() =>
   canRetryTurn(activeTurn.value, session.value) ? activeTurn.value : null,
 );
@@ -661,11 +698,11 @@ function turnError(value: string) {
 }
 const latestReply = computed(() =>
   session.value?.messages.at(-1)?.role === 'assistant' && session.value?.messages.at(-1)?.parent
-    ? session.value.messages.at(-1)
+    ? openStory().messages.at(-1)
     : null,
 );
 const editableMessageIds = computed(() => {
-  const ids = new Set<string>(session.value?.head ? [session.value.head] : []);
+  const ids = new Set<string>(session.value?.head ? [openStory().head] : []);
   const user = session.value?.messages.at(-2);
   if (user?.role === 'user' && user.id === latestReply.value?.parent) ids.add(user.id);
   return ids;
@@ -675,13 +712,20 @@ const mvuPanel = computed(() => {
     if (message.presentation?.panel.length)
       return {
         ...message,
-        id: session.value.head,
-        snapshot: session.value.snapshot,
+        id: openStory().head,
+        snapshot: openStory().snapshot,
       };
   }
   return null;
 });
 const scriptPermissionBusy = ref(false);
+const scriptPermissionDisabled = computed(
+  () =>
+    busy.value ||
+    scriptPermissionBusy.value ||
+    contextBusy.value ||
+    activeTurn.value?.status === 'awaiting_review',
+);
 async function setSessionScriptPermission(enabled: boolean) {
   const token = viewScope.current();
   const sid = session.value?.id;
@@ -690,20 +734,19 @@ async function setSessionScriptPermission(enabled: boolean) {
   try {
     const result = await viewApi(
       `/sessions/${sid}/script-permission`,
-      { enabled, expected_revision: session.value.revision },
+      { enabled, expected_revision: openStory().revision },
       'PUT',
     );
     if (!viewScope.owns(token)) return;
     sessionCard.value = result.card;
-    session.value.revision = result.session.revision;
-    // Reload resolved display assets without reinitializing variables or replacing
-    // unsaved identity/preferences in the settings form.
+    openStory().revision = result.session.revision;
+    // Reload resolved display assets without reinitializing variables.
     if (enabled) {
       const updated = await viewApi(`/sessions/${sid}`);
       if (!viewScope.owns(token)) return;
-      session.value.messages = updated.messages;
-      session.value.snapshot = updated.snapshot;
-      session.value.revision = updated.revision;
+      openStory().messages = updated.messages;
+      openStory().snapshot = updated.snapshot;
+      openStory().revision = updated.revision;
     }
   } catch (e: any) {
     if (viewScope.owns(token)) notify(e.message);
@@ -777,7 +820,7 @@ const loreRecords = computed(() => {
 const pendingInputLore = computed(() => {
   const inputId = pendingInput.value?.id;
   // Regeneration reuses an input whose lore is already shown at its history anchor.
-  if (session.value?.messages.some((message: any) => message.id === inputId)) return [];
+  if (session.value?.messages.some((message) => message.id === inputId)) return [];
   return pendingLore.value.filter((record) => !record.manually_removed && record.anchor_id === inputId);
 });
 const removingLore = ref(false);
@@ -787,8 +830,8 @@ async function removeLore(record: LoreRecord) {
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/lore-injections/${encodeURIComponent(record.anchor_id)}/${encodeURIComponent(record.id)}`,
-        { expected_revision: session.value.revision },
+        `/sessions/${openStory().id}/lore-injections/${encodeURIComponent(record.anchor_id)}/${encodeURIComponent(record.id)}`,
+        { expected_revision: openStory().revision },
         'DELETE',
       );
       pendingLore.value = pendingLore.value.filter(
@@ -808,13 +851,8 @@ const budgetSourceSummary = computed(() =>
     contextLabel,
   ),
 );
+const stateTab = ref<StateTab>('memory');
 // Rounds count user turns; replies belong to the round of the input they answer.
-const stateTabs = [
-  { id: 'variables', label: '变量' },
-  { id: 'memory', label: '记忆' },
-  { id: 'content', label: '设定演化' },
-] as const;
-const stateTab = ref<(typeof stateTabs)[number]['id']>('memory');
 const messageRounds = computed(() => {
   const rounds = new Map<string, number>();
   let round = 0;
@@ -825,24 +863,24 @@ const messageRounds = computed(() => {
   return rounds;
 });
 const storyRounds = computed(() =>
-  (session.value?.messages || []).map((message: any) => messageRounds.value.get(message.id)!),
+  (session.value?.messages || []).map((message) => messageRounds.value.get(message.id)!),
 );
-function contextItemTitle(item: any) {
+function contextItemTitle(item: JsonObject) {
   if (item.title) return item.title;
   const source = String(item.source || '');
   if (source.startsWith('lore:')) {
-    const entry = preview.value?.lore?.find((e: any) => String(e.id) === source.slice(5));
+    const entry = preview.value?.lore.find((e) => String(e.id) === source.slice(5));
     return entry?.comment || entry?.name || '';
   }
   if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;
   if (source === 'agent_tools') {
     if (item.role === 'tool') {
       const call = (preview.value?.trace || [])
-        .flatMap((message: any) => message.tool_calls || [])
-        .find((call: any) => call.id === item.tool_call_id);
+        .flatMap((message) => message.tool_calls || [])
+        .find((call: JsonObject) => call.id === item.tool_call_id);
       return `工具返回 · ${call?.function?.name || item.tool_call_id || '工具'}`;
     }
-    const names = (item.tool_calls || []).map((call: any) => call.function?.name || '工具').join('、');
+    const names = (item.tool_calls || []).map((call: JsonObject) => call.function?.name || '工具').join('、');
     return names ? `工具调用 · ${names}` : `${name.value} · 中间消息`;
   }
   if (source === 'history') return `${item.role === 'user' ? session.value?.persona : name.value} · 历史消息`;
@@ -916,7 +954,7 @@ async function afterDataImport(result: {
 async function refreshContextStats() {
   if (!session.value) return;
   const request = ++contextStatsRequest;
-  const sid = session.value.id,
+  const sid = openStory().id,
     token = viewScope.current();
   try {
     const [stats, records] = await Promise.allSettled([
@@ -937,7 +975,7 @@ async function refreshContextStats() {
     /* Explicit preview presents errors; a stats refresh must not break reading. */
   }
 }
-async function openSession(id: string, creating = false, createdSession?: any) {
+async function openSession(id: string, creating = false, createdSession?: Session) {
   pendingReplyStart.value = '';
   regenerateIncludeReply.value = false;
   rewriteExpanded.value = false;
@@ -971,27 +1009,28 @@ async function openSession(id: string, creating = false, createdSession?: any) {
   quickEffort.value = localStorage.getItem(`tavern-effort-${id}`) || 'inherit';
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   try {
-    const [opened, card] = await Promise.all([
+    const [opened, card]: [Session, CardRecord] = await Promise.all([
       createdSession || api(`/sessions/${id}`),
       api(`/sessions/${id}/card`),
     ]);
     if (!viewScope.owns(token)) return;
-    const active = opened.turns.find((turn: any) =>
+    const active = opened.turns.find((turn) =>
       ['running', 'queued', 'awaiting_review'].includes(turn.status),
     );
     const last = active || opened.turns[0];
-    let restored = active || null;
+    // An active turn is always reloaded below, so only full turns are restored.
+    let restored: TurnRecord | null = null;
     let restoredDraft = '';
     if (
       last &&
       ['running', 'queued', 'awaiting_review', 'error', 'cancelled', 'interrupted'].includes(last.status)
     ) {
-      const turn = await api(`/turns/${last.id}`);
+      const turn: TurnRecord = await api(`/turns/${last.id}`);
       if (!viewScope.owns(token)) return;
       if (active || canRetryTurn(turn, opened)) {
         restored = turn;
         restoredDraft = turn.draft;
-        if (turn.status === 'error') error.value = turnError(turn.error);
+        if (turn.status === 'error') error.value = turnError(turn.error || '');
       }
     }
     session.value = opened;
@@ -1007,7 +1046,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
     const latest = opened.messages
       .slice()
       .reverse()
-      .find((message: any) => message.role === 'assistant');
+      .find((message) => message.role === 'assistant');
     if (!restored && latest) await navigateMessage(latest.id);
     else await scroll(true);
     if (viewScope.owns(token)) void refreshContextStats();
@@ -1021,7 +1060,7 @@ async function openSession(id: string, creating = false, createdSession?: any) {
   }
 }
 
-function askDeleteConversation(item: any, event: MouseEvent, kind: 'session' | 'editor') {
+function askDeleteConversation(target: DeleteTarget, event: MouseEvent) {
   deleteTrigger = event.currentTarget as HTMLElement;
   const rect = deleteTrigger.getBoundingClientRect(),
     width = 270,
@@ -1029,8 +1068,8 @@ function askDeleteConversation(item: any, event: MouseEvent, kind: 'session' | '
     below = rect.bottom + height + 8 < window.innerHeight,
     left = Math.max(10, Math.min(window.innerWidth - width - 10, rect.right - width));
   deleteBubble.value = {
-    item,
-    kind,
+    ...target,
+    title: target.item.title || (target.kind === 'session' ? target.item.name : ''),
     above: !below,
     left,
     arrowLeft: Math.max(12, Math.min(width - 12, rect.left + rect.width / 2 - left)),
@@ -1057,9 +1096,9 @@ async function deleteCard() {
   deletingCardBusy.value = true;
   try {
     await guarded(async () => {
-      const id = deletingCard.value.id;
+      const id = deletingCard.value!.id;
       await api(`/cards/${id}`, {}, 'DELETE');
-      if (session.value?.card === id) sessionCard.value = await api(`/sessions/${session.value.id}/card`);
+      if (session.value?.card === id) sessionCard.value = await api(`/sessions/${openStory().id}/card`);
       if (selected.value?.id === id) {
         selected.value = null;
         if (pageMode.value === 'card') pageMode.value = '';
@@ -1072,7 +1111,7 @@ async function deleteCard() {
     deletingCardBusy.value = false;
   }
 }
-async function deleteSession(item: any) {
+async function deleteSession(item: SessionSummary) {
   closeDeleteBubble(false);
   const isCurrent = session.value?.id === item.id || storyLoad.value?.id === item.id;
   if (isCurrent) {
@@ -1094,53 +1133,33 @@ async function deleteSession(item: any) {
     await load();
   });
 }
-function editSessionTitle(item: any) {
-  editingSessionTitleId.value = item.id;
-  sessionTitleDraft.value = item.title || item.name || '';
-  nextTick(() => {
-    sessionTitleInput.value?.focus();
-    sessionTitleInput.value?.select();
-  });
-}
-function cancelSessionTitle() {
-  editingSessionTitleId.value = '';
-  sessionTitleDraft.value = '';
-}
-async function saveSessionTitle(item: any) {
-  if (savingSessionTitle.value) return;
-  const title = sessionTitleDraft.value.trim();
-  if (!title || title.length > 100) {
-    error.value = '对话标题须为 1 到 100 个字符';
-    return;
-  }
-  if (title === item.title) {
-    cancelSessionTitle();
-    return;
-  }
+async function renameFromList(item: SessionSummary, title: string) {
   savingSessionTitle.value = true;
   try {
-    await guarded(async () => {
-      await renameSession(item, title);
-      cancelSessionTitle();
-    });
+    return (
+      (await guarded(async () => {
+        await renameSession(item, title);
+        return true;
+      })) === true
+    );
   } finally {
     savingSessionTitle.value = false;
   }
 }
-async function renameSession(item: any, title: string) {
+async function renameSession(item: SessionSummary | Session, title: string) {
   const updated = await api(
     `/sessions/${item.id}/title`,
     {
       title,
-      expected_revision: session.value?.id === item.id ? session.value.revision : item.revision,
+      expected_revision: session.value?.id === item.id ? openStory().revision : item.revision,
     },
     'PUT',
   );
   item.title = updated.title;
   item.revision = updated.revision;
   if (session.value?.id === item.id) {
-    session.value.title = updated.title;
-    session.value.revision = updated.revision;
+    openStory().title = updated.title;
+    openStory().revision = updated.revision;
   }
 }
 /** A title the user clicked among the advisor's candidates. */
@@ -1164,9 +1183,12 @@ ${text}`
   if (rightOverlay.value) layout.value.rightCollapsed = true;
   nextTick(() => composer.value?.querySelector('textarea')?.focus());
 }
-function trackScroll() {
+function atLatest() {
   const el = chat.value;
-  if (el && !readingPinned.value) followLatest.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+  return !!el && el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+}
+function trackScroll() {
+  if (chat.value && !readingPinned.value) followLatest.value = atLatest();
 }
 function pauseFollow(event: WheelEvent) {
   readingPinned.value = false;
@@ -1197,6 +1219,9 @@ async function jumpBoundary(edge: 'start' | 'end') {
   followLatest.value = false;
   await nextTick();
   await dialogue.value?.jumpBoundary(edge);
+  // Reaching the end of the newest message is reading the latest: resume following
+  // so the floating jump button does not linger over a fully read story.
+  if (edge === 'end' && atLatest()) await scroll(true);
 }
 watch(storyView, (view) => {
   if (view === 'dialogue' && pendingReplyStart.value) void navigateMessage(pendingReplyStart.value);
@@ -1249,7 +1274,7 @@ async function retryTurn() {
   const resumeFullAgent =
     session.value?.agent_mode === 'full_agent' &&
     retryableTurn.value.resumable === true &&
-    retryableTurn.value.request.expected_revision === session.value.revision &&
+    retryableTurn.value.request.expected_revision === openStory().revision &&
     allowEdit.value === !!retryableTurn.value.request.allow_content_edit &&
     updateVariables.value === !!retryableTurn.value.request.update_variables &&
     retryIncludeReply.value === !!retryableTurn.value.request.regenerate_include_reply;
@@ -1261,16 +1286,16 @@ async function retryTurn() {
     regenerate_include_reply: retryIncludeReply.value,
     reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
     operation_id: crypto.randomUUID(),
-    expected_revision: session.value.revision,
+    expected_revision: openStory().revision,
     ...(resumeFullAgent ? { resume_turn_id: retryableTurn.value.id } : { resume_turn_id: null }),
   };
   const token = viewScope.current();
   busy.value = true;
   try {
-    activeTurn.value = await viewApi(`/sessions/${session.value.id}/turns`, request);
+    activeTurn.value = await viewApi(`/sessions/${openStory().id}/turns`, request);
     workCount.value += 1;
     void scroll(true);
-    observe(activeTurn.value.id);
+    observe(currentTurn().id);
   } catch (e: any) {
     if (viewScope.owns(token)) {
       busy.value = false;
@@ -1278,9 +1303,7 @@ async function retryTurn() {
     }
   }
 }
-async function importCard(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
+async function importCard(file: File) {
   const form = new FormData();
   form.append('file', file);
   await guarded(async () => {
@@ -1291,10 +1314,6 @@ async function importCard(event: Event) {
     panel.value = '';
     if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   });
-  (event.target as HTMLInputElement).value = '';
-}
-async function openOrphanDraft(id: string) {
-  openCardAgent(id);
 }
 async function refreshCardConversations() {
   cardConversations.value = await api('/card-author/conversations');
@@ -1348,7 +1367,7 @@ async function cardConversationDeleted(id: string) {
     }
   }
 }
-async function deleteCardConversation(item: any) {
+async function deleteCardConversation(item: CardConversationSummary) {
   if (deletingCardConversationId.value) return;
   closeDeleteBubble(false);
   deletingCardConversationId.value = item.id;
@@ -1361,14 +1380,20 @@ async function deleteCardConversation(item: any) {
     deletingCardConversationId.value = '';
   }
 }
-async function copyLibraryCard(card: any) {
+async function copyLibraryCard(card: CardRecord) {
   await guarded(async () => {
     const copied = await api(`/cards/${card.id}/copy`, {});
     await load();
     showCard(copied);
   });
 }
-async function cardSaved(card: any) {
+// Switching the Agent workspace keeps the editor's mount key so its composer survives.
+function selectWorkspace(id: string) {
+  const card = selected.value;
+  if (!card) return;
+  selected.value = { ...card, _editorKey: card._editorKey || card._workspaceId || card.id, _workspaceId: id };
+}
+async function cardSaved(card: CardRecord) {
   // Saving an Agent workspace, including Save As, must not remount its composer.
   selected.value =
     card?._workspaceId && selected.value
@@ -1377,10 +1402,9 @@ async function cardSaved(card: any) {
   await load();
 }
 function editSessionLore() {
-  selected.value = {
-    ...sessionCard.value,
-    document: session.value.snapshot.content?.document || sessionCard.value.document,
-  };
+  const card = sessionCard.value;
+  if (!card) throw new Error('对话角色卡尚未载入');
+  selected.value = { ...card, document: openStory().snapshot.content?.document || card.document };
   pageMode.value = 'session-lore';
 }
 function sessionLoreSaved(value: any) {
@@ -1388,7 +1412,7 @@ function sessionLoreSaved(value: any) {
   activeTurn.value = value.turns.find((turn: any) => turn.status === 'awaiting_review') || null;
   pageMode.value = '';
   if (activeTurn.value) {
-    const id = activeTurn.value.id;
+    const id = currentTurn().id;
     void guarded(async () => {
       activeTurn.value = await viewApi(`/turns/${id}`);
     });
@@ -1397,7 +1421,7 @@ function sessionLoreSaved(value: any) {
 watch(pageMode, (value) => {
   if (value) abandonStoryLoad();
 });
-function showCard(card: any) {
+function showCard(card: CardRecord) {
   // Explicit navigation starts a fresh view, even after Save As retained an
   // earlier editor instance. The draft itself is restored by workspace ID.
   selected.value = { ...card, _editorKey: crypto.randomUUID() };
@@ -1447,9 +1471,9 @@ async function cardStarted(s: any) {
 }
 function setEffort(value: string) {
   quickEffort.value = value;
-  if (session.value) localStorage.setItem(`tavern-effort-${session.value.id}`, value);
+  if (session.value) localStorage.setItem(`tavern-effort-${openStory().id}`, value);
 }
-async function send(mode = 'send', message?: any, text?: string, note = '') {
+async function send(mode = 'send', message?: StoryMessageRecord, text?: string, note = '') {
   if (variablePreferenceSaving.value) return;
   if (modelSaving.value || contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
     notify(
@@ -1464,19 +1488,19 @@ async function send(mode = 'send', message?: any, text?: string, note = '') {
   if (!session.value || busy.value || sceneSubmitting.value) return;
   const value = text ?? input.value;
   if (mode === 'send' && !value.trim()) return;
-  const sid = session.value.id,
+  const sid = openStory().id,
     token = viewScope.current();
   busy.value = true;
   error.value = '';
   pendingInput.value = null;
   pendingLore.value = [];
   try {
-    const turn = await api(`/sessions/${sid}/turns`, {
+    const turn: TurnRecord = await api(`/sessions/${sid}/turns`, {
       text: value,
       mode,
       message_id: message?.id,
       operation_id: crypto.randomUUID(),
-      expected_revision: session.value.revision,
+      expected_revision: openStory().revision,
       allow_content_edit: allowEdit.value,
       update_variables: updateVariables.value,
       reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
@@ -1503,7 +1527,7 @@ async function send(mode = 'send', message?: any, text?: string, note = '') {
 
 function observe(id: string) {
   events?.close();
-  const sid = session.value.id,
+  const sid = openStory().id,
     token = viewScope.current();
   // Rebuild from sequence zero on reopen instead of appending replay to a draft snapshot.
   const ownsTurn = () => viewScope.owns(token) && activeTurn.value?.id === id;
@@ -1525,19 +1549,22 @@ function observe(id: string) {
           void scroll();
         }
         if (event.kind === 'scene_refresh_ready' && event.payload.purpose === 'memory') {
-          delete session.value.snapshot.memory_warning;
+          delete openStory().snapshot.memory_warning;
           memoryWarning.value = '';
           error.value = '';
         }
         if (event.kind === 'error') error.value = turnError(event.payload.message);
-        if (event.kind === 'memory_failed') session.value.snapshot.memory_warning = event.payload.message;
-        if (event.kind === 'memory_ready') delete session.value.snapshot.memory_warning;
+        if (event.kind === 'memory_failed') openStory().snapshot.memory_warning = event.payload.message;
+        if (event.kind === 'memory_ready') delete openStory().snapshot.memory_warning;
         if (event.kind === 'memory_records_discarded') memoryDiscardNotice.value = event.payload.message;
       }
     },
     async () => {
       try {
-        const [turn, updated] = await Promise.all([api(`/turns/${id}`), api(`/sessions/${sid}`)]);
+        const [turn, updated]: [TurnRecord, Session] = await Promise.all([
+          api(`/turns/${id}`),
+          api(`/sessions/${sid}`),
+        ]);
         if (!ownsTurn()) return;
         const following = followLatest.value,
           top = chat.value?.scrollTop || 0;
@@ -1546,7 +1573,7 @@ function observe(id: string) {
             ? updated.messages
                 .slice()
                 .reverse()
-                .find((message: any) => message.role === 'assistant')
+                .find((message) => message.role === 'assistant')
             : null;
         if (following && completedReply) {
           readingPinned.value = true;
@@ -1584,8 +1611,8 @@ async function saveMemoryRecord(change: any) {
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/memory/records`,
-        { ...change, expected_revision: session.value.revision },
+        `/sessions/${openStory().id}/memory/records`,
+        { ...change, expected_revision: openStory().revision },
         'PUT',
       );
       await refreshContextStats();
@@ -1595,7 +1622,7 @@ async function saveMemoryRecord(change: any) {
   }
 }
 async function locateSource(id: string, excerpt: string) {
-  const message = session.value?.messages.find((m: any) => m.id === id);
+  const message = session.value?.messages.find((m) => m.id === id);
   if (!message) return;
   panel.value = '';
   storyView.value = 'dialogue';
@@ -1626,7 +1653,7 @@ async function refreshScene(kind: 'memory') {
   sceneSubmitting.value = kind;
   try {
     await guarded(async () => {
-      memoryRebuildEstimate.value = await viewApi(`/sessions/${session.value.id}/memory/rebuild-estimate`);
+      memoryRebuildEstimate.value = await viewApi(`/sessions/${openStory().id}/memory/rebuild-estimate`);
       panel.value = 'memory-rebuild';
     });
   } finally {
@@ -1645,35 +1672,35 @@ async function startSceneRefresh(kind: 'memory') {
   sceneSubmitting.value = kind;
   try {
     await guarded(async () => {
-      activeTurn.value = await viewApi(`/sessions/${session.value.id}/scene/${kind}/regenerate`, {
+      activeTurn.value = await viewApi(`/sessions/${openStory().id}/scene/${kind}/regenerate`, {
         operation_id: crypto.randomUUID(),
-        expected_revision: session.value.revision,
+        expected_revision: openStory().revision,
       });
       panel.value = '';
       busy.value = true;
       draft.value = '';
       trace.value = [];
-      observe(activeTurn.value.id);
+      observe(currentTurn().id);
     });
   } finally {
     sceneSubmitting.value = null;
   }
 }
 async function stop() {
-  if (activeTurn.value) await guarded(() => api(`/turns/${activeTurn.value.id}/cancel`, {}));
+  if (activeTurn.value) await guarded(() => api(`/turns/${currentTurn().id}/cancel`, {}));
 }
 async function review(accept: boolean) {
-  const sid = session.value.id,
+  const sid = openStory().id,
     token = viewScope.current();
   await guarded(async () => {
-    await api(`/turns/${activeTurn.value.id}/review`, { accept });
+    await api(`/turns/${currentTurn().id}/review`, { accept });
     if (viewScope.owns(token)) await openSession(sid);
   });
 }
 function beginPendingEdit() {
   pauseForMessageEdit();
   editingMessageId.value = '__pending__';
-  editingMessageText.value = visiblePendingInput.value.raw;
+  editingMessageText.value = visiblePendingInput.value!.raw;
 }
 async function savePendingEdit() {
   if (!editingMessageText.value.trim() || !retryableTurn.value || savingMessageEdit.value) return;
@@ -1683,8 +1710,8 @@ async function savePendingEdit() {
   try {
     await guarded(async () => {
       activeTurn.value = await viewApi(
-        `/turns/${activeTurn.value.id}/input`,
-        { text, expected_revision: session.value.revision },
+        `/turns/${currentTurn().id}/input`,
+        { text, expected_revision: openStory().revision },
         'PUT',
       );
       pendingInput.value = { raw: text };
@@ -1708,7 +1735,7 @@ function pauseForMessageEdit() {
     }),
   );
 }
-function beginMessageEdit(message: any, notifyAi: boolean | null = null) {
+function beginMessageEdit(message: StoryMessageRecord, notifyAi: boolean | null = null) {
   if (
     !editableMessageIds.value.has(message.id) ||
     busy.value ||
@@ -1741,7 +1768,7 @@ function cancelMessageEdit() {
     });
 }
 const switchingVersion = ref(false);
-async function switchReplyVersion(message: any, offset: number) {
+async function switchReplyVersion(message: StoryMessageRecord, offset: number) {
   if (
     busy.value ||
     switchingVersion.value ||
@@ -1749,14 +1776,14 @@ async function switchReplyVersion(message: any, offset: number) {
     activeTurn.value?.status === 'awaiting_review'
   )
     return;
-  const target = message.versions?.[message.version_index + offset];
+  const target = message.versions?.[(message.version_index ?? 0) + offset];
   if (!target || message.id !== session.value?.head) return;
   switchingVersion.value = true;
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/messages/${message.id}/version`,
-        { head: target, expected_revision: session.value.revision },
+        `/sessions/${openStory().id}/messages/${message.id}/version`,
+        { head: target, expected_revision: openStory().revision },
         'PUT',
       );
       await refreshContextStats();
@@ -1765,7 +1792,7 @@ async function switchReplyVersion(message: any, offset: number) {
     switchingVersion.value = false;
   }
 }
-async function saveMessageEdit(message: any, notifyAi: boolean) {
+async function saveMessageEdit(message: StoryMessageRecord, notifyAi: boolean) {
   if (
     !editingMessageText.value.trim() ||
     !editableMessageIds.value.has(message.id) ||
@@ -1781,12 +1808,12 @@ async function saveMessageEdit(message: any, notifyAi: boolean) {
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/messages/${message.id}`,
-        { text: editingMessageText.value, expected_revision: session.value.revision, notify_ai: notifyAi },
+        `/sessions/${openStory().id}/messages/${message.id}`,
+        { text: editingMessageText.value, expected_revision: openStory().revision, notify_ai: notifyAi },
         'PUT',
       );
       cancelMessageEdit();
-      if (session.value.edit_affected_memory) showEditNotice();
+      if (openStory().edit_affected_memory) showEditNotice();
       await load();
       await refreshContextStats();
     });
@@ -1796,7 +1823,7 @@ async function saveMessageEdit(message: any, notifyAi: boolean) {
 }
 async function inspectContext() {
   await guarded(async () => {
-    preview.value = await viewApi(`/sessions/${session.value.id}/preview`, {
+    preview.value = await viewApi(`/sessions/${openStory().id}/preview`, {
       text: input.value,
       update_variables: updateVariables.value,
       allow_content_edit: allowEdit.value,
@@ -1811,7 +1838,7 @@ async function exportNextMessages() {
   previewMessagesBusy.value = true;
   try {
     await guarded(async () => {
-      const sid = session.value.id;
+      const sid = openStory().id;
       const messages = await viewApi(`/sessions/${sid}/messages-preview`, {
         text: input.value,
         update_variables: updateVariables.value,
@@ -1842,13 +1869,12 @@ async function showForkPoints() {
   )
     return;
   await guarded(async () => {
-    forkPoints.value = (await viewApi(`/sessions/${session.value.id}/branches`)).filter(
-      (message: any) => message.role === 'assistant',
-    );
+    const messages: BranchMessage[] = await viewApi(`/sessions/${openStory().id}/branches`);
+    forkPoints.value = messages.filter((message) => message.role === 'assistant');
     panel.value = 'fork-select';
   });
 }
-function askFork(message: any, fromPicker = false) {
+function askFork(message: BranchMessage | StoryMessageRecord | null, fromPicker = false) {
   if (!message || busy.value || editingMessageId.value || activeTurn.value?.status === 'awaiting_review')
     return;
   forkMessage.value = message;
@@ -1856,15 +1882,16 @@ function askFork(message: any, fromPicker = false) {
   panel.value = 'fork';
 }
 async function createFork() {
-  if (!session.value || !forkMessage.value || creatingFork.value) return;
+  const fork = forkMessage.value;
+  if (!session.value || !fork || creatingFork.value) return;
   creatingFork.value = true;
   try {
     await guarded(async () => {
-      const originalId = session.value.id,
+      const originalId = openStory().id,
         effort = quickEffort.value;
       const created = await api(`/sessions/${originalId}/fork`, {
-        message_id: forkMessage.value.id,
-        expected_revision: session.value.revision,
+        message_id: fork.id,
+        expected_revision: openStory().revision,
       });
       localStorage.setItem(`tavern-effort-${created.id}`, effort);
       panel.value = '';
@@ -1896,18 +1923,19 @@ async function saveCacheBreakpoint(
   cacheBreakpointBusy.value = true;
   try {
     await guarded(async () => {
-      const sid = session.value.id;
+      const sid = openStory().id;
       const updated = await viewApi(
         `/sessions/${sid}/cache-breakpoint`,
         {
           automatic,
           message_id: automatic ? null : messageId,
-          expected_revision: session.value.revision,
+          expected_revision: openStory().revision,
           follow_interval: interval,
           reply_offset: offset,
         },
         'PUT',
       );
+      const story = openStory();
       for (const field of [
         'revision',
         'cache_breakpoint_auto',
@@ -1915,8 +1943,8 @@ async function saveCacheBreakpoint(
         'cache_breakpoint_effective_id',
         'cache_breakpoint_follow',
         'cache_breakpoint_reason',
-      ])
-        session.value[field] = updated[field];
+      ] as const)
+        Object.assign(story, { [field]: updated[field] });
       const listed = sessions.value.find((item) => item.id === sid);
       if (listed) listed.revision = updated.revision;
       await refreshContextStats();
@@ -1939,7 +1967,7 @@ async function saveCacheRetention(value: string) {
       settings.value = await api(
         `/settings/${scope}`,
         {
-          expected_revision: settings.value.revisions[scope],
+          expected_revision: loadedSettings().revisions[scope],
           changes: { [path]: value },
         },
         'PATCH',
@@ -1950,30 +1978,24 @@ async function saveCacheRetention(value: string) {
     cacheBreakpointBusy.value = false;
   }
 }
-async function saveOptions() {
+async function saveOptions(draft: SessionOptionsDraft) {
   await guarded(async () => {
     session.value = await viewApi(
-      `/sessions/${session.value.id}/options`,
-      {
-        persona: session.value.persona,
-        persona_data: session.value.persona_data,
-        policy: session.value.policy,
-        turn_preference: session.value.turn_preference || '',
-        expected_revision: session.value.revision,
-      },
+      `/sessions/${openStory().id}/options`,
+      { ...draft, turn_preference: draft.turn_preference || '', expected_revision: openStory().revision },
       'PUT',
     );
     showOptionsNotice('已保存');
   });
 }
-async function saveRecipe(recipe: any) {
+async function saveRecipe(recipe: JsonObject) {
   if (savingRecipe.value) return;
   savingRecipe.value = true;
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/recipe`,
-        { recipe, expected_revision: session.value.revision },
+        `/sessions/${openStory().id}/recipe`,
+        { recipe, expected_revision: openStory().revision },
         'PUT',
       );
       panel.value = '';
@@ -1990,8 +2012,8 @@ async function resetRecipe() {
   try {
     await guarded(async () => {
       session.value = await viewApi(
-        `/sessions/${session.value.id}/recipe`,
-        { use_global: true, expected_revision: session.value.revision },
+        `/sessions/${openStory().id}/recipe`,
+        { use_global: true, expected_revision: openStory().revision },
         'PUT',
       );
       showOptionsNotice('已采用当前全局编排');
@@ -2026,10 +2048,10 @@ async function frameAction(
     }
     if (method === 'generate') {
       if (busy.value) throw Error('当前回合正在运行');
-      const turn = await api(`/sessions/${session.value.id}/turns`, {
+      const turn = await api(`/sessions/${openStory().id}/turns`, {
         text: args.user_input || '继续',
         generate: args,
-        expected_revision: session.value.revision,
+        expected_revision: openStory().revision,
         operation_id: crypto.randomUUID(),
         reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
       });
@@ -2062,15 +2084,15 @@ async function frameAction(
       }
       return;
     }
-    const updated = await viewApi(`/sessions/${session.value.id}/interaction`, {
+    const updated: Session = await viewApi(`/sessions/${openStory().id}/interaction`, {
       method,
       args,
-      expected_revision: session.value.revision,
+      expected_revision: openStory().revision,
       operation_id: crypto.randomUUID(),
       allow_content_edit: allowEdit.value,
     });
     session.value = updated;
-    const review = updated.turns.find((t: any) => t.status === 'awaiting_review');
+    const review = updated.turns.find((t) => t.status === 'awaiting_review');
     if (review) activeTurn.value = await viewApi(`/turns/${review.id}`);
     resolve(null);
   } catch (e: any) {
@@ -2089,15 +2111,15 @@ onMounted(() => {
     const last = localStorage.getItem('tavern-session');
     if (sidebarSection.value === 'editor') await manageCardAgent();
     else if (sessions.value.some((s) => s.id === last)) await openSession(last!);
-    const status = await api('/local-models');
+    const status: LocalModelStatus = await api('/local-models');
     const enabled = [
-      ...(activeSettings.value.retrieval?.channels?.includes('embedding') ? ['embedding'] : []),
-      ...(activeSettings.value.local_runtime?.reranker_enabled ? ['reranker'] : []),
+      ...(activeSettings.value.retrieval?.channels?.includes('embedding') ? ['embedding' as const] : []),
+      ...(activeSettings.value.local_runtime?.reranker_enabled ? ['reranker' as const] : []),
     ].filter(
       (purpose) =>
         !status.models[purpose].ready &&
         !status.jobs.some(
-          (job: any) => job.kind === `warmup:${purpose}` && ['queued', 'running'].includes(job.status),
+          (job) => job.kind === `warmup:${purpose}` && ['queued', 'running'].includes(job.status),
         ),
     );
     if (enabled.length && localStorage.getItem('tavern-warmup-startup') !== status.startup_id) {
@@ -2207,177 +2229,44 @@ useTimedError(error);
       </nav>
       <div id="primary-sidebar-panel" class="sidebar-panel">
         <div class="panel-brand">Terrarium Tavern</div>
-        <template v-if="sidebarSection === 'sessions'"
-          ><header class="panel-head">
-            <h2>会话</h2>
-            <span class="panel-count">{{ sessions.length }}</span>
-          </header>
-          <button class="new-story" :disabled="busy" @click="startNewStory">
-            <Icon name="plus" :size="17" />开始新故事
-          </button>
-          <nav class="session-list" aria-label="会话列表">
-            <div
-              v-for="s in sessions"
-              :key="s.id"
-              class="session-row"
-              :class="{ active: session?.id === s.id, kemini: s.kemini }"
-            >
-              <div v-if="editingSessionTitleId === s.id" class="session-title-editor">
-                <input
-                  :ref="(element) => (sessionTitleInput = element as HTMLInputElement | null)"
-                  v-model="sessionTitleDraft"
-                  maxlength="100"
-                  aria-label="对话标题"
-                  @keydown.enter="saveSessionTitle(s)"
-                  @keydown.esc="cancelSessionTitle"
-                />
-                <button :disabled="savingSessionTitle" @click="saveSessionTitle(s)">保存</button>
-                <button :disabled="savingSessionTitle" @click="cancelSessionTitle">取消</button>
-              </div>
-              <template v-else
-                ><button
-                  class="session-open"
-                  title="单击打开对话，双击重命名"
-                  @click="$event.detail < 2 && guarded(() => openSession(s.id))"
-                  @dblclick.stop.prevent="editSessionTitle(s)"
-                >
-                  <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" />
-                  <span
-                    >{{ s.title || s.name
-                    }}<small
-                      >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
-                      {{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small
-                    ></span
-                  ></button
-                ><span class="row-actions"
-                  ><button
-                    class="session-rename"
-                    title="重命名"
-                    :aria-label="`重命名对话 ${s.title || s.name}`"
-                    @click.stop="editSessionTitle(s)"
-                  >
-                    <Icon name="pencil" :size="15" /></button
-                  ><button
-                    class="session-delete"
-                    title="删除"
-                    :aria-label="`删除会话 ${s.title || s.name}`"
-                    @click.stop="askDeleteConversation(s, $event, 'session')"
-                  >
-                    <Icon name="trash" :size="15" /></button></span
-              ></template>
-            </div>
-            <p v-if="!sessions.length" class="empty-small">故事开始后，会留在这里。</p>
-          </nav></template
-        >
-        <template v-else-if="sidebarSection === 'cards'"
-          ><header class="panel-head">
-            <h2>角色卡</h2>
-            <span class="panel-count">{{ cards.length }}</span>
-          </header>
-          <button class="new-story import-only" @click="importInput?.click()">
-            <Icon name="import" :size="17" />导入角色卡</button
-          ><input ref="importInput" type="file" accept=".json,.png,.charx" hidden @change="importCard" />
-          <nav class="session-list card-side-list" aria-label="角色卡列表">
-            <div v-for="card in cards" :key="card.id" class="card-side-row" :data-card-id="card.id">
-              <button
-                class="card-side-item"
-                :class="{ active: selected?.id === card.id && pageMode === 'card' }"
-                @click="showCard(card)"
-              >
-                <CharacterPortrait :src="cardPortraitUrl(card)" :name="card.name" />
-                <span
-                  >{{ card.name
-                  }}<small>{{ card.report.variables === 'mvu_detected' ? 'MVU' : '普通角色卡' }}</small></span
-                >
-              </button>
-              <div class="card-row-actions" role="group" :aria-label="`${card.name} 操作`">
-                <button
-                  class="card-copy-action"
-                  title="复制"
-                  :aria-label="`复制角色卡 ${card.name}`"
-                  @click="copyLibraryCard(card)"
-                >
-                  <Icon name="copy" :size="15" /></button
-                ><button
-                  class="card-delete-action"
-                  title="删除"
-                  :aria-label="`删除角色卡 ${card.name}`"
-                  @click="
-                    deletingCard = card;
-                    panel = 'delete-card';
-                  "
-                >
-                  <Icon name="trash" :size="15" />
-                </button>
-              </div>
-            </div>
-            <p v-if="!cards.length" class="empty-small">从上方导入 JSON、PNG 或 CHARX 角色卡。</p>
-            <p v-if="orphanDrafts.length" class="panel-subhead">原卡已删除的编辑草稿</p>
-            <button
-              v-for="draft in orphanDrafts"
-              :key="draft.id"
-              class="orphan-draft"
-              @click="openOrphanDraft(draft.id)"
-            >
-              <span class="session-glyph"><Icon name="pencil" :size="16" /></span>继续编辑 {{ draft.name }}
-            </button>
-          </nav></template
-        >
-        <template v-if="sidebarSection === 'editor'">
-          <header class="panel-head">
-            <h2>制卡</h2>
-            <span class="panel-count">{{ cardConversations.length }}</span>
-          </header>
-          <button class="new-story" @click="newCardConversation">
-            <Icon name="plus" :size="17" />新制卡对话
-          </button>
-          <nav class="session-list" aria-label="制卡对话列表">
-            <div
-              v-for="conversation in cardConversations"
-              :key="conversation.id"
-              class="session-row"
-              :data-conversation-id="conversation.id"
-              :class="{ active: conversation.id === editorConversationId }"
-            >
-              <button class="session-open" @click="openCardAgent(conversation.id)">
-                <span class="session-glyph"><Icon name="feather" :size="17" /></span>
-                <span
-                  >{{ conversation.title
-                  }}<small
-                    >{{ conversation.reference_count ?? conversation.card_count }} 份资料 ·
-                    {{
-                      ['queued', 'running'].includes(conversation.status)
-                        ? '运行中'
-                        : conversation.resumable
-                          ? '可继续'
-                          : '已保存对话'
-                    }}
-                    · {{ channelLabels[conversation.channel_origin as Channel] || '渠道待确认' }}</small
-                  ></span
-                >
-              </button>
-              <span class="row-actions"
-                ><button
-                  class="session-delete"
-                  :aria-label="`删除制卡对话 ${conversation.title}`"
-                  :disabled="
-                    !!deletingCardConversationId ||
-                    ['queued', 'running'].includes(conversation.status) ||
-                    conversation.resumable
-                  "
-                  :title="
-                    ['queued', 'running'].includes(conversation.status) || conversation.resumable
-                      ? '请先停止任务并处理未完成进度'
-                      : '删除制卡对话'
-                  "
-                  @click.stop="askDeleteConversation(conversation, $event, 'editor')"
-                >
-                  <Icon name="trash" :size="15" /></button
-              ></span>
-            </div>
-            <p v-if="!cardConversations.length" class="empty-small">从上方新建制卡对话。</p>
-          </nav>
-        </template>
+        <SessionList
+          v-if="sidebarSection === 'sessions'"
+          :sessions="sessions"
+          :active-id="session?.id"
+          :portraits="sessionPortraits"
+          :busy="busy"
+          :saving="savingSessionTitle"
+          :rename="renameFromList"
+          @new-story="startNewStory"
+          @open="(id) => guarded(() => openSession(id))"
+          @delete="(item, event) => askDeleteConversation({ kind: 'session', item }, event)"
+          @invalid="(message) => (error = message)"
+        />
+        <CardList
+          v-else-if="sidebarSection === 'cards'"
+          :cards="cards"
+          :orphan-drafts="orphanDrafts"
+          :active-id="pageMode === 'card' ? selected?.id : undefined"
+          @import="importCard"
+          @show="showCard"
+          @copy="copyLibraryCard"
+          @delete="
+            (card) => {
+              deletingCard = card;
+              panel = 'delete-card';
+            }
+          "
+          @open-draft="openCardAgent"
+        />
+        <CardConversationList
+          v-else-if="sidebarSection === 'editor'"
+          :conversations="cardConversations"
+          :active-id="editorConversationId"
+          :deleting="!!deletingCardConversationId"
+          @create="newCardConversation"
+          @open="openCardAgent"
+          @delete="(item, event) => askDeleteConversation({ kind: 'editor', item }, event)"
+        />
       </div>
     </aside>
 
@@ -2410,21 +2299,22 @@ useTimedError(error);
         :key="editorConversationId"
         :conversation-id="editorConversationId"
         :library="cards"
-        :model-profile="settings.shared.card_author"
-        :providers="settings.shared.providers"
-        :send-shortcut="settings.shared.send_shortcut"
+        :model-profile="loadedSettings().shared.card_author"
+        :providers="loadedSettings().shared.providers"
+        :send-shortcut="loadedSettings().shared.send_shortcut"
         @changed="refreshCardConversations"
         @saved="load"
         @deleted="cardConversationDeleted"
       />
-      <section v-else-if="pageMode === 'editor'" class="library home" aria-label="制卡对话入口">
+      <section v-else-if="pageMode === 'editor'" class="library home solo" aria-label="制卡对话入口">
         <div class="home-hero">
           <div class="home-emblem" aria-hidden="true"><Icon name="quill" :size="30" :stroke="1.4" /></div>
           <div class="eyebrow">Card Author</div>
           <h1>开始制卡</h1>
           <p class="intro">
-            与制卡 agent
-            一起整理设定、世界书与开场。它只修改独立草稿，保存前由你审阅。从左侧选择已有对话，或新建一个制卡对话。
+            与制卡 agent 一起整理设定、世界书与开场。它只修改独立草稿，保存前由你审阅。{{
+              cardConversations.length ? '从左侧继续已有对话，或新建一个。' : ''
+            }}
           </p>
           <div class="home-actions">
             <button class="primary" :disabled="busy" @click="newCardConversation">
@@ -2439,15 +2329,7 @@ useTimedError(error);
         :card="selected"
         @saved="cardSaved"
         @open-agent="openCardAgent"
-        @workspace-selected="
-          (id) => {
-            selected = {
-              ...selected,
-              _editorKey: selected._editorKey || selected._workspaceId || selected.id,
-              _workspaceId: id,
-            };
-          }
-        "
+        @workspace-selected="selectWorkspace"
         @back="pageMode = ''"
       /><CharacterEditor
         v-else-if="pageMode === 'session-lore' && selected && session"
@@ -2479,84 +2361,28 @@ useTimedError(error);
         @retry="retryStoryLoad"
         @back="abandonStoryLoad"
       />
-      <section v-else-if="!session" class="library home">
-        <div class="home-hero">
-          <div class="home-emblem" aria-hidden="true"><Icon name="brand" :size="34" :stroke="1.4" /></div>
-          <div class="eyebrow">A place for your stories</div>
-          <h1>推开门，<br />进入另一个世界。</h1>
-          <p class="intro">让角色拥有记忆，让每一个选择留下回响。从一张角色卡，开始属于你的故事。</p>
-          <div class="home-actions">
-            <button v-if="cards.length" class="primary" :disabled="busy" @click="startNewStory">
-              <Icon name="sparkle" :size="17" />开始一段新故事
-            </button>
-            <button @click="openSidebarSection('cards')">
-              <Icon :name="cards.length ? 'cards' : 'import'" :size="17" />{{
-                cards.length ? `浏览角色卡 · ${cards.length}` : '前往导入角色卡'
-              }}
-            </button>
-          </div>
-        </div>
-        <section v-if="recentSessions.length" aria-label="最近的故事">
-          <div class="library-heading">
-            <h2>最近的故事</h2>
-            <span>共 {{ sessions.length }} 个会话</span>
-          </div>
-          <div class="recent-grid">
-            <button
-              v-for="s in recentSessions"
-              :key="s.id"
-              class="recent-card"
-              :class="{ kemini: s.kemini }"
-              @click="guarded(() => openSession(s.id))"
-            >
-              <CharacterPortrait :src="sessionPortraits[s.id]" :name="s.name" size="card" />
-              <span
-                ><strong>{{ s.title || s.name }}</strong
-                ><small>{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }}</small
-                ><small>{{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small></span
-              >
-            </button>
-          </div>
-        </section>
-        <div v-else class="library-guide">
-          <span class="guide-mark"><Icon :name="cards.length ? 'cards' : 'import'" :size="20" /></span>
-          <div>
-            <strong>{{ cards.length ? '从一张角色卡开始' : '先导入一张角色卡' }}</strong>
-            <p>
-              {{
-                cards.length
-                  ? '点击“开始一段新故事”选择角色卡，设置你的身份与开场，即可进入故事。'
-                  : '角色卡在左侧“角色卡”分类导入，支持 JSON、PNG 与 CHARX。'
-              }}
-            </p>
-          </div>
-        </div>
-        <ul class="home-tips">
-          <li>
-            <Icon name="branch" :size="18" /><span
-              ><strong>剧情可以分支</strong>从任意回复继承进度另开对话，原来的故事依然保留。</span
-            >
-          </li>
-          <li>
-            <Icon name="memory" :size="18" /><span
-              ><strong>记忆在后台整理</strong>Tracker 随剧情维护记忆与变量，长对话也能记得来龙去脉。</span
-            >
-          </li>
-          <li>
-            <Icon name="compass" :size="18" /><span
-              ><strong>参谋随时商量</strong>在右侧栏与参谋 agent 讨论走向，它只读故事，不改正文。</span
-            >
-          </li>
-        </ul>
-      </section>
+      <HomeView
+        v-else-if="!session"
+        :sessions="sessions"
+        :portraits="sessionPortraits"
+        :card-count="cards.length"
+        :busy="busy"
+        @new-story="startNewStory"
+        @browse-cards="openSidebarSection('cards')"
+        @open="(id) => guarded(() => openSession(id))"
+      />
 
       <section v-else class="story">
         <header class="story-heading" :class="{ kemini: session.kemini }">
           <div class="story-title">
             <CharacterPortrait :src="storyPortrait" :name="name" />
             <div>
-              <h1>{{ name }}</h1>
-              <div class="story-meta" aria-label="运行模式与渠道">
+              <h1>{{ session.title || name }}</h1>
+              <div class="story-meta" aria-label="角色、运行模式与渠道">
+                <template v-if="session.title && session.title !== name"
+                  ><span>{{ name }}</span
+                  ><span class="story-meta-separator" aria-hidden="true">·</span></template
+                >
                 <span>{{ isFullAgent ? 'Full Agent' : 'Half Agent' }}</span>
                 <span class="story-meta-separator" aria-hidden="true">·</span>
                 <span class="story-channel-label">{{
@@ -2599,20 +2425,18 @@ useTimedError(error);
             ><button
               aria-label="剧情分支"
               title="剧情分支：继承某条回复的进度另开对话"
-              :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+              :disabled="storyLocked"
               @click="showForkPoints"
             >
               <Icon name="branch" /><span class="tool-label">剧情分支</span></button
             ><button
-              :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次 messages'"
-              :disabled="
-                busy || previewMessagesBusy || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-              "
-              title="导出当前分支和输入编译的完整 messages；只读预览不运行神经召回"
+              :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次请求'"
+              :disabled="storyLocked || previewMessagesBusy"
+              title="导出按当前分支和输入编译的下次请求 messages；只读预览不运行神经召回"
               @click="exportNextMessages"
             >
               <Icon name="eye" /><span class="tool-label">{{
-                previewMessagesBusy ? '正在预览…' : '预览下次 messages'
+                previewMessagesBusy ? '正在预览…' : '预览下次请求'
               }}</span>
             </button>
           </div>
@@ -2674,13 +2498,7 @@ useTimedError(error);
               <button
                 class="cache-breakpoint-dot"
                 :class="{ manual: !session.cache_breakpoint_auto }"
-                :disabled="
-                  busy ||
-                  cacheBreakpointBusy ||
-                  !!editingMessageId ||
-                  activeTurn?.status === 'awaiting_review' ||
-                  switchingVersion
-                "
+                :disabled="storyLocked || cacheBreakpointBusy || switchingVersion"
                 :title="
                   session.cache_breakpoint_auto
                     ? '缓存断点自动跟进中；点击固定当前位置'
@@ -2716,9 +2534,7 @@ useTimedError(error);
                   v-if="loreRecords.has(message.id)"
                   :records="loreRecords.get(message.id)!"
                   :removable="!pendingVisible"
-                  :disabled="
-                    busy || removingLore || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-                  "
+                  :disabled="storyLocked || removingLore"
                   @remove="removeLore"
                 />
               </template>
@@ -2759,8 +2575,7 @@ useTimedError(error);
                   <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
                   <article
                     v-if="
-                      visiblePendingInput &&
-                      !session.messages.some((m: any) => m.id === visiblePendingInput.id)
+                      visiblePendingInput && !session.messages.some((m) => m.id === visiblePendingInput?.id)
                     "
                     class="message user"
                     data-message-id="__pending__"
@@ -2882,10 +2697,7 @@ useTimedError(error);
                   @keydown.enter.prevent="regenerateReply"
                 />
               </PromptField>
-              <button
-                :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-                @click="regenerateReply"
-              >
+              <button :disabled="storyLocked" @click="regenerateReply">
                 <Icon name="refresh" :size="16" />重新生成
               </button>
             </div>
@@ -2894,11 +2706,7 @@ useTimedError(error);
               class="regenerate-options"
               title="将原回复全文提供给模型作为修改参考，仍从本轮生成前的状态和笔记开始。"
             >
-              <input
-                v-model="regenerationIncludeReply"
-                type="checkbox"
-                :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-              />
+              <input v-model="regenerationIncludeReply" type="checkbox" :disabled="storyLocked" />
               带上原 AI 回复作为重写参考
             </label>
           </section>
@@ -2916,9 +2724,9 @@ useTimedError(error);
               <AppNotification
                 v-if="retryableTurn"
                 :message="
-                  activeTurn.request.expected_revision !== session.revision
+                  retryableTurn.request.expected_revision !== session.revision
                     ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
-                    : activeTurn.status === 'cancelled'
+                    : retryableTurn.status === 'cancelled'
                       ? '本次生成已停止，草稿未提交。'
                       : '本次生成失败，正文与状态未提交。'
                 "
@@ -2932,7 +2740,7 @@ useTimedError(error);
                   expand-on-focus
                   :rows="2"
                   submit-on-enter
-                  :send-shortcut="settings.shared.send_shortcut"
+                  :send-shortcut="loadedSettings().shared.send_shortcut"
                   @submit="send()"
                   :disabled="busy"
                 />
@@ -2945,20 +2753,14 @@ useTimedError(error);
                       :aria-expanded="rewriteExpanded"
                       :aria-label="rewriteExpanded ? '收起重新生成选项' : '重新生成'"
                       title="重新生成"
-                      :disabled="
-                        !rewriteExpanded &&
-                        (busy ||
-                          variablePreferenceSaving ||
-                          !!editingMessageId ||
-                          activeTurn?.status === 'awaiting_review')
-                      "
+                      :disabled="!rewriteExpanded && (storyLocked || variablePreferenceSaving)"
                       @click="rewriteExpanded = !rewriteExpanded"
                     >
                       <Icon name="refresh" :size="16" /><span class="regenerate-label">重新生成</span></button
                     ><ConversationModelControls
                       v-if="session?.channel_origin"
                       :profile="activeModel"
-                      :providers="settings.shared.providers"
+                      :providers="loadedSettings().shared.providers"
                       :channel="session.channel_origin"
                       :effort="quickEffort"
                       :disabled="
@@ -3034,7 +2836,7 @@ useTimedError(error);
                 <ChatGPTUsage
                   :active="activeSubscription || trackerSubscription"
                   :label="storySubscriptionLabel"
-                  :error="error || activeTurn?.error"
+                  :error="error || activeTurn?.error || undefined"
                 />
                 <span
                   :title="composerContextTitle"
@@ -3141,11 +2943,11 @@ useTimedError(error);
           :key="session.id"
           :session-id="session.id"
           :story-revision="session.revision"
-          :settings="settings"
+          :settings="loadedSettings()"
           :story-rounds="storyRounds"
           @settings="
             settingsInitialPage = 'shared.advisor';
-            settingsChannel = session.channel_origin;
+            settingsChannel = session.channel_origin ?? undefined;
             panel = 'settings';
           "
           :story-title="session.title"
@@ -3162,13 +2964,7 @@ useTimedError(error);
             :sent-label="sentCacheLabel"
             :retention="writerCacheRetention"
             :runtime="writerResponseCache"
-            :disabled="
-              busy ||
-              cacheBreakpointBusy ||
-              !!editingMessageId ||
-              activeTurn?.status === 'awaiting_review' ||
-              switchingVersion
-            "
+            :disabled="storyLocked || cacheBreakpointBusy || switchingVersion"
             @save="saveCacheBreakpoint"
             @save-retention="saveCacheRetention"
             @locate="locateCacheBreakpoint"
@@ -3177,177 +2973,58 @@ useTimedError(error);
             v-if="isFullAgent && inspectorTab === 'tools'"
             :key="session.id"
             :session="session"
-            :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
+            :disabled="storyLocked"
             :update-variables="updateVariables"
             :allow-content-edit="allowEdit"
             @saved="applyFullSession"
           />
-          <section v-show="inspectorTab === 'mvu'" aria-label="MVU 变量">
-            <h2>MVU 变量</h2>
-            <StoryMessage
-              v-if="mvuPanel"
-              :message="mvuPanel"
-              panel-only
-              expand-first-level
-              :session="session"
-              :enabled="!!sessionCard?.permission"
-              @action="frameAction"
-            />
-            <p v-else class="state-empty">此角色卡没有独立状态面板，可展开查看变量。</p>
-            <button
-              v-if="mvuPanel && !sessionCard?.permission"
-              :disabled="
-                busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
-              "
-              @click="setSessionScriptPermission(true)"
-            >
-              启用此对话的脚本
-            </button>
-            <details :key="session.id">
-              <summary>查看 MVU 变量</summary>
-              <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
-            </details>
-          </section>
-          <section v-show="inspectorTab === 'scene'" class="scene-memory" aria-label="场景">
-            <div class="scene-heading">
-              <h2>场景</h2>
-              <button :disabled="busy || activeTurn?.status === 'awaiting_review'" @click="editSessionLore">
-                编辑对话世界书
-              </button>
-            </div>
-            <FullAgentNotes
-              v-if="isFullAgent"
-              :key="session.id"
-              :session="session"
-              :disabled="busy || !!editingMessageId || activeTurn?.status === 'awaiting_review'"
-              @saved="applyFullSession"
-            />
-            <template v-else>
-              <ContextStrategyControls
-                :session="session"
-                :disabled="
-                  busy || !!sceneSubmitting || !!editingMessageId || activeTurn?.status === 'awaiting_review'
-                "
-              />
-              <p class="inspector-note">
-                这是当前对话的记忆上下文，由后台 Tracker 整理、Roleplay Runtime
-                保存。记忆随剧情进度保存，继承进度时会带入新对话。
-              </p>
-              <p v-if="sceneUpdating" class="scene-update-status" role="status">
-                {{ '正在根据当前对话重新生成记忆…' }}
-              </p>
-              <div class="scene-section-heading">
-                <h3>记忆</h3>
-                <button
-                  :disabled="
-                    busy ||
-                    contextBusy ||
-                    !!sceneSubmitting ||
-                    !!editingMessageId ||
-                    activeTurn?.status === 'awaiting_review'
-                  "
-                  :aria-busy="sceneUpdating === 'memory'"
-                  @click="refreshScene('memory')"
-                  aria-label="重新生成记忆"
-                >
-                  <span
-                    v-if="sceneUpdating === 'memory'"
-                    class="scene-update-spinner"
-                    aria-hidden="true"
-                  ></span
-                  >{{ sceneUpdating === 'memory' ? '更新中…' : '↻ 重新生成' }}
-                </button>
-              </div>
-              <SceneNotes
-                :key="`${session.id}:memory`"
-                kind="memory"
-                :snapshot="session.snapshot"
-                :memory-view="session.memory_view"
-                :progress="memoryProgress"
-                @change="saveMemoryRecord"
-                @cancel="stop"
-                :messages="session.messages"
-                :persona="session.persona"
-                :character="archiveCharacter"
-                :disabled="
-                  busy ||
-                  contextBusy ||
-                  !!sceneSubmitting ||
-                  !!editingMessageId ||
-                  activeTurn?.status === 'awaiting_review'
-                "
-                :saving="sceneSaving === 'memory'"
-                @locate="locateSource"
-              />
-            </template>
-          </section>
-          <section v-show="inspectorTab === 'options'" class="inspector-options" aria-label="会话设置">
-            <button @click="panel = 'message-adapter'">消息适配</button>
-            <div class="inspector-options-heading">
-              <h2>会话设置</h2>
-              <div class="inspector-save">
-                <span v-if="optionsNotice" role="status">{{ optionsNotice }}</span>
-                <button class="primary" @click="saveOptions">保存</button>
-              </div>
-            </div>
-            <label class="check">
-              <input
-                type="checkbox"
-                :checked="!!sessionCard?.permission"
-                :disabled="
-                  busy || scriptPermissionBusy || contextBusy || activeTurn?.status === 'awaiting_review'
-                "
-                @change="setSessionScriptPermission(($event.target as HTMLInputElement).checked)"
-              />启用此对话的角色卡脚本
-            </label>
-            <label>你的身份<input v-model="session.persona" /></label
-            ><label
-              >用户完整描述<ExpandableTextarea
-                v-model="session.persona_data.description"
-                label="用户完整描述"
-                placeholder="外貌、背景、性格、能力与边界" /></label
-            ><label
-              >本轮偏好（可选）<ExpandableTextarea
-                v-model="session.turn_preference"
-                label="本轮偏好"
-                :prefix="activeSettings.preference_prompt || ''"
-                placeholder="例如：多用对话推进，节奏放缓，给我留下行动空间。"
-              />
-            </label>
-            <PreferencePresetPicker
-              :key="session.id"
-              v-model="session.turn_preference"
-              :revision="session.revision"
-              :presets="settings.shared?.preference_presets || []"
-              @saved="settings = $event"
-              @manage="managePreferencePresets"
-            />
-            <p class="inspector-note">仅补充当前对话的系统提示，保存后持续生效；清空可取消。</p>
-            <PolicySelect v-model="session.policy" :inherited-policy="activeSettings.policy" compact />
-            <p class="inspector-note">
-              世界书注入：{{
-                session.lore_injection_mode === 'conversation' ? '随对话滚动' : 'ST 式顶部可变'
-              }}（随剧情进度继承）。
-            </p>
-            <p v-if="isFullAgent" class="inspector-note">
-              Full Agent 使用独立的工作窗口与交接笔记。模式在创建会话时确定。
-            </p>
-            <template v-else>
-              <h3>上下文结构编排</h3>
-              <p class="inspector-note">仅影响当前对话，随剧情进度继承。</p>
-              <button
-                :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-                @click="panel = 'recipe'"
-              >
-                编辑上下文配方</button
-              ><button
-                :disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
-                @click="resetRecipe"
-              >
-                恢复当前全局编排
-              </button>
-            </template>
-          </section>
+          <MvuInspector
+            v-show="inspectorTab === 'mvu'"
+            :session="session"
+            :panel="mvuPanel"
+            :scripts-enabled="!!sessionCard?.permission"
+            :permission-disabled="scriptPermissionDisabled"
+            @action="frameAction"
+            @enable-scripts="setSessionScriptPermission(true)"
+          />
+          <SceneInspector
+            v-show="inspectorTab === 'scene'"
+            :session="session"
+            :full-agent="isFullAgent"
+            :locked="storyLocked"
+            :lore-disabled="busy || activeTurn?.status === 'awaiting_review'"
+            :context-busy="contextBusy"
+            :submitting="!!sceneSubmitting"
+            :updating="sceneUpdating"
+            :progress="memoryProgress"
+            :character="archiveCharacter"
+            :saving="sceneSaving === 'memory'"
+            @edit-lore="editSessionLore"
+            @saved="applyFullSession"
+            @refresh="refreshScene('memory')"
+            @change="saveMemoryRecord"
+            @cancel="stop"
+            @locate="locateSource"
+          />
+          <SessionOptions
+            v-show="inspectorTab === 'options'"
+            :session="session"
+            :full-agent="isFullAgent"
+            :notice="optionsNotice"
+            :scripts-enabled="!!sessionCard?.permission"
+            :permission-disabled="scriptPermissionDisabled"
+            :recipe-disabled="busy || savingRecipe || activeTurn?.status === 'awaiting_review'"
+            :preference-prompt="activeSettings.preference_prompt || ''"
+            :inherited-policy="activeSettings.policy"
+            :presets="settings?.shared.preference_presets || []"
+            @message-adapter="panel = 'message-adapter'"
+            @save="saveOptions"
+            @script-permission="setSessionScriptPermission"
+            @presets-saved="settings = $event"
+            @manage-presets="managePreferencePresets"
+            @edit-recipe="panel = 'recipe'"
+            @reset-recipe="resetRecipe"
+          />
         </div>
       </div>
     </aside>
@@ -3367,7 +3044,7 @@ useTimedError(error);
         @keydown.esc.prevent="closeDeleteBubble()"
       >
         <div class="popover-arrow"></div>
-        <h3 id="delete-confirm-title">删除“{{ deleteBubble.item.title || deleteBubble.item.name }}”？</h3>
+        <h3 id="delete-confirm-title">删除“{{ deleteBubble.title }}”？</h3>
         <p>
           {{
             deleteBubble.kind === 'editor'
@@ -3402,16 +3079,16 @@ useTimedError(error);
             'settings-modal': panel === 'settings',
           }"
           :size="
-            ['settings', 'context', 'state', 'card', 'trace', 'recipe', 'message-adapter'].includes(panel)
+            ['settings', 'context', 'state', 'recipe', 'message-adapter'].includes(panel)
               ? 'large'
-              : ['delete-card', 'fork'].includes(panel)
+              : ['delete-card', 'fork', 'warmup'].includes(panel)
                 ? 'small'
                 : 'medium'
           "
           @close="closePanel"
           ><AppNotification :message="error" />
           <StartupWarmup
-            v-if="panel === 'warmup'"
+            v-if="panel === 'warmup' && startupModels"
             :status="startupModels"
             :warmup="startupWarmup"
             @close="panel = ''"
@@ -3432,200 +3109,74 @@ useTimedError(error);
             "
             @close="panel = ''"
           />
-          <template v-else-if="panel === 'delete-card'"
-            ><h2>删除角色卡</h2>
-            <p>
-              彻底删除“{{
-                deletingCard?.name
-              }}”？角色卡及未被使用的资源会删除，已有对话保留继续游玩所需的设定和资源。
-            </p>
-            <div class="modal-footer">
-              <button :disabled="deletingCardBusy" @click="panel = ''">取消</button
-              ><button class="danger" :disabled="deletingCardBusy" @click="deleteCard">
-                {{ deletingCardBusy ? '正在删除…' : '确认删除角色卡' }}
-              </button>
-            </div></template
-          >
+          <DeleteCardConfirm
+            v-else-if="panel === 'delete-card'"
+            :name="deletingCard?.name"
+            :busy="deletingCardBusy"
+            @cancel="panel = ''"
+            @confirm="deleteCard"
+          />
           <ConversationMessageAdapter
-            v-else-if="panel === 'message-adapter'"
+            v-else-if="panel === 'message-adapter' && session"
             :key="session.id"
             :endpoint="`/sessions/${session.id}/message-adapter`"
             :kemini-enabled="session.kemini"
           />
           <RecipeEditor
-            v-else-if="panel === 'recipe'"
+            v-else-if="panel === 'recipe' && session"
             :recipe="session.recipe"
             :saving="savingRecipe"
             @save="saveRecipe"
           />
-          <template v-else-if="panel === 'layout'"
-            ><h2>阅读排版</h2>
-            <p class="muted">设置即时生效，保存在当前浏览器。</p>
-            <p class="layout-preview" aria-hidden="true">
-              雾气从港口的石阶上缓缓爬起。“你来晚了。”守卫靠在铁栏边，提灯晃出一圈昏黄的光晕。
-            </p>
-            <div class="layout-grid">
-              <label
-                >正文字号<input
-                  aria-label="正文字号"
-                  type="number"
-                  min="14"
-                  max="28"
-                  v-model.number="layout.fontSize"
-                  @change="normalizeLayoutNumber('fontSize', 14, 28)" /></label
-              ><label
-                >行距<input
-                  aria-label="行距"
-                  type="number"
-                  min="1.4"
-                  max="2.6"
-                  step="0.1"
-                  v-model.number="layout.lineHeight"
-                  @change="normalizeLayoutNumber('lineHeight', 1.4, 2.6)" /></label
-              ><label
-                >阅读区宽度<input
-                  aria-label="阅读区宽度"
-                  type="number"
-                  min="700"
-                  max="1600"
-                  step="10"
-                  v-model.number="layout.readingWidth"
-                  @change="normalizeLayoutNumber('readingWidth', 700, 1600)" /></label
-              ><label
-                >右侧栏宽度<input
-                  aria-label="右侧栏宽度"
-                  type="number"
-                  min="240"
-                  max="640"
-                  step="10"
-                  v-model.number="layout.rightWidth"
-                  @change="normalizeLayoutNumber('rightWidth', 240, 640)" /></label
-              ><label
-                >字体<select v-model="layout.fontFamily">
-                  <option value="sans">清晰无衬线</option>
-                  <option value="serif">书籍衬线</option>
-                </select></label
-              >
-            </div>
-            <label class="check"><input type="checkbox" v-model="layout.leftCollapsed" />折叠左侧栏</label
-            ><label class="check"><input type="checkbox" v-model="layout.rightCollapsed" />折叠右侧栏</label
-            ><label class="check" title="关闭后界面改用不透明面板，适合低性能显卡或偏好清晰边界"
-              ><input type="checkbox" v-model="layout.glass" />毛玻璃效果</label
-            ></template
-          ><template v-else-if="panel === 'memory-rebuild'">
-            <h2>重新生成记忆</h2>
-            <p>
-              预计至少 {{ memoryRebuildEstimate?.estimated_batches }} 次分批整理，最多
-              {{ memoryRebuildEstimate?.review_max_calls }} 次疑难复核。
-            </p>
-            <p class="muted">
-              {{ memoryRebuildEstimate?.message }}
-              重建会重新核对当前分支全部原文，保留手工修订和删除标记。实际 API 用量在后台工作记录中查看。
-            </p>
-            <div class="actions">
-              <button :disabled="busy || !!sceneSubmitting" @click="startSceneRefresh('memory')">
-                开始重建
-              </button>
-              <button @click="panel = ''">取消</button>
-            </div></template
-          ><template v-else-if="panel === 'context-management'">
-            <h2>窗口与笔记</h2>
-            <p class="muted">
-              {{ channelLabels[session.channel_origin as Channel] || '渠道待确认' }} ·
-              {{ activeModel.model || '模型待配置' }}
-            </p>
-            <FullAgentNotes
-              :session="session"
-              :disabled="busy || activeTurn?.status === 'awaiting_review'"
-              @saved="applyFullSession"
-            /> </template
-          ><template v-else-if="panel === 'state'"
-            ><div class="state-panel-head">
-              <h2 class="panel-title"><Icon name="braces" :size="19" />变量与记忆</h2>
-              <nav class="panel-tabs" aria-label="变量与记忆分页">
-                <button
-                  v-for="tab in stateTabs"
-                  :key="tab.id"
-                  :class="{ active: stateTab === tab.id }"
-                  :aria-pressed="stateTab === tab.id"
-                  @click="stateTab = tab.id"
-                >
-                  {{ tab.label }}
-                </button>
-              </nav>
-            </div>
-            <p class="muted state-panel-note">仅显示当前剧情分支。切换分支会一同恢复变量与记忆。</p>
-            <div v-if="stateTab === 'variables'" class="state-cards">
-              <StateTree :value="session.snapshot.state.stat_data || session.snapshot.state" />
-            </div>
-            <template v-else-if="stateTab === 'memory'"
-              ><FullAgentNotes
-                v-if="isFullAgent"
-                :session="session"
-                :disabled="busy || activeTurn?.status === 'awaiting_review'"
-                @saved="applyFullSession" />
-              <SceneNotes
-                v-else
-                kind="memory"
-                layout="cards"
-                :rounds="messageRounds"
-                :snapshot="session.snapshot"
-                :memory-view="session.memory_view"
-                :progress="memoryProgress"
-                @change="saveMemoryRecord"
-                @cancel="stop"
-                :messages="session.messages"
-                :persona="session.persona"
-                :character="archiveCharacter"
-                :disabled="busy || activeTurn?.status === 'awaiting_review'"
-                :saving="sceneSaving === 'memory'"
-                @locate="locateSource"
-            /></template>
-            <div v-else class="state-cards"><StateTree :value="session.snapshot.content" /></div
-          ></template>
-          <template v-else-if="panel === 'fork-select'"
-            ><h2>新建对话</h2>
-            <p class="muted">
-              选择要继承的对话进度。新对话将从所选回复结束的位置继续，并保留该位置的记忆与状态快照。
-            </p>
-            <div class="branch-list">
-              <button
-                v-for="(point, index) in forkPoints"
-                :key="point.id"
-                class="branch"
-                :class="{ current: point.id === session.head }"
-                :title="point.raw"
-                @click="askFork(point, true)"
-              >
-                <small class="branch-index">{{ index + 1 }}</small
-                ><span class="branch-role">{{ name }}</span
-                ><span class="branch-excerpt">{{
-                  point.raw.replace(/\s+/g, ' ').trim() || '（空回复）'
-                }}</span
-                ><small v-if="point.id === session.head" class="branch-current">当前</small>
-              </button>
-            </div>
-            <p v-if="!forkPoints.length" class="muted">暂无可继承的 AI 回复。</p>
-            <div class="modal-footer"><button @click="panel = ''">取消</button></div></template
-          >
-          <template v-else-if="panel === 'fork'"
-            ><h2>继承进度，新建对话</h2>
-            <p class="muted">
-              继承这条回复及此前的完整对话，同时延续当时的场景变量、记忆、检索线索、世界书和脚本变量，以及上下文配方。新对话从这里独立继续，原对话保留。
-            </p>
-            <div class="fork-preview">
-              <strong>{{ name }}</strong>
-              <p>{{ forkMessage?.raw }}</p>
-            </div>
-            <div class="modal-footer">
-              <button v-if="forkFromPicker" :disabled="creatingFork" @click="panel = 'fork-select'">
-                返回选择</button
-              ><button :disabled="creatingFork" @click="panel = ''">取消</button
-              ><button class="primary" :disabled="creatingFork" @click="createFork">
-                {{ creatingFork ? '正在创建…' : '确认继承并新建对话' }}
-              </button>
-            </div></template
-          >
+          <ReadingLayoutPanel v-else-if="panel === 'layout'" v-model:layout="layout" />
+          <MemoryRebuildConfirm
+            v-else-if="panel === 'memory-rebuild' && session"
+            :estimate="memoryRebuildEstimate"
+            :disabled="busy || !!sceneSubmitting"
+            @start="startSceneRefresh('memory')"
+            @cancel="panel = ''"
+          />
+          <FullAgentWindowPanel
+            v-else-if="panel === 'context-management' && session"
+            :session="session"
+            :channel="(session.channel_origin && channelLabels[session.channel_origin]) || '渠道待确认'"
+            :model="activeModel.model || '模型待配置'"
+            :disabled="busy || activeTurn?.status === 'awaiting_review'"
+            @saved="applyFullSession"
+          />
+          <StoryStatePanel
+            v-else-if="panel === 'state' && session"
+            v-model:tab="stateTab"
+            :session="session"
+            :full-agent="isFullAgent"
+            :rounds="messageRounds"
+            :progress="memoryProgress"
+            :character="archiveCharacter"
+            :disabled="busy || activeTurn?.status === 'awaiting_review'"
+            :saving="sceneSaving === 'memory'"
+            @saved="applyFullSession"
+            @change="saveMemoryRecord"
+            @cancel="stop"
+            @locate="locateSource"
+          />
+          <ForkSelectPanel
+            v-else-if="panel === 'fork-select' && session"
+            :points="forkPoints"
+            :head="session.head"
+            :name="name"
+            @pick="askFork($event, true)"
+            @cancel="panel = ''"
+          />
+          <ForkConfirmPanel
+            v-else-if="panel === 'fork'"
+            :name="name"
+            :message="forkMessage"
+            :from-picker="forkFromPicker"
+            :creating="creatingFork"
+            @back="panel = 'fork-select'"
+            @cancel="panel = ''"
+            @confirm="createFork"
+          />
           <ContextPreview
             v-else-if="panel === 'context'"
             :preview="preview"
@@ -3639,33 +3190,7 @@ useTimedError(error);
             :item-title="contextItemTitle"
             :rounds="messageRounds"
           />
-          <template v-else-if="panel === 'trace'"
-            ><h2>幕后活动</h2>
-            <p class="muted">模型请求、工具活动、变量修改与脚本日志。</p>
-            <details v-for="(event, i) in trace" :key="i">
-              <summary>{{ event.kind }}</summary>
-              <pre>{{ JSON.stringify(event.payload, null, 2) }}</pre>
-            </details>
-            <p v-if="!trace.length" class="muted">下一轮运行时，活动将在这里出现。</p></template
-          >
-          <template v-else-if="panel === 'probe'"
-            ><h2>模型能力检查</h2>
-            <pre>{{ JSON.stringify(preview, null, 2) }}</pre>
-          </template>
-          <template v-else-if="panel === 'about'"
-            ><div class="about-mark" aria-hidden="true"><Icon name="brand" :size="30" :stroke="1.4" /></div>
-            <div class="eyebrow">Terrarium Tavern · 0.1</div>
-            <h2 class="about-title">给故事一处生长的地方。</h2>
-            <p>本地优先的 Roleplay Agent 应用。角色数据、剧情分支和记忆保存在你的电脑。</p>
-            <p>
-              Powered by
-              <a href="https://github.com/Kohaku-Lab/KohakuTerrarium" target="_blank" rel="noreferrer"
-                >KohakuTerrarium</a
-              >
-              · Shih-Ying Yeh 与贡献者。
-            </p>
-            <p>兼容接口参考 Tavern Helper 与 MagVarUpdate。支持范围以项目兼容矩阵和测试为准。</p></template
-          >
+          <AboutPanel v-else-if="panel === 'about'" />
         </AppModal>
       </div>
     </Teleport>

@@ -9,8 +9,11 @@ from tavern.memories.memory import window_history
 
 def reply_ids(history):
     roles = {message["id"]: message["role"] for message in history}
-    return [message["id"] for message in history
-            if message["role"] == "assistant" and roles.get(message.get("parent")) == "user"]
+    return [
+        message["id"]
+        for message in history
+        if message["role"] == "assistant" and roles.get(message.get("parent")) == "user"
+    ]
 
 
 def automatic_message_id(history, offset=2):
@@ -20,8 +23,12 @@ def automatic_message_id(history, offset=2):
 
 def reset_follow(history, follow=None):
     follow = follow or {}
-    return {"interval": follow.get("interval", 2), "offset": follow.get("offset", 2),
-            "anchor": automatic_message_id(history, follow.get("offset", 2)), "progress": 0}
+    return {
+        "interval": follow.get("interval", 2),
+        "offset": follow.get("offset", 2),
+        "anchor": automatic_message_id(history, follow.get("offset", 2)),
+        "progress": 0,
+    }
 
 
 def advance_follow(history, follow, advance=False):
@@ -49,9 +56,12 @@ def effective_message_id(session, settings):
 
     state = session["snapshot"].get("state", {})
     full = session.get("agent_mode") == "full_agent"
-    if not full and not any(block.get("source") == "history" and block.get("enabled", True)
-               and (not block.get("condition") or get_path(state, block["condition"]))
-               for block in session.get("recipe", {}).get("blocks", [])):
+    if not full and not any(
+        block.get("source") == "history"
+        and block.get("enabled", True)
+        and (not block.get("condition") or get_path(state, block["condition"]))
+        for block in session.get("recipe", {}).get("blocks", [])
+    ):
         return None
     candidate = planned_message_id(session)
     if not candidate or candidate not in reply_ids(session["messages"]):
@@ -61,8 +71,10 @@ def effective_message_id(session, settings):
         visible = session["messages"][start:]
     else:
         from tavern.conversation.half_compaction import local_window_enabled
-        visible, _ = window_history(session["messages"], session["snapshot"],
-                                    enabled=local_window_enabled(settings))
+
+        visible, _ = window_history(
+            session["messages"], session["snapshot"], enabled=local_window_enabled(settings)
+        )
     return candidate if any(message["id"] == candidate for message in visible) else None
 
 
@@ -74,30 +86,47 @@ def breakpoint_reason(session, effective_id):
         return "所选回复不在实际上下文窗口，暂用固定前缀"
     if not candidate:
         follow = session.get("cache_breakpoint_follow", {})
-        if session.get("cache_breakpoint_auto", True) and len(reply_ids(session["messages"])) >= follow.get("offset", 2):
+        if session.get("cache_breakpoint_auto", True) and len(reply_ids(session["messages"])) >= follow.get(
+            "offset", 2
+        ):
             return "尚未到下次跟进，暂用固定前缀"
-        return ("已完成回复不足目标位置，暂用固定前缀" if session.get("cache_breakpoint_auto", True)
-                else "手动固定于可用的固定前缀")
+        return (
+            "已完成回复不足目标位置，暂用固定前缀"
+            if session.get("cache_breakpoint_auto", True)
+            else "手动固定于可用的固定前缀"
+        )
     return None
 
 
 def context_breakpoint_index(trace, message_id):
     from tavern.core.kemini import PREFIX_SOURCES
+
     if message_id:
         for index, entry in enumerate(trace):
-            if (entry.get("source") == "history" and entry.get("role") == "assistant"
-                    and entry.get("message_id") == message_id):
+            if (
+                entry.get("source") == "history"
+                and entry.get("role") == "assistant"
+                and entry.get("message_id") == message_id
+            ):
                 return index
-    first_history = next((index for index, entry in enumerate(trace)
-                          if entry.get("source") == "history"), len(trace))
-    experimental = [index for index, entry in enumerate(trace[:first_history])
-                    if entry.get("source") in PREFIX_SOURCES]
+    first_history = next(
+        (index for index, entry in enumerate(trace) if entry.get("source") == "history"), len(trace)
+    )
+    experimental = [
+        index for index, entry in enumerate(trace[:first_history]) if entry.get("source") in PREFIX_SOURCES
+    ]
     for source in ("constant", "character"):
-        indices = [index for index, entry in enumerate(trace)
-                   if index < first_history and
-                   (entry.get("lore_region") == source if source == "constant"
-                    else entry.get("context_source", entry.get("source")) in
-                    {"character", "system_prompt", "description", "personality", "scenario"})]
+        indices = [
+            index
+            for index, entry in enumerate(trace)
+            if index < first_history
+            and (
+                entry.get("lore_region") == source
+                if source == "constant"
+                else entry.get("context_source", entry.get("source"))
+                in {"character", "system_prompt", "description", "personality", "scenario"}
+            )
+        ]
         if indices:
             return max([indices[-1], *experimental])
     indices = [index for index, entry in enumerate(trace[:first_history]) if is_static(entry)]
@@ -106,9 +135,29 @@ def context_breakpoint_index(trace, message_id):
 
 def is_static(entry):
     source = entry.get("context_source", entry.get("source"))
-    return source in {"rules", "tool_protocol", "context_policy", "system", "character", "system_prompt", "description", "personality", "scenario",
-                      "persona", "examples", "custom", "session_preference", "kemini_filler", "kemini_clear",
-                      "kemini_identity", "kemini_info"} or entry.get("lore_region") == "constant"
+    return (
+        source
+        in {
+            "rules",
+            "tool_protocol",
+            "context_policy",
+            "system",
+            "character",
+            "system_prompt",
+            "description",
+            "personality",
+            "scenario",
+            "persona",
+            "examples",
+            "custom",
+            "session_preference",
+            "kemini_filler",
+            "kemini_clear",
+            "kemini_identity",
+            "kemini_info",
+        }
+        or entry.get("lore_region") == "constant"
+    )
 
 
 def prepare_context(context, session, history, snapshot, settings):
@@ -128,14 +177,19 @@ def prepare_context(context, session, history, snapshot, settings):
         if not fixed:
             leading = False
         entry["cache_static"] = fixed
-    context["cache"] = {"mode": settings.cache.mode if explicit else "cloud",
-                        "status": "planned" if explicit and settings.cache.mode == "runtime" else "cloud",
-                        "planned_index": at, "message_id": trace[at].get("message_id") if at is not None else None,
-                        "source": trace[at]["source"] if at is not None else None,
-                        "scope": session["id"],
-                        "revision": session.get("revision"),
-                        "window": str(snapshot.get("full_agent", {}).get("window", {}).get("id") or
-                                      fingerprint(snapshot.get("context_window", {})))}
+    context["cache"] = {
+        "mode": settings.cache.mode if explicit else "cloud",
+        "status": "planned" if explicit and settings.cache.mode == "runtime" else "cloud",
+        "planned_index": at,
+        "message_id": trace[at].get("message_id") if at is not None else None,
+        "source": trace[at]["source"] if at is not None else None,
+        "scope": session["id"],
+        "revision": session.get("revision"),
+        "window": str(
+            snapshot.get("full_agent", {}).get("window", {}).get("id")
+            or fingerprint(snapshot.get("context_window", {}))
+        ),
+    }
     return context
 
 

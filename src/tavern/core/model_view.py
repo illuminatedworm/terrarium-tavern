@@ -6,6 +6,7 @@ applying edits. Hash fields are omitted and preserved by Runtime, including when
 an agent replaces a parent object. Never store this view as the real document.
 Free-form source code is kept intact except for reversible opaque-token handles.
 """
+
 import copy
 import re
 import uuid
@@ -13,7 +14,9 @@ import uuid
 import jsonpatch
 import jsonpointer
 
-OPAQUE = re.compile(r"(?<![\w])(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24,})(?![\w])")
+OPAQUE = re.compile(
+    r"(?<![\w])(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{24,})(?![\w])"
+)
 HANDLE = re.compile(r"@D[1-9]\d*\b")
 IDENTITY_FIELDS = {"id", "uid", "source", "message_id", "source_message_id", "anchor_id", "split_from"}
 STATE_BOOKKEEPING = {"initialized_lorebooks", "schema", "display_data", "delta_data"}
@@ -26,12 +29,14 @@ def state_for_model(state):
     'id' or 'hash'. Both flat state and stat_data are supported. Runtime receives
     the complete original state; this projection must never be committed back.
     """
+
     def values(value):
         if isinstance(value, dict):
             return {k: values(v) for k, v in value.items() if k not in {"$internal", "$meta", "$arrayMeta"}}
         if isinstance(value, list):
             return [values(v) for v in value if v != "$__META_EXTENSIBLE__$"]
         return copy.deepcopy(value)
+
     return values({k: v for k, v in state.items() if k not in STATE_BOOKKEEPING})
 
 
@@ -93,12 +98,14 @@ class ModelView:
 
     def restore(self, value):
         if isinstance(value, str):
+
             def replace(match):
                 if match[0] in self.reserved:
                     return match[0]
                 if match[0] not in self.reverse:
                     raise ValueError("未知资料短编号；请使用本次工具返回的编号")
                 return self.reverse[match[0]]
+
             return HANDLE.sub(replace, value)
         if isinstance(value, dict):
             return {self.restore(k): self.restore(v) for k, v in value.items()}
@@ -126,12 +133,19 @@ class ModelView:
         # Decode JSON Pointer escapes before mapping keys, and re-escape after
         # restoring them. A key containing '/' or '~' remains exactly one key.
         convert = self.restore if restore else self.text
-        return "".join("/" + convert(part).replace("~", "~0").replace("/", "~1")
-                       for part in jsonpointer.JsonPointer(path).parts)
+        return "".join(
+            "/" + convert(part).replace("~", "~0").replace("/", "~1")
+            for part in jsonpointer.JsonPointer(path).parts
+        )
 
     def operations(self, operations):
-        return [{k: self.pointer(v, restore=True) if k in ("path", "from") else self.restore(v)
-                 for k, v in raw.items()} for raw in operations]
+        return [
+            {
+                k: self.pointer(v, restore=True) if k in ("path", "from") else self.restore(v)
+                for k, v in raw.items()
+            }
+            for raw in operations
+        ]
 
     def patch(self, document, operations):
         """Apply to the original, preserving fields the model was never shown.
@@ -145,7 +159,9 @@ class ModelView:
             path = operation.get("path", "")
             if any(hidden_field(part) for part in jsonpointer.JsonPointer(path).parts):
                 raise ValueError("指纹和哈希由程序维护，不接受模型修改；开场请使用 set_opening")
-            if "from" in operation and any(hidden_field(part) for part in jsonpointer.JsonPointer(operation["from"]).parts):
+            if "from" in operation and any(
+                hidden_field(part) for part in jsonpointer.JsonPointer(operation["from"]).parts
+            ):
                 raise ValueError("模型不能读取或复制内部哈希")
             op = copy.deepcopy(operation)
             if op.get("op") in ("add", "replace") and "value" in op:
@@ -185,10 +201,12 @@ def preserve_hidden(new, old):
     if isinstance(new, list):
         old = old if isinstance(old, list) else []
         by_id = {v["id"]: v for v in old if isinstance(v, dict) and isinstance(v.get("id"), (str, int))}
+
         def previous(value, index):
             if isinstance(value, dict) and "id" in value:
                 return by_id.get(value["id"])
             candidate = old[index] if index < len(old) else None
             return None if isinstance(candidate, dict) and "id" in candidate else candidate
+
         return [preserve_hidden(v, previous(v, i)) for i, v in enumerate(new)]
     return new

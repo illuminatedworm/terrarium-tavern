@@ -171,10 +171,10 @@ onBeforeUnmount(() => {
 .cw-run {
   margin: 0 0 20px 52px;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
-  font: 12px/1.6 var(--font-ui);
+  font: var(--fs-sm) / 1.6 var(--font-ui);
   min-width: 0;
 }
 .cw-run > summary {
@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
 }
 .cw-run-count {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
   flex-shrink: 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .run-running .cw-run-status,
 .run-queued .cw-run-status {
@@ -240,14 +240,14 @@ onBeforeUnmount(() => {
 }
 .run-note {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 10px 0 0;
 }
 .run-failure {
   /* Sit under the failed step it explains, apart from the next attempt. */
   margin: -10px 0 20px 52px;
   color: var(--warning);
-  font: 12px/1.6 var(--font-ui);
+  font: var(--fs-sm) / 1.6 var(--font-ui);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

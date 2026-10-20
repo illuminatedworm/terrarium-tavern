@@ -44,23 +44,23 @@ defineEmits<{ retry: []; back: [] }>();
 }
 .story-loading h2 {
   margin: 0 0 12px;
-  font-size: 20px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   color: var(--text-primary);
 }
 .story-loading-name {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 .story-loading-hint {
-  font-size: 13px;
+  font-size: var(--fs-md);
   color: var(--text-muted);
 }
 .story-loading-error {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-md);
   overflow-wrap: anywhere;
 }
 .story-loading-actions {

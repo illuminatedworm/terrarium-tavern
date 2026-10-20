@@ -1,4 +1,5 @@
 """Explicit edit choices reach real model requests and commit with branch state."""
+
 import copy
 import json
 
@@ -31,8 +32,9 @@ def story(tmp_path, request):
 
 
 def edit(store, session, text="修订后的完整回复", notify=True, mid=None):
-    return store.edit_message(session["id"], mid or session["head"], text,
-                              session["revision"], notify_ai=notify)
+    return store.edit_message(
+        session["id"], mid or session["head"], text, session["revision"], notify_ai=notify
+    )
 
 
 def test_latest_choice_restart_fork_and_atomic_conflict(story):
@@ -68,11 +70,15 @@ async def test_api_defaults_and_preview_do_not_consume(story):
             quiet = await client.put(url, json={"text": "silent", "expected_revision": session["revision"]})
             assert quiet.status_code == 200
             assert NOTIFICATIONS not in quiet.json()["snapshot"]
-            chosen = await client.put(url, json={"text": "explicit", "notify_ai": True,
-                                                "expected_revision": quiet.json()["revision"]})
+            chosen = await client.put(
+                url,
+                json={"text": "explicit", "notify_ai": True, "expected_revision": quiet.json()["revision"]},
+            )
             assert chosen.status_code == 200
             assert chosen.json()["snapshot"][NOTIFICATIONS] == [session["head"]]
-            preview = await client.post(f"/api/sessions/{session['id']}/messages-preview", json={"text": "next"})
+            preview = await client.post(
+                f"/api/sessions/{session['id']}/messages-preview", json={"text": "next"}
+            )
             assert preview.status_code == 200, preview.text
             assert "用户已修订" in json.dumps(preview.json(), ensure_ascii=False)
             assert app.state.store.session(session["id"])["snapshot"][NOTIFICATIONS] == [session["head"]]
@@ -89,16 +95,20 @@ def test_notice_uses_valid_references_or_complete_text(story):
     referenced = edit_notification(edited["snapshot"], edited["messages"], {edited["head"]: text})
     assert "H3" in referenced and text not in referenced
     assert edited["head"] not in notice and edited["head"] not in referenced
-    assert review_snapshot(edited["snapshot"]) == review_snapshot({
-        **edited["snapshot"], NOTIFICATIONS: []})
+    assert review_snapshot(edited["snapshot"]) == review_snapshot({**edited["snapshot"], NOTIFICATIONS: []})
 
 
 async def run_story(store, session, model, *, regenerate=False, tracker=None):
     if session["agent_mode"] == "full_agent":
         service = runtime(store)
         try:
-            return await turn(service, session, model, mode="regenerate" if regenerate else "send",
-                              message_id=session["head"] if regenerate else None)
+            return await turn(
+                service,
+                session,
+                model,
+                mode="regenerate" if regenerate else "send",
+                message_id=session["head"] if regenerate else None,
+            )
         finally:
             await service.close()
     service = RoleplayRuntime(store)
@@ -106,9 +116,17 @@ async def run_story(store, session, model, *, regenerate=False, tracker=None):
     if tracker:
         service.tracker_provider_factory = lambda: tracker
     try:
-        result = service.submit(session["id"], TurnRequest(text="next", operation_id=uid(),
-            expected_revision=session["revision"], mode="regenerate" if regenerate else "send",
-            message_id=session["head"] if regenerate else None, update_variables=tracker is not None))
+        result = service.submit(
+            session["id"],
+            TurnRequest(
+                text="next",
+                operation_id=uid(),
+                expected_revision=session["revision"],
+                mode="regenerate" if regenerate else "send",
+                message_id=session["head"] if regenerate else None,
+                update_variables=tracker is not None,
+            ),
+        )
         await service.tasks[result["id"]]
         return store.turn(result["id"]), store.session(session["id"])
     finally:
@@ -134,7 +152,7 @@ async def test_actual_next_request_and_consumption(story, regenerate, notify):
     assert result["status"] == "committed", result["error"]
     assert ("用户已修订" in sent_text(model)) is notify
     if notify:
-        assert ("修订后的完整回复" in sent_text(model))
+        assert "修订后的完整回复" in sent_text(model)
         assert edited["head"] not in sent_text(model)
     assert NOTIFICATIONS not in current["snapshot"]
     next_model = model_for(current, "next reply")
@@ -151,8 +169,9 @@ async def test_failure_cancellation_and_rejected_review_keep_queue(story):
     assert result["status"] == "error"
     assert current["snapshot"][NOTIFICATIONS] == [edited["head"]]
     for status in ("cancelled", "awaiting_review"):
-        tid, _ = store.create_turn(current["id"], TurnRequest(text="next", operation_id=uid(),
-                                                           expected_revision=current["revision"]))
+        tid, _ = store.create_turn(
+            current["id"], TurnRequest(text="next", operation_id=uid(), expected_revision=current["revision"])
+        )
         store.set_turn(tid, status=status)
         if status == "awaiting_review":
             service = RoleplayRuntime(store)
@@ -206,16 +225,35 @@ async def test_full_tool_continuations_keep_one_notice_and_silent_edits_keep_sta
 def test_notification_consumption_waits_for_accepted_commit(story):
     store, _, session = story
     edited = edit(store, session)
-    tid, _ = store.create_turn(edited["id"], TurnRequest(text="next", operation_id=uid(),
-                                                     expected_revision=edited["revision"]))
+    tid, _ = store.create_turn(
+        edited["id"], TurnRequest(text="next", operation_id=uid(), expected_revision=edited["revision"])
+    )
     user_id, reply_id = uid(), uid()
     snapshot = copy.deepcopy(edited["snapshot"])
-    pending = {"before": snapshot, "message_edit_notified": [edited["head"]], "messages": [
-        {"id": user_id, "parent": edited["head"], "role": "user", "raw": "next", "model": "next",
-         "display": "next", "snapshot": snapshot},
-        {"id": reply_id, "parent": user_id, "role": "assistant", "raw": "reply", "model": "reply",
-         "display": "reply", "snapshot": snapshot},
-    ]}
+    pending = {
+        "before": snapshot,
+        "message_edit_notified": [edited["head"]],
+        "messages": [
+            {
+                "id": user_id,
+                "parent": edited["head"],
+                "role": "user",
+                "raw": "next",
+                "model": "next",
+                "display": "next",
+                "snapshot": snapshot,
+            },
+            {
+                "id": reply_id,
+                "parent": user_id,
+                "role": "assistant",
+                "raw": "reply",
+                "model": "reply",
+                "display": "reply",
+                "snapshot": snapshot,
+            },
+        ],
+    }
     store.set_turn(tid, status="awaiting_review", pending=json.dumps(pending))
     assert store.session(edited["id"])["snapshot"][NOTIFICATIONS] == [edited["head"]]
     store.commit_turn(tid, pending)

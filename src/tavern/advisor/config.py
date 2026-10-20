@@ -1,4 +1,5 @@
 """Visible Advisor defaults, shared by configuration, preview and execution."""
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field

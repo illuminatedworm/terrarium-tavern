@@ -1,4 +1,5 @@
 """Browser uploads remain readable, scoped, bounded and removable."""
+
 import json
 
 import pytest
@@ -22,7 +23,11 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
             endpoint = f"/api/card-author/conversations/{wid}/files"
-            response = await client.post(endpoint, data={"expected_revision": 0}, files={"file": ("../../资料.md", "世界设定\n完整尾部".encode())})
+            response = await client.post(
+                endpoint,
+                data={"expected_revision": 0},
+                files={"file": ("../../资料.md", "世界设定\n完整尾部".encode())},
+            )
             assert response.status_code == 200, response.text
             workspace = response.json()
             item = workspace["files"][0]
@@ -30,16 +35,24 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
             path = attachment_path(editor.store, wid, item)
             assert path.read_text(encoding="utf-8").endswith("完整尾部")
             doc = make_docx(tmp_path / "资料.docx")
-            response = await client.post(endpoint, data={"expected_revision": workspace["revision"]}, files={"file": (doc.name, doc.read_bytes())})
+            response = await client.post(
+                endpoint,
+                data={"expected_revision": workspace["revision"]},
+                files={"file": (doc.name, doc.read_bytes())},
+            )
             assert response.status_code == 200, response.text
             second = response.json()["files"][1]
             card = import_fixture(editor.store)
             linked = editor.edits.attach(wid, card["id"], response.json()["revision"])
             editor.edits.remove_card(wid, linked["cards"][0]["ref"], linked["revision"])
             assert path.exists() and attachment_path(editor.store, wid, second).exists()
-            provider = ToolLLM([("read_text_file", {"path": item["ref"]}),
-                                ("new_context", {"content": "继续阅读资料"}),
-                                ("read_document", {"path": second["ref"]})])
+            provider = ToolLLM(
+                [
+                    ("read_text_file", {"path": item["ref"]}),
+                    ("new_context", {"content": "继续阅读资料"}),
+                    ("read_document", {"path": second["ref"]}),
+                ]
+            )
             result = await run(editor, wid, provider)
             assert result["status"] == "completed", result["error"]
             events = editor.edits.events(result["id"])
@@ -56,7 +69,9 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
             workspace = editor.edits.conversation(wid)
             assert len(workspace["messages"][0]["attachments"]) == 2
             assert all(f["message_ref"] == workspace["messages"][0]["ref"] for f in workspace["files"])
-            removed = await client.request("DELETE", endpoint + "/" + item["ref"], json={"expected_revision": workspace["revision"]})
+            removed = await client.request(
+                "DELETE", endpoint + "/" + item["ref"], json={"expected_revision": workspace["revision"]}
+            )
             assert removed.status_code == 400
             assert path.exists()
             next_provider = ToolLLM([])
@@ -68,9 +83,17 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
             assert "F1" not in latest_user["content"]
             workspace = editor.edits.conversation(wid)
             assert workspace["messages"][-2]["attachments"] == []
-            response = await client.post(endpoint, data={"expected_revision": workspace["revision"]}, files={"file": ("待发送.txt", b"draft")})
+            response = await client.post(
+                endpoint,
+                data={"expected_revision": workspace["revision"]},
+                files={"file": ("待发送.txt", b"draft")},
+            )
             unsent = response.json()["files"][-1]
-            removed = await client.request("DELETE", endpoint + "/" + unsent["ref"], json={"expected_revision": response.json()["revision"]})
+            removed = await client.request(
+                "DELETE",
+                endpoint + "/" + unsent["ref"],
+                json={"expected_revision": response.json()["revision"]},
+            )
             assert removed.status_code == 200
             assert not attachment_path(editor.store, wid, unsent).exists()
             workspace = editor.edits.conversation(wid)
@@ -83,14 +106,19 @@ async def test_upload_read_rollover_restore_and_remove(tmp_path):
 
 async def test_submit_atomicity_cancel_resume_and_legacy_migration(tmp_path):
     from tavern.character.editor_attachments import attach_file
+
     editor = CardAuthorService(Store(tmp_path))
     wid = editor.edits.create_conversation()["id"]
     workspace = attach_file(editor.edits, wid, 0, "PS.txt", b"fixture")
     editor.provider_factory = lambda: ToolLLM([])
     with pytest.raises(ValueError, match="请输入"):
-        editor.submit(wid, CardAuthorRequest(text="", expected_revision=workspace["revision"], operation_id="invalid"))
+        editor.submit(
+            wid, CardAuthorRequest(text="", expected_revision=workspace["revision"], operation_id="invalid")
+        )
     assert editor.edits.conversation(wid)["files"][0]["message_ref"] is None
-    request = CardAuthorRequest(text="读取附件", expected_revision=workspace["revision"], operation_id="first")
+    request = CardAuthorRequest(
+        text="读取附件", expected_revision=workspace["revision"], operation_id="first"
+    )
     first = editor.submit(wid, request)
     assert editor.submit(wid, request)["id"] == first["id"]
     await editor.cancel(first["id"])
@@ -125,10 +153,14 @@ async def test_rejected_uploads_leave_no_files(tmp_path, monkeypatch):
         async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
             endpoint = f"/api/card-author/conversations/{wid}/files"
             for filename, revision in [("x.exe", 0), ("x.txt", 9)]:
-                response = await client.post(endpoint, data={"expected_revision": revision}, files={"file": (filename, b"abc")})
+                response = await client.post(
+                    endpoint, data={"expected_revision": revision}, files={"file": (filename, b"abc")}
+                )
                 assert response.status_code in (400, 409), response.text
             monkeypatch.setattr("tavern.character.editor_files.MAX_FILE_BYTES", 2)
-            response = await client.post(endpoint, data={"expected_revision": 0}, files={"file": ("x.txt", b"abc")})
+            response = await client.post(
+                endpoint, data={"expected_revision": 0}, files={"file": ("x.txt", b"abc")}
+            )
             assert response.status_code == 400
             assert not editor.edits.conversation(wid).get("files")
             assert not list((tmp_path / "blobs").rglob("F*"))

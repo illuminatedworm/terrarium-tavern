@@ -25,13 +25,22 @@
   position: relative;
   padding-top: clamp(8px, 6vh, 56px);
 }
+/* A page holding only the hero centres it optically instead of leaving it in a corner. */
+.home.solo {
+  justify-content: center;
+  padding-bottom: 12vh;
+}
+.home.solo > .home-hero {
+  max-width: 600px;
+  padding-top: 0;
+}
 .home-emblem {
   display: grid;
   place-items: center;
   width: 64px;
   height: 64px;
   margin-bottom: 26px;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   color: var(--ivory);
   background:
     radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.42), transparent 62%),
@@ -53,7 +62,12 @@
   font-weight: 600;
   line-height: 1.28;
   letter-spacing: 0.01em;
-  background: linear-gradient(120deg, #fff 10%, var(--accent-hover) 62%, rgb(var(--moss-rgb)) 110%);
+  background: linear-gradient(
+    120deg,
+    var(--text-strong) 10%,
+    var(--accent-hover) 62%,
+    rgb(var(--moss-rgb)) 110%
+  );
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -128,7 +142,7 @@
 .recent-grid .recent-card .character-portrait {
   width: 52px;
   height: 64px;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
 }
 .recent-grid .recent-card.kemini,
 .recent-grid .recent-card.kemini:hover:not(:disabled) {
@@ -178,7 +192,7 @@
   flex: none;
   width: 44px;
   height: 44px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.32), rgb(var(--moss-rgb) / 0.18));
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12);
   color: var(--ivory);
@@ -190,7 +204,7 @@
 .library-guide p {
   margin: 6px 0 0;
   color: var(--text-muted);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
 }
 .home-tips {
@@ -220,7 +234,7 @@
   color: var(--text-secondary);
   font-weight: 600;
 }
-@media (max-width: 950px) {
+@media (max-width: 1000px) {
   .library {
     padding: 40px 28px 32px;
   }
@@ -237,7 +251,7 @@
     gap: 32px;
   }
   .home-hero h1 {
-    font-size: 32px;
+    font-size: var(--fs-3xl);
   }
   .home-emblem {
     width: 54px;
@@ -314,7 +328,7 @@
 .editor-header .character-heading .portrait-card {
   width: 68px;
   height: 86px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   box-shadow:
     inset 0 0 0 1px rgb(255 255 255 / 0.1),
     0 16px 34px -16px var(--accent-glow);
@@ -388,7 +402,7 @@
   right: 14px;
   bottom: -1px;
   height: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent-glow);
 }
@@ -430,7 +444,7 @@
   min-width: 0;
 }
 .editor-fields textarea {
-  font-size: 15px;
+  font-size: var(--fs-ui);
 }
 .editor-start {
   position: sticky;
@@ -446,17 +460,17 @@
     inset 0 0 0 1px var(--glass-edge);
 }
 .editor-start p {
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 .editor-start a {
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .editor-start .primary {
   width: 100%;
 }
 .editor-start h3 {
-  font-size: 18px;
+  font-size: var(--fs-xl);
 }
 .editor-start .greeting {
   max-height: 220px;
@@ -483,7 +497,7 @@
   height: 65vh;
 }
 .code-editor {
-  font: 12px/1.7 var(--font-mono);
+  font: var(--fs-sm) / 1.7 var(--font-mono);
   min-height: 390px;
   resize: vertical;
 }
@@ -509,17 +523,17 @@
 }
 .card-script-group h3 {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: var(--fs-xl);
 }
 .card-script-group h3 small,
 .card-script-entry > summary small {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: 400;
 }
 .card-script-group > p {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .card-script-entry {
   padding: 12px;
@@ -527,7 +541,7 @@
 }
 .card-script-entry > summary {
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .card-script-entry > summary small {
   float: right;
@@ -546,7 +560,7 @@
   gap: 12px;
   margin-top: 12px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .card-script-options label {
   margin: 0;
@@ -558,7 +572,7 @@
 .card-script-diagnostics pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 /* ---------- Worldbook ---------- */
@@ -574,23 +588,23 @@
 }
 .lore-group-heading h3 {
   margin: 0 0 5px;
-  font-size: 18px;
+  font-size: var(--fs-xl);
 }
 .lore-group-heading h3 span {
   margin-left: 6px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .lore-group-heading p {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .lore-editor {
   padding: 10px 12px;
 }
 .lore-editor > summary {
-  font-size: 15px;
+  font-size: var(--fs-ui);
   line-height: 1.8;
 }
 .lore-editor > summary small {
@@ -654,7 +668,7 @@
   bottom: 10px;
   left: 14px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   font-weight: normal;
 }
 .lore-entry-grid > .lore-editor > summary {
@@ -662,7 +676,7 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -685,7 +699,7 @@
 }
 .lore-modal-header h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-title);
   overflow-wrap: anywhere;
 }
 .lore-modal-form {
@@ -720,7 +734,7 @@
 }
 .lore-delete-zone span {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .lore-modal-actions {
   margin-left: auto;
@@ -742,7 +756,7 @@
 .story-setup .character-heading .portrait-detail {
   width: 92px;
   height: 120px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
 }
 .story-setup.kemini .character-heading .portrait-detail {
   background: var(--experiment-portrait);
@@ -752,7 +766,7 @@
 .story-setup .character-heading h1 {
   margin: 0 0 6px;
   font-family: var(--font-display);
-  font-size: 32px;
+  font-size: var(--fs-3xl);
 }
 .story-steps {
   display: flex;
@@ -761,7 +775,7 @@
   width: fit-content;
   margin: 4px 0 22px;
   padding: 3px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgb(0 0 0 / 0.24);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
@@ -769,7 +783,7 @@
 .story-steps button {
   padding: 5px 13px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: var(--fs-sm);
@@ -841,7 +855,7 @@
   height: auto;
   aspect-ratio: 4 / 3;
   border-radius: 0;
-  font-size: 40px;
+  font-size: var(--fs-display);
   box-shadow: inset 0 -1px 0 var(--border-subtle);
 }
 .story-card-description {
@@ -864,7 +878,7 @@
   line-height: 1.65;
 }
 .story-card-description small {
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
 }
 /* Setup: options in a pane beside a reading-style opening preview. */
 .story-setup-grid {
@@ -910,7 +924,7 @@
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 .story-opening p {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   line-height: 1.9;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -946,7 +960,7 @@
   border-radius: var(--radius-md);
   background: rgb(var(--well-rgb) / 0.3);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .story-channel-model strong {
   font-weight: 500;
@@ -973,7 +987,7 @@
     grid-template-columns: 1fr;
   }
 }
-@media (max-width: 950px) {
+@media (max-width: 1000px) {
   .lore-entry-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

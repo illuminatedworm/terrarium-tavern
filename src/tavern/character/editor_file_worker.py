@@ -1,4 +1,5 @@
 """Disposable Office conversion process; stdin/stdout carry a single UTF-8 JSON exchange."""
+
 import contextlib
 import json
 import sys

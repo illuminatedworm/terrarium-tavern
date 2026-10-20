@@ -1,4 +1,5 @@
 """Streaming side-channel parser. Hidden text never reaches MVU or story history."""
+
 import re
 
 OPEN = "<tavern_retrieval>"
@@ -20,15 +21,17 @@ class RetrievalParser:
         while self.buffer:
             marker = CLOSE if self.hidden else OPEN
             index = self.buffer.find(marker)
-            recovery = re.search(r"<(?:UpdateVariable|JSONPatch)\b", self.buffer, re.I) if self.hidden else None
+            recovery = (
+                re.search(r"<(?:UpdateVariable|JSONPatch)\b", self.buffer, re.I) if self.hidden else None
+            )
             if recovery and (index < 0 or recovery.start() < index):
                 self.diagnostics.append("检索线索未闭合，已忽略；保留 MVU 更新块")
                 self.current = ""
                 self.hidden = False
-                self.buffer = self.buffer[recovery.start():]
+                self.buffer = self.buffer[recovery.start() :]
                 continue
             if index >= 0:
-                before, self.buffer = self.buffer[:index], self.buffer[index + len(marker):]
+                before, self.buffer = self.buffer[:index], self.buffer[index + len(marker) :]
                 if self.hidden:
                     self.current += before
                     self.parts.append(self.current.strip())
@@ -41,7 +44,7 @@ class RetrievalParser:
                 continue
             hold = 0
             if not final:
-                for boundary in ([marker, "<UpdateVariable>", "<JSONPatch>"] if self.hidden else [marker]):
+                for boundary in [marker, "<UpdateVariable>", "<JSONPatch>"] if self.hidden else [marker]:
                     for n in range(1, min(len(boundary), len(self.buffer) + 1)):
                         if self.buffer.endswith(boundary[:n]):
                             hold = max(hold, n)
@@ -49,8 +52,8 @@ class RetrievalParser:
             if self.hidden and final:
                 match = re.search(r"<(?:UpdateVariable|JSONPatch)\b", self.buffer, re.I)
                 if match:
-                    output += self.buffer[match.start():]
-                    self.buffer = self.buffer[:match.start()]
+                    output += self.buffer[match.start() :]
+                    self.buffer = self.buffer[: match.start()]
             ready = self.buffer[:-hold] if hold else self.buffer
             self.buffer = self.buffer[-hold:] if hold else ""
             if final and not self.hidden:
@@ -86,11 +89,12 @@ def split_retrieval(text, limit=512):
 
 def query_text(history, user_input, config):
     clues = [m.get("retrieval_query", "") for m in history if m.get("retrieval_query")]
-    clues = clues[-config.query_lookback:] if config.query_lookback else []
+    clues = clues[-config.query_lookback :] if config.query_lookback else []
     current = user_input
     fallback = ""
     if not clues and current.strip().lower() in ("", "继续", "继续剧情", "continue", "続けて") and history:
         from tavern.search.retrieval import tokenize
+
         fallback = " ".join(dict.fromkeys(tokenize(history[-1].get("model", history[-1].get("raw", "")))))
     return "\n".join(filter(None, [*clues, fallback, current])).strip()
 

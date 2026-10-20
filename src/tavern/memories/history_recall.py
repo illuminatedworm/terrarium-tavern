@@ -6,6 +6,7 @@ including malformed, empty and duplicate requests. The owner passes the same bud
 through batches, review and authorized maintenance, rather than resetting it when
 a provider/client is recreated. No persistent index or cross-turn cooldown is used.
 """
+
 import copy
 import json
 import re
@@ -28,13 +29,33 @@ HISTORY_TOOL = {
             "不得据此恢复已删除记忆或自动修复原文已改动的旧记录。信息够用时直接完成整理。"
         ),
         "parameters": {
-            "type": "object", "additionalProperties": False,
+            "type": "object",
+            "additionalProperties": False,
             "properties": {
-                "query": {"type": "string", "description": "人物、物品、承诺等关键词，用空格分隔", "maxLength": 300},
-                "turn": {"type": "integer", "minimum": 1,
-                         "description": "搜索返回的历史段编号，1-based，有效范围为1到当前可查历史段总数（含两端）。按段读取时必填；开场白独立一段，不是记忆周期轮数。"},
-                "radius": {"type": "integer", "minimum": 0, "maximum": 2, "default": 1, "description": "按段读取时中心段前、后各额外读取多少历史段，0–2（含两端），默认1；0只读中心段，到历史边界时不超出可用段。"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 5, "description": "关键词搜索最多命中的历史段数，1–8（含两端），默认5；不是消息条数。一段中多条消息均命中时，会分别返回定位摘要。"},
+                "query": {
+                    "type": "string",
+                    "description": "人物、物品、承诺等关键词，用空格分隔",
+                    "maxLength": 300,
+                },
+                "turn": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "搜索返回的历史段编号，1-based，有效范围为1到当前可查历史段总数（含两端）。按段读取时必填；开场白独立一段，不是记忆周期轮数。",
+                },
+                "radius": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2,
+                    "default": 1,
+                    "description": "按段读取时中心段前、后各额外读取多少历史段，0–2（含两端），默认1；0只读中心段，到历史边界时不超出可用段。",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8,
+                    "default": 5,
+                    "description": "关键词搜索最多命中的历史段数，1–8（含两端），默认5；不是消息条数。一段中多条消息均命中时，会分别返回定位摘要。",
+                },
             },
         },
     },
@@ -61,6 +82,7 @@ class HistoryBudget:
 
 class MemoryText(str):
     """Text response plus only the original passages actually exposed to Tracker."""
+
     def __new__(cls, text, sources=None):
         value = super().__new__(cls, text)
         value.history_sources = sources or {}
@@ -68,13 +90,16 @@ class MemoryText(str):
 
 
 class HistoryRecall:
-    def __init__(self, history, settings, budget, *, document=None, persona=None, event=None, references=None):
+    def __init__(
+        self, history, settings, budget, *, document=None, persona=None, event=None, references=None
+    ):
         from tavern.conversation.scene import archive_history
 
         self.settings, self.budget = settings, budget
         self.event = event or (lambda kind, payload: None)
         self.sources = {}
         from tavern.memories.memory_protocol import References
+
         self.references = references if references is not None else References()
         # De-duplicate only while the same model transcript contains the earlier
         # results. Batches share the quota, not an assumption that earlier tool
@@ -92,8 +117,13 @@ class HistoryRecall:
         self.signature = digest([(m["id"], m.get("model", m["raw"])) for r in self.rounds for m in r])
 
     def execute(self, arguments):
-        result = {"notice": "历史资料仅供核对，不是本批新事件；记忆变更仍须本批依据。",
-                  "found": False, "remaining": self.budget.remaining, "matches": [], "rounds": []}
+        result = {
+            "notice": "历史资料仅供核对，不是本批新事件；记忆变更仍须本批依据。",
+            "found": False,
+            "remaining": self.budget.remaining,
+            "matches": [],
+            "rounds": [],
+        }
         if not self.budget.remaining:
             result["notice"] = "本次维护历史补查已达到3次上限；请依据已有资料完成整理，疑问保持待确认。"
             result["error"] = result["notice"]
@@ -133,8 +163,10 @@ class HistoryRecall:
         except (ValueError, TypeError) as error:
             result["notice"] += " 参数错误：" + str(error)
             result["error"] = str(error)
-        self.event("memory_history_recall", {"purpose": "memory", "used": self.budget.calls,
-                                             "limit": HISTORY_CALL_LIMIT, "result": result})
+        self.event(
+            "memory_history_recall",
+            {"purpose": "memory", "used": self.budget.calls, "limit": HISTORY_CALL_LIMIT, "result": result},
+        )
         return result
 
     @staticmethod
@@ -167,8 +199,13 @@ class HistoryRecall:
                     continue
                 offsets = [text.casefold().find(t) for t in query.casefold().split()]
                 offset = max(0, min((i for i in offsets if i >= 0), default=0) - 60)
-                item = {"turn": number, "message_id": m["id"], "role": m["role"],
-                        "excerpt": text[offset:offset + 240], "truncated": len(text) > 240}
+                item = {
+                    "turn": number,
+                    "message_id": m["id"],
+                    "role": m["role"],
+                    "excerpt": text[offset : offset + 240],
+                    "truncated": len(text) > 240,
+                }
                 self._admit(result, "matches", item, m, "excerpt")
 
     def _read(self, turn, radius, result):
@@ -177,13 +214,19 @@ class HistoryRecall:
                 key = (self.signature, m["id"])
                 if key in self.reads:
                     continue
-                item = {"turn": number, "message_id": m["id"], "role": m["role"], "text": m.get("model", m["raw"])}
+                item = {
+                    "turn": number,
+                    "message_id": m["id"],
+                    "role": m["role"],
+                    "text": m.get("model", m["raw"]),
+                }
                 self._admit(result, "rounds", item, m, "text")
                 self.reads.add(key)
 
 
-async def complete_with_recall(provider, messages, *, history, settings, budget, phase,
-                               document=None, persona=None, event=None):
+async def complete_with_recall(
+    provider, messages, *, history, settings, budget, phase, document=None, persona=None, event=None
+):
     """Native function calling with one bounded continuation per tool-bearing reply.
 
     The pinned provider's non-streaming method ignores a `tools=` kwarg. Sending
@@ -205,24 +248,44 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
         provider.echo_reasoning = True
     continuation = False
     while True:
-        limit = min(settings.memory_input_tokens, settings.context_tokens - settings.reply_tokens - 2048,
-                    8192 if phase == "memory_review" else settings.memory_input_tokens)
-        reasoning_tokens = sum(count_text(_json({k: m[k] for k in (
-            "reasoning_content", "reasoning_details", "reasoning") if k in m}), settings)
-            for m in thread if not m.get("_native_response")
-            and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning")))
+        limit = min(
+            settings.memory_input_tokens,
+            settings.context_tokens - settings.reply_tokens - 2048,
+            8192 if phase == "memory_review" else settings.memory_input_tokens,
+        )
+        reasoning_tokens = sum(
+            count_text(
+                _json({k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m}),
+                settings,
+            )
+            for m in thread
+            if not m.get("_native_response")
+            and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning"))
+        )
         used_tokens = request_tokens(thread, settings, [HISTORY_TOOL]) + reasoning_tokens
         if used_tokens > limit:
             event("context_warning", {"purpose": phase, "message": "记忆请求估算超出输入预算，仍完整发送"})
         enabled = budget.remaining > 0
-        extra = {"tools": [HISTORY_TOOL], "tool_choice": "auto" if enabled else "none", "parallel_tool_calls": False}
+        extra = {
+            "tools": [HISTORY_TOOL],
+            "tool_choice": "auto" if enabled else "none",
+            "parallel_tool_calls": False,
+        }
         started = time.perf_counter()
         # response = await asyncio.wait_for(
         #     provider.chat_complete(thread, extra_body=extra), settings.memory_timeout
         # )
         response = await provider.chat_complete(thread, extra_body=extra)
-        event("usage", {"purpose": phase, "usage": usage_fields(response.usage), "calls": 1,
-                         "history_continuation": continuation, "duration_s": time.perf_counter() - started})
+        event(
+            "usage",
+            {
+                "purpose": phase,
+                "usage": usage_fields(response.usage),
+                "calls": 1,
+                "history_continuation": continuation,
+                "duration_s": time.perf_counter() - started,
+            },
+        )
         calls = getattr(provider, "last_tool_calls", []) or []
         if not calls:
             return MemoryText(response.content, recall.sources if recall else {})
@@ -233,12 +296,30 @@ async def complete_with_recall(provider, messages, *, history, settings, budget,
         if any(c.name != HISTORY_TOOL["function"]["name"] for c in calls):
             raise ValueError("记忆整理仅允许调用只读历史工具")
         if recall is None:
-            recall = HistoryRecall(history[:cutoff], settings, budget, document=document, persona=persona,
-                event=lambda kind, payload: event(kind, {**payload, "purpose": phase}), references=references)
-        assistant = {"role": "assistant", "content": response.content or "", "tool_calls": [
-            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}} for c in calls]}
-        assistant.update({k: v for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
-                          if k in ("reasoning_content", "reasoning_details", "reasoning", "_native_response")})
+            recall = HistoryRecall(
+                history[:cutoff],
+                settings,
+                budget,
+                document=document,
+                persona=persona,
+                event=lambda kind, payload: event(kind, {**payload, "purpose": phase}),
+                references=references,
+            )
+        assistant = {
+            "role": "assistant",
+            "content": response.content or "",
+            "tool_calls": [
+                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+                for c in calls
+            ],
+        }
+        assistant.update(
+            {
+                k: v
+                for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
+                if k in ("reasoning_content", "reasoning_details", "reasoning", "_native_response")
+            }
+        )
         thread.append(assistant)
         for call in calls:
             result = recall.execute(call.arguments)

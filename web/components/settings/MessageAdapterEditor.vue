@@ -161,7 +161,7 @@ defineExpose({ resetRoles });
 .adapter-note,
 .adapter-fixed {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .adapter-check {
   display: flex;
@@ -175,7 +175,7 @@ defineExpose({ resetRoles });
 .adapter-note {
   line-height: 1.7;
 }
-@media (max-width: 650px) {
+@media (max-width: 620px) {
   .adapter-row {
     grid-template-columns: minmax(0, 1fr) minmax(100px, 140px);
   }

@@ -6,10 +6,10 @@
   --compose-input-height: 76px;
   --compose-input-min-height: 64px;
   --compose-input-padding: 10px;
-  --compose-input-font-size: 15px;
+  --compose-input-font-size: var(--fs-ui);
   padding: 8px 10px 10px;
   border: 1px solid var(--glass-edge);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   background: var(--glass-sheen), var(--glass-bar);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -37,7 +37,7 @@
   padding: var(--compose-input-padding);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   box-shadow: none;
   font-size: var(--compose-input-font-size);
   line-height: 1.65;
@@ -71,7 +71,7 @@
     --compose-input-height: 64px;
     --compose-input-min-height: 54px;
     --compose-input-padding: 8px;
-    --compose-input-font-size: 16px;
+    --compose-input-font-size: var(--fs-lg);
     padding: 7px;
   }
 }

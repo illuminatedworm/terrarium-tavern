@@ -40,7 +40,7 @@ button {
   justify-content: center;
   gap: 7px;
   padding: 7px 9px;
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
   color: var(--text-secondary);
   background: transparent;
   border-color: transparent;

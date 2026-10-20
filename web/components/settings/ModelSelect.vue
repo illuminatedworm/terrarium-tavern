@@ -77,7 +77,7 @@ async function fetchModels() {
 .model-connection {
   margin: 0;
   padding: 4px 10px 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 .model-fetch {
@@ -88,10 +88,10 @@ async function fetchModels() {
   margin: 0;
   padding: 3px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-muted);
-  font: 500 11.5px/1.4 var(--font-ui);
+  font: 500 var(--fs-xs) / 1.4 var(--font-ui);
   letter-spacing: 0;
   cursor: pointer;
 }

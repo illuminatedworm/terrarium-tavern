@@ -16,18 +16,36 @@ def story(tmp_path):
 
 
 def generate(store, session, text="相同正文", regenerate=False):
-    req = TurnRequest(text="继续", expected_revision=session["revision"], operation_id=uid(),
-                      mode="regenerate" if regenerate else "send",
-                      message_id=session["head"] if regenerate else None)
+    req = TurnRequest(
+        text="继续",
+        expected_revision=session["revision"],
+        operation_id=uid(),
+        mode="regenerate" if regenerate else "send",
+        message_id=session["head"] if regenerate else None,
+    )
     tid, _ = store.create_turn(session["id"], req)
     store.set_turn(tid, status="running")
     parent = session["messages"][-1]["parent"] if regenerate else uid()
     snapshot = {**session["snapshot"], "state": {"generation": tid}}
-    reply = dict(id=uid(), parent=parent, role="assistant", raw=text, model=text,
-                 display=text, snapshot=snapshot)
-    messages = [reply] if regenerate else [
-        dict(id=parent, parent=session["head"], role="user", raw="继续", model="继续",
-             display="继续", snapshot=session["snapshot"]), reply]
+    reply = dict(
+        id=uid(), parent=parent, role="assistant", raw=text, model=text, display=text, snapshot=snapshot
+    )
+    messages = (
+        [reply]
+        if regenerate
+        else [
+            dict(
+                id=parent,
+                parent=session["head"],
+                role="user",
+                raw="继续",
+                model="继续",
+                display="继续",
+                snapshot=session["snapshot"],
+            ),
+            reply,
+        ]
+    )
     pending = dict(messages=messages, before=session["snapshot"])
     store.commit_turn(tid, pending)
     store.commit_turn(tid, pending)  # Retrying a committed transaction must not add a version.
@@ -61,8 +79,9 @@ def test_failed_cancelled_and_active_turns(story):
     first = generate(store, session)
     second = generate(store, first, regenerate=True)
     for status in ("error", "cancelled", "running", "awaiting_review"):
-        tid, _ = store.create_turn(second["id"], TurnRequest(
-            text="继续", expected_revision=second["revision"], operation_id=uid()))
+        tid, _ = store.create_turn(
+            second["id"], TurnRequest(text="继续", expected_revision=second["revision"], operation_id=uid())
+        )
         store.set_turn(tid, status=status, draft="未提交草稿")
         if status in ("running", "awaiting_review"):
             with pytest.raises(Conflict):
@@ -79,7 +98,9 @@ async def test_version_endpoint(story):
     second = generate(store, first, regenerate=True)
     app = create_app(store.root)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        response = await client.put(f"/api/sessions/{second['id']}/messages/{second['head']}/version",
-                                    json={"head": first["head"], "expected_revision": second["revision"]})
+        response = await client.put(
+            f"/api/sessions/{second['id']}/messages/{second['head']}/version",
+            json={"head": first["head"], "expected_revision": second["revision"]},
+        )
     assert response.status_code == 200
     assert response.json()["head"] == first["head"]

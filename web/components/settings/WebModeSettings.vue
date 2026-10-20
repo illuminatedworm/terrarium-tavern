@@ -41,7 +41,7 @@ label {
 }
 .muted {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   margin: 0;
   overflow-wrap: anywhere;

@@ -1,4 +1,5 @@
 """Behavioral authoring contracts, using isolated data and local model fixtures."""
+
 import asyncio
 import copy
 import json
@@ -12,21 +13,35 @@ from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.core.models import CardAuthorRequest, SessionCreate
+from tavern.core.settings import SettingsDocument
 from tavern.storage.backup import backup, restore
-from tavern.storage.store import Conflict, Store, dump, uid
+from tavern.storage.store import SCHEMA_VERSION, Conflict, Store, dump, uid
 from tests.backend.test_card_author import ToolLLM, import_fixture
 
 
 async def run(editor, wid, provider, text="修改已引用卡片", resume=None):
     editor.provider_factory = lambda: provider
     workspace = editor.edits.conversation(wid)
-    result = editor.submit(wid, CardAuthorRequest(text=text, expected_revision=workspace["revision"], operation_id=uid(), resume_run_id=resume), legacy=False)
+    result = editor.submit(
+        wid,
+        CardAuthorRequest(
+            text=text, expected_revision=workspace["revision"], operation_id=uid(), resume_run_id=resume
+        ),
+        legacy=False,
+    )
     await editor.tasks[result["id"]]
     return editor.edits.run(result["id"])
 
 
 def patch(ref, text):
-    return ("patch_draft", {"card_ref": ref, "operations": [{"op": "replace", "path": "/description", "value": text}], "comment": "用户要求"})
+    return (
+        "patch_draft",
+        {
+            "card_ref": ref,
+            "operations": [{"op": "replace", "path": "/description", "value": text}],
+            "comment": "用户要求",
+        },
+    )
 
 
 class Batches(ToolLLM):
@@ -36,7 +51,10 @@ class Batches(ToolLLM):
         index = self.call_count
         self.call_count += 1
         if index < len(self.steps):
-            self.native = [NativeToolCall(id=f"batch{index}-{i}", name=n, arguments=dump(a)) for i, (n, a) in enumerate(self.steps[index])]
+            self.native = [
+                NativeToolCall(id=f"batch{index}-{i}", name=n, arguments=dump(a))
+                for i, (n, a) in enumerate(self.steps[index])
+            ]
             yield "正在处理"
         else:
             self.native = []
@@ -50,10 +68,19 @@ def test_schemas_are_explicit_and_use_one_catalog():
         schema = tool["function"]["parameters"]
         assert schema["additionalProperties"] is False
         assert all(value.get("description") for value in schema["properties"].values())
-    patch_schema = next(t["function"]["parameters"] for t in definitions if t["function"]["name"] == "patch_draft")
+    patch_schema = next(
+        t["function"]["parameters"] for t in definitions if t["function"]["name"] == "patch_draft"
+    )
     assert "card_ref" in patch_schema["required"]
     assert patch_schema["properties"]["operations"]["items"]["$ref"]
-    assert set(patch_schema["$defs"]["Operation"]["properties"]["op"]["enum"]) == {"add", "remove", "replace", "move", "copy", "test"}
+    assert set(patch_schema["$defs"]["Operation"]["properties"]["op"]["enum"]) == {
+        "add",
+        "remove",
+        "replace",
+        "move",
+        "copy",
+        "test",
+    }
 
 
 @pytest.mark.parametrize("name", ["patch_draft", "revert_draft"])
@@ -70,8 +97,9 @@ async def test_comment_argument_recovers_from_old_name_in_editor_loop(tmp_path, 
     else:
         arguments["operations"] = operations
     comment = "简短操作备注"
-    provider = ToolLLM([*steps, (name, {**arguments, "reason": "旧参数备注"}),
-                       (name, {**arguments, "comment": comment})])
+    provider = ToolLLM(
+        [*steps, (name, {**arguments, "reason": "旧参数备注"}), (name, {**arguments, "comment": comment})]
+    )
     try:
         result = await run(editor, workspace["id"], provider)
         assert result["status"] == "completed", result["error"]
@@ -79,20 +107,27 @@ async def test_comment_argument_recovers_from_old_name_in_editor_loop(tmp_path, 
         assert "comment" in schema["properties"] and "comment" in schema["required"]
         assert "reason" not in schema["properties"]
         events = editor.edits.activity(result["id"])["events"]
-        finished = [event["payload"] for event in events
-                    if event["kind"] == "tool_finished" and event["payload"]["tool"] == name]
+        finished = [
+            event["payload"]
+            for event in events
+            if event["kind"] == "tool_finished" and event["payload"]["tool"] == name
+        ]
         assert [event["status"] for event in finished[-2:]] == ["error", "completed"]
         assert "comment" in finished[-2]["detail"] and "reason" in finished[-2]["detail"]
-        starts = [event["payload"] for event in events
-                  if event["kind"] == "tool_started" and event["payload"]["tool"] == name]
+        starts = [
+            event["payload"]
+            for event in events
+            if event["kind"] == "tool_started" and event["payload"]["tool"] == name
+        ]
         assert json.loads(starts[-2]["arguments"])["reason"] == "旧参数备注"
         assert json.loads(starts[-1]["arguments"])["comment"] == comment
         current = editor.edits.conversation(workspace["id"])["cards"][0]["document"]
         assert current["description"] == ("原人物设定" if name == "revert_draft" else "新的角色描述")
         assert store.card(card["id"])["document"]["description"] == "原人物设定"
         if name == "patch_draft":
-            change = next(event for event in editor.edits.events(result["id"])
-                          if event["kind"] == "draft_change")
+            change = next(
+                event for event in editor.edits.events(result["id"]) if event["kind"] == "draft_change"
+            )
             assert change["payload"]["reason"] == comment
     finally:
         await editor.close()
@@ -109,20 +144,54 @@ async def test_empty_consultation_then_confirmed_creation_survives_rollover(tmp_
         assert first["status"] == "completed"
         assert editor.edits.conversation(wid)["cards"] == []
         proposal = editor.edits.messages(wid)[-1]
-        made = await run(editor, wid, ToolLLM([
-            ("create_draft", {"name": "林间", "proposal_ref": proposal["ref"], "confirmation_ref": "H3", "fields": {
-                "description": "经营雨夜书店的店主", "first_mes": "铜铃轻响，他递来毛巾。", "alternate_greetings": ["闭店后，灯还亮着。"]}}),
-            ("patch_draft", {"card_ref": "C1", "operations": [
-                {"op": "replace", "path": "/data/mes_example", "value": "{{char}}：雨总会停的。"}], "comment": "按确认方案制作"}),
-            ("new_context", {"content": "林间已创建，等待审阅；保留已确认方案。"}),
-        ]), "确认，按方案制作")
+        made = await run(
+            editor,
+            wid,
+            ToolLLM(
+                [
+                    (
+                        "create_draft",
+                        {
+                            "name": "林间",
+                            "proposal_ref": proposal["ref"],
+                            "confirmation_ref": "H3",
+                            "fields": {
+                                "description": "经营雨夜书店的店主",
+                                "first_mes": "铜铃轻响，他递来毛巾。",
+                                "alternate_greetings": ["闭店后，灯还亮着。"],
+                            },
+                        },
+                    ),
+                    (
+                        "patch_draft",
+                        {
+                            "card_ref": "C1",
+                            "operations": [
+                                {
+                                    "op": "replace",
+                                    "path": "/data/mes_example",
+                                    "value": "{{char}}：雨总会停的。",
+                                }
+                            ],
+                            "comment": "按确认方案制作",
+                        },
+                    ),
+                    ("new_context", {"content": "林间已创建，等待审阅；保留已确认方案。"}),
+                ]
+            ),
+            "确认，按方案制作",
+        )
         assert made["status"] == "completed", made["error"]
         workspace = editor.edits.conversation(wid)
         card = workspace["cards"][0]
         assert card["document"]["spec"] == "chara_card_v2"
         data = card["document"]["data"]
         assert (data["description"], data["first_mes"], data["alternate_greetings"], data["mes_example"]) == (
-            "经营雨夜书店的店主", "铜铃轻响，他递来毛巾。", ["闭店后，灯还亮着。"], "{{char}}：雨总会停的。")
+            "经营雨夜书店的店主",
+            "铜铃轻响，他递来毛巾。",
+            ["闭店后，灯还亮着。"],
+            "{{char}}：雨总会停的。",
+        )
         created = next(e for e in editor.edits.events(made["id"]) if e["kind"] == "tool_finished")
         assert "铜铃" not in created["payload"]["result"]
         assert proposal["content"] in card["brief"] and "确认，按方案制作" in card["brief"]
@@ -132,7 +201,10 @@ async def test_empty_consultation_then_confirmed_creation_survives_rollover(tmp_
         assert proposal["content"] in dump(record["messages"])
         saved = editor.edits.save_card(wid, "C1", workspace["revision"], "create", "save-once")
         assert saved["name"] == "林间"
-        assert editor.edits.save_card(wid, "C1", workspace["revision"], "create", "save-once")["id"] == saved["id"]
+        assert (
+            editor.edits.save_card(wid, "C1", workspace["revision"], "create", "save-once")["id"]
+            == saved["id"]
+        )
         assert store.new_session(SessionCreate(card_id=saved["id"]))["card"] == saved["id"]
     finally:
         await editor.close()
@@ -145,7 +217,13 @@ async def test_reference_promotion_multi_card_and_invalid_target(tmp_path):
     wid = editor.edits.create_conversation()["id"]
     editor.edits.attach(wid, one["id"], 0)
     editor.edits.attach(wid, two["id"], 1)
-    provider = ToolLLM([("read_field", {"card_ref": "C1", "path": "/description"}), patch("C1", "只修改 A"), patch("C99", "错误目标")])
+    provider = ToolLLM(
+        [
+            ("read_field", {"card_ref": "C1", "path": "/description"}),
+            patch("C1", "只修改 A"),
+            patch("C99", "错误目标"),
+        ]
+    )
     try:
         result = await run(editor, wid, provider)
         assert result["status"] == "completed"
@@ -182,11 +260,17 @@ async def test_interrupt_and_steer_abort_unexecuted_calls_without_repeating_writ
         return await original(self, args)
 
     monkeypatch.setattr(EditorTools, "patch_draft", hold)
-    provider = Batches([[("read_field", {"card_ref": f"C{i}"}) for i in range(1, 4)],
-                        [patch("C1", "A 已改"), patch("C2", "B 不想要"), patch("C3", "旧的 C")]])
+    provider = Batches(
+        [
+            [("read_field", {"card_ref": f"C{i}"}) for i in range(1, 4)],
+            [patch("C1", "A 已改"), patch("C2", "B 不想要"), patch("C3", "旧的 C")],
+        ]
+    )
     editor.provider_factory = lambda: provider
     try:
-        active = editor.submit(wid, CardAuthorRequest(text="修改三张卡", expected_revision=3, operation_id="start"), legacy=False)
+        active = editor.submit(
+            wid, CardAuthorRequest(text="修改三张卡", expected_revision=3, operation_id="start"), legacy=False
+        )
         await asyncio.wait_for(entered.wait(), 10)
         await editor.cancel(active["id"])
         stopped = editor.edits.conversation(wid)
@@ -195,17 +279,27 @@ async def test_interrupt_and_steer_abort_unexecuted_calls_without_repeating_writ
         with pytest.raises(Conflict, match="未完成"):
             editor.edits.save_card(wid, "C1", 3, "overwrite", "blocked")
         calls.append("resuming")
-        followup = ToolLLM([('revert_draft', {'card_ref': 'C2', 'comment': '用户要求恢复 B'}), patch('C3', '新的 C')])
-        completed = await run(editor, wid, followup, "保留 A，B 恢复本轮之前的版本，C 按新要求改", resume=active["id"])
+        followup = ToolLLM(
+            [("revert_draft", {"card_ref": "C2", "comment": "用户要求恢复 B"}), patch("C3", "新的 C")]
+        )
+        completed = await run(
+            editor, wid, followup, "保留 A，B 恢复本轮之前的版本，C 按新要求改", resume=active["id"]
+        )
         assert completed["status"] == "completed", completed["error"]
         current = editor.edits.conversation(wid)
         assert [c["document"]["description"] for c in current["cards"]] == ["A 已改", "原人物设定", "新的 C"]
         assert calls.count("C1") == 1 and calls.count("C3") == 1
         assert current["pending"] is None
         first = followup.call_log[0]
-        cancelled_index = next(i for i, m in enumerate(first) if m.get("role") == "tool" and '"cancelled": true' in m.get("content", ""))
+        cancelled_index = next(
+            i
+            for i, m in enumerate(first)
+            if m.get("role") == "tool" and '"cancelled": true' in m.get("content", "")
+        )
         assert first[cancelled_index]["_tool_error"] is True
-        steering_index = next(i for i, m in enumerate(first) if m.get("role") == "user" and "保留 A" in m.get("content", ""))
+        steering_index = next(
+            i for i, m in enumerate(first) if m.get("role") == "user" and "保留 A" in m.get("content", "")
+        )
         assert cancelled_index < steering_index
     finally:
         await editor.close()
@@ -220,9 +314,20 @@ async def test_long_source_reaches_followup_and_strict_patch_recovers(tmp_path):
     card = store.import_card(dump(document).encode(), "card.json")
     editor = CardAuthorService(store)
     workspace = editor.edits.create(card["id"])
-    provider = ToolLLM([("read_field", {"card_ref": "C1", "path": "/description"}),
-        ("patch_draft", {"card_ref": "C1", "comment": "错误参数", "operations": [{"op": "replace", "path": "/description"}]}),
-        patch("C1", "正确结果")])
+    provider = ToolLLM(
+        [
+            ("read_field", {"card_ref": "C1", "path": "/description"}),
+            (
+                "patch_draft",
+                {
+                    "card_ref": "C1",
+                    "comment": "错误参数",
+                    "operations": [{"op": "replace", "path": "/description"}],
+                },
+            ),
+            patch("C1", "正确结果"),
+        ]
+    )
     try:
         result = await run(editor, workspace["id"], provider)
         assert result["status"] == "completed", result["error"]
@@ -247,7 +352,9 @@ async def test_pending_progress_backup_resume_and_discard(tmp_path):
                 yield chunk
 
     try:
-        failed = await run(editor, workspace["id"], Failure([("read_field", {"card_ref": "C1"}), patch("C1", "保留的进度")]))
+        failed = await run(
+            editor, workspace["id"], Failure([("read_field", {"card_ref": "C1"}), patch("C1", "保留的进度")])
+        )
         assert failed["status"] == "error"
         backup(store, tmp_path / "backup.zip")
         recovered = CardAuthorService(restore(tmp_path / "backup.zip", tmp_path / "restore"))
@@ -255,14 +362,19 @@ async def test_pending_progress_backup_resume_and_discard(tmp_path):
             # Continuing with another model rebuilds the context but keeps this
             # round's completed tool exchanges and request numbering.
             with recovered.store.connection() as db:
-                db.execute("UPDATE card_author_conversations SET model_selection=? WHERE id=?",
-                           (json.dumps({"provider_id": "default", "model": "new-model"}), workspace["id"]))
+                db.execute(
+                    "UPDATE card_author_conversations SET model_selection=? WHERE id=?",
+                    (json.dumps({"provider_id": "default", "model": "new-model"}), workspace["id"]),
+                )
             provider = ToolLLM([])
             result = await run(recovered, workspace["id"], provider, "", resume=failed["id"])
             assert result["status"] == "completed"
             assert recovered.edits.get(workspace["id"])["document"]["description"] == "保留的进度"
             events = recovered.edits.events(result["id"])
-            assert next(e["payload"]["rebuild_reason"] for e in events if e["kind"] == "context_baseline") == "provider_or_model_changed"
+            assert (
+                next(e["payload"]["rebuild_reason"] for e in events if e["kind"] == "context_baseline")
+                == "provider_or_model_changed"
+            )
             assert [e["payload"]["call"] for e in events if e["kind"] == "model_call"] == [4]
             sent = json.dumps(provider.call_log[0], ensure_ascii=False)
             assert "call-0" in sent and "call-1" in sent
@@ -286,9 +398,13 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
             preview = (await client.post(base + "/preview", json={"text": "先讨论"})).json()
             assert preview["preview_only"] and len(preview["tools"]) == 25
             assert editor.edits.messages(created["id"]) == []
-            attached = (await client.post(base + "/references", json={"card_id": card["id"], "expected_revision": 0})).json()
+            attached = (
+                await client.post(base + "/references", json={"card_id": card["id"], "expected_revision": 0})
+            ).json()
             assert attached["cards"][0]["kind"] == "reference"
-            assert (await client.put(base, json={"title": "过时写入", "expected_revision": 0})).status_code == 409
+            assert (
+                await client.put(base, json={"title": "过时写入", "expected_revision": 0})
+            ).status_code == 409
             doc = copy.deepcopy(card["document"])
             doc["description"] = "书架新版本"
             app.state.store.edit_card(card["id"], doc, 0)
@@ -309,10 +425,15 @@ async def test_optional_compatibility_target_can_be_preserved_cleared_and_undone
     base = f"/api/card-author/conversations/{workspace['id']}/drafts/C1"
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-            for fields, expected in (({"target_mode": "full_agent"}, "full_agent"), ({}, "full_agent"),
-                                     ({"target_mode": None}, None)):
-                response = await client.put(base, json={"document": card["document"],
-                    "expected_revision": workspace["revision"], **fields})
+            for fields, expected in (
+                ({"target_mode": "full_agent"}, "full_agent"),
+                ({}, "full_agent"),
+                ({"target_mode": None}, None),
+            ):
+                response = await client.put(
+                    base,
+                    json={"document": card["document"], "expected_revision": workspace["revision"], **fields},
+                )
                 assert response.status_code == 200, response.text
                 workspace = response.json()
                 assert workspace["cards"][0]["target_mode"] == expected
@@ -327,13 +448,19 @@ async def test_optional_compatibility_target_can_be_preserved_cleared_and_undone
 
 async def test_local_sandbox_reports_observed_initialization_and_errors(tmp_path):
     store = Store(tmp_path)
-    item = {"ref": "C1", "card": None, "source": {}, "document": {
-        "name": "本地验证", "first_mes": "<initvar>hp: 8</initvar>", "extensions": {}}}
+    item = {
+        "ref": "C1",
+        "card": None,
+        "source": {},
+        "document": {"name": "本地验证", "first_mes": "<initvar>hp: 8</initvar>", "extensions": {}},
+    }
     passed = await probe_card(store, item, samples=["正文样例"])
     assert passed["status"] == "passed", passed
     assert passed["checks"][0]["state"]["stat_data"]["hp"] == 8
     assert passed["model_calls"] == 0 and not store.sessions()
-    item["document"]["extensions"]["tavern_helper"] = {"scripts": [{"name": "bad", "content": "throw new Error('PROBE_EXPECTED_ERROR')"}]}
+    item["document"]["extensions"]["tavern_helper"] = {
+        "scripts": [{"name": "bad", "content": "throw new Error('PROBE_EXPECTED_ERROR')"}]
+    }
     failed = await probe_card(store, item)
     assert failed["status"] == "failed", failed
     assert "PROBE_EXPECTED_ERROR" in dump(failed)
@@ -345,10 +472,24 @@ async def test_inline_initialization_update_preserves_narrative(tmp_path):
     source = import_fixture(store)
     workspace = editor.edits.create(source["id"])
     try:
-        result = await run(editor, workspace["id"], ToolLLM([
-            ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
-            ("set_opening", {"card_ref": "C1", "index": 0, "narrative": source["document"]["first_mes"] + "\n<initvar>hp: 8</initvar>"})]),
-            "只设置开场初始化，正文原样保留")
+        result = await run(
+            editor,
+            workspace["id"],
+            ToolLLM(
+                [
+                    ("read_field", {"card_ref": "C1", "path": "/first_mes"}),
+                    (
+                        "set_opening",
+                        {
+                            "card_ref": "C1",
+                            "index": 0,
+                            "narrative": source["document"]["first_mes"] + "\n<initvar>hp: 8</initvar>",
+                        },
+                    ),
+                ]
+            ),
+            "只设置开场初始化，正文原样保留",
+        )
         assert result["status"] == "completed", result["error"]
         card = editor.edits.conversation(workspace["id"])["cards"][0]
         assert card["document"]["first_mes"] == source["document"]["first_mes"] + "\n<initvar>hp: 8</initvar>"
@@ -373,19 +514,36 @@ async def test_mvu_adaptation_uses_shared_validation_without_requiring_target(tm
     workspace = editor.edits.update_card(wid, "C1", document, workspace["revision"], target_mode=target)
     try:
         assert workspace["cards"][0]["validation"]["warnings"]
-        model = ToolLLM([
-            ("read_skill", {"resource": "runtime-guide.md"}),
-            ("read_field", {"card_ref": "C1", "path": "/character_book/entries/0"}),
-            ("patch_draft", {"card_ref": "C1", "operations": [{"op": "add", "path": "/character_book/entries/0/extensions",
-                "value": {"terrarium": {"audience": "tracker_mvu"}}}], "comment": "Use shared variable routing"}),
-            ("validate_draft", {"card_ref": "C1"}),
-        ])
+        model = ToolLLM(
+            [
+                ("read_skill", {"resource": "runtime-guide.md"}),
+                ("read_field", {"card_ref": "C1", "path": "/character_book/entries/0"}),
+                (
+                    "patch_draft",
+                    {
+                        "card_ref": "C1",
+                        "operations": [
+                            {
+                                "op": "add",
+                                "path": "/character_book/entries/0/extensions",
+                                "value": {"terrarium": {"audience": "tracker_mvu"}},
+                            }
+                        ],
+                        "comment": "Use shared variable routing",
+                    },
+                ),
+                ("validate_draft", {"card_ref": "C1"}),
+            ]
+        )
         result = await run(editor, wid, model, "将变量更新规则标记为变量用途，不改变其他内容")
         assert result["status"] == "completed", result["error"]
         card = editor.edits.conversation(wid)["cards"][0]
         assert card["validation"]["warnings"] == []
         assert card["target_mode"] == target
-        assert card["document"]["character_book"]["entries"][0]["extensions"]["terrarium"]["audience"] == "tracker_mvu"
+        assert (
+            card["document"]["character_book"]["entries"][0]["extensions"]["terrarium"]["audience"]
+            == "tracker_mvu"
+        )
     finally:
         await editor.close()
 
@@ -395,14 +553,32 @@ def test_schema_two_migration_preserves_identity_history_and_backup(tmp_path):
     card = import_fixture(store)
     with store.connection() as db:
         db.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
-        db.execute("INSERT INTO card_edits VALUES (?,?,?,?,?,?,?,?)", ("legacy-chat", card["id"], dump(card), 0, dump(card["document"]), dump(card["document"]), 7, 100))
-        db.execute("INSERT INTO card_edit_runs VALUES ('legacy-run','legacy-chat','once',?,'completed','原回复',NULL,100)", (dump({"text": "原要求"}),))
+        db.execute(
+            "INSERT INTO card_edits VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "legacy-chat",
+                card["id"],
+                dump(card),
+                0,
+                dump(card["document"]),
+                dump(card["document"]),
+                7,
+                100,
+            ),
+        )
+        db.execute(
+            "INSERT INTO card_edit_runs VALUES ('legacy-run','legacy-chat','once',?,'completed','原回复',NULL,100)",
+            (dump({"text": "原要求"}),),
+        )
     reopened = Store(tmp_path)
     workspace = CardAuthorService(reopened).edits.conversation("legacy-chat")
     assert workspace["revision"] == 7 and workspace["cards"][0]["ref"] == "C1"
     assert [m["content"] for m in workspace["messages"]] == ["原要求", "原回复"]
-    assert list(tmp_path.glob("before-card-editor-v3-*.sqlite3"))
-    assert CardAuthorService(Store(tmp_path)).edits.conversation("legacy-chat")["messages"] == workspace["messages"]
+    assert list(tmp_path.glob("before-upgrade-*.sqlite3"))
+    assert (
+        CardAuthorService(Store(tmp_path)).edits.conversation("legacy-chat")["messages"]
+        == workspace["messages"]
+    )
 
 
 def test_schema_six_renames_card_editor_storage_and_settings_in_place(tmp_path):
@@ -417,20 +593,30 @@ def test_schema_six_renames_card_editor_storage_and_settings_in_place(tmp_path):
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(settings),))
         for suffix in ("conversations", "progress", "messages", "traces"):
             db.execute(f"ALTER TABLE card_author_{suffix} RENAME TO card_editor_{suffix}")
-        config = json.loads(db.execute("SELECT config FROM message_adapter_configs WHERE owner_id=?", (wid,)).fetchone()[0])
-        db.execute("UPDATE message_adapter_configs SET config=? WHERE owner_id=?", (dump({"card_editor": config["card_author"]}), wid))
+        config = json.loads(
+            db.execute("SELECT config FROM message_adapter_configs WHERE owner_id=?", (wid,)).fetchone()[0]
+        )
+        db.execute(
+            "UPDATE message_adapter_configs SET config=? WHERE owner_id=?",
+            (dump({"card_editor": config["card_author"]}), wid),
+        )
         db.execute("INSERT INTO sent_cache_breakpoints VALUES (?,'card_editor','i','p','{}')", (wid,))
         db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
     reopened = Store(tmp_path)
-    assert reopened.settings_document().version == 4
+    assert reopened.settings_document().version == SettingsDocument().version
     assert reopened.settings_document().shared.card_author_config.system_prompt == "旧版自定义规则"
     assert CardAuthorService(reopened).edits.conversation(wid)["title"] == "旧制卡"
     assert reopened.message_adapter("editor", wid, "card_author")
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "7"
-        assert db.execute("SELECT scope FROM sent_cache_breakpoints WHERE owner=?", (wid,)).fetchone()[0] == "card_author"
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(
+            SCHEMA_VERSION
+        )
+        assert (
+            db.execute("SELECT scope FROM sent_cache_breakpoints WHERE owner=?", (wid,)).fetchone()[0]
+            == "card_author"
+        )
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'card_editor_%'").fetchone()
-    assert len(list(tmp_path.glob("before-card-author-v6-*.sqlite3"))) == 1
+    assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
 def test_undo_reload_restores_original_save_authority(tmp_path):
@@ -452,12 +638,22 @@ def test_undo_reload_restores_original_save_authority(tmp_path):
 async def test_nullable_worldbook_is_searchable_and_unrelated_edit_preserves_it(tmp_path):
     store = Store(tmp_path)
     editor = CardAuthorService(store)
-    card = store.import_card(dump({"name": "无世界书", "description": "原文", "character_book": None}).encode(), "card.json")
+    card = store.import_card(
+        dump({"name": "无世界书", "description": "原文", "character_book": None}).encode(), "card.json"
+    )
     workspace = editor.edits.create(card["id"])
     try:
-        result = await run(editor, workspace["id"], ToolLLM([
-            ("search_entries", {"card_ref": "C1"}),
-            ("read_field", {"card_ref": "C1", "path": "/description"}), patch("C1", "新文")]))
+        result = await run(
+            editor,
+            workspace["id"],
+            ToolLLM(
+                [
+                    ("search_entries", {"card_ref": "C1"}),
+                    ("read_field", {"card_ref": "C1", "path": "/description"}),
+                    patch("C1", "新文"),
+                ]
+            ),
+        )
         assert result["status"] == "completed", result["error"]
         document = editor.edits.get(workspace["id"])["document"]
         assert document["character_book"] is None and document["description"] == "新文"
@@ -471,8 +667,14 @@ async def test_new_unsaved_card_does_not_break_asset_cleanup(tmp_path):
     existing = import_fixture(store)
     workspace = editor.edits.create_conversation()
     try:
-        result = await run(editor, workspace["id"], ToolLLM([("create_draft", {
-            "name": "新卡", "confirmation_ref": "H1", "direct_instruction": True})]), "直接创建一张新卡草稿")
+        result = await run(
+            editor,
+            workspace["id"],
+            ToolLLM(
+                [("create_draft", {"name": "新卡", "confirmation_ref": "H1", "direct_instruction": True})]
+            ),
+            "直接创建一张新卡草稿",
+        )
         assert result["status"] == "completed"
         store.delete_card(existing["id"])
         current = editor.edits.conversation(workspace["id"])

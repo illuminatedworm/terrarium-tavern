@@ -96,12 +96,15 @@ NOTE: 思考内容由<thinking> </thinking>进行包裹
 </Interleaved_thinking>"""
 
 CLEAR_PROMPT = LEGACY_CLEAR_PROMPT.replace("</clear>", "---").replace(
-    "after <Interleaving>", "after the Markdown separator")
+    "after <Interleaving>", "after the Markdown separator"
+)
 INFO_PROMPT = LEGACY_INFO_PROMPT.replace("<info>", "---")
-THINKING_PROMPT = (LEGACY_THINKING_PROMPT.replace("<Interleaving>", "---")
-                   .replace("</Interleaving>", "---")
-                   .replace("<interactive_input>", "当前用户输入")
-                   .replace("<char_guide>", "角色设定"))
+THINKING_PROMPT = (
+    LEGACY_THINKING_PROMPT.replace("<Interleaving>", "---")
+    .replace("</Interleaving>", "---")
+    .replace("<interactive_input>", "当前用户输入")
+    .replace("<char_guide>", "角色设定")
+)
 
 ROLEPLAY_PROMPT = """---
 

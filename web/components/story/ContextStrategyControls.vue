@@ -151,7 +151,7 @@ const usage = computed(() => {
 .compact-auto-row .compact-auto,
 .compact-auto-row .inspector-note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.5;
 }
 .compact-auto-row .compact-auto {

@@ -1,4 +1,5 @@
 """Short-lived Gemini objects and negative capability results, scoped to credentials."""
+
 import asyncio
 import copy
 import re
@@ -17,8 +18,9 @@ LOCKS = {}
 
 
 def capability_key(settings, key):
-    return fingerprint([settings.base_url, fingerprint(key), settings.model, settings.api_mode,
-                        settings.cache.model_dump()])
+    return fingerprint(
+        [settings.base_url, fingerprint(key), settings.model, settings.api_mode, settings.cache.model_dump()]
+    )
 
 
 def reset_capability(settings, key):
@@ -33,11 +35,31 @@ def cache_rejection(status, payload, field, *, resource=False):
     message = str(error.get("message", "")).lower()
     param = str(error.get("param", "")).lower()
     fields = [field] if isinstance(field, str) else list(field)
-    named = any(x.lower() in message or x.lower() in param for x in
-                fields + ["prompt_cache", "cache_control", "cachedcontent", "cached_content", "cached content"] if x)
-    return named and (resource and status == 404 or any(x in message for x in
-                    ("not supported", "unsupported", "unknown", "unrecognized", "invalid", "expired", "not found",
-                     "不支持", "不存在", "过期")))
+    named = any(
+        x.lower() in message or x.lower() in param
+        for x in fields
+        + ["prompt_cache", "cache_control", "cachedcontent", "cached_content", "cached content"]
+        if x
+    )
+    return named and (
+        resource
+        and status == 404
+        or any(
+            x in message
+            for x in (
+                "not supported",
+                "unsupported",
+                "unknown",
+                "unrecognized",
+                "invalid",
+                "expired",
+                "not found",
+                "不支持",
+                "不存在",
+                "过期",
+            )
+        )
+    )
 
 
 async def gemini_object(provider, messages, tools, tool_choice="auto"):
@@ -48,22 +70,29 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
     if boundary is None:
         return None, "没有可用的固定前缀断点"
     at = next(i for i, message in enumerate(messages) if message.get("_cache_breakpoint"))
-    prefix_system, prefix_contents, _ = native_messages(messages[:at + 1], "gemini")
+    prefix_system, prefix_contents, _ = native_messages(messages[: at + 1], "gemini")
     if prefix_system != system:
         # Gemini cannot combine cached and uncached systemInstruction blocks.
         # Never silently expand a user-selected breakpoint to cache later content.
         return None, "Gemini 无法拆分固定系统前缀；请将断点固定到更后的正文消息，当前完整发送"
-    prefix = {"model": "models/" + settings.model.removeprefix("models/"),
-              "systemInstruction": {"parts": prefix_system}, "contents": prefix_contents}
+    prefix = {
+        "model": "models/" + settings.model.removeprefix("models/"),
+        "systemInstruction": {"parts": prefix_system},
+        "contents": prefix_contents,
+    }
     if tools:
         prefix["tools"] = native_tools(tools, "gemini")
         selection = {"mode": "AUTO"}
         if isinstance(tool_choice, dict):
-            selection = {"mode": "ANY", "allowedFunctionNames": [tool_choice.get("function", tool_choice)["name"]]}
+            selection = {
+                "mode": "ANY",
+                "allowedFunctionNames": [tool_choice.get("function", tool_choice)["name"]],
+            }
         elif tool_choice == "none":
             selection = {"mode": "NONE"}
         prefix["toolConfig"] = {"functionCallingConfig": selection}
     import json
+
     # A conservative reference estimate avoids creating known undersized objects.
     minimum = 2048 if "2.5-flash" in settings.model.lower() else 4096
     if count_text(json.dumps(prefix, ensure_ascii=False), settings) < minimum:
@@ -73,8 +102,15 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
     window = next((m.get("_cache_window") for m in messages if m.get("_cache_window")), settings.cache_window)
     # TTL changes must replace and delete the old object in the same slot,
     # rather than abandon a paid long-lived object under a new capability key.
-    slot = fingerprint([settings.base_url, fingerprint(provider.key), settings.api_mode,
-                        scope or "standalone", settings.model])
+    slot = fingerprint(
+        [
+            settings.base_url,
+            fingerprint(provider.key),
+            settings.api_mode,
+            scope or "standalone",
+            settings.model,
+        ]
+    )
     digest = fingerprint([prefix, window, ttl])
     lock_key = (id(asyncio.get_running_loop()), slot)
     lock = LOCKS.setdefault(lock_key, asyncio.Lock())
@@ -90,7 +126,9 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
                 return None, "服务商未返回有效缓存资源名称"
             expires = time.time() + ttl
             if payload.get("expireTime"):
-                expires = min(expires, datetime.fromisoformat(payload["expireTime"].replace("Z", "+00:00")).timestamp())
+                expires = min(
+                    expires, datetime.fromisoformat(payload["expireTime"].replace("Z", "+00:00")).timestamp()
+                )
             entry = {"name": name, "digest": digest, "expires": expires, "boundary": boundary, "slot": slot}
             OBJECTS[slot] = entry
             if old and old["name"] != name:

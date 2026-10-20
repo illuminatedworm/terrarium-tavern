@@ -1,4 +1,5 @@
 """Reassemble Responses output items even when the terminal event only carries usage."""
+
 import copy
 
 

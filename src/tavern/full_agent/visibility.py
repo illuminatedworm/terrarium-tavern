@@ -5,6 +5,7 @@ search previews, note directories and opaque compaction do not grant evidence.
 Model-authored tool arguments count just like tool results, including complete
 replacement texts. Nothing from this bookkeeping is added to model messages.
 """
+
 import json
 
 import jsonpatch
@@ -53,18 +54,34 @@ def context_messages(compiled):
             yield row
             continue
         items = native_items(wire, "responses") or []
-        start = max((index + 1 for index, item in enumerate(items) if item.get("type") == "compaction"), default=0)
+        start = max(
+            (index + 1 for index, item in enumerate(items) if item.get("type") == "compaction"), default=0
+        )
         for item in items[start:]:
             kind = item.get("type")
             if kind == "function_call":
-                yield {"role": "assistant", "tool_calls": [{"id": item["call_id"],
-                    "function": {"name": item["name"], "arguments": item["arguments"]}}]}
+                yield {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": item["call_id"],
+                            "function": {"name": item["name"], "arguments": item["arguments"]},
+                        }
+                    ],
+                }
             elif kind == "function_call_output":
                 yield {"role": "tool", "tool_call_id": item["call_id"], "content": item["output"]}
             elif kind == "message" or "role" in item:
                 parts = item.get("content", "")
-                content = parts if isinstance(parts, str) else "".join(
-                    part.get("text", "") for part in parts if part.get("type") in ("input_text", "output_text", "text"))
+                content = (
+                    parts
+                    if isinstance(parts, str)
+                    else "".join(
+                        part.get("text", "")
+                        for part in parts
+                        if part.get("type") in ("input_text", "output_text", "text")
+                    )
+                )
                 message = {"role": item["role"], "content": content}
                 # Recover source identity only for an exact original message
                 # still present in the actual native plaintext input.
@@ -76,8 +93,11 @@ def observe_context(reads, messages):
     data = card_data(owner.document)
     expose = owner.model_view.expose
     refs = lore_references(owner.document, owner.state)
-    entries = {entry["id"]: (raw, entry) for _, raw, entry in entry_rows(owner.document)
-               if editable_entry(raw, entry)}
+    entries = {
+        entry["id"]: (raw, entry)
+        for _, raw, entry in entry_rows(owner.document)
+        if editable_entry(raw, entry)
+    }
     reverse = {identity: ref for ref, identity in refs.items()}
     projected = state_for_model(owner.snapshot.get("state", {}))
     variables = expose(projected.get("stat_data", {}))
@@ -144,15 +164,22 @@ def observe_context(reads, messages):
                 for operation in objects(args.get("operations")):
                     if operation.get("op") == "set_character" and "value" in operation:
                         character(operation.get("field"), operation.get("value"))
-                    elif (operation.get("op") == "update_lore" and isinstance(operation.get("changes"), dict)
-                          and "content" in operation["changes"]):
+                    elif (
+                        operation.get("op") == "update_lore"
+                        and isinstance(operation.get("changes"), dict)
+                        and "content" in operation["changes"]
+                    ):
                         entry(operation.get("ref"), operation["changes"]["content"])
                     elif operation.get("op") == "add_lore" and isinstance(operation.get("entry"), dict):
                         for ref in refs:
                             entry(ref, operation["entry"].get("content"))
             elif name == "patch_state":
                 for operation in objects(args.get("operations")):
-                    if operation.get("path") == "" and operation.get("op") in ("add", "replace", "test") and "value" in operation:
+                    if (
+                        operation.get("path") == ""
+                        and operation.get("op") in ("add", "replace", "test")
+                        and "value" in operation
+                    ):
                         state(operation.get("value"))
 
         call = calls.get(message.get("tool_call_id")) if message.get("role") == "tool" else None
@@ -194,6 +221,12 @@ def observe_context(reads, messages):
             # the reconstructed value must exactly match current variables.
             try:
                 known_variables = jsonpatch.apply_patch(known_variables, args.get("operations", []))
-            except (jsonpatch.JsonPatchException, jsonpointer.JsonPointerException, KeyError, TypeError, ValueError):
+            except (
+                jsonpatch.JsonPatchException,
+                jsonpointer.JsonPointerException,
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
                 known_variables = None
             state(known_variables)

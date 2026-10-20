@@ -184,8 +184,11 @@ class Dependencies:
         urls = {}
 
         def collect(url):
-            if (url.startswith("https://") and not TEMPLATE.search(url)
-                    and not re.search(r"\.(?:css|js|mjs|woff2?|ttf|otf|eot)(?:[?#]|$)", url, re.I)):
+            if (
+                url.startswith("https://")
+                and not TEMPLATE.search(url)
+                and not re.search(r"\.(?:css|js|mjs|woff2?|ttf|otf|eot)(?:[?#]|$)", url, re.I)
+            ):
                 urls[url] = None
             return url
 
@@ -219,7 +222,7 @@ class Dependencies:
                     if total > 32 * 1024 * 1024:
                         yield url, None, ValueError("单个内容块的远程图片原始数据超过 32 MiB")
                         return
-                    result = f'data:{result[1]};base64,{base64.b64encode(result[0]).decode()}'
+                    result = f"data:{result[1]};base64,{base64.b64encode(result[0]).decode()}"
                 yield url, result, error
         finally:
             for task in tasks:
@@ -243,9 +246,7 @@ class Dependencies:
     def read(self, card):
         path = self.manifest_path(card)
         manifest = (
-            json.loads(path.read_text(encoding="utf-8"))
-            if path.exists()
-            else self.store.card_manifest(card)
+            json.loads(path.read_text(encoding="utf-8")) if path.exists() else self.store.card_manifest(card)
         )
         return manifest
 
@@ -259,7 +260,6 @@ class Dependencies:
         manifest = self.read(card)
         proxy = self.proxy()
         async with self.client(proxy) as client:
-
             visited = set()
 
             async def fetch(url, depth=0):
@@ -272,7 +272,9 @@ class Dependencies:
                 visited.add(url)
                 if url in manifest["resources"]:
                     resource = manifest["resources"][url]
-                    if "text/css" in resource["content_type"] or urlparse(resource["url"]).path.endswith(".css"):
+                    if "text/css" in resource["content_type"] or urlparse(resource["url"]).path.endswith(
+                        ".css"
+                    ):
                         source = (self.store.root / "blobs" / resource["hash"]).read_text(encoding="utf-8")
                         for child in css_urls(source):
                             await fetch(urljoin(resource["url"], child), depth + 1)
@@ -303,7 +305,9 @@ class Dependencies:
 
             for url in diagnose(card["document"])["external_dependencies"]:
                 # Download assets and modules; ordinary creator links are not runtime dependencies.
-                if re.search(r"\.(?:js|mjs|css|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|eot)(?:[?#]|$)", url):
+                if re.search(
+                    r"\.(?:js|mjs|css|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|eot)(?:[?#]|$)", url
+                ):
                     await fetch(url)
             for script in card_scripts(card["document"]):
                 source = script.get("content", "")
@@ -407,8 +411,10 @@ class Dependencies:
                     if absolute in stack:
                         raise ValueError("CSS 依赖循环")
                     resource = manifest["resources"].get(absolute, {})
-                    raw = inline_css(raw.decode("utf-8"), resource.get("url", absolute), (*stack, absolute)).encode()
-                data = f'data:{mime.split(";")[0]};base64,{base64.b64encode(raw).decode()}'
+                    raw = inline_css(
+                        raw.decode("utf-8"), resource.get("url", absolute), (*stack, absolute)
+                    ).encode()
+                data = f"data:{mime.split(';')[0]};base64,{base64.b64encode(raw).decode()}"
                 return f'@import "{data}"' if match[3] is not None else f'url("{data}")'
 
             return CSS_URLS.sub(replace, source)
@@ -439,11 +445,15 @@ class Dependencies:
                 # Snapshot macros are expanded by the reader; its parent prepares
                 # the resulting concrete image before mounting even script-free frames.
                 return url
-            if url.startswith("https://") and url not in manifest["resources"] and declared_image(url, declarations):
+            if (
+                url.startswith("https://")
+                and url not in manifest["resources"]
+                and declared_image(url, declarations)
+            ):
                 # Presentation-only images are resolved by the reader, after macros.
                 # Their availability must not gate story generation/atomic commits.
                 return url
             raw, mime = content(url)
-            return f'data:{mime.split(";")[0]};base64,{base64.b64encode(raw).decode()}'
+            return f"data:{mime.split(';')[0]};base64,{base64.b64encode(raw).decode()}"
 
         return rewrite_markup(html, asset)

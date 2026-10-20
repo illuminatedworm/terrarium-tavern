@@ -223,7 +223,7 @@ h2 {
   align-items: center;
   gap: 10px;
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-title);
 }
 h2 :deep(.icon) {
   color: var(--text-secondary);

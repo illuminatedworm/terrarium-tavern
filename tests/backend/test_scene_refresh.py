@@ -22,16 +22,27 @@ def story(tmp_path):
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     snapshot = session["snapshot"] | {
-        "state": {"keys": 1}, "scopes": {"character": {"keep": True}},
-
+        "state": {"keys": 1},
+        "scopes": {"character": {"keep": True}},
     }
     with store.connection() as db:
         parent = session["head"]
         for role, raw in [("user", "钥匙交给乙"), ("assistant", "乙收好钥匙")]:
             mid = uid()
-            db.execute("INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)", (
-                mid, session["id"], parent, role, raw, raw, raw, dump(snapshot), 1,
-            ))
+            db.execute(
+                "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    mid,
+                    session["id"],
+                    parent,
+                    role,
+                    raw,
+                    raw,
+                    raw,
+                    dump(snapshot),
+                    1,
+                ),
+            )
             parent = mid
         db.execute("UPDATE sessions SET head=? WHERE id=?", (parent, session["id"]))
     return app, store.session(session["id"])
@@ -39,15 +50,30 @@ def story(tmp_path):
 
 def output(kind, session, source=None):
     source = source or "S2"
-    return json.dumps({"operations": [{"op": "add", "id": "N1", "record": {
-        "category": "current", "content": "乙持有钥匙", "sources": [source]}}], "questions": []})
+    return json.dumps(
+        {
+            "operations": [
+                {
+                    "op": "add",
+                    "id": "N1",
+                    "record": {"category": "current", "content": "乙持有钥匙", "sources": [source]},
+                }
+            ],
+            "questions": [],
+        }
+    )
 
 
 async def refresh(app, session, kind):
     service = app.state.service
-    turn = service.submit(session["id"], TurnRequest(
-        operation_id=uid(), expected_revision=session["revision"], scene_refresh=kind,
-    ))
+    turn = service.submit(
+        session["id"],
+        TurnRequest(
+            operation_id=uid(),
+            expected_revision=session["revision"],
+            scene_refresh=kind,
+        ),
+    )
     await service.tasks[turn["id"]]
     return app.state.store.turn(turn["id"])
 
@@ -66,16 +92,20 @@ async def test_manual_refresh_rebuilds_from_full_history_without_story_generatio
             {k: v for k, v in m.items() if k != "snapshot"} for m in before["messages"]
         ]
         assert after["messages"][:-1] == before["messages"][:-1]
-        assert {k: v for k, v in after["snapshot"].items() if k not in ("memory_archive", "memory_document")} == {
-            k: v for k, v in before["snapshot"].items() if k not in ("memory_archive", "memory_document")
-        }
-        assert after["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"] == before["messages"][-2]["id"]
+        assert {
+            k: v for k, v in after["snapshot"].items() if k not in ("memory_archive", "memory_document")
+        } == {k: v for k, v in before["snapshot"].items() if k not in ("memory_archive", "memory_document")}
+        assert (
+            after["snapshot"]["memory_document"]["records"][0]["sources"][0]["message_id"]
+            == before["messages"][-2]["id"]
+        )
         assert after["snapshot"]["memory_document"]["records"][0]["content"] == "乙持有钥匙"
         assert provider.call_count == 2
         payload = batch_payload(provider.call_log[0])
         assert payload["previous_result"] == {"version": 1, "records": []}
         assert ["".join(p["text"] for p in m["passages"]) for m in payload["messages"]] == [
-            m["model"] for m in before["messages"]]
+            m["model"] for m in before["messages"]
+        ]
         assert app.state.service.runtime.browser is None
         assert not any(e["kind"] == "text" for e in app.state.store.events(turn["id"]))
     finally:

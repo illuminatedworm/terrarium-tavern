@@ -1,4 +1,5 @@
 """Rewrite references reach real requests without inheriting a rejected reply's state."""
+
 import copy
 import json
 
@@ -28,11 +29,20 @@ def story(tmp_path, request):
     if request.param == "full_agent":
         snapshot["full_agent"]["handoff"]["text"] = "HANDOFF_FROM_REPLACED_REPLY"
     with store.connection() as db:
-        db.execute("UPDATE messages SET model=?,snapshot=? WHERE id=?", (text, dump(snapshot), session["head"]))
+        db.execute(
+            "UPDATE messages SET model=?,snapshot=? WHERE id=?", (text, dump(snapshot), session["head"])
+        )
         if request.param == "full_agent":
-            db.execute("INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload) VALUES (?,?,?,?,?)", (
-                session["id"], session["head"], 1, snapshot["full_agent"]["window"]["id"],
-                dump({"role": "system", "content": "TOOLS_FROM_REPLACED_REPLY"})))
+            db.execute(
+                "INSERT INTO full_agent_trace(session,message_id,seq,window_id,payload) VALUES (?,?,?,?,?)",
+                (
+                    session["id"],
+                    session["head"],
+                    1,
+                    snapshot["full_agent"]["window"]["id"],
+                    dump({"role": "system", "content": "TOOLS_FROM_REPLACED_REPLY"}),
+                ),
+            )
     return store, store.session(session["id"]), text
 
 
@@ -68,11 +78,15 @@ async def test_reference_is_opt_in_complete_and_only_for_this_turn(story, includ
     store, session, text = story
     service = service_for(store, session)
     user = copy.deepcopy(session["messages"][-2])
-    model = model_for(session, *(("read_state", {}), "replacement")
-                      if session["agent_mode"] == "full_agent" else ("replacement",))
+    model = model_for(
+        session,
+        *(("read_state", {}), "replacement") if session["agent_mode"] == "full_agent" else ("replacement",),
+    )
     try:
         options = {} if include is None else {"regenerate_include_reply": include}
-        result, current = await run(service, session, model, mode="regenerate", regenerate_note="缩短正文", **options)
+        result, current = await run(
+            service, session, model, mode="regenerate", regenerate_note="缩短正文", **options
+        )
         assert result["status"] == "committed", result["error"]
         for messages in requests(model):
             wire = json.dumps(messages, ensure_ascii=False)
@@ -124,8 +138,14 @@ async def test_repeated_rewrite_references_current_candidate_and_restores_same_b
     try:
         for candidate in ("first replacement", "second replacement"):
             model = model_for(session, candidate)
-            result, session = await run(service, session, model, mode="regenerate",
-                                        message_id=session["head"], regenerate_include_reply=True)
+            result, session = await run(
+                service,
+                session,
+                model,
+                mode="regenerate",
+                message_id=session["head"],
+                regenerate_include_reply=True,
+            )
             assert result["status"] == "committed", result["error"]
             reference = next(m for m in requests(model)[0] if "<rewrite_reference>" in m.get("content", ""))
             assert text in reference["content"]
@@ -141,8 +161,9 @@ async def test_repeated_rewrite_references_current_candidate_and_restores_same_b
 async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(story):
     store, session, text = story
     service = service_for(store, session)
-    model = Model(("new_context", {"handoff": "本轮新交接", "keep_recent": 0}),
-                  ("read_state", {}), "replacement")
+    model = Model(
+        ("new_context", {"handoff": "本轮新交接", "keep_recent": 0}), ("read_state", {}), "replacement"
+    )
     try:
         result, current = await run(service, session, model, mode="regenerate", regenerate_include_reply=True)
         assert result["status"] == "committed", result["error"]
@@ -165,18 +186,36 @@ async def test_full_retry_keeps_reference_and_changing_choice_requires_restart(s
     store, session, text = story
     service = service_for(store, session)
     try:
-        failed, current = await run(service, session,
+        failed, current = await run(
+            service,
+            session,
             Model(("read_state", {}), RuntimeError("disconnected")),
-            mode="regenerate", regenerate_include_reply=True)
+            mode="regenerate",
+            regenerate_include_reply=True,
+        )
         assert failed["status"] == "error"
         assert store.full_agent_progress(failed["id"])
         with pytest.raises(Conflict, match="输入或授权已改变"):
-            store.create_turn(session["id"], TurnRequest(**{
-                **failed["request"], "operation_id": uid(), "resume_turn_id": failed["id"],
-                "regenerate_include_reply": False}))
+            store.create_turn(
+                session["id"],
+                TurnRequest(
+                    **{
+                        **failed["request"],
+                        "operation_id": uid(),
+                        "resume_turn_id": failed["id"],
+                        "regenerate_include_reply": False,
+                    }
+                ),
+            )
         model = Model("replacement after retry")
-        result, current = await run(service, current, model, mode="regenerate",
-                                    regenerate_include_reply=True, resume_turn_id=failed["id"])
+        result, current = await run(
+            service,
+            current,
+            model,
+            mode="regenerate",
+            regenerate_include_reply=True,
+            resume_turn_id=failed["id"],
+        )
         assert result["status"] == "committed", result["error"]
         assert sum(text in m.get("content", "") for m in requests(model)[0]) == 1
         next_model = Model("following")

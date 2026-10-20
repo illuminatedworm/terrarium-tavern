@@ -15,16 +15,21 @@ from tavern.storage.store import dump
 
 def register_editor_routes(app, editor):
     from tavern.character.editor_api import register_conversation_routes
+
     register_conversation_routes(app, editor)
+
     @app.get("/api/card-edits")
     async def orphan_edits():
         with editor.store.connection() as db:
-            return [dict(row) for row in db.execute("""SELECT w.id,w.created,
+            return [
+                dict(row)
+                for row in db.execute("""SELECT w.id,w.created,
                 json_extract(a.value,'$.card') AS card, json_extract(a.value,'$.source.name') AS name
                 FROM card_author_conversations w JOIN json_each(w.payload,'$.cards') a
                 LEFT JOIN cards c ON c.id=json_extract(a.value,'$.card')
                 WHERE json_array_length(w.payload,'$.cards')=1
-                    AND json_extract(a.value,'$.card') IS NOT NULL AND c.id IS NULL ORDER BY w.created DESC""")]
+                    AND json_extract(a.value,'$.card') IS NOT NULL AND c.id IS NULL ORDER BY w.created DESC""")
+            ]
 
     @app.get("/api/cards/{cid}/edits")
     async def list_edits(cid: str):
@@ -90,8 +95,11 @@ def register_editor_routes(app, editor):
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
                 batch = editor.edits.events(rid, cursor)
-                cache_usage = (editor.edits.conversation_cache_usage(run["workspace"])
-                               if any(e["kind"] == "context_stats" for e in batch) else None)
+                cache_usage = (
+                    editor.edits.conversation_cache_usage(run["workspace"])
+                    if any(e["kind"] == "context_stats" for e in batch)
+                    else None
+                )
                 for event in batch:
                     cursor = event["seq"]
                     if event["kind"] == "context_stats":
@@ -106,5 +114,8 @@ def register_editor_routes(app, editor):
                     return
                 if await request.is_disconnected():
                     return
-                await asyncio.sleep(.15)
-        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+                await asyncio.sleep(0.15)
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        )

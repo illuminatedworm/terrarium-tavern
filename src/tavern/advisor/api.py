@@ -1,10 +1,12 @@
 """Advisor API and reconnectable event observation."""
+
 import asyncio
 
 from fastapi import Query, Request
 from fastapi.responses import StreamingResponse
 
 from tavern.advisor.runtime import AdvisorRevisionRequest, ConsultationRequest, OptionsRequest
+from tavern.core.errors import NotFound
 from tavern.storage.store import dump
 
 
@@ -56,12 +58,15 @@ def register_routes(app, advisor):
                     yield f"id: {cursor}\ndata: {dump(event)}\n\n"
                 try:
                     active = advisor.data.run(rid)["status"] in ("queued", "running")
-                except KeyError:
+                except NotFound:
                     active = False  # Another tab may have cleared the consultation.
                 if len(batch) < 200 and not active:
                     yield "event: end\ndata: {}\n\n"
                     return
                 if await request.is_disconnected():
                     return
-                await asyncio.sleep(.15)
-        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+                await asyncio.sleep(0.15)
+
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+        )

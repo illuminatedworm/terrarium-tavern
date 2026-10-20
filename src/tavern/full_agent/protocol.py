@@ -6,7 +6,10 @@ RECOVERY = {
     "INVALID_ARGUMENTS": (True, "按参数定义修正后重试。"),
     "INVALID_REFERENCE": (True, "重新搜索或读取当前分支中的有效引用。"),
     "READ_REQUIRED": (True, "在当前窗口完整读取最新目标后重试。"),
-    "INVALID_PATH": (True, "使用 JSON Pointer；变量路径相对于 stat_data，如 /hp，不是 stat_data.hp 或 /stat_data/hp。不要自动删除真实同名键。"),
+    "INVALID_PATH": (
+        True,
+        "使用 JSON Pointer；变量路径相对于 stat_data，如 /hp，不是 stat_data.hp 或 /stat_data/hp。不要自动删除真实同名键。",
+    ),
     "PATCH_VALIDATION_FAILED": (True, "核对最新变量与 MVU 规则，修正补丁后重试。"),
     "CONTENT_LIMIT": (True, "精简本次写入内容后重试；不能截断读取的原文。"),
     "PROTECTED_TARGET": (False, "仅修改工具公开的业务字段；程序内部字段与执行配置不可修改。"),
@@ -20,9 +23,16 @@ RECOVERY = {
 class ToolError(ValueError):
     def __init__(self, code, message, *, next_action=None, **details):
         retryable, action = RECOVERY[code]
-        self.result = {"ok": False, "error": {
-            "code": code, "message": message, "retryable": retryable,
-            "next_action": next_action or action, **details}}
+        self.result = {
+            "ok": False,
+            "error": {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+                "next_action": next_action or action,
+                **details,
+            },
+        }
         super().__init__(message)
 
 

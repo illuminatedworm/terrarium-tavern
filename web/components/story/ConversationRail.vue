@@ -361,7 +361,7 @@ onBeforeUnmount(() => {
   right: 8px;
   width: 6px;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--radius-2xs);
   background: rgb(255 255 255 / 0.18);
   transform: translateY(-50%);
   pointer-events: none;
@@ -387,7 +387,7 @@ onBeforeUnmount(() => {
   right: 0;
   width: 4px;
   height: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   background: var(--cache-gold);
 }
 .rail-tick.hovered {
@@ -411,7 +411,7 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--glass-blur-strong);
   backdrop-filter: var(--glass-blur-strong);
   box-shadow: var(--glass-highlight), var(--shadow-pop);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   pointer-events: auto;
 }
@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 .rail-preview-heading > span {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .rail-preview button {
   font: inherit;
@@ -499,12 +499,12 @@ onBeforeUnmount(() => {
 }
 .rail-reply {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .rail-round-status {
   flex-shrink: 0;
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 @media (max-width: 620px) {
   .conversation-rail-wrap {

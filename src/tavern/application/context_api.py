@@ -1,4 +1,5 @@
 """Shared, revision-checked context controls for the two story modes."""
+
 from typing import Literal
 
 from tavern.application.context_operations import ContextOperationRequest

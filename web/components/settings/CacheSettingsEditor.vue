@@ -191,7 +191,7 @@ function edit(kind: 'value' | 'request', event: Event) {
   font-family: monospace;
 }
 .cache-settings [role='alert'] {
-  color: var(--danger, #a83232);
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 </style>

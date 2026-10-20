@@ -91,7 +91,7 @@ label {
 fieldset {
   padding: 16px;
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
 }
 .web-service-heading {
   display: flex;
@@ -112,7 +112,7 @@ fieldset {
 }
 .muted {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.7;
   margin: 0;
 }

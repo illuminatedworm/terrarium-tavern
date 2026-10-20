@@ -5,7 +5,7 @@ export const DIRECT_TEXT_LIMIT = 200_000;
 
 export type HistoryMessage = {
   id: string;
-  parent?: string;
+  parent?: string | null;
   role: string;
   display?: string;
   raw?: string;

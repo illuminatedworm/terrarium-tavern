@@ -1,4 +1,5 @@
 """Card Author policy, separate from either roleplay mode."""
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.web.config import AgentWebConfig
@@ -79,28 +80,59 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 
 最终回复简述实际改动、验证范围和下一步，卡片内容通过工具写入，不在回复中贴整张 JSON。工具成功仅表示本轮临时修改成功，卡片草稿和用户角色修改在正常结束时共同提交；卡片仍由用户审阅后保存，用户角色则保存到用户角色库。停止后可续接，补充要求优先于旧计划。"""
 
+
 class CardAuthorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     system_prompt: str = SYSTEM
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
-    pressure_ratio: float = Field(default=.70, ge=.25, le=.9)
+    pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
     handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
     web: AgentWebConfig = Field(default_factory=AgentWebConfig)
 
 
 FIELD_PURPOSES = {
-    "name": "卡名", "description": "核心人物或世界设定", "personality": "性格", "scenario": "互动背景",
-    "first_mes": "默认开场", "alternate_greetings": "替代开场", "mes_example": "风格示例",
-    "system_prompt": "游玩系统要求", "post_history_instructions": "游玩后置要求",
-    "character_book": "世界书与注入条件", "extensions": "脚本、正则及未知扩展",
-    "creator_notes": "作者备注（不是运行设定）", "creator": "作者", "tags": "分类标签",
+    "name": "卡名",
+    "description": "核心人物或世界设定",
+    "personality": "性格",
+    "scenario": "互动背景",
+    "first_mes": "默认开场",
+    "alternate_greetings": "替代开场",
+    "mes_example": "风格示例",
+    "system_prompt": "游玩系统要求",
+    "post_history_instructions": "游玩后置要求",
+    "character_book": "世界书与注入条件",
+    "extensions": "脚本、正则及未知扩展",
+    "creator_notes": "作者备注（不是运行设定）",
+    "creator": "作者",
+    "tags": "分类标签",
     "character_version": "创作版本",
 }
 
 
 def blank_card(name):
-    return {"spec": "chara_card_v2", "spec_version": "2.0", "data": {
-        "name": name, **{key: "" for key in ("description", "personality", "scenario", "first_mes", "mes_example",
-                                             "system_prompt", "post_history_instructions", "creator_notes", "creator")},
-        "alternate_greetings": [], "tags": [], "character_version": "1.0", "extensions": {},
-        "character_book": {"entries": []}}}
+    return {
+        "spec": "chara_card_v2",
+        "spec_version": "2.0",
+        "data": {
+            "name": name,
+            **{
+                key: ""
+                for key in (
+                    "description",
+                    "personality",
+                    "scenario",
+                    "first_mes",
+                    "mes_example",
+                    "system_prompt",
+                    "post_history_instructions",
+                    "creator_notes",
+                    "creator",
+                )
+            },
+            "alternate_greetings": [],
+            "tags": [],
+            "character_version": "1.0",
+            "extensions": {},
+            "character_book": {"entries": []},
+        },
+    }

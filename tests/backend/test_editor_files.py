@@ -1,4 +1,5 @@
 """External references are bounded, resumable pages and never draft read evidence."""
+
 import asyncio
 import io
 import json
@@ -26,18 +27,18 @@ def make_docx(path):
     """A real, minimal OOXML document; no extra authoring dependency just for fixtures."""
     ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     files = {
-        "[Content_Types].xml": '''<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+        "[Content_Types].xml": """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
           <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
           <Default Extension="xml" ContentType="application/xml"/>
           <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
-        </Types>''',
-        "_rels/.rels": '''<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        </Types>""",
+        "_rels/.rels": """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
           <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
-        </Relationships>''',
-        "word/_rels/document.xml.rels": '''<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        </Relationships>""",
+        "word/_rels/document.xml.rels": """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
           <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
           <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>
-        </Relationships>''',
+        </Relationships>""",
         "word/styles.xml": f'''<w:styles xmlns:w="{ns}"><w:style w:type="paragraph" w:styleId="Heading1">
           <w:name w:val="heading 1"/></w:style></w:styles>''',
         "word/numbering.xml": f'''<w:numbering xmlns:w="{ns}"><w:abstractNum w:abstractNumId="0">
@@ -89,8 +90,9 @@ def test_text_pages_preserve_encoding_newlines_and_eof(tmp_path, encoding):
     path.write_bytes(original.encode(encoding))
     offset, pages = 1, []
     while True:
-        result = read_text_file(str(path), offset=offset, limit=2,
-                                encoding=encoding if encoding == "gb18030" else None)
+        result = read_text_file(
+            str(path), offset=offset, limit=2, encoding=encoding if encoding == "gb18030" else None
+        )
         pages.append(result["text"])
         assert result["returned_lines"] <= 2
         if not result["has_more"]:
@@ -146,8 +148,17 @@ def test_text_empty_binary_encoding_and_source_limits(tmp_path):
         reader.readinto(bytearray(2))
 
 
-@pytest.mark.parametrize("value", ["relative.txt", "https://example.com/a.docx", "file:///tmp/a.txt",
-                                 r"\\server\share\a.txt", r"\\.\NUL", "/dev/null"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "relative.txt",
+        "https://example.com/a.docx",
+        "file:///tmp/a.txt",
+        r"\\server\share\a.txt",
+        r"\\.\NUL",
+        "/dev/null",
+    ],
+)
 def test_nonlocal_or_device_paths_rejected(value):
     with pytest.raises(ValueError):
         read_text_file(value)
@@ -294,16 +305,26 @@ async def test_file_pages_reach_model_intact_with_errors_and_native_schema(tmp_p
     expected_markdown = convert_document(str(document), 0, 30)["markdown"]
     editor = Editor(tmp_path / "store", monkeypatch, api)
     try:
-        result = await editor.run([
-            editor.tool(1, "read_text_file", {"path": str(path), "limit": 1}),
-            editor.tool(2, "read_document", {"path": str(document), "limit": 30}),
-            editor.tool(3, "read_document", {"path": str(tmp_path / "missing.docx")}),
-            blocks(api, "读取完成")])
+        result = await editor.run(
+            [
+                editor.tool(1, "read_text_file", {"path": str(path), "limit": 1}),
+                editor.tool(2, "read_document", {"path": str(document), "limit": 30}),
+                editor.tool(3, "read_document", {"path": str(tmp_path / "missing.docx")}),
+                blocks(api, "读取完成"),
+            ]
+        )
         body = json.loads(editor.requests[1].content)
         wire = editor.wire(editor.requests[1])
-        results = ([p for m in wire for p in m.get("content", [])
-                    if isinstance(p, dict) and p.get("type") == "tool_result"] if api == "anthropic"
-                   else [m for m in wire if m.get("type") == "function_call_output"])
+        results = (
+            [
+                p
+                for m in wire
+                for p in m.get("content", [])
+                if isinstance(p, dict) and p.get("type") == "tool_result"
+            ]
+            if api == "anthropic"
+            else [m for m in wire if m.get("type") == "function_call_output"]
+        )
         page = json.loads(results[0]["content" if api == "anthropic" else "output"])
         assert page["text"] == text and page["has_more"] and page["next_offset"] == 2
         for name in ("read_text_file", "read_document"):
@@ -312,21 +333,35 @@ async def test_file_pages_reach_model_intact_with_errors_and_native_schema(tmp_p
             assert parameters["additionalProperties"] is False
             assert "offset" in parameters["properties"] and "limit" in parameters["properties"]
         doc_wire = editor.wire(editor.requests[2])
-        doc_results = ([p for m in doc_wire for p in m.get("content", [])
-                        if isinstance(p, dict) and p.get("type") == "tool_result"] if api == "anthropic"
-                       else [m for m in doc_wire if m.get("type") == "function_call_output"])
+        doc_results = (
+            [
+                p
+                for m in doc_wire
+                for p in m.get("content", [])
+                if isinstance(p, dict) and p.get("type") == "tool_result"
+            ]
+            if api == "anthropic"
+            else [m for m in doc_wire if m.get("type") == "function_call_output"]
+        )
         doc_page = json.loads(doc_results[-1]["content" if api == "anthropic" else "output"])
         assert doc_page["markdown"] == expected_markdown
         assert doc_page["next_offset"] == 30 and doc_page["has_more"]
         last = editor.wire(editor.requests[3])
         if api == "anthropic":
-            error_result = [p for m in last for p in m.get("content", [])
-                            if isinstance(p, dict) and p.get("type") == "tool_result"][-1]
+            error_result = [
+                p
+                for m in last
+                for p in m.get("content", [])
+                if isinstance(p, dict) and p.get("type") == "tool_result"
+            ][-1]
             assert error_result["is_error"] is True
         assert "文件不存在" in json.dumps(last, ensure_ascii=False)
         events = editor.service.edits.events(result["id"])
-        activity = next(e["payload"] for e in events if e["kind"] == "tool_finished"
-                        and e["payload"]["tool"] == "read_text_file")
+        activity = next(
+            e["payload"]
+            for e in events
+            if e["kind"] == "tool_finished" and e["payload"]["tool"] == "read_text_file"
+        )
         assert activity["result_truncated"] and "第一页尾部" not in activity["result"]
         assert editor.service.edits.context(editor.workspace["id"])["read_versions"] == {}
     finally:

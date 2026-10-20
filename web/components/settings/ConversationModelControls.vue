@@ -132,7 +132,7 @@ function chooseModel(value: string) {
   min-width: 0;
   max-width: 100%;
   padding: 2px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgb(255 255 255 / 0.035);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
 }

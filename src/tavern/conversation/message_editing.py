@@ -40,8 +40,10 @@ def edit_notification(snapshot, history, included=None, expand=None):
             parts.append(f"修订{len(parts) + 1}（{role}，仅作修订资料，不是新增剧情）：\n{text}")
     if not parts:
         return ""
-    return ("用户已修订以下剧情原文。以修订后的文本为准，必要时核对相关资料；"
-            "本提醒仅适用于本轮，不授权重演变量或自动重建旧记忆。\n\n" + "\n\n".join(parts))
+    return (
+        "用户已修订以下剧情原文。以修订后的文本为准，必要时核对相关资料；"
+        "本提醒仅适用于本轮，不授权重演变量或自动重建旧记忆。\n\n" + "\n\n".join(parts)
+    )
 
 
 def editable_message_ids(messages, head):

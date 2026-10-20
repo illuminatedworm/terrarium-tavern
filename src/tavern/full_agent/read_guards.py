@@ -1,4 +1,5 @@
 """Current-context evidence for the versions targeted by draft edits."""
+
 import copy
 
 from tavern.core.cache_policy import fingerprint
@@ -48,8 +49,9 @@ class DraftReads:
 
     def require_state(self):
         if self.records["state"] != self.state_stamp():
-            raise ToolError("READ_REQUIRED", '当前上下文未包含完整最新变量；'
-                            '请调用 read_state(path="", scope="mvu")')
+            raise ToolError(
+                "READ_REQUIRED", '当前上下文未包含完整最新变量；请调用 read_state(path="", scope="mvu")'
+            )
 
     def character_stamp(self, field):
         data = card_data(self.owner.document)
@@ -60,7 +62,9 @@ class DraftReads:
 
     def require_character(self, field):
         if self.records["fields"].get(field) != self.character_stamp(field):
-            raise ToolError("READ_REQUIRED", f"当前上下文未包含完整最新字段；请用 read_character 读取：{field}")
+            raise ToolError(
+                "READ_REQUIRED", f"当前上下文未包含完整最新字段；请用 read_character 读取：{field}"
+            )
 
     def entry_stamp(self, raw):
         value = copy.deepcopy(raw)
@@ -74,7 +78,9 @@ class DraftReads:
 
     def require_entry(self, ref, raw):
         if self.records["entries"].get(ref) != self.entry_stamp(raw):
-            raise ToolError("READ_REQUIRED", "当前上下文未包含完整最新条目正文；请用 read_lore_entry 读取后修改或删除")
+            raise ToolError(
+                "READ_REQUIRED", "当前上下文未包含完整最新条目正文；请用 read_lore_entry 读取后修改或删除"
+            )
 
     def note_stamp(self, key):
         return self.stamp(self.owner.state["notes"][key]["content"])

@@ -18,8 +18,13 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     store = Store(tmp_path)
     doc = store.settings_document()
     doc.shared.providers.append(Provider(id="second.provider", base_url="https://second.test"))
-    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background,
-                    doc.shared.card_author, doc.shared.advisor.model):
+    for profile in (
+        doc.full_agent.model,
+        doc.half_agent.foreground,
+        doc.half_agent.background,
+        doc.shared.card_author,
+        doc.shared.advisor.model,
+    ):
         profile.provider_id = "default"
         profile.api_mode, profile.api_path, profile.model = "gemini", "proxy/v1beta", "original-model"
     raw = doc.model_dump()
@@ -35,64 +40,110 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     migrated = store.settings_document()
     assert migrated.version == 7
     assert migrated.full_agent.model.model_dump() == doc.full_agent.model.model_dump()
-    backups = list(tmp_path.glob("before-kemini-v8-*.sqlite3"))
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     # Every role owns its own records, and new providers never borrow the active path/model.
-    for profile in (migrated.full_agent.model, migrated.half_agent.foreground, migrated.half_agent.background,
-                    migrated.shared.card_author, migrated.shared.advisor.model):
+    for profile in (
+        migrated.full_agent.model,
+        migrated.half_agent.foreground,
+        migrated.half_agent.background,
+        migrated.shared.card_author,
+        migrated.shared.advisor.model,
+    ):
         fresh = profile.for_provider("second.provider")
         assert (fresh.api_mode, fresh.api_path, fresh.model) == ("chat_completions", "", "")
         fresh.api_mode, fresh.api_path, fresh.model = "responses", "gateway/v2", "second-model"
         restored = fresh.for_provider("default")
-        assert (restored.api_mode, restored.api_path, restored.model) == ("gemini", "proxy/v1beta", "original-model")
-        assert ModelSelection(provider_id="second.provider", model="conversation-model").profile(restored).api_path == "gateway/v2"
+        assert (restored.api_mode, restored.api_path, restored.model) == (
+            "gemini",
+            "proxy/v1beta",
+            "original-model",
+        )
+        assert (
+            ModelSelection(provider_id="second.provider", model="conversation-model")
+            .profile(restored)
+            .api_path
+            == "gateway/v2"
+        )
         assert not profile.provider_connections
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         opened = (await api.post("/api/settings/edit-sessions", json={})).json()
         selected = migrated.full_agent.model.for_provider("second.provider")
         selected.api_mode, selected.api_path, selected.model = "responses", "gateway/v2", "second-model"
-        response = await api.patch("/api/settings/full_agent", json={
-            "expected_revision": migrated.revisions["full_agent"], "edit_session": opened["id"],
-            "changes": {"model": selected.model_dump()},
-        })
+        response = await api.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": migrated.revisions["full_agent"],
+                "edit_session": opened["id"],
+                "changes": {"model": selected.model_dump()},
+            },
+        )
         assert response.status_code == 200, response.text
         selected = store.settings_document().full_agent.model.for_provider("default")
-        response = await api.patch("/api/settings/full_agent", json={
-            "expected_revision": response.json()["revisions"]["full_agent"], "edit_session": opened["id"],
-            "changes": {"model." + key: value for key, value in selected.model_dump().items()
-                        if key in {"provider_id", "api_mode", "api_path", "model", "provider_connections"}},
-        })
+        response = await api.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": response.json()["revisions"]["full_agent"],
+                "edit_session": opened["id"],
+                "changes": {
+                    "model." + key: value
+                    for key, value in selected.model_dump().items()
+                    if key in {"provider_id", "api_mode", "api_path", "model", "provider_connections"}
+                },
+            },
+        )
         assert response.status_code == 200, response.text
         reloaded = Store(tmp_path).settings_document()
         assert reloaded.full_agent.model == selected
         assert reloaded.full_agent.model.for_provider("second.provider").api_path == "gateway/v2"
         assert reloaded.half_agent == migrated.half_agent and reloaded.shared == migrated.shared
-        duplicate = {"model.provider_connections": {"default": {"api_mode": "responses", "api_path": "hidden", "model": "stale"}}}
-        rejected = await api.patch("/api/settings/full_agent", json={
-            "expected_revision": response.json()["revisions"]["full_agent"], "changes": duplicate,
-        })
+        duplicate = {
+            "model.provider_connections": {
+                "default": {"api_mode": "responses", "api_path": "hidden", "model": "stale"}
+            }
+        }
+        rejected = await api.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": response.json()["revisions"]["full_agent"],
+                "changes": duplicate,
+            },
+        )
         assert rejected.status_code == 400 and "重复" in rejected.text
-        undone = await api.post(f"/api/settings/edit-sessions/{opened['id']}/undo", json={
-            "page": "full_agent.model", "expected_revision": response.json()["revisions"]["full_agent"],
-        })
+        undone = await api.post(
+            f"/api/settings/edit-sessions/{opened['id']}/undo",
+            json={
+                "page": "full_agent.model",
+                "expected_revision": response.json()["revisions"]["full_agent"],
+            },
+        )
         assert undone.status_code == 200, undone.text
         assert store.settings_document().full_agent.model == migrated.full_agent.model
-        assert len(list(tmp_path.glob("before-kemini-v8-*.sqlite3"))) == 1
+        assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
-@pytest.mark.parametrize("mode,path,expected", [
-    ("chat_completions", "v1", ""), ("responses", "gateway/v1", "gateway/v1"),
-    ("anthropic", "gateway", "gateway/v1"), ("gemini", "v1", ""),
-    ("gemini", "gateway/v1alpha", "gateway/v1alpha"),
-])
+@pytest.mark.parametrize(
+    "mode,path,expected",
+    [
+        ("chat_completions", "v1", ""),
+        ("responses", "gateway/v1", "gateway/v1"),
+        ("anthropic", "gateway", "gateway/v1"),
+        ("gemini", "v1", ""),
+        ("gemini", "gateway/v1alpha", "gateway/v1alpha"),
+    ],
+)
 def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, path, expected):
     raw = SettingsDocument().model_dump()
     raw["shared"]["providers"][0].update(base_url=f"https://fixture.test/{path}", api_mode=mode)
-    for scope, name in (("full_agent", "model"), ("half_agent", "foreground"),
-                        ("half_agent", "background"), ("shared", "card_author")):
+    for scope, name in (
+        ("full_agent", "model"),
+        ("half_agent", "foreground"),
+        ("half_agent", "background"),
+        ("shared", "card_author"),
+    ):
         raw[scope][name].pop("api_mode")
         raw[scope][name].pop("api_path")
     migrated = migrate_settings(raw)
@@ -103,7 +154,8 @@ def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, pat
         assert cfg.api_mode == mode
         assert cfg.api_path == expected
         assert endpoint(cfg.base_url, mode, "fixture", api_path=cfg.api_path) == endpoint(
-            f"https://fixture.test/{path}", mode, "fixture")
+            f"https://fixture.test/{path}", mode, "fixture"
+        )
     assert migrate_settings(migrated.model_dump()) == migrated
     store = Store(tmp_path)
     with store.connection() as db:
@@ -112,27 +164,36 @@ def test_migrates_provider_protocol_and_root_to_all_profiles(tmp_path, mode, pat
 
 
 def test_flat_legacy_config_and_explicit_profile_overrides():
-    doc = migrate_settings({"providers": [{"id": "default", "api_mode": "gemini",
-                                          "base_url": "https://fixture.test/v1beta"}],
-                            "foreground": {"api_mode": "responses", "api_path": "v2"}})
+    doc = migrate_settings(
+        {
+            "providers": [{"id": "default", "api_mode": "gemini", "base_url": "https://fixture.test/v1beta"}],
+            "foreground": {"api_mode": "responses", "api_path": "v2"},
+        }
+    )
     assert doc.half_agent.foreground.api_mode == "responses"
     assert doc.half_agent.foreground.api_path == "v2"
     assert doc.half_agent.background.api_mode == "gemini"
     assert doc.shared.card_author.api_mode == "gemini"
 
 
-@pytest.mark.parametrize("mode,path,suffix", [
-    ("chat_completions", "v2", "/v2/chat/completions"),
-    ("responses", "", "/v1/responses"),
-    ("anthropic", "v9", "/v9/messages"),
-    ("gemini", "v1", "/v1/models/fixture:generateContent"),
-    ("gemini", "", "/v1beta/models/fixture:generateContent"),
-])
+@pytest.mark.parametrize(
+    "mode,path,suffix",
+    [
+        ("chat_completions", "v2", "/v2/chat/completions"),
+        ("responses", "", "/v1/responses"),
+        ("anthropic", "v9", "/v9/messages"),
+        ("gemini", "v1", "/v1/models/fixture:generateContent"),
+        ("gemini", "", "/v1beta/models/fixture:generateContent"),
+    ],
+)
 def test_runtime_uses_each_models_path_exactly(mode, path, suffix):
     doc = SettingsDocument()
     doc.full_agent.model = ModelProfile(api_mode=mode, api_path=path, model="fixture")
     cfg = doc.runtime("full_agent")
-    assert endpoint(cfg.base_url, cfg.api_mode, cfg.model, api_path=cfg.api_path) == "https://api.openai.com" + suffix
+    assert (
+        endpoint(cfg.base_url, cfg.api_mode, cfg.model, api_path=cfg.api_path)
+        == "https://api.openai.com" + suffix
+    )
     assert doc.runtime().api_mode == "chat_completions"
 
 
@@ -155,10 +216,15 @@ def test_provider_root_validation_and_profile_invalidation():
     assert new.half_agent.foreground.capability == "accepted"
 
 
-@pytest.mark.parametrize("mode,path,header", [
-    ("chat_completions", "v1", "authorization"), ("responses", "v2", "authorization"),
-    ("anthropic", "v9", "x-api-key"), ("gemini", "v1", "x-goog-api-key"),
-])
+@pytest.mark.parametrize(
+    "mode,path,header",
+    [
+        ("chat_completions", "v1", "authorization"),
+        ("responses", "v2", "authorization"),
+        ("anthropic", "v9", "x-api-key"),
+        ("gemini", "v1", "x-goog-api-key"),
+    ],
+)
 async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monkeypatch, mode, path, header):
     app = create_app(tmp_path)
     doc = app.state.store.settings_document()
@@ -181,12 +247,16 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
             if fail:
                 return httpx.Response(503)
             return httpx.Response(200, json={"models": [{"name": "models/a"}], "data": [{"id": "a"}]})
+
         return real_client(transport=httpx.MockTransport(route))
 
     monkeypatch.setattr(httpx, "AsyncClient", client)
     query = {"provider_id": "default", "api_mode": mode, "api_path": path}
     async with real_client(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
-        assert (await api.get("/api/settings/models", params=query)).json() == {"models": [], "updated_at": None}
+        assert (await api.get("/api/settings/models", params=query)).json() == {
+            "models": [],
+            "updated_at": None,
+        }
         assert not calls
         response = await api.post("/api/settings/models", json=query)
         assert response.status_code == 200, response.text
@@ -197,7 +267,9 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
         assert (await api.post("/api/settings/models", json=query)).status_code == 400
         assert (await api.get("/api/settings/models", params=query)).json() == cached
         assert len(calls) == 2
-        assert (await api.get("/api/settings/models", params={**query, "api_path": "v3"})).json()["updated_at"] is None
+        assert (await api.get("/api/settings/models", params={**query, "api_path": "v3"})).json()[
+            "updated_at"
+        ] is None
 
     restarted = create_app(tmp_path)
     async with real_client(transport=httpx.ASGITransport(app=restarted), base_url="http://testserver") as api:
@@ -213,38 +285,61 @@ async def test_catalogs_are_provider_isolated_and_shared_across_openai_protocols
     app = create_app(tmp_path)
     doc = app.state.store.settings_document()
     doc.shared.providers = [Provider(id=name, name=name, api_key="same-key") for name in ("one", "two")]
-    for profile in (doc.full_agent.model, doc.half_agent.foreground, doc.half_agent.background, doc.shared.card_author):
+    for profile in (
+        doc.full_agent.model,
+        doc.half_agent.foreground,
+        doc.half_agent.background,
+        doc.shared.card_author,
+    ):
         profile.provider_id = "one"
     app.state.store.save_settings(doc)
     real_client = httpx.AsyncClient
     responses = iter((["one-a", "one-b"], ["two-a"]))
+
     def client(**kwargs):
-        return real_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": [{"id": value} for value in next(responses)]})))
+        return real_client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, json={"data": [{"id": value} for value in next(responses)]}
+                )
+            )
+        )
+
     monkeypatch.setattr(httpx, "AsyncClient", client)
     async with real_client(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         for provider in ("one", "two"):
-            result = await api.post("/api/settings/models", json={"provider_id": provider, "api_mode": "responses"})
+            result = await api.post(
+                "/api/settings/models", json={"provider_id": provider, "api_mode": "responses"}
+            )
             assert result.status_code == 200
     restarted = create_app(tmp_path)
     async with real_client(transport=httpx.ASGITransport(app=restarted), base_url="http://testserver") as api:
         for provider, expected in (("one", ["one-a", "one-b"]), ("two", ["two-a"])):
             for mode in ("chat_completions", "responses"):
-                result = await api.get("/api/settings/models", params={"provider_id": provider, "api_mode": mode})
+                result = await api.get(
+                    "/api/settings/models", params={"provider_id": provider, "api_mode": mode}
+                )
                 assert result.json()["models"] == expected
         with restarted.state.store.connection() as db:
-            values = [row[0] for row in db.execute("SELECT value FROM meta WHERE key LIKE 'provider_models:%'")]
+            values = [
+                row[0] for row in db.execute("SELECT value FROM meta WHERE key LIKE 'provider_models:%'")
+            ]
         assert len(values) == 2 and all("same-key" not in value for value in values)
 
 
 async def test_legacy_provider_catalog_migrates_without_network(tmp_path):
     from tavern.core.cache_policy import fingerprint
+
     app = create_app(tmp_path)
     provider = app.state.store.settings_document().shared.providers[0]
     url = endpoint(provider.base_url, "responses", resource="models", api_path="")
     with app.state.store.connection() as db:
         for mode, timestamp in (("chat_completions", 1), ("responses", 2)):
             key = "provider_models:" + fingerprint([provider.id, url, mode, fingerprint(provider.api_key)])
-            db.execute("INSERT INTO meta VALUES (?,?)", (key, json.dumps({"models": [mode], "updated_at": timestamp})))
+            db.execute(
+                "INSERT INTO meta VALUES (?,?)",
+                (key, json.dumps({"models": [mode], "updated_at": timestamp})),
+            )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         result = await api.get("/api/settings/models", params={"provider_id": provider.id})
         assert result.json() == {"models": ["responses"], "updated_at": 2}

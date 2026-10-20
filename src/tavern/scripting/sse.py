@@ -1,4 +1,5 @@
 """Decode complete SSE events, including multiline data and a final event at EOF."""
+
 import json
 
 
@@ -59,7 +60,9 @@ def stream_error(label, event):
     error = event.get("error")
     if not isinstance(error, dict):
         error = {"message": error} if isinstance(error, str) else event
-    codes = [str(error[key]) for key in ("code", "status", "type") if error.get(key) not in (None, "", "error")]
+    codes = [
+        str(error[key]) for key in ("code", "status", "type") if error.get(key) not in (None, "", "error")
+    ]
     message = str(error.get("message") or "").strip()
     detail = (f"（{' '.join(codes)}）" if codes else "") + (f"：{message[:500]}" if message else "")
     return f"{label}{detail}；本回合未提交"

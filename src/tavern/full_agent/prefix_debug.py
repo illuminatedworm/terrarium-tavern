@@ -1,4 +1,5 @@
 """Compare independent wire parameters without reconstructing a provider prompt."""
+
 import json
 import re
 from collections import deque
@@ -43,18 +44,28 @@ def compare_parameters(previous: bytes, current: bytes) -> list[dict]:
     result = []
     for name in dict.fromkeys([*before, *after]):
         left, right = before.get(name), after.get(name)
-        entry = {"parameter": name, "previous_bytes": len(left) if left is not None else None,
-                 "current_bytes": len(right) if right is not None else None}
+        entry = {
+            "parameter": name,
+            "previous_bytes": len(left) if left is not None else None,
+            "current_bytes": len(right) if right is not None else None,
+        }
         if left is None or right is None:
             entry["status"] = "added" if left is None else "removed"
         else:
             prefix = sum(1 for _ in takewhile(lambda pair: pair[0] == pair[1], zip(left, right)))
-            entry.update(status="identical" if left == right else "changed", common_prefix_bytes=prefix,
-                         first_difference_byte=None if left == right else prefix)
+            entry.update(
+                status="identical" if left == right else "changed",
+                common_prefix_bytes=prefix,
+                first_difference_byte=None if left == right else prefix,
+            )
             # Appending messages changes the old array's closing bracket. Show
             # that exact boundary separately instead of calling it instability.
-            if (left != right and left.startswith(b"[") and prefix == len(left) - 1
-                    and right[prefix:prefix + 1] == b","):
+            if (
+                left != right
+                and left.startswith(b"[")
+                and prefix == len(left) - 1
+                and right[prefix : prefix + 1] == b","
+            ):
                 entry["status"] = "array_extended"
         result.append(entry)
     return result
@@ -76,8 +87,13 @@ class PrefixDebug:
             return {"message": "Full Agent 前缀测试：已暂存首个真实请求，等待下一个请求。", "parameters": []}
         parameters = compare_parameters(*self.requests)
         lines = [f"Full Agent 前缀测试：请求 #{self.sequence - 1} → #{self.sequence}"]
-        descriptions = {"added": "新增参数，无法比较", "removed": "参数已移除，无法比较",
-                        "identical": "一致", "array_extended": "不一致", "changed": "不一致"}
+        descriptions = {
+            "added": "新增参数，无法比较",
+            "removed": "参数已移除，无法比较",
+            "identical": "一致",
+            "array_extended": "不一致",
+            "changed": "不一致",
+        }
         for item in parameters:
             detail = descriptions[item["status"]]
             if item["parameter"] in {"messages", "input", "contents"}:

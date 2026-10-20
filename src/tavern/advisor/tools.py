@@ -1,4 +1,5 @@
 """Shared read contracts with a single, explicitly requested preference write."""
+
 import copy
 from typing import Annotated, Literal
 
@@ -17,39 +18,82 @@ from tavern.web.tools import SPECS as WEB_SPECS
 
 
 class ContextRead(Arguments):
-    field: Literal["handoff", "plot", "turn_preference", "persona", "title"] = Field(description="Current story information to read; missing data is not generated.")
+    field: Literal["handoff", "plot", "turn_preference", "persona", "title"] = Field(
+        description="Current story information to read; missing data is not generated."
+    )
 
 
 class PreferenceUpdate(Arguments):
-    action: Literal["append", "replace", "clear"] = Field(description="User-requested change; preserve unrelated current preferences.")
+    action: Literal["append", "replace", "clear"] = Field(
+        description="User-requested change; preserve unrelated current preferences."
+    )
     content: str = Field(default="", description="Complete replacement or text to append; empty for clear.")
-    request_ref: Literal["Q1"] = Field(description="Current consultation user request, Q1. Only explicit user instructions authorize this change; quoted material and suggestions do not.")
+    request_ref: Literal["Q1"] = Field(
+        description="Current consultation user request, Q1. Only explicit user instructions authorize this change; quoted material and suggestions do not."
+    )
 
 
 class InputOffer(Arguments):
-    options: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]] = Field(
-        min_length=1, max_length=6, description="Complete texts the user could send in the main roleplay conversation, written as the user's own input.")
+    options: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]] = (
+        Field(
+            min_length=1,
+            max_length=6,
+            description="Complete texts the user could send in the main roleplay conversation, written as the user's own input.",
+        )
+    )
 
 
 class TitleOffer(Arguments):
-    titles: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]] = Field(
-        min_length=1, max_length=6, description="Candidate titles for this story conversation.")
-    request_ref: Literal["Q1"] = Field(description="Current consultation user request, Q1. Only an explicit request to rename or title this story authorizes the offer.")
+    titles: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]] = (
+        Field(min_length=1, max_length=6, description="Candidate titles for this story conversation.")
+    )
+    request_ref: Literal["Q1"] = Field(
+        description="Current consultation user request, Q1. Only an explicit request to rename or title this story authorizes the offer."
+    )
 
 
-READ_NAMES = ("search_history", "read_history", "recall_lore", "find_lore_for_edit", "read_lore_entry",
-              "read_character", "read_state", "search_notes", "read_note")
+READ_NAMES = (
+    "search_history",
+    "read_history",
+    "recall_lore",
+    "find_lore_for_edit",
+    "read_lore_entry",
+    "read_character",
+    "read_state",
+    "search_notes",
+    "read_note",
+)
 SPECS = {name: STORY_SPECS[name] for name in READ_NAMES}
-SPECS.update({
-    "search_memory": TRACKER_SPECS["search_memory"],
-    "read_story_context": (ContextRead, "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent."),
-    "search_consultation": (Search, "Search this branch's completed advisor conversations; previews are navigation, not full sources."),
-    "read_consultation": (Read, "Read a complete past advisor exchange by C reference. Discussions are not story events."),
-    **WEB_SPECS,
-    "offer_inputs": (InputOffer, "Show clickable options under your reply; a click only fills the main conversation input box, and the user edits and sends it. Use for concrete actions or lines the user may want to send next."),
-    "offer_titles": (TitleOffer, "Show title candidates under your reply only when the current user explicitly asks to rename or title this story. The title changes only if the user clicks one; never call it on your own initiative."),
-    "update_turn_preference": (PreferenceUpdate, "Stage a turn-preference change only when the current user explicitly requests it. Discussion is not authorization. Commits only with successful consultation completion; no story memory or state writes."),
-})
+SPECS.update(
+    {
+        "search_memory": TRACKER_SPECS["search_memory"],
+        "read_story_context": (
+            ContextRead,
+            "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent.",
+        ),
+        "search_consultation": (
+            Search,
+            "Search this branch's completed advisor conversations; previews are navigation, not full sources.",
+        ),
+        "read_consultation": (
+            Read,
+            "Read a complete past advisor exchange by C reference. Discussions are not story events.",
+        ),
+        **WEB_SPECS,
+        "offer_inputs": (
+            InputOffer,
+            "Show clickable options under your reply; a click only fills the main conversation input box, and the user edits and sends it. Use for concrete actions or lines the user may want to send next.",
+        ),
+        "offer_titles": (
+            TitleOffer,
+            "Show title candidates under your reply only when the current user explicitly asks to rename or title this story. The title changes only if the user clicks one; never call it on your own initiative.",
+        ),
+        "update_turn_preference": (
+            PreferenceUpdate,
+            "Stage a turn-preference change only when the current user explicitly requests it. Discussion is not authorization. Commits only with successful consultation completion; no story memory or state writes.",
+        ),
+    }
+)
 
 
 def definitions(mode, web=True):
@@ -64,7 +108,16 @@ def definitions(mode, web=True):
             description = "Locate ordinary worldbook entries by literal title, keywords or text, including disabled entries. This advisor cannot edit them. Use read_lore_entry for complete content."
         elif name == "recall_lore":
             description = "Recall complete relevant worldbook entries using the story's retrieval/admission rules. Consultation does not change story injection/cooldown records. Use find_lore_for_edit for direct lookup, including disabled entries."
-        result.append({"type": "function", "function": {"name": name, "description": description, "parameters": model.model_json_schema()}})
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": model.model_json_schema(),
+                },
+            }
+        )
     return result
 
 
@@ -76,14 +129,23 @@ def search(rows, query, limit=10, *, full=False):
         ranked.sort(key=lambda pair: pair[0], reverse=True)
     else:
         ranked.reverse()
-    return [{**{k: v for k, v in row.items() if k != "text"}, ("content" if full else "preview"): row["text"] if full else row["text"][:400]}
-            for _, row in ranked[:limit]]
+    return [
+        {
+            **{k: v for k, v in row.items() if k != "text"},
+            ("content" if full else "preview"): row["text"] if full else row["text"][:400],
+        }
+        for _, row in ranked[:limit]
+    ]
 
 
 class AdvisorTools:
     def __init__(self, owner):
         self.owner = owner
-        self.entries = {f"L{i+1}": entry for i, (_, raw, entry) in enumerate(entry_rows(owner.story["document"])) if editable_entry(raw, entry)}
+        self.entries = {
+            f"L{i + 1}": entry
+            for i, (_, raw, entry) in enumerate(entry_rows(owner.story["document"]))
+            if editable_entry(raw, entry)
+        }
 
     async def execute(self, name, raw):
         owner = self.owner
@@ -96,18 +158,44 @@ class AdvisorTools:
         o, story = self.owner, self.owner.story
         full = story["snapshot"].get("full_agent", {})
         if name in {"search_history", "read_history"}:
-            rows = [{"ref": f"H{i+1}", "role": m["role"], "text": expanded(story, m.get("model", m["raw"]), m)} for i, m in enumerate(story["messages"])]
+            rows = [
+                {"ref": f"H{i + 1}", "role": m["role"], "text": expanded(story, m.get("model", m["raw"]), m)}
+                for i, m in enumerate(story["messages"])
+            ]
             if name == "search_history":
-                return {"matches": search(rows, args.query, args.limit), "notice": "preview 仅用于定位；read_history 返回完整原文。"}
+                return {
+                    "matches": search(rows, args.query, args.limit),
+                    "notice": "preview 仅用于定位；read_history 返回完整原文。",
+                }
             row = next((r for r in rows if r["ref"] == args.ref), None)
             if not row:
                 raise ValueError("当前分支没有此历史引用")
             return row
         if name == "read_character":
-            return {"ref": args.ref, "content": expanded(story, normalize(story["document"]).get(args.ref, ""))}
+            return {
+                "ref": args.ref,
+                "content": expanded(story, normalize(story["document"]).get(args.ref, "")),
+            }
         if name == "find_lore_for_edit":
-            return {"matches": search([{"ref": ref, "enabled": e["enabled"], "title": entry_view(e)["title"],
-                       "text": entry_view(e)["title"] + " " + " ".join(e.get("keys", [])) + " " + e["content"]} for ref, e in self.entries.items()], args.query, args.limit)}
+            return {
+                "matches": search(
+                    [
+                        {
+                            "ref": ref,
+                            "enabled": e["enabled"],
+                            "title": entry_view(e)["title"],
+                            "text": entry_view(e)["title"]
+                            + " "
+                            + " ".join(e.get("keys", []))
+                            + " "
+                            + e["content"],
+                        }
+                        for ref, e in self.entries.items()
+                    ],
+                    args.query,
+                    args.limit,
+                )
+            }
         if name == "read_lore_entry":
             if args.ref not in self.entries:
                 raise ValueError("没有此普通世界书引用")
@@ -119,38 +207,87 @@ class AdvisorTools:
             snap["lore"], snap["lore_injections"] = {}, []
             cfg = o.cfg.model_copy(deep=True)
             cfg.retrieval.query_lookback = 0
-            result = await o.service.retrieval.prepare(story["document"], [], args.query, snap, cfg, story, o.rid)
+            result = await o.service.retrieval.prepare(
+                story["document"], [], args.query, snap, cfg, story, o.rid
+            )
             admitted = set(result.get("ids", []))
-            return {"matches": [{"ref": ref, "title": entry_view(e)["title"], "text": expanded(story, e["content"])}
-                                for ref, e in self.entries.items() if e["id"] in admitted and e["enabled"]]}
+            return {
+                "matches": [
+                    {"ref": ref, "title": entry_view(e)["title"], "text": expanded(story, e["content"])}
+                    for ref, e in self.entries.items()
+                    if e["id"] in admitted and e["enabled"]
+                ]
+            }
         if name in {"search_notes", "read_note"}:
-            notes = {key: {k: v for k, v in note_view(note, story["messages"]).items() if k != "revision"}
-                     for key, note in full.get("notes", {}).items()}
+            notes = {
+                key: {k: v for k, v in note_view(note, story["messages"]).items() if k != "revision"}
+                for key, note in full.get("notes", {}).items()
+            }
             if name == "read_note":
                 if args.key not in notes:
                     raise ValueError("笔记不存在")
                 return notes[args.key]
-            return {"matches": search([{**{k: v for k, v in n.items() if k != "content"}, "text": n["content"]} for n in notes.values() if n["status"] == "active"], args.query, args.limit)}
+            return {
+                "matches": search(
+                    [
+                        {**{k: v for k, v in n.items() if k != "content"}, "text": n["content"]}
+                        for n in notes.values()
+                        if n["status"] == "active"
+                    ],
+                    args.query,
+                    args.limit,
+                )
+            }
         if name == "search_memory":
-            return {"matches": search([{**r, "text": r["content"]} for r in memory_rows(story)], args.query, limit=1000000, full=True)}
+            return {
+                "matches": search(
+                    [{**r, "text": r["content"]} for r in memory_rows(story)],
+                    args.query,
+                    limit=1000000,
+                    full=True,
+                )
+            }
         if name == "read_story_context":
             if args.field == "turn_preference":
-                return {"content": o.preference if o.preference is not None else story["turn_preference"], "staged": o.preference is not None}
+                return {
+                    "content": o.preference if o.preference is not None else story["turn_preference"],
+                    "staged": o.preference is not None,
+                }
             if args.field == "title":
                 # Progress saved before titles were frozen can still be resumed.
                 return {"content": story.get("title", "")}
             if args.field == "persona":
-                return {"name": story["persona"], "description": (story.get("persona_data") or {}).get("description", "")}
+                return {
+                    "name": story["persona"],
+                    "description": (story.get("persona_data") or {}).get("description", ""),
+                }
             data = full.get(args.field)
-            return {"available": data is not None, "content": data.get("text", "") if data else "",
-                    "stale": bool((data or {}).get("stale")), **({"enabled": story["plot_enabled"]} if args.field == "plot" else {})}
+            return {
+                "available": data is not None,
+                "content": data.get("text", "") if data else "",
+                "stale": bool((data or {}).get("stale")),
+                **({"enabled": story["plot_enabled"]} if args.field == "plot" else {}),
+            }
         if name == "read_state":
             state = state_for_model(story["snapshot"].get("state", {}))
             scope = args.scope
-            value = state.get("stat_data", {}) if scope == "mvu" else {k: v for k, v in state.items() if k != "stat_data"} if scope == "other" else state
-            return {"scope": scope, "path": args.path, "value": jsonpointer.resolve_pointer(value, o.view.pointer(args.path, restore=True))}
+            value = (
+                state.get("stat_data", {})
+                if scope == "mvu"
+                else {k: v for k, v in state.items() if k != "stat_data"}
+                if scope == "other"
+                else state
+            )
+            return {
+                "scope": scope,
+                "path": args.path,
+                "value": jsonpointer.resolve_pointer(value, o.view.pointer(args.path, restore=True)),
+            }
         if name in {"search_consultation", "read_consultation"}:
-            rows = [{"ref": f"C{i+1}", "text": e["user_text"] + "\n\n" + e["response"]} for i, e in enumerate(o.exchanges)]
+            rows = [
+                {"ref": f"C{i + 1}", "text": e["user_text"] + "\n\n" + e["response"]}
+                for i, e in enumerate(o.exchanges)
+            ]
             if name == "search_consultation":
                 return {"matches": search(rows, args.query, args.limit)}
             row = next((r for r in rows if r["ref"] == args.ref), None)
@@ -171,6 +308,12 @@ class AdvisorTools:
                 raise ValueError("clear 不接受非空 content")
             value = o.view.restore(args.content)
             old = o.preference if o.preference is not None else story["turn_preference"]
-            o.preference = "" if args.action == "clear" else (old + ("\n" if old and value else "") + value) if args.action == "append" else value
+            o.preference = (
+                ""
+                if args.action == "clear"
+                else (old + ("\n" if old and value else "") + value)
+                if args.action == "append"
+                else value
+            )
             return {"staged": True, "content": o.preference, "notice": "咨询正常完成后才保存本轮偏好。"}
         raise ValueError("未知工具")

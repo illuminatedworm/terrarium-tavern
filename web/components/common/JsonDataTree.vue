@@ -38,7 +38,7 @@ function toggle(key: string, event: Event) {
 <style scoped>
 .json-data-tree {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 details {
   border: 0;
@@ -58,7 +58,7 @@ summary {
 small {
   color: var(--text-muted);
   margin-left: 8px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .json-data-tree .json-data-tree {
   margin: 0 0 8px 9px;
@@ -72,6 +72,6 @@ pre {
   overflow-wrap: anywhere;
   max-height: 360px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 </style>

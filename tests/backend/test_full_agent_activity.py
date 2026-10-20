@@ -31,15 +31,22 @@ async def test_dialogue_uses_durable_trace_and_pages_results_without_reasoning(t
         message_id = current["head"]
         large_result = "原始结果<>\n" * 5000
         with store.connection() as db:
-            row = db.execute("SELECT seq,payload FROM full_agent_trace WHERE message_id=? "
-                             "AND json_extract(payload,'$.role')='tool' ORDER BY seq LIMIT 1", (message_id,)).fetchone()
+            row = db.execute(
+                "SELECT seq,payload FROM full_agent_trace WHERE message_id=? "
+                "AND json_extract(payload,'$.role')='tool' ORDER BY seq LIMIT 1",
+                (message_id,),
+            ).fetchone()
             payload = json.loads(row["payload"])
             payload["_archive_content"] = large_result
-            db.execute("UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=?",
-                       (json.dumps(payload), message_id, row["seq"]))
+            db.execute(
+                "UPDATE full_agent_trace SET payload=? WHERE message_id=? AND seq=?",
+                (json.dumps(payload), message_id, row["seq"]),
+            )
             db.execute("DELETE FROM events WHERE turn=?", (result["id"],))
         recovered = load_trace(store, session["id"], current["messages"])
-        assert next(r["message"]["content"] for r in recovered if r["message"]["role"] == "tool") == large_result
+        assert (
+            next(r["message"]["content"] for r in recovered if r["message"]["role"] == "tool") == large_result
+        )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             prefix = f"/api/sessions/{session['id']}/full-agent"
             response = await client.post(prefix + "/activity", json={"message_ids": [message_id]})
@@ -68,17 +75,25 @@ async def test_dialogue_activity_follows_selected_versions_and_fork_identity(tmp
     try:
         _, first = await turn(service, session, Model(("read_history", {"ref": "H2"}), "第一版"))
         fork = store.fork_session(first["id"], first["head"], first["revision"])
-        _, second = await turn(service, first, Model(("write_handoff", {"content": "新的交接"}), "第二版"), mode="regenerate")
+        _, second = await turn(
+            service, first, Model(("write_handoff", {"content": "新的交接"}), "第二版"), mode="regenerate"
+        )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+
             async def fetch(sid, mid):
-                return await client.post(f"/api/sessions/{sid}/full-agent/activity", json={"message_ids": [mid]})
+                return await client.post(
+                    f"/api/sessions/{sid}/full-agent/activity", json={"message_ids": [mid]}
+                )
+
             assert (await fetch(first["id"], first["head"])).status_code == 404
             current = (await fetch(second["id"], second["head"])).json()["messages"][second["head"]]
             assert [item["name"] for item in current if item["kind"] == "tool"] == ["write_handoff"]
             inherited = (await fetch(fork["id"], fork["head"])).json()["messages"][fork["head"]]
             assert [item["name"] for item in inherited if item["kind"] == "tool"] == ["read_history"]
             assert (await fetch(fork["id"], first["head"])).status_code == 404
-            switched = store.switch_message_version(second["id"], second["head"], first["head"], second["revision"])
+            switched = store.switch_message_version(
+                second["id"], second["head"], first["head"], second["revision"]
+            )
             assert (await fetch(switched["id"], first["head"])).status_code == 200
             assert (await fetch(switched["id"], second["head"])).status_code == 404
     finally:
@@ -89,8 +104,11 @@ async def test_pending_activity_survives_reopen_and_marks_unfinished_calls(tmp_p
     app, store, service, session = setup(tmp_path)
     try:
         tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="partial", expected_revision=0))
-        store.event(tid, "full_agent_tool_started", {"activity_id": "call-1-0", "order": 11,
-                    "name": "recall_lore", "arguments": '{"query":"钟楼"}'})
+        store.event(
+            tid,
+            "full_agent_tool_started",
+            {"activity_id": "call-1-0", "order": 11, "name": "recall_lore", "arguments": '{"query":"钟楼"}'},
+        )
         store.set_turn(tid, status="cancelled")
         other = store.new_session(SessionCreate(card_id=session["card"], agent_mode="full_agent"))
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -108,13 +126,30 @@ async def test_pending_activity_survives_reopen_and_marks_unfinished_calls(tmp_p
 def test_batch_calls_pair_results_by_id_and_preserve_request_order():
     def row(seq, message):
         return {"seq": seq, "payload": json.dumps(message)}
-    items = from_trace([
-        row(1, {"role": "assistant", "tool_calls": [
-            {"id": "a", "function": {"name": "read_state", "arguments": "{}"}},
-            {"id": "b", "function": {"name": "read_note", "arguments": '{"key":"钟楼"}'}}]}),
-        row(2, {"role": "tool", "tool_call_id": "b", "content": '{"ok":false,"error":{"code":"INVALID_REFERENCE","message":"未找到","retryable":true,"next_action":"重新搜索"}}'}),
-        row(3, {"role": "tool", "tool_call_id": "a", "content": '{"ok":true,"data":{"energy":4}}'}),
-    ])
+
+    items = from_trace(
+        [
+            row(
+                1,
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "a", "function": {"name": "read_state", "arguments": "{}"}},
+                        {"id": "b", "function": {"name": "read_note", "arguments": '{"key":"钟楼"}'}},
+                    ],
+                },
+            ),
+            row(
+                2,
+                {
+                    "role": "tool",
+                    "tool_call_id": "b",
+                    "content": '{"ok":false,"error":{"code":"INVALID_REFERENCE","message":"未找到","retryable":true,"next_action":"重新搜索"}}',
+                },
+            ),
+            row(3, {"role": "tool", "tool_call_id": "a", "content": '{"ok":true,"data":{"energy":4}}'}),
+        ]
+    )
     assert [item["name"] for item in items] == ["read_state", "read_note"]
     assert [item["status"] for item in items] == ["returned", "error"]
     assert json.loads(items[0]["details"]["result"]) == {"ok": True, "data": {"energy": 4}}

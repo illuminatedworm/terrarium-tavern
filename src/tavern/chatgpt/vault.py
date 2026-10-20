@@ -1,4 +1,5 @@
 """Atomic local credentials. Secrets never enter the story/settings database."""
+
 import ctypes
 import json
 import os
@@ -24,13 +25,27 @@ def _dpapi(data: bytes, *, decrypt=False) -> bytes:
     source, target = Blob(len(data), buffer), Blob()
     if decrypt:
         fn = crypt.CryptUnprotectData
-        fn.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
-                       ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+        fn.argtypes = [
+            ctypes.POINTER(Blob),
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(Blob),
+        ]
         args = [ctypes.byref(source), None, None, None, None, 1, ctypes.byref(target)]
     else:
         fn = crypt.CryptProtectData
-        fn.argtypes = [ctypes.POINTER(Blob), wintypes.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p,
-                       ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+        fn.argtypes = [
+            ctypes.POINTER(Blob),
+            wintypes.LPCWSTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(Blob),
+        ]
         args = [ctypes.byref(source), "Terrarium Tavern ChatGPT", None, None, None, 1, ctypes.byref(target)]
     fn.restype = wintypes.BOOL
     if not fn(*args):

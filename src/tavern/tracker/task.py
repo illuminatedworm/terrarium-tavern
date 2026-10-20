@@ -4,6 +4,7 @@ The memory engine pauses this loop at accepted write_memory calls. Its next batc
 or review is attached to that *unsent* tool result, preserving native tool pairs
 and the already-sent prefix without another, competing model conversation.
 """
+
 import asyncio
 import copy
 import json
@@ -40,9 +41,28 @@ class TaskBudget:
 
 
 class TrackerTask:
-    def __init__(self, store, tid, settings, session, document, history, snapshot, *, phase,
-                 user_input="", narrative="", memory=False, variables=False, content=False,
-                 budget=None, history_budget=None, committed_history=None, contexts=None, provider=None):
+    def __init__(
+        self,
+        store,
+        tid,
+        settings,
+        session,
+        document,
+        history,
+        snapshot,
+        *,
+        phase,
+        user_input="",
+        narrative="",
+        memory=False,
+        variables=False,
+        content=False,
+        budget=None,
+        history_budget=None,
+        committed_history=None,
+        contexts=None,
+        provider=None,
+    ):
         self.store, self.tid = store, tid
         self.settings = settings.for_role("background")
         if memory:
@@ -100,17 +120,34 @@ class TrackerTask:
             result.update(self.view.expose(fields))
             self.write_result["content"] = json.dumps(result, ensure_ascii=False)
         else:
-            self.thread.append({"role": "system", "message_type": "tracker_task_update", "runtime_phase": "body", "content": self.encoded({"tracker_task_update": fields})})
+            self.thread.append(
+                {
+                    "role": "system",
+                    "message_type": "tracker_task_update",
+                    "runtime_phase": "body",
+                    "content": self.encoded({"tracker_task_update": fields}),
+                }
+            )
 
     async def start(self):
         if self.provider is None:
-            self.provider = await make_provider(self.settings,
-                lambda value: self.event("provider_request", value), request_timeout=self.settings.memory_timeout)
+            self.provider = await make_provider(
+                self.settings,
+                lambda value: self.event("provider_request", value),
+                request_timeout=self.settings.memory_timeout,
+            )
         configure_operation(self.provider, self.contexts.new(self.purpose), self.event, self.purpose)
         if hasattr(self.provider, "echo_reasoning"):
             self.provider.echo_reasoning = True
-        self.event("tracker_started", {"phase": self.phase, "memory": self.memory_enabled,
-                                       "variables": self.variables_enabled, "content": self.content_enabled})
+        self.event(
+            "tracker_started",
+            {
+                "phase": self.phase,
+                "memory": self.memory_enabled,
+                "variables": self.variables_enabled,
+                "content": self.content_enabled,
+            },
+        )
 
     async def close(self):
         if self.owns_provider and self.provider is not None:
@@ -122,8 +159,15 @@ class TrackerTask:
             fresh = self.batch.context["fresh_ids"]
             cutoff = max((i + 1 for i, m in enumerate(self.history) if m["id"] in fresh), default=0)
             history = history[:cutoff]
-        self.recall = HistoryRecall(history, self.settings, self.history_budget, document=self.document,
-                                    persona=self.persona, event=self.event, references=self.references)
+        self.recall = HistoryRecall(
+            history,
+            self.settings,
+            self.history_budget,
+            document=self.document,
+            persona=self.persona,
+            event=self.event,
+            references=self.references,
+        )
 
     async def generate_memory(self, request, *, phase="memory", output_tokens=None):
         """Adapter for the existing source-aware engine; all I/O is tool-driven."""
@@ -147,8 +191,11 @@ class TrackerTask:
         if self.current_ready:
             payload["current_turn"] = {"user": self.user_input, "assistant": self.narrative}
             payload["current_variables"] = self.view.expose(self.variables)
-        payload["notice"] = ("本批编号取代此前批次的编号。复核仅允许修订指定待确认条目，不能再次提出问题。"
-                             if phase == "memory_review" else "本批编号取代此前批次的编号；完成后调用 write_memory。")
+        payload["notice"] = (
+            "本批编号取代此前批次的编号。复核仅允许修订指定待确认条目，不能再次提出问题。"
+            if phase == "memory_review"
+            else "本批编号取代此前批次的编号；完成后调用 write_memory。"
+        )
         if not self.thread:
             self.thread = initial_messages(self)
             # Merge batch data into the first task input instead of installing
@@ -170,25 +217,44 @@ class TrackerTask:
         try:
             await self.start()
             if memory_start is not None:
-                result = await consolidate(self.history, self.settings, self.generate_memory,
-                    memory=self.memory, start=memory_start, document=self.document, persona=self.persona,
-                    budget=memory_budget, event=self.event)
+                result = await consolidate(
+                    self.history,
+                    self.settings,
+                    self.generate_memory,
+                    memory=self.memory,
+                    start=memory_start,
+                    document=self.document,
+                    persona=self.persona,
+                    budget=memory_budget,
+                    event=self.event,
+                )
                 self.memory = result
                 self.snapshot["memory_document"] = copy.deepcopy(result)
                 self.batch = None
                 self.output_tokens = self.settings.reply_tokens
                 if self.write_result is not None:
-                    self.runtime_update({"memory_complete": True,
-                        "remaining_tasks": ["patch_state"] if self.variables_enabled and self.patch is None else []})
+                    self.runtime_update(
+                        {
+                            "memory_complete": True,
+                            "remaining_tasks": ["patch_state"]
+                            if self.variables_enabled and self.patch is None
+                            else [],
+                        }
+                    )
             if not self.thread:
                 self.thread = initial_messages(self)
-            if (self.budget.calls >= self.budget.limit and self.phase != "pre" and memory_start is not None
-                    and (not self.variables_enabled or self.patch is not None)):
+            if (
+                self.budget.calls >= self.budget.limit
+                and self.phase != "pre"
+                and memory_start is not None
+                and (not self.variables_enabled or self.patch is not None)
+            ):
                 self.summary, self.completed = "必要工具写入已完成；模型调用额度已用尽。", True
             else:
                 await self.loop()
-            self.event("tracker_completed", {"phase": self.phase, "record": self.summary,
-                                              "calls": self.total_calls})
+            self.event(
+                "tracker_completed", {"phase": self.phase, "record": self.summary, "calls": self.total_calls}
+            )
             return self
         finally:
             await self.close()
@@ -203,11 +269,22 @@ class TrackerTask:
                 self.event("context_warning", {"message": "Tracker 请求估算超出上下文，仍完整发送"})
             begun = time.perf_counter()
             self.sent_count = len(self.thread)
-            response = await asyncio.wait_for(self.provider.chat_complete(provider_messages(self.provider, typed, self.settings), max_tokens=self.output_tokens, extra_body={
-                "tools": self.definitions, "tool_choice": "auto", "parallel_tool_calls": False}),
-                self.settings.memory_timeout)
-            self.event("usage", {"calls": 1, "usage": response.usage or {},
-                                  "duration_s": time.perf_counter() - begun})
+            response = await asyncio.wait_for(
+                self.provider.chat_complete(
+                    provider_messages(self.provider, typed, self.settings),
+                    max_tokens=self.output_tokens,
+                    extra_body={
+                        "tools": self.definitions,
+                        "tool_choice": "auto",
+                        "parallel_tool_calls": False,
+                    },
+                ),
+                self.settings.memory_timeout,
+            )
+            self.event(
+                "usage",
+                {"calls": 1, "usage": response.usage or {}, "duration_s": time.perf_counter() - begun},
+            )
             if getattr(response, "finish_reason", None) in ("length", "content_filter"):
                 raise ValueError("Tracker 回复未完整结束，草稿未提交")
             calls = getattr(self.provider, "last_tool_calls", []) or []
@@ -215,19 +292,39 @@ class TrackerTask:
                 raise ValueError("Tracker 工具调用序列无效")
             assistant = {"role": "assistant", "content": response.content or ""}
             if calls:
-                assistant["tool_calls"] = [{"id": c.id, "type": "function",
-                    "function": {"name": c.name, "arguments": c.arguments}} for c in calls]
-            assistant.update({k: copy.deepcopy(v) for k, v in
-                getattr(self.provider, "last_assistant_extra_fields", {}).items() if k in (
-                    "reasoning_content", "reasoning_details", "reasoning", "_native_response",
-                    "_response_origin", "_response_digest")})
+                assistant["tool_calls"] = [
+                    {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+                    for c in calls
+                ]
+            assistant.update(
+                {
+                    k: copy.deepcopy(v)
+                    for k, v in getattr(self.provider, "last_assistant_extra_fields", {}).items()
+                    if k
+                    in (
+                        "reasoning_content",
+                        "reasoning_details",
+                        "reasoning",
+                        "_native_response",
+                        "_response_origin",
+                        "_response_digest",
+                    )
+                }
+            )
             self.thread.append(assistant)
             if not calls:
-                missing = (["write_memory"] if stop_on_memory and self.accepted is None else [])
+                missing = ["write_memory"] if stop_on_memory and self.accepted is None else []
                 if self.variables_enabled and self.patch is None:
                     missing.append("patch_state")
                 if missing:
-                    self.thread.append({"role": "system", "message_type": "required_tool_notice", "runtime_phase": "body", "content": "必要任务尚未完成，请调用：" + ", ".join(missing)})
+                    self.thread.append(
+                        {
+                            "role": "system",
+                            "message_type": "required_tool_notice",
+                            "runtime_phase": "body",
+                            "content": "必要任务尚未完成，请调用：" + ", ".join(missing),
+                        }
+                    )
                     continue
                 self.summary, self.completed = response.content or "", True
                 return
@@ -238,8 +335,13 @@ class TrackerTask:
                     # Recall returns its own validation/quota failures. Other
                     # read tools may legitimately return a user field named error.
                     tool_error = call.name == "tavern_recall_history" and "error" in result
-                except (ValueError, TypeError, KeyError, jsonpatch.JsonPatchException,
-                        jsonpointer.JsonPointerException) as error:
+                except (
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    jsonpatch.JsonPatchException,
+                    jsonpointer.JsonPointerException,
+                ) as error:
                     result = {"error": self.view.text(str(error))}
                     tool_error = True
                 message = {"role": "tool", "tool_call_id": call.id, "content": self.encoded(result)}
@@ -251,8 +353,12 @@ class TrackerTask:
                     self.write_result = message
             if stop_on_memory and self.accepted is not None:
                 return
-            if (not stop_on_memory and self.phase != "pre" and self.patch is not None
-                    and self.budget.calls >= self.budget.limit):
+            if (
+                not stop_on_memory
+                and self.phase != "pre"
+                and self.patch is not None
+                and self.budget.calls >= self.budget.limit
+            ):
                 self.summary, self.completed = "变量补丁已暂存；模型调用额度已用尽。", True
                 return
 
@@ -260,11 +366,21 @@ class TrackerTask:
         if name == "search_lore" and self.retrieval is not None:
             query = self.view.restore(SPECS[name][0].model_validate(arguments).query)
             if query != "*":
-                selected = await self.retrieval.prepare(self.document, self.committed_history, query,
-                    self.search_snapshot(), self.settings, self.session, self.tid)
+                selected = await self.retrieval.prepare(
+                    self.document,
+                    self.committed_history,
+                    query,
+                    self.search_snapshot(),
+                    self.settings,
+                    self.session,
+                    self.tid,
+                )
                 ids = set(selected["ids"])
-                return [{"name": e.get("comment", ""), "content": e["content"]}
-                        for e in selected["entries"] if e["enabled"] and e["id"] in ids]
+                return [
+                    {"name": e.get("comment", ""), "content": e["content"]}
+                    for e in selected["entries"]
+                    if e["enabled"] and e["id"] in ids
+                ]
         return self.execute(name, arguments)
 
     def search_snapshot(self):
@@ -291,8 +407,16 @@ class TrackerTask:
                 matches = entries
             else:
                 from tavern.search.retrieval import fuse, lexical_recall
-                result = lexical_recall(self.document, self.committed_history, self.view.restore(model.query),
-                                        self.search_snapshot(), self.settings, self.session, self.tid)
+
+                result = lexical_recall(
+                    self.document,
+                    self.committed_history,
+                    self.view.restore(model.query),
+                    self.search_snapshot(),
+                    self.settings,
+                    self.session,
+                    self.tid,
+                )
                 ids = set(fuse(result["rankings"], result["entries"], self.settings.retrieval))
                 matches = [e for e in result["entries"] if e["enabled"] and e["id"] in ids]
             return [{"name": e.get("comment", ""), "content": e["content"]} for e in matches]
@@ -304,14 +428,21 @@ class TrackerTask:
             if not self.current_ready:
                 raise ValueError("请先完成历史记忆批次，等待本轮资料后再修改设定")
             data = self.view.patch(normalize(self.document), model.operations)
-            if not isinstance(data, dict) or not isinstance(data.get("name"), str) or not data["name"].strip():
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("name"), str)
+                or not data["name"].strip()
+            ):
                 raise ValueError("设定必须保留有效角色名称")
             if self.document.get("spec"):
                 self.document["data"] = data
             else:
                 self.document = data
-            self.snapshot["content"] = {"document": copy.deepcopy(self.document),
-                "reason": self.view.restore(model.comment), "turn": self.tid}
+            self.snapshot["content"] = {
+                "document": copy.deepcopy(self.document),
+                "reason": self.view.restore(model.comment),
+                "turn": self.tid,
+            }
             self.event("content_proposal", {"operations": model.operations, "reason": model.comment})
             return {"saved_to_draft": True, "notice": "对话级角色卡草稿已更新，回合提交后生效。"}
         if name == "patch_state":
@@ -320,14 +451,19 @@ class TrackerTask:
             if self.patch is not None:
                 raise ValueError("本轮变量补丁已接受，不能重复提交")
             from tavern.tracker.state import stage
+
             operations, candidate = stage(self.raw_variables, self.view.operations(model.operations))
             self.patch, self.patch_reason = operations, self.view.restore(model.comment)
             self.raw_variables = candidate
             self.variables = state_for_model({"stat_data": candidate})["stat_data"]
-            self.event("state_proposal", {"operations": operations, "reason": self.patch_reason, "staged": True})
+            self.event(
+                "state_proposal", {"operations": operations, "reason": self.patch_reason, "staged": True}
+            )
             return {"saved_to_draft": True, "notice": "变量补丁已暂存，待最终 MVU 与脚本校验。"}
         if name == "write_memory":
-            return self.write_memory(self.view.restore(model.model_dump(exclude_unset=True, exclude_none=True)))
+            return self.write_memory(
+                self.view.restore(model.model_dump(exclude_unset=True, exclude_none=True))
+            )
         raise ValueError("未知 Tracker 工具")
 
     def write_memory(self, arguments):
@@ -335,16 +471,27 @@ class TrackerTask:
             raise ValueError("当前没有待提交的记忆批次；已处理批次不能重复提交")
         arguments.setdefault("questions", [])
         context = self.batch.context
-        parsed = self.references.resolve(arguments,
-            on_invalid=lambda p: self.event("memory_records_discarded", p))
+        parsed = self.references.resolve(
+            arguments, on_invalid=lambda p: self.event("memory_records_discarded", p)
+        )
         sources = self.recall.sources if self.recall else {}
         expanded = copy.deepcopy(context["expanded"])
         from tavern.memories.memory_engine import _merge_history_sources
+
         _merge_history_sources(expanded, sources)
         suppressed = set()
-        preview = apply_operations(context["memory"], parsed, context["originals"], expanded,
-            context["evidence"], fresh_ids=context["fresh_ids"], settings=self.settings,
-            review_ids=context["review_ids"], suppressed_ids=suppressed, defer_retention=True)
+        preview = apply_operations(
+            context["memory"],
+            parsed,
+            context["originals"],
+            expanded,
+            context["evidence"],
+            fresh_ids=context["fresh_ids"],
+            settings=self.settings,
+            review_ids=context["review_ids"],
+            suppressed_ids=suppressed,
+            defer_retention=True,
+        )
         questions = parsed["questions"]
         if context["review_ids"] is not None and questions:
             raise ValueError("复核不能再次请求核验")
@@ -362,5 +509,8 @@ class TrackerTask:
         accepted.resolved = parsed
         self.accepted, self.memory = accepted, preview
         self.event("memory_proposal", {"operations": len(parsed["operations"]), "questions": len(questions)})
-        return {"saved_to_draft": True, "operations": len(parsed["operations"]),
-                "notice": "本批记忆已接受；程序将提供下一批或复核，全部成功后才推进覆盖。"}
+        return {
+            "saved_to_draft": True,
+            "operations": len(parsed["operations"]),
+            "notice": "本批记忆已接受；程序将提供下一批或复核，全部成功后才推进覆盖。",
+        }

@@ -79,8 +79,11 @@ def project_compact(result, state, settings, tools, fixed_count):
     signature = fingerprint(signature_parts)
     checkpoint = state.get("compaction")
     usable = valid(checkpoint, body, settings, signature)
-    needs_rebuild = (not usable and request_tokens(complete, settings, tools) > compact_limit(settings)
-                     and (settings.compact_auto or bool(checkpoint)))
+    needs_rebuild = (
+        not usable
+        and request_tokens(complete, settings, tools) > compact_limit(settings)
+        and (settings.compact_auto or bool(checkpoint))
+    )
     covered = len(checkpoint["covered"]) if usable else 0
     messages = header + (
         [opaque_message(checkpoint["items"], settings)] if usable and checkpoint.get("items") else []
@@ -196,16 +199,21 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
     # The maintenance instruction is per-request instructions, never a story
     # message or a window policy injected into ordinary gameplay.
     while position < len(groups):
-        prefix = ([opaque_message(state["items"], settings)] if state["items"]
-                  else [m for g in groups[:position] for m in g])
-        end, batch = replay_batch(groups, position, header + prefix, settings,
-                                 compiled.get("tools"), compact_limit(settings))
+        prefix = (
+            [opaque_message(state["items"], settings)]
+            if state["items"]
+            else [m for g in groups[:position] for m in g]
+        )
+        end, batch = replay_batch(
+            groups, position, header + prefix, settings, compiled.get("tools"), compact_limit(settings)
+        )
         messages = header + prefix + batch
         # Plain source is already a valid representation. Keep a short tail as
         # plaintext; absence of an encrypted checkpoint is not a model task.
         if request_tokens(messages, settings, compiled.get("tools")) <= compact_limit(settings) and not force:
             if state["items"]:
                 from tavern.scripting.protocols import response_input
+
                 state["items"].extend(response_input(batch))
             position = end
             break
@@ -258,6 +266,7 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
     # that entire unfinished exchange verbatim into the ordinary request.
     if state["items"] and body[completed:]:
         from tavern.scripting.protocols import response_input
+
         state["items"].extend(response_input(body[completed:]))
     state.update(cursor=position, processed=len(body), total=len(body))
     return {
@@ -276,8 +285,14 @@ async def prepare_turn(compiled, settings, provider, *, progress=None, save=None
     completed = compiled.get("_replay_complete", len(body))
     covered = compiled.get("_compact_covered", 0)
     if compiled.get("compaction_opaque") and covered <= completed:
-        history = {**compiled, "_compact_body": body[:completed], "messages": [
-            *compiled["messages"][:len(compiled["_compact_header"]) + 1], *body[covered:completed]]}
+        history = {
+            **compiled,
+            "_compact_body": body[:completed],
+            "messages": [
+                *compiled["messages"][: len(compiled["_compact_header"]) + 1],
+                *body[covered:completed],
+            ],
+        }
         checkpoint, usage = await compact_once(history, settings, provider)
         if save:
             await save({"batches": 1, "processed": completed, "total": len(body), "usage": [usage]})

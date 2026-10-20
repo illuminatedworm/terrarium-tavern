@@ -1,4 +1,5 @@
 """Incremental SSE accumulators; a disconnected stream never becomes a completed turn."""
+
 import copy
 import json
 
@@ -25,12 +26,19 @@ class StreamState:
             # Some compatible endpoints append an empty stop after tool_calls.
             # Accept only empty terminal choices; keep the first finish reason
             # so a redundant stop cannot turn a tool response into a plain reply.
-            if ((api == "chat_completions" and any(
-                    choice.get("delta") != {} or choice.get("index", 0) != 0
-                    or choice.get("finish_reason") not in ("stop", self.result["finish_reason"])
-                    for choice in event.get("choices") or []))
-                    or (api == "gemini" and event.get("candidates"))
-                    or (api in ("responses", "anthropic") and event.get("type") != "ping")):
+            if (
+                (
+                    api == "chat_completions"
+                    and any(
+                        choice.get("delta") != {}
+                        or choice.get("index", 0) != 0
+                        or choice.get("finish_reason") not in ("stop", self.result["finish_reason"])
+                        for choice in event.get("choices") or []
+                    )
+                )
+                or (api == "gemini" and event.get("candidates"))
+                or (api in ("responses", "anthropic") and event.get("type") != "ping")
+            ):
                 raise ValueError("模型完成事件之后仍有响应内容，本回合未提交")
             if event.get("type") == "ping":
                 return ""
@@ -58,8 +66,9 @@ class StreamState:
             if delta.get("reasoning_details"):
                 self.parts.extend(copy.deepcopy(delta["reasoning_details"]))
             for call in delta.get("tool_calls") or []:
-                item = self.calls.setdefault(call["index"], {"id": "", "type": "function",
-                    "function": {"name": "", "arguments": ""}})
+                item = self.calls.setdefault(
+                    call["index"], {"id": "", "type": "function", "function": {"name": "", "arguments": ""}}
+                )
                 if call.get("id"):
                     item["id"] = call["id"]
                 for field in ("name", "arguments"):
@@ -130,6 +139,10 @@ class StreamState:
                     block["input"] = json.loads(block.pop("_json"))
             self.result["content"] = [self.blocks[i] for i in sorted(self.blocks)]
         elif self.api == "gemini":
-            self.result["candidates"] = [{"content": {"role": "model", "parts": self.parts},
-                                           "finishReason": self.result["finishReason"]}]
+            self.result["candidates"] = [
+                {
+                    "content": {"role": "model", "parts": self.parts},
+                    "finishReason": self.result["finishReason"],
+                }
+            ]
         return self.result

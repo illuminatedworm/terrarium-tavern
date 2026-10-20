@@ -1,4 +1,5 @@
 """Conversation-local connection choices; credentials always come from settings."""
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from tavern.core.channels import require_channel

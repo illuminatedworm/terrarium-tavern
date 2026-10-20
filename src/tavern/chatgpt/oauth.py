@@ -1,4 +1,5 @@
 """OpenAI public-client OAuth primitives and a short-lived loopback callback."""
+
 import asyncio
 import hmac
 from urllib.parse import parse_qs, urlsplit
@@ -16,11 +17,13 @@ async def metadata(client):
     response = await client.get(DISCOVERY)
     response.raise_for_status()
     result = response.json()
-    expected = {"issuer": ISSUER,
-                "authorization_endpoint": ISSUER + "/api/accounts/authorize",
-                "token_endpoint": ISSUER + "/api/accounts/oauth/token",
-                "revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke",
-                "jwks_uri": ISSUER + "/.well-known/jwks.json"}
+    expected = {
+        "issuer": ISSUER,
+        "authorization_endpoint": ISSUER + "/api/accounts/authorize",
+        "token_endpoint": ISSUER + "/api/accounts/oauth/token",
+        "revocation_endpoint": ISSUER + "/api/accounts/oauth/revoke",
+        "jwks_uri": ISSUER + "/.well-known/jwks.json",
+    }
     if not isinstance(result, dict) or any(result.get(key) != value for key, value in expected.items()):
         # Discovery must not become an arbitrary URL that receives credentials.
         raise ChatGPTError("OpenAI 身份服务配置与受支持端点不符", code="invalid_discovery")
@@ -39,12 +42,19 @@ async def validate_identity(client, config, token, client_id, *, nonce=None, sub
             raise ValueError("invalid signing keys")
         keys = jwt.PyJWKSet.from_dict(document)
         key = next(key for key in keys.keys if key.key_id == header["kid"] and key.algorithm_name == "RS256")
-        claims = jwt.decode(token, key.key, algorithms=["RS256"], issuer=ISSUER, audience=client_id,
-                            options={"require": ["iss", "aud", "sub", "exp", "iat"]})
+        claims = jwt.decode(
+            token,
+            key.key,
+            algorithms=["RS256"],
+            issuer=ISSUER,
+            audience=client_id,
+            options={"require": ["iss", "aud", "sub", "exp", "iat"]},
+        )
         if not isinstance(claims["sub"], str) or not claims["sub"]:
             raise ValueError("missing identity")
-        if nonce is not None and (not isinstance(claims.get("nonce"), str)
-                                  or not hmac.compare_digest(claims["nonce"], nonce)):
+        if nonce is not None and (
+            not isinstance(claims.get("nonce"), str) or not hmac.compare_digest(claims["nonce"], nonce)
+        ):
             raise ValueError("nonce mismatch")
         if subject is not None and claims["sub"] != subject:
             raise ValueError("identity mismatch")
@@ -57,6 +67,7 @@ async def validate_identity(client, config, token, client_id, *, nonce=None, sub
 
 class LoopbackCallback:
     """No access log, redirects, cookies or browser scripts on this listener."""
+
     def __init__(self, callback):
         self.callback, self.server, self.tasks = callback, None, set()
         self.uri = ""
@@ -100,28 +111,48 @@ class LoopbackCallback:
                     raise ValueError("duplicate header")
                 headers[name] = value.strip()
             url = urlsplit(target)
-            if (method != "GET" or protocol not in ("HTTP/1.0", "HTTP/1.1") or url.scheme or url.netloc
-                    or url.path != "/auth/callback" or headers.get("host") != urlsplit(self.uri).netloc):
+            if (
+                method != "GET"
+                or protocol not in ("HTTP/1.0", "HTTP/1.1")
+                or url.scheme
+                or url.netloc
+                or url.path != "/auth/callback"
+                or headers.get("host") != urlsplit(self.uri).netloc
+            ):
                 raise ValueError("invalid callback target")
             values = parse_qs(url.query, keep_blank_values=True, max_num_fields=12)
             if any(len(value) != 1 for value in values.values()):
                 raise ValueError("duplicate OAuth parameter")
             status, message = await self.callback({key: value[0] for key, value in values.items()})
-        except (ValueError, UnicodeError, asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError,
-                httpx.HTTPError):
+        except (
+            ValueError,
+            UnicodeError,
+            asyncio.IncompleteReadError,
+            asyncio.LimitOverrunError,
+            TimeoutError,
+            httpx.HTTPError,
+        ):
             pass
         finally:
             # Only fixed application-authored messages are returned, never tokens or callback values.
-            body = ("<!doctype html><html lang=zh-CN><meta charset=utf-8>"
-                    "<meta name=viewport content='width=device-width,initial-scale=1'>"
-                    "<title>Terrarium Tavern · ChatGPT</title><h1>Terrarium Tavern</h1><p>"
-                    + message + "</p></html>").encode()
+            body = (
+                "<!doctype html><html lang=zh-CN><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>Terrarium Tavern · ChatGPT</title><h1>Terrarium Tavern</h1><p>"
+                + message
+                + "</p></html>"
+            ).encode()
             try:
-                writer.write((f"HTTP/1.1 {status} {'OK' if status == 200 else 'Bad Request'}\r\n"
-                    "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
-                    "Referrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n"
-                    "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n"
-                    f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n").encode() + body)
+                writer.write(
+                    (
+                        f"HTTP/1.1 {status} {'OK' if status == 200 else 'Bad Request'}\r\n"
+                        "Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+                        "Referrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n"
+                        "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n"
+                        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+                    ).encode()
+                    + body
+                )
                 await writer.drain()
             except (OSError, RuntimeError, asyncio.CancelledError):
                 pass

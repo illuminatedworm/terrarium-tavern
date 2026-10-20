@@ -28,15 +28,25 @@ def document(*entries):
 
 
 def history(n, text="继续"):
-    return [{"id": f"m{i}", "role": "user", "raw": text, "model": text, "retrieval_query": text} for i in range(n)]
+    return [
+        {"id": f"m{i}", "role": "user", "raw": text, "model": text, "retrieval_query": text} for i in range(n)
+    ]
 
 
 def compile_lore(entries, *, prior=None, messages=None, text="灯塔", recipe=None, **kwargs):
     session = {"id": "session", "persona": "玩家", "recipe": recipe or ContextRecipe().model_dump()}
     snapshot = {"state": {}, "lore": prior or {}}
     before = copy.deepcopy(snapshot)
-    result = compile_context(document(*entries), session, messages or [], snapshot,
-                             text, kwargs.pop("settings", Settings()), kwargs.pop("seed", "seed"), **kwargs)
+    result = compile_context(
+        document(*entries),
+        session,
+        messages or [],
+        snapshot,
+        text,
+        kwargs.pop("settings", Settings()),
+        kwargs.pop("seed", "seed"),
+        **kwargs,
+    )
     assert snapshot == before
     return result
 
@@ -45,20 +55,24 @@ def recovery_note(result, eid="e"):
     return next(n for n in result["diagnostics"] if n["id"] == eid and n["reason"] == "冷却恢复判断")
 
 
-@pytest.mark.parametrize("elapsed,expected", [(1, 15.910358), (4, 50), (8, 75), (12, 87.5), (16, 100), (30, 100)])
+@pytest.mark.parametrize(
+    "elapsed,expected", [(1, 15.910358), (4, 50), (8, 75), (12, 87.5), (16, 100), (30, 100)]
+)
 def test_recovery_curve_and_direct_boost(elapsed, expected):
     old = {"removed_at": 3}
     normal = lore_recovery(entry(), old, 3 + elapsed, False, "s", "p")
     direct = lore_recovery(entry(), old, 3 + elapsed, True, "s", "p")
     assert normal["recovery_elapsed"] == elapsed
     assert normal["recovery_probability"] == pytest.approx(expected, abs=1e-5)
-    assert direct["recovery_probability"] == pytest.approx(expected + .75 * (100 - expected), abs=1e-5)
+    assert direct["recovery_probability"] == pytest.approx(expected + 0.75 * (100 - expected), abs=1e-5)
     assert direct["recovery_roll"] == normal["recovery_roll"]
 
 
 def test_curve_is_monotonic_and_zero_or_unused_has_no_suppression():
-    probabilities = [lore_recovery(entry(), {"removed_at": 1}, t, False, "s", "p")
-                     ["recovery_probability"] for t in range(2, 25)]
+    probabilities = [
+        lore_recovery(entry(), {"removed_at": 1}, t, False, "s", "p")["recovery_probability"]
+        for t in range(2, 25)
+    ]
     assert probabilities == sorted(probabilities)
     for e, old in [(entry(), {}), (entry(cooldown=0), {"removed_at": 1})]:
         assert lore_recovery(e, old, 2, False, "s", "p")["recovery_probability"] == 100
@@ -70,8 +84,10 @@ def test_recovery_draw_is_stable_and_independent_of_generation_seed():
     b = compile_lore([entry()], seed="regenerated", **args)
     assert recovery_note(a) == recovery_note(b)
     assert compile_lore([entry()], seed="original", **args) == a
-    draws = {lore_recovery(entry(), args["prior"]["e"], 2, False, s, p)["recovery_roll"]
-             for s, p in [("s", "p"), ("s2", "p"), ("s", "p2")]}
+    draws = {
+        lore_recovery(entry(), args["prior"]["e"], 2, False, s, p)["recovery_roll"]
+        for s, p in [("s", "p"), ("s2", "p"), ("s", "p2")]
+    }
     draws.add(lore_recovery(entry("other"), args["prior"]["e"], 2, False, "s", "p")["recovery_roll"])
     draws.add(lore_recovery(entry(), args["prior"]["e"], 3, False, "s", "p")["recovery_roll"])
     assert len(draws) == 5
@@ -81,23 +97,33 @@ def test_recovery_draw_is_stable_and_independent_of_generation_seed():
     assert a["lore"][0]["recovery_roll"] == b["lore"][0]["recovery_roll"]
 
 
-@pytest.mark.parametrize("key,fields,text,direct", [
-    ("灯塔", {}, "灯塔", True),
-    ("LIGHT", {"caseSensitive": True}, "light", False),
-    ("LIGHT", {}, "light", True),
-    ("light", {"matchWholeWords": True}, "lighting", False),
-    ("/灯[塔台]/", {}, "灯台", True),
-])
+@pytest.mark.parametrize(
+    "key,fields,text,direct",
+    [
+        ("灯塔", {}, "灯塔", True),
+        ("LIGHT", {"caseSensitive": True}, "light", False),
+        ("LIGHT", {}, "light", True),
+        ("light", {"matchWholeWords": True}, "lighting", False),
+        ("/灯[塔台]/", {}, "灯台", True),
+    ],
+)
 def test_direct_mention_uses_normal_matching(key, fields, text, direct):
-    result = compile_lore([entry(keys=[key], **fields)], text=text, requested=("e",), retrieval={"ids": ["e"], "query": text, "diagnostics": []})
+    result = compile_lore(
+        [entry(keys=[key], **fields)],
+        text=text,
+        requested=("e",),
+        retrieval={"ids": ["e"], "query": text, "diagnostics": []},
+    )
     assert recovery_note(result)["direct_mention"] is direct
 
 
 def test_history_and_recursion_do_not_get_direct_boost():
     result = compile_lore([entry()], messages=history(1, "灯塔"), text="继续")
     assert not recovery_note(result)["direct_mention"]
-    result = compile_lore([entry("source", keys=["港口"], content="灯塔", insertion_order=200),
-                           entry(insertion_order=100)], text="港口")
+    result = compile_lore(
+        [entry("source", keys=["港口"], content="灯塔", insertion_order=200), entry(insertion_order=100)],
+        text="港口",
+    )
     assert {e["id"] for e in result["lore"]} == {"source"}
     assert not any(n.get("id") == "e" and n["reason"] == "冷却恢复判断" for n in result["diagnostics"])
 
@@ -116,12 +142,21 @@ def test_auxiliary_conditions_and_original_probability_still_gate_activation():
 def test_failed_draws_do_not_reset_state_and_requests_still_obey_cooldown():
     old = {"e": {"removed_at": 1, "cooldown_until": 999}}
     # Choose an actual deterministic failing draw rather than rely on a lucky fixture.
-    parent = next(f"p{i}" for i in range(100)
-                  if not lore_recovery(entry(), old["e"], 2, False, "session", f"p{i}")["recovery_passed"])
+    parent = next(
+        f"p{i}"
+        for i in range(100)
+        if not lore_recovery(entry(), old["e"], 2, False, "session", f"p{i}")["recovery_passed"]
+    )
     messages = [{"id": parent, "role": "user", "raw": "灯塔", "retrieval_query": "灯塔"}]
     for fields, requested in [({}, ()), ({"keys": []}, ("e",))]:
-        result = compile_lore([entry(**fields)], prior=old, messages=messages, text="继续", requested=requested,
-                              retrieval={"ids": ["e"], "query": "灯塔", "diagnostics": []})
+        result = compile_lore(
+            [entry(**fields)],
+            prior=old,
+            messages=messages,
+            text="继续",
+            requested=requested,
+            retrieval={"ids": ["e"], "query": "灯塔", "diagnostics": []},
+        )
         assert not result["lore"]
         assert result["next_lore"] == {"e": {"removed_at": 1}}
         assert not recovery_note(result)["direct_mention"]
@@ -131,7 +166,9 @@ def test_failed_draws_do_not_reset_state_and_requests_still_obey_cooldown():
 def test_sticky_is_ignored_and_constant_bypasses_recovery():
     prior = {"e": {"present": False, "removed_at": 1}}
     assert not compile_lore([entry(sticky=100)], prior=prior, messages=history(2), text="继续")["lore"]
-    result = compile_lore([entry(constant=True, probability=0)], prior=prior, messages=history(1), text="继续")
+    result = compile_lore(
+        [entry(constant=True, probability=0)], prior=prior, messages=history(1), text="继续"
+    )
     assert result["lore"][0]["reason"] == "常驻"
     assert result["next_lore"] == {"e": {"present": True}}
 
@@ -156,9 +193,20 @@ def test_actual_injections_record_all_supported_positions(position):
     assert all(set(m) == {"role", "content"} for m in result["messages"])
 
 
-@pytest.mark.parametrize("omission", ["disabled", "condition",
-                                     "outlet", "unnamed_outlet", "override", "author_override",
-                                     "ordered", "depth_disabled", "empty"])
+@pytest.mark.parametrize(
+    "omission",
+    [
+        "disabled",
+        "condition",
+        "outlet",
+        "unnamed_outlet",
+        "override",
+        "author_override",
+        "ordered",
+        "depth_disabled",
+        "empty",
+    ],
+)
 def test_omitted_candidates_are_not_used(omission):
     e, recipe, kwargs = entry(sticky=3), ContextRecipe().model_dump(), {}
     block = recipe["blocks"][1]
@@ -214,8 +262,9 @@ def test_merged_and_duplicate_blocks_record_each_entry_once():
 def test_omitted_candidate_cannot_trigger_unapproved_recursive_entry():
     recipe = ContextRecipe().model_dump()
     recipe["blocks"][1]["enabled"] = False
-    result = compile_lore([entry("source", keys=["港口"], content="灯塔"), entry(position=4)],
-                          recipe=recipe, text="港口")
+    result = compile_lore(
+        [entry("source", keys=["港口"], content="灯塔"), entry(position=4)], recipe=recipe, text="港口"
+    )
     assert {e["id"] for e in result["lore"]} == {"source"}
     assert result["next_lore"] == {}
 
@@ -236,9 +285,15 @@ def story(tmp_path):
 
 
 async def send(service, session, **kwargs):
-    turn = service.submit(session["id"], TurnRequest(
-        text=kwargs.pop("text", "灯塔"), operation_id=kwargs.pop("operation_id", "send"),
-        expected_revision=session["revision"], **kwargs))
+    turn = service.submit(
+        session["id"],
+        TurnRequest(
+            text=kwargs.pop("text", "灯塔"),
+            operation_id=kwargs.pop("operation_id", "send"),
+            expected_revision=session["revision"],
+            **kwargs,
+        ),
+    )
     await service.tasks[turn["id"]]
     return service.store.turn(turn["id"])
 
@@ -277,18 +332,28 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["" if outcome == "failure" else "正文"])
     service.tracker_provider_factory = lambda: TrackerModel(
-        ("revise_content", {"operations": [{"op": "add", "path": "/description", "value": "New setting"}],
-                            "comment": "Explicit request"}), "done")
+        (
+            "revise_content",
+            {
+                "operations": [{"op": "add", "path": "/description", "value": "New setting"}],
+                "comment": "Explicit request",
+            },
+        ),
+        "done",
+    )
     try:
         if outcome == "cancel":
-            service.provider_factory = lambda: ScriptedLLM([
-                ScriptEntry(response="正文" * 100, delay_per_chunk=.1, chunk_size=1)])
-            turn = service.submit(initial["id"], TurnRequest(
-                text="灯塔", operation_id="cancel", expected_revision=initial["revision"]))
+            service.provider_factory = lambda: ScriptedLLM(
+                [ScriptEntry(response="正文" * 100, delay_per_chunk=0.1, chunk_size=1)]
+            )
+            turn = service.submit(
+                initial["id"],
+                TurnRequest(text="灯塔", operation_id="cancel", expected_revision=initial["revision"]),
+            )
             for _ in range(200):
                 if store.turn(turn["id"])["draft"]:
                     break
-                await asyncio.sleep(.01)
+                await asyncio.sleep(0.01)
             assert store.turn(turn["id"])["draft"]
             await service.cancel(turn["id"])
             assert store.turn(turn["id"])["status"] == "cancelled"
@@ -301,7 +366,8 @@ async def test_only_successful_or_approved_narrative_commits_usage(story, outcom
                 assert store.session(initial["id"])["snapshot"]["lore"] == {}
                 service.review(turn["id"], outcome == "accept")
         assert store.session(initial["id"])["snapshot"]["lore"] == (
-            {"e": {"present": True}} if outcome == "accept" else {})
+            {"e": {"present": True}} if outcome == "accept" else {}
+        )
     finally:
         await service.close()
 
@@ -310,9 +376,19 @@ async def test_maintenance_compilation_does_not_consume_narrative_usage(story):
     store, initial = story
 
     from tests.support.tracker_model import TrackerModel
-    provider = TrackerModel(("search_lore", {"query": "灯塔"}),
-        ("revise_content", {"operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
-                            "comment": "停用条目"}), "维护完成", "后置检查完成")
+
+    provider = TrackerModel(
+        ("search_lore", {"query": "灯塔"}),
+        (
+            "revise_content",
+            {
+                "operations": [{"op": "add", "path": "/character_book/entries/0/enabled", "value": False}],
+                "comment": "停用条目",
+            },
+        ),
+        "维护完成",
+        "后置检查完成",
+    )
     writer = ScriptedLLM(["正文"])
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: writer
@@ -351,6 +427,7 @@ async def test_nested_generate_does_not_consume_narrative_usage(story, monkeypat
         turn = await send(service, initial, text="无关话题")
         assert turn["status"] == "committed", turn["error"]
         from uuid import UUID, uuid5
+
         assert nested.request_context.session_id == str(uuid5(UUID(initial["id"]), "half_agent:script"))
         assert any("灯塔设定" in str(m.get("content")) for m in nested.call_log[0])
         assert store.session(initial["id"])["snapshot"]["lore"] == {}

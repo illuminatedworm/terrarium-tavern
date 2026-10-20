@@ -144,7 +144,7 @@ async function save() {
 }
 .preference-picker-heading span,
 .preference-picker-save label {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 .preference-picker-heading button {
@@ -167,7 +167,7 @@ async function save() {
   margin: 0;
 }
 .preference-picker button {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   white-space: nowrap;
 }
 .preference-picker > button {
@@ -191,7 +191,7 @@ async function save() {
 .preference-picker-notice,
 .preference-picker-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }

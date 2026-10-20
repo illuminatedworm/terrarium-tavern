@@ -1,8 +1,20 @@
 """Public editor conversation activity survives diagnostic-log retention."""
+
 import json
 
-PUBLIC_KINDS = ("started", "model_call", "text", "tool_started", "tool_finished", "completed", "error", "cancelled",
-                "web_activity", "web_sources", "response_restarted")
+PUBLIC_KINDS = (
+    "started",
+    "model_call",
+    "text",
+    "tool_started",
+    "tool_finished",
+    "completed",
+    "error",
+    "cancelled",
+    "web_activity",
+    "web_sources",
+    "response_restarted",
+)
 
 
 def compact_text_events(db):
@@ -11,7 +23,9 @@ def compact_text_events(db):
     Cleanup holds the write transaction and rejects active editor runs first.
     Keep the first sequence ID so a retained message stays at the same position.
     """
-    rows = db.execute("SELECT run,seq,kind,payload FROM card_edit_events WHERE kind IN ('model_call','response_restarted','text') ORDER BY run,seq").fetchall()
+    rows = db.execute(
+        "SELECT run,seq,kind,payload FROM card_edit_events WHERE kind IN ('model_call','response_restarted','text') ORDER BY run,seq"
+    ).fetchall()
     chunks, run = [], None
 
     def flush():

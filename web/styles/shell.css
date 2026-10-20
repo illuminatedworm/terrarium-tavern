@@ -68,7 +68,7 @@ main {
   width: 42px;
   height: 42px;
   flex: none;
-  border-radius: 13px;
+  border-radius: var(--radius-md);
   color: var(--ivory);
   text-decoration: none;
   background:
@@ -133,7 +133,7 @@ main {
   top: 14px;
   bottom: 14px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-2xs) var(--radius-2xs) 0;
   background: var(--accent);
   box-shadow: 0 0 12px var(--accent-glow);
 }
@@ -176,7 +176,7 @@ main {
 .panel-brand {
   padding: 0 8px;
   color: var(--text-secondary);
-  font: italic 500 15px/1.2 var(--font-display);
+  font: italic 500 var(--fs-ui) / 1.2 var(--font-display);
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
@@ -261,7 +261,7 @@ main {
   top: 16px;
   bottom: 16px;
   width: 3px;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-2xs) var(--radius-2xs) 0;
   background: var(--accent);
 }
 .session-open,
@@ -309,13 +309,13 @@ main {
 }
 .session-row.active .session-open > span:last-child,
 .card-side-item.active > span:last-child {
-  color: #fff;
+  color: var(--text-strong);
 }
 .session-list .session-open .character-portrait,
 .session-list .card-side-item .character-portrait {
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
 }
 .session-row.kemini .session-open,
 .session-row.kemini .session-open:hover:not(:disabled) {
@@ -332,7 +332,7 @@ main {
   flex: none;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgb(255 255 255 / 0.05);
   box-shadow: inset 0 0 0 1px var(--glass-edge);
   color: var(--text-secondary);
@@ -348,7 +348,7 @@ main {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--glass-float);
   box-shadow: inset 0 0 0 1px var(--glass-edge);
   transform: translateY(-50%);
@@ -373,7 +373,7 @@ main {
   height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
 }
@@ -483,12 +483,13 @@ main {
 .inspector-rail .rail-tab.active::before {
   left: auto;
   right: -8px;
-  border-radius: 3px 0 0 3px;
+  border-radius: var(--radius-2xs) 0 0 var(--radius-2xs);
 }
 .inspector-panel {
   display: flex;
   flex-direction: column;
-  width: var(--right-sidebar-width, 380px);
+  /* The stored width is a preference; the story sheet keeps priority on smaller desktops. */
+  width: min(var(--right-sidebar-width, 380px), 35vw);
   min-width: 0;
   min-height: 0;
 }
@@ -509,7 +510,7 @@ main {
   top: 24px;
   bottom: 24px;
   width: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-2xs);
   background: transparent;
   transition:
     background var(--dur),
@@ -545,7 +546,7 @@ main {
   font-size: var(--fs-xl);
 }
 .inspector-content pre {
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
   max-height: none;
 }
 .inspector-content .card-frame {
@@ -627,12 +628,12 @@ main {
   animation: spin 0.8s linear infinite;
 }
 .scene-update-status {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
   line-height: 1.7;
 }
 .scene-notes .prose {
-  font: 13px/1.8 var(--font-ui);
+  font: var(--fs-md) / 1.8 var(--font-ui);
 }
 @keyframes spin {
   to {
@@ -666,7 +667,7 @@ main {
 .inspector-options > label,
 .inspector-options .policy-control > label {
   margin: 13px 0;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .inspector-options .expandable-textarea > .prompt-field:not(.has-prefix) > textarea {
   height: 112px;
@@ -677,7 +678,7 @@ main {
 .inspector-options .inspector-note,
 .inspector-options .policy-help {
   margin: 8px 0 12px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
 }
 .inspector-options h3 {
@@ -692,7 +693,7 @@ main {
 }
 .inspector-save span {
   color: var(--success);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .inspector-save button {
   min-height: 32px;
@@ -709,11 +710,6 @@ main {
 @media (max-width: 1200px) {
   .sidebar-panel {
     width: 220px;
-  }
-}
-@media (min-width: 761px) and (max-width: 1200px) {
-  .inspector-panel {
-    width: min(var(--right-sidebar-width, 380px), 35vw);
   }
 }
 @media (max-height: 650px) {

@@ -20,7 +20,7 @@ defineProps<{ prefix?: string; label: string }>();
 .has-prefix {
   grid-template-rows: auto minmax(0, 1fr);
   border: 1px solid var(--border-control);
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   background: var(--surface-base);
 }
 .has-prefix:focus-within {
@@ -39,7 +39,7 @@ defineProps<{ prefix?: string; label: string }>();
   min-height: 0;
   margin: 0;
   border: 0;
-  border-radius: 0 0 6px 6px;
+  border-radius: 0 0 var(--radius-xs) var(--radius-xs);
   background: transparent;
   outline: none;
 }

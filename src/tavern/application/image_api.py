@@ -52,18 +52,22 @@ def register_image_routes(app, store, dependencies):
     @app.post("/api/sessions/{sid}/images")
     async def image(sid: str, payload: ImageRequest, request: Request):
         try:
-            result = await connected(request, dependencies.image(source_card(sid, payload.message_id), payload.url))
+            result = await connected(
+                request, dependencies.image(source_card(sid, payload.message_id), payload.url)
+            )
         except httpx.HTTPError as error:
             raise HTTPException(502, "图片加载失败：" + str(error)) from error
         if result is None:
             return Response(status_code=499)
         raw, mime = result
-        return {"url": f'data:{mime};base64,{base64.b64encode(raw).decode()}'}
+        return {"url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"}
 
     @app.post("/api/sessions/{sid}/images/markup")
     async def markup(sid: str, payload: MarkupRequest, request: Request):
         try:
-            html = await connected(request, dependencies.prepare_markup(source_card(sid, payload.message_id), payload.html))
+            html = await connected(
+                request, dependencies.prepare_markup(source_card(sid, payload.message_id), payload.html)
+            )
         except httpx.HTTPError as error:
             raise HTTPException(502, "图片加载失败：" + str(error)) from error
         if html is None:

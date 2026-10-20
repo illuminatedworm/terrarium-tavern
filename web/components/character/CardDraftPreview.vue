@@ -160,7 +160,7 @@ watch(opening, () => {
   border: 0;
   background: transparent;
   color: var(--accent-hover);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   padding: 8px 0 0;
   margin-top: 6px;
 }
@@ -179,7 +179,7 @@ watch(opening, () => {
 .draft-preview-heading :deep(.character-portrait) {
   width: 48px;
   height: 58px;
-  font-size: 22px;
+  font-size: var(--fs-title);
 }
 .draft-preview-heading > div {
   flex: 1;
@@ -187,13 +187,13 @@ watch(opening, () => {
 }
 .draft-preview-heading h3 {
   margin: 0 0 4px;
-  font: 600 17px/1.5 var(--font-ui);
+  font: 600 var(--fs-lg) / 1.5 var(--font-ui);
   overflow-wrap: anywhere;
 }
 .draft-preview-heading p {
   margin: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .draft-preview-heading button {
   padding: 8px;
@@ -203,7 +203,7 @@ watch(opening, () => {
 .draft-preview-note {
   margin: 14px 0 22px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
 }
 .draft-preview-section {
@@ -215,7 +215,7 @@ watch(opening, () => {
 }
 .draft-preview-section h4 {
   margin: 0 0 12px;
-  font: 600 14px/1.5 var(--font-ui);
+  font: 600 var(--fs-base) / 1.5 var(--font-ui);
   color: var(--text-primary);
 }
 .draft-section-heading {
@@ -229,31 +229,31 @@ watch(opening, () => {
   margin: 0;
 }
 .draft-section-heading h4 span {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   font-weight: 400;
   margin-left: 5px;
 }
 .draft-section-heading small {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .draft-section-heading select {
   width: auto;
   max-width: 65%;
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
   min-height: 30px;
   padding: 4px 8px;
   background: transparent;
 }
 .draft-preview-empty {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
   margin: 10px 0 0;
 }
 .draft-preview-section input {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 0 0 12px;
 }
 .draft-lore-entry {
@@ -261,7 +261,7 @@ watch(opening, () => {
   padding: 0;
   background: transparent;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 .draft-lore-entry summary {
   display: flex;
@@ -285,11 +285,11 @@ watch(opening, () => {
   min-width: 0;
   flex: 1;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .draft-lore-entry summary small {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   text-align: right;
   max-width: 44%;
 }
@@ -301,7 +301,7 @@ watch(opening, () => {
   padding: 12px;
 }
 .draft-keywords {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   margin: 0 0 12px;
   overflow-wrap: anywhere;
@@ -315,7 +315,7 @@ watch(opening, () => {
 }
 .draft-extra summary {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .draft-extra[open] summary {
   margin-bottom: 12px;

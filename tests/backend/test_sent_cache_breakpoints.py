@@ -1,4 +1,5 @@
 """Sent endpoint retention through the real serializers and HTTP dispatch path."""
+
 import asyncio
 import copy
 import json
@@ -19,15 +20,25 @@ from tests.backend.test_unified_cache import config, reply
 
 
 def messages(at, count=6):
-    result = [{"role": "system" if i == 0 else "assistant" if i % 2 == 0 else "user",
-               "content": f"block {i}", "_cache_static": i == 0} for i in range(count)]
+    result = [
+        {
+            "role": "system" if i == 0 else "assistant" if i % 2 == 0 else "user",
+            "content": f"block {i}",
+            "_cache_static": i == 0,
+        }
+        for i in range(count)
+    ]
     result[at]["_cache_breakpoint"] = True
     return result
 
 
 def marked(body, api):
-    return [part["text"] for message in body["input" if api == "responses" else "messages"]
-            for part in message.get("content", []) if isinstance(part, dict) and "prompt_cache_breakpoint" in part]
+    return [
+        part["text"]
+        for message in body["input" if api == "responses" else "messages"]
+        for part in message.get("content", [])
+        if isinstance(part, dict) and "prompt_cache_breakpoint" in part
+    ]
 
 
 @asynccontextmanager
@@ -39,8 +50,13 @@ async def transport(api, seen, *, context=None, route=None, capture=None, cfg=No
         seen.append(json.loads(request.content))
         return httpx.Response(200, json=reply(api))
 
-    provider = ModelTransport(cfg, cfg.api_key, capture, request_context=context,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route or success)))
+    provider = ModelTransport(
+        cfg,
+        cfg.api_key,
+        capture,
+        request_context=context,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route or success)),
+    )
     try:
         yield provider
     finally:
@@ -59,8 +75,11 @@ async def test_only_dispatched_boundaries_accumulate_and_manual_rewind_keeps_the
         await p.chat_complete(messages(4))
         await p.chat_complete(messages(0))
     assert [marked(body, api) for body in seen] == [
-        ["block 0"], ["block 0", "block 2"], ["block 0", "block 2", "block 4"],
-        ["block 0", "block 2", "block 4"]]
+        ["block 0"],
+        ["block 0", "block 2"],
+        ["block 0", "block 2", "block 4"],
+        ["block 0", "block 2", "block 4"],
+    ]
     assert original == messages(0)
     assert [point["message_index"] for point in captured[-1]["cache"]["sent_breakpoints"]] == [0, 2, 4]
 
@@ -105,8 +124,19 @@ async def test_changed_prefix_and_window_do_not_relocate_old_markers(api):
         assert marked(seen[-1], api) == ["block 4"]
         await p.chat_complete(messages(4))
         assert marked(seen[-1], api) == ["block 0", "block 2", "block 4"]
-        await p.chat_complete(messages(4), tools=[{"type": "function", "function": {
-            "name": "new_tool", "description": "changed tools", "parameters": {"type": "object"}}}])
+        await p.chat_complete(
+            messages(4),
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "new_tool",
+                        "description": "changed tools",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        )
         assert marked(seen[-1], api) == ["block 4"]
 
 
@@ -158,8 +188,13 @@ async def test_native_responses_replays_exact_content_block_endpoint():
         payload = reply(api)
         payload["output"] = [
             {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
-            {"type": "message", "id": "msg_1", "role": "assistant", "content": [
-                {"type": "output_text", "text": "block "}, {"type": "output_text", "text": "2"}]}]
+            {
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "block "}, {"type": "output_text", "text": "2"}],
+            },
+        ]
         current[2]["_native_response"] = attachment(payload, response_origin(p.settings, p.key), current[2])
         await p.chat_complete(current)
         later = copy.deepcopy(current)
@@ -181,8 +216,11 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
     async def handle(reader, writer):
         try:
             headers = await reader.readuntil(b"\r\n\r\n")
-            length = next(int(line.split(b":", 1)[1]) for line in headers.lower().split(b"\r\n")
-                          if line.startswith(b"content-length:"))
+            length = next(
+                int(line.split(b":", 1)[1])
+                for line in headers.lower().split(b"\r\n")
+                if line.startswith(b"content-length:")
+            )
             await reader.readexactly(length)
             received.set()
             await release.wait()  # No response headers or body are sent.
@@ -196,8 +234,9 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
     cfg.base_url = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     store, sid = Store(tmp_path), uuid4().hex
     context = OperationContexts(store, sid, "turn").new()
-    provider = ModelTransport(cfg, cfg.api_key, request_context=context,
-                              http_client=httpx.AsyncClient(trust_env=False))
+    provider = ModelTransport(
+        cfg, cfg.api_key, request_context=context, http_client=httpx.AsyncClient(trust_env=False)
+    )
     task = asyncio.create_task(provider.chat_complete(messages(0)))
     try:
         await asyncio.wait_for(received.wait(), 5)
@@ -236,8 +275,10 @@ async def test_durable_history_survives_restart_backup_and_fork_without_cross_se
         await p.chat_complete(messages(2))
     assert marked(seen[-1], api) == ["block 0", "block 2"]
     other = store.new_session(SessionCreate(card_id=card["id"]))
-    for context in (OperationContexts(store, other["id"], "turn").new(),
-                    OperationContexts(store, sid, "turn").new("tracker")):
+    for context in (
+        OperationContexts(store, other["id"], "turn").new(),
+        OperationContexts(store, sid, "turn").new("tracker"),
+    ):
         async with transport(api, seen, context=context) as p:
             await p.chat_complete(messages(4))
         assert marked(seen[-1], api) == ["block 4"]
@@ -248,8 +289,15 @@ async def test_durable_history_survives_restart_backup_and_fork_without_cross_se
     assert marked(seen[-1], api) == ["block 0", "block 2", "block 4"]
     store.delete_session(fork["id"])
     with store.connection() as db:
-        assert db.execute("SELECT count(*) FROM sent_cache_breakpoints WHERE owner=?", (fork["id"],)).fetchone()[0] == 0
-        assert db.execute("SELECT count(*) FROM sent_cache_breakpoints WHERE owner=?", (sid,)).fetchone()[0] == 3
+        assert (
+            db.execute("SELECT count(*) FROM sent_cache_breakpoints WHERE owner=?", (fork["id"],)).fetchone()[
+                0
+            ]
+            == 0
+        )
+        assert (
+            db.execute("SELECT count(*) FROM sent_cache_breakpoints WHERE owner=?", (sid,)).fetchone()[0] == 3
+        )
 
 
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
@@ -270,7 +318,9 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
     for model in (document.full_agent.model, document.half_agent.foreground):
         model.api_mode, model.model = api, "gpt-6-sol"
     store.save_settings(document)
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening","description":"fixed rules"}', "card.json")
+    card = store.import_card(
+        b'{"name":"fixture","first_mes":"opening","description":"fixed rules"}', "card.json"
+    )
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
     service = ModeRuntime(store)
@@ -285,21 +335,33 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
             return httpx.Response(200, json=payload)
         if api == "responses":
             return sse(api, payload)
-        events = [{"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]},
-                  {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": payload["usage"]}]
-        return httpx.Response(200, content="".join("data: " + json.dumps(e) + "\n\n" for e in events)
-                              + "data: [DONE]\n\n", headers={"content-type": "text/event-stream"})
+        events = [
+            {"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": payload["usage"]},
+        ]
+        return httpx.Response(
+            200,
+            content="".join("data: " + json.dumps(e) + "\n\n" for e in events) + "data: [DONE]\n\n",
+            headers={"content-type": "text/event-stream"},
+        )
 
     async def factory(settings, capture=None, *, request_context=None):
-        return ModelTransport(settings, settings.api_key, capture, request_context=request_context,
-                              http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+        return ModelTransport(
+            settings,
+            settings.api_key,
+            capture,
+            request_context=request_context,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
+        )
 
     monkeypatch.setattr("tavern.full_agent.agent.make_provider", factory)
     monkeypatch.setattr("tavern.scripting.agent.make_provider", factory)
     try:
         for _ in range(3):
-            turn = service.submit(session["id"], TurnRequest(text="continue", operation_id=uuid4().hex,
-                                  expected_revision=session["revision"]))
+            turn = service.submit(
+                session["id"],
+                TurnRequest(text="continue", operation_id=uuid4().hex, expected_revision=session["revision"]),
+            )
             await service.tasks[turn["id"]]
             result = store.turn(turn["id"])
             assert result["status"] == "committed", result["error"]

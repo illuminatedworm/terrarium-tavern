@@ -2,6 +2,7 @@
 
 Shared by web tools and card resource downloads; each passes its own rejection text.
 """
+
 import asyncio
 import ipaddress
 import socket
@@ -26,7 +27,10 @@ class PublicNetworkBackend(httpcore.AnyIOBackend):
         self.message = message
 
     async def connect_tcp(
-        self, host: str, port: int, timeout: float | None = None,
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
         local_address: str | None = None,
         socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
     ) -> httpcore.AsyncNetworkStream:
@@ -38,7 +42,11 @@ class PublicNetworkBackend(httpcore.AnyIOBackend):
                         # Pass only a validated numeric address to the socket backend.
                         # The pool retains the hostname for Host, TLS and origin isolation.
                         return await super().connect_tcp(
-                            address, port, timeout, local_address, socket_options,
+                            address,
+                            port,
+                            timeout,
+                            local_address,
+                            socket_options,
                         )
                     except (httpcore.ConnectError, httpcore.ConnectTimeout):
                         # Preserve multi-address connectivity without resolving again.

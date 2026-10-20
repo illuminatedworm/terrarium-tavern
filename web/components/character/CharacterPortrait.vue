@@ -45,11 +45,11 @@ watch(
   width: 36px;
   height: 36px;
   overflow: hidden;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(145deg, rgb(var(--accent-rgb) / 0.3), rgb(var(--accent-rgb) / 0.1));
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
   color: var(--accent-hover);
-  font: 500 16px var(--font-ui);
+  font: 500 var(--fs-lg) var(--font-ui);
 }
 .character-portrait img {
   display: block;
@@ -61,22 +61,22 @@ watch(
 .portrait-message {
   width: 35px;
   height: 35px;
-  border-radius: 11px;
-  font-size: 15px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-ui);
 }
 .portrait-card {
   width: 64px;
   height: 80px;
-  font-size: 24px;
+  font-size: var(--fs-2xl);
 }
 .portrait-detail {
   width: 104px;
   height: 136px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   box-shadow:
     inset 0 0 0 1px rgb(255 255 255 / 0.1),
     0 18px 40px -18px var(--accent-glow, transparent);
-  font-size: 32px;
+  font-size: var(--fs-3xl);
 }
 @media (max-width: 620px) {
   .portrait-message {

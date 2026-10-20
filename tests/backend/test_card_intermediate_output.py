@@ -1,4 +1,5 @@
 """Public prose is distinct from reasoning and survives reload/log cleanup."""
+
 import json
 
 import httpx
@@ -64,18 +65,44 @@ async def test_chat_completions_stream_pagination_and_compaction_preserve_whole_
             text = middle if first else "最终说明"
             frames = [{"choices": [{"delta": {"content": char}, "finish_reason": None}]} for char in text]
             if first:
-                frames.append({"choices": [{"delta": {"reasoning_content": "PRIVATE_REASONING",
-                    "tool_calls": [{"index": 0, "id": "call", "type": "function", "function": {
-                        "name": "overview", "arguments": "{}"}}]}, "finish_reason": None}]})
+                frames.append(
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "reasoning_content": "PRIVATE_REASONING",
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call",
+                                            "type": "function",
+                                            "function": {"name": "overview", "arguments": "{}"},
+                                        }
+                                    ],
+                                },
+                                "finish_reason": None,
+                            }
+                        ]
+                    }
+                )
             frames.append({"choices": [{"delta": {}, "finish_reason": "tool_calls" if first else "stop"}]})
-            return httpx.Response(200, content="".join("data: " + json.dumps(frame) + "\n\n" for frame in frames) + "data: [DONE]\n\n",
-                                  headers={"content-type": "text/event-stream"})
-        return ModelTransport(cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+            return httpx.Response(
+                200,
+                content="".join("data: " + json.dumps(frame) + "\n\n" for frame in frames)
+                + "data: [DONE]\n\n",
+                headers={"content-type": "text/event-stream"},
+            )
+
+        return ModelTransport(
+            cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+        )
 
     monkeypatch.setattr("tavern.character.card_author.make_provider", factory)
     try:
         ws = editor.workspace
-        run = editor.service.submit(ws["id"], CardAuthorRequest(text="检查资料", operation_id="ordinary", expected_revision=0))
+        run = editor.service.submit(
+            ws["id"], CardAuthorRequest(text="检查资料", operation_id="ordinary", expected_revision=0)
+        )
         await editor.service.tasks[run["id"]]
         assert editor.service.edits.run(run["id"])["status"] == "completed"
         assert editor.service.edits.activity(run["id"])["has_more"]

@@ -1,4 +1,5 @@
 """Manual retries discard failed exchanges at the persisted and native boundaries."""
+
 import copy
 import json
 from types import SimpleNamespace
@@ -18,38 +19,75 @@ from tests.backend.test_full_agent_alignment import game, transport
 
 def native_reply(api, calls=(), text="", marker=""):
     if api == "chat_completions":
-        return {"model": "fixture", "choices": [{"finish_reason": "tool_calls" if calls else "stop",
-            "message": {"content": text, "reasoning_content": marker,
-                        "tool_calls": [{"id": cid, "type": "function", "function": {
-                            "name": name, "arguments": json.dumps(args)}} for cid, name, args in calls]}}]}
+        return {
+            "model": "fixture",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls" if calls else "stop",
+                    "message": {
+                        "content": text,
+                        "reasoning_content": marker,
+                        "tool_calls": [
+                            {
+                                "id": cid,
+                                "type": "function",
+                                "function": {"name": name, "arguments": json.dumps(args)},
+                            }
+                            for cid, name, args in calls
+                        ],
+                    },
+                }
+            ],
+        }
     if api == "gemini":
-        parts = ([{"text": marker, "thought": True}] if marker else [])
-        parts += [{"functionCall": {"id": cid, "name": name, "args": args}}
-                  for cid, name, args in calls]
+        parts = [{"text": marker, "thought": True}] if marker else []
+        parts += [{"functionCall": {"id": cid, "name": name, "args": args}} for cid, name, args in calls]
         if text:
             parts.append({"text": text})
         return {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
     if api == "anthropic":
-        content = ([{"type": "thinking", "thinking": marker, "signature": marker}] if marker else [])
-        content += [{"type": "tool_use", "id": cid, "name": name, "input": args}
-                    for cid, name, args in calls]
+        content = [{"type": "thinking", "thinking": marker, "signature": marker}] if marker else []
+        content += [{"type": "tool_use", "id": cid, "name": name, "input": args} for cid, name, args in calls]
         if text:
             content.append({"type": "text", "text": text})
-        return {"id": "msg_fixture", "model": "fixture", "content": content,
-                "stop_reason": "tool_use" if calls else "end_turn", "usage": {}}
-    output = ([{"type": "reasoning", "id": "rs_" + marker, "summary": [],
-                "encrypted_content": marker}] if marker else [])
-    output += [{"type": "function_call", "id": "fc_" + cid, "call_id": cid,
-                "name": name, "arguments": json.dumps(args)} for cid, name, args in calls]
+        return {
+            "id": "msg_fixture",
+            "model": "fixture",
+            "content": content,
+            "stop_reason": "tool_use" if calls else "end_turn",
+            "usage": {},
+        }
+    output = (
+        [{"type": "reasoning", "id": "rs_" + marker, "summary": [], "encrypted_content": marker}]
+        if marker
+        else []
+    )
+    output += [
+        {
+            "type": "function_call",
+            "id": "fc_" + cid,
+            "call_id": cid,
+            "name": name,
+            "arguments": json.dumps(args),
+        }
+        for cid, name, args in calls
+    ]
     if text:
-        output.append({"type": "message", "id": "msg_fixture", "role": "assistant",
-                       "content": [{"type": "output_text", "text": text, "annotations": []}]})
-    return {"id": "resp_fixture", "model": "fixture", "output": output,
-            "status": "completed", "usage": {}}
+        output.append(
+            {
+                "type": "message",
+                "id": "msg_fixture",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+        )
+    return {"id": "resp_fixture", "model": "fixture", "output": output, "status": "completed", "usage": {}}
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
-async def test_retry_filters_mixed_failures_from_native_wire_activity_and_committed_trace(tmp_path, monkeypatch, api):
+async def test_retry_filters_mixed_failures_from_native_wire_activity_and_committed_trace(
+    tmp_path, monkeypatch, api
+):
     import tavern.full_agent.agent as agent_module
 
     store, service, session = game(tmp_path, api)
@@ -64,10 +102,14 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         if len(requests) == 3:
             raise httpx.ReadTimeout("synthetic interruption", request=request)
         if len(requests) == 1:
-            payload = native_reply(api, [
-                ("bad", "read_history", {"reason": "BAD_ARGUMENT"}),
-                ("accepted", "write_handoff", {"content": "MEMORY_ACCEPTED"}),
-            ], marker="MIXED_NATIVE")
+            payload = native_reply(
+                api,
+                [
+                    ("bad", "read_history", {"reason": "BAD_ARGUMENT"}),
+                    ("accepted", "write_handoff", {"content": "MEMORY_ACCEPTED"}),
+                ],
+                marker="MIXED_NATIVE",
+            )
         elif len(requests) == 2:
             payload = native_reply(api, [("read", "read_state", {})], marker="DEPENDENT_NATIVE")
         else:
@@ -79,8 +121,9 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
-        failed = service.submit(session["id"], TurnRequest(text="继续", operation_id=uuid4().hex,
-                                                           expected_revision=0))
+        failed = service.submit(
+            session["id"], TurnRequest(text="继续", operation_id=uuid4().hex, expected_revision=0)
+        )
         await service.tasks[failed["id"]]
         failed = store.turn(failed["id"])
         assert failed["status"] == "error", failed["error"]
@@ -94,8 +137,12 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         assert [m.get("_tool_error", False) for m in returned] == [True, False, False]
         if api == "anthropic":
             messages = json.loads(requests[1].content)["messages"]
-            results = [part for message in messages for part in message.get("content", [])
-                       if isinstance(part, dict) and part.get("type") == "tool_result"]
+            results = [
+                part
+                for message in messages
+                for part in message.get("content", [])
+                if isinstance(part, dict) and part.get("type") == "tool_result"
+            ]
             assert [part.get("is_error", False) for part in results] == [True, False]
         else:
             assert "is_error" not in requests[1].content.decode()
@@ -108,8 +155,12 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
     store = Store(store.root)
     service = runtime(store)
     try:
-        resumed = service.submit(session["id"], TurnRequest(text="继续", operation_id=uuid4().hex,
-            expected_revision=0, resume_turn_id=failed["id"]))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text="继续", operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]
+            ),
+        )
         copied = store.full_agent_progress(resumed["id"])
         assert "BAD_ARGUMENT" not in json.dumps(copied["continuation"])
         assert "BAD_ARGUMENT" not in json.dumps(copied["new_trace"])
@@ -128,15 +179,19 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
             assert "x-codex-turn-state" not in requests[3].headers
         items = [i for i in turn_items(store, session["id"], resumed["id"]) if i["kind"] == "tool"]
         assert [(i["name"], i["status"]) for i in items] == [
-            ("write_handoff", "returned"), ("read_state", "returned")]
+            ("write_handoff", "returned"),
+            ("read_state", "returned"),
+        ]
         current = store.session(session["id"])
         memory = current["snapshot"]["full_agent"]["handoff"]
         assert memory["text"] == "MEMORY_ACCEPTED" and memory["revision"] == 1
         trace = tool_exchanges(load_trace(store, session["id"], current["messages"]))
         assert len(trace) == 4 and "BAD_ARGUMENT" not in json.dumps(trace)
         assert any(i["status"] == "error" for i in turn_items(store, session["id"], failed["id"]))
-        following = service.submit(session["id"], TurnRequest(text="继续", operation_id=uuid4().hex,
-                                                              expected_revision=current["revision"]))
+        following = service.submit(
+            session["id"],
+            TurnRequest(text="继续", operation_id=uuid4().hex, expected_revision=current["revision"]),
+        )
         await service.tasks[following["id"]]
         assert store.turn(following["id"])["status"] == "committed"
         assert "BAD_ARGUMENT" not in requests[4].content.decode()
@@ -147,27 +202,51 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
 async def test_retry_of_only_failures_starts_without_tools_and_survives_another_failure(tmp_path):
     store, service, session = game(tmp_path)
     try:
-        failed, _ = await turn(service, session, Model(
-            ("write_handoff", {"content": "FAILED_PROPOSAL", "reason": "extra"}),
-            ("read_history", {"reason": "missing ref"}), RuntimeError("disconnected")))
+        failed, _ = await turn(
+            service,
+            session,
+            Model(
+                ("write_handoff", {"content": "FAILED_PROPOSAL", "reason": "extra"}),
+                ("read_history", {"reason": "missing ref"}),
+                RuntimeError("disconnected"),
+            ),
+        )
         saved = store.full_agent_progress(failed["id"])
         retry_model = Model(RuntimeError("second interruption"))
         service.full.provider_factory = lambda: retry_model
-        retry = service.submit(session["id"], TurnRequest(text=failed["request"]["text"],
-            operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]))
+        retry = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
         await service.tasks[retry["id"]]
         assert store.turn(retry["id"])["status"] == "error"
         assert not tool_exchanges(store.full_agent_progress(retry["id"])["new_trace"])
-        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in retry_model.requests[0]["messages"])
+        assert not any(
+            m.get("tool_calls") or m["role"] == "tool" for m in retry_model.requests[0]["messages"]
+        )
         assert "FAILED_PROPOSAL" not in json.dumps(retry_model.requests)
         assert store.full_agent_progress(failed["id"]) == saved
         final_model = Model("新的正文")
         service.full.provider_factory = lambda: final_model
-        final = service.submit(session["id"], TurnRequest(text=failed["request"]["text"],
-            operation_id=uuid4().hex, expected_revision=0, resume_turn_id=retry["id"]))
+        final = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=retry["id"],
+            ),
+        )
         await service.tasks[final["id"]]
         assert store.turn(final["id"])["status"] == "committed"
-        assert not any(m.get("tool_calls") or m["role"] == "tool" for m in final_model.requests[0]["messages"])
+        assert not any(
+            m.get("tool_calls") or m["role"] == "tool" for m in final_model.requests[0]["messages"]
+        )
     finally:
         await service.close()
 
@@ -178,12 +257,14 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
             self.requests.append(copy.deepcopy(messages))
-            self.last_tool_calls = [SimpleNamespace(id=cid, name=name, arguments=json.dumps(args))
+            self.last_tool_calls = [
+                SimpleNamespace(id=cid, name=name, arguments=json.dumps(args))
                 for cid, name, args in [
                     ("bad", "read_history", {"reason": "missing ref"}),
                     ("accepted", "write_handoff", {"content": "MEMORY_A"}),
                     ("unfinished", "write_handoff", {"content": "MEMORY_B"}),
-                ]]
+                ]
+            ]
             return SimpleNamespace(content="", usage={}, finish_reason="stop")
 
     original = AgentTools.execute
@@ -206,8 +287,15 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         assert executed == ["MEMORY_A"]
         model = Model("续接正文")
         service.full.provider_factory = lambda: model
-        resumed = service.submit(session["id"], TurnRequest(text=failed["request"]["text"],
-            operation_id=uuid4().hex, expected_revision=0, resume_turn_id=failed["id"]))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
         await service.tasks[resumed["id"]]
         result = store.turn(resumed["id"])
         assert result["status"] == "committed", result["error"]

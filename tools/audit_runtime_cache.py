@@ -4,6 +4,7 @@ python tools/audit_runtime_cache.py --data data --session SESSION_ID --output .c
 Read-only SQLite access; credentials, request prose, tool arguments and response prose
 are never exported. Missing cache counters remain unknown, not zero.
 """
+
 import argparse
 import copy
 import json
@@ -37,7 +38,7 @@ def wire_prefix(body, api, field):
             continue
         for j, part in enumerate(content):
             if isinstance(part, dict) and field in part:
-                item["content"] = content[:j + 1]
+                item["content"] = content[: j + 1]
                 return fingerprint(prefix), f"{key}[{i}].content[{j}]"
     return None, None
 
@@ -49,13 +50,15 @@ def audit(data, session_id):
         session = db.execute("SELECT id,agent_mode FROM sessions WHERE id=?", (session_id,)).fetchone()
         if session is None:
             raise ValueError("Session does not exist")
-        turns = db.execute("SELECT id,status,created FROM turns WHERE session=? ORDER BY created,id",
-                           (session_id,)).fetchall()
+        turns = db.execute(
+            "SELECT id,status,created FROM turns WHERE session=? ORDER BY created,id", (session_id,)
+        ).fetchall()
         result = {"session": dict(session), "turns": []}
         for turn in turns:
             row = {"id": turn["id"], "status": turn["status"], "requests": [], "usage": [], "tools": []}
-            events = db.execute("SELECT seq,kind,payload,created FROM events WHERE turn=? ORDER BY seq",
-                                (turn["id"],)).fetchall()
+            events = db.execute(
+                "SELECT seq,kind,payload,created FROM events WHERE turn=? ORDER BY seq", (turn["id"],)
+            ).fetchall()
             last_api = {}
             for event in events:
                 payload = json.loads(event["payload"])
@@ -65,32 +68,86 @@ def audit(data, session_id):
                     last_api[purpose] = api
                     body, cache = payload.get("wire", {}), payload.get("cache", {})
                     parameters = cache.get("parameters", {})
-                    field = next((k for k in parameters if k in ("cache_control", "prompt_cache_breakpoint")), "cache_control")
+                    field = next(
+                        (k for k in parameters if k in ("cache_control", "prompt_cache_breakpoint")),
+                        "cache_control",
+                    )
                     digest, location = wire_prefix(body, api, field)
-                    row["requests"].append({
-                        "seq": event["seq"], "time": datetime.fromtimestamp(event["created"], ZoneInfo("Asia/Shanghai")).isoformat(),
-                        "purpose": purpose, "api": api, "url": payload.get("url"), "model": payload.get("model"),
-                        "estimated_input_tokens": payload.get("estimated_input_tokens"),
-                        "cache_status": cache.get("status"), "cache_reason": cache.get("reason"),
-                        "planned_index": cache.get("planned_index"), "anchor": cache.get("message_id"),
-                        "wire_prefix_sha256": digest, "wire_breakpoint": location,
-                        "wire_tools_sha256": fingerprint(body.get("tools", [])),
-                        "wire_system_sha256": fingerprint(body.get("system", [
-                            m for m in body.get("messages", []) if m.get("role") in ("system", "developer")])),
-                    })
+                    row["requests"].append(
+                        {
+                            "seq": event["seq"],
+                            "time": datetime.fromtimestamp(
+                                event["created"], ZoneInfo("Asia/Shanghai")
+                            ).isoformat(),
+                            "purpose": purpose,
+                            "api": api,
+                            "url": payload.get("url"),
+                            "model": payload.get("model"),
+                            "estimated_input_tokens": payload.get("estimated_input_tokens"),
+                            "cache_status": cache.get("status"),
+                            "cache_reason": cache.get("reason"),
+                            "planned_index": cache.get("planned_index"),
+                            "anchor": cache.get("message_id"),
+                            "wire_prefix_sha256": digest,
+                            "wire_breakpoint": location,
+                            "wire_tools_sha256": fingerprint(body.get("tools", [])),
+                            "wire_system_sha256": fingerprint(
+                                body.get(
+                                    "system",
+                                    [
+                                        m
+                                        for m in body.get("messages", [])
+                                        if m.get("role") in ("system", "developer")
+                                    ],
+                                )
+                            ),
+                        }
+                    )
                 elif event["kind"] == "usage":
                     usage = payload.get("usage", {})
                     raw = usage.get("raw_usage")
                     # Half Agent aggregates several provider calls in one event.
                     parts = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
-                    normalized = [normalize_usage(part, last_api.get(purpose, "chat_completions")) for part in parts]
-                    current = {k: (sum(v[k] for v in normalized) if all(v[k] is not None for v in normalized) else None)
-                               for k in ("prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens")} if normalized else {
-                                   k: usage.get(k) for k in ("prompt_tokens", "completion_tokens", "cached_tokens", "cache_write_tokens")}
-                    row["usage"].append({"seq": event["seq"], "purpose": purpose, **current,
-                        "renormalized": any(current[k] != usage.get(k) for k in current)})
+                    normalized = [
+                        normalize_usage(part, last_api.get(purpose, "chat_completions")) for part in parts
+                    ]
+                    current = (
+                        {
+                            k: (
+                                sum(v[k] for v in normalized)
+                                if all(v[k] is not None for v in normalized)
+                                else None
+                            )
+                            for k in (
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "cached_tokens",
+                                "cache_write_tokens",
+                            )
+                        }
+                        if normalized
+                        else {
+                            k: usage.get(k)
+                            for k in (
+                                "prompt_tokens",
+                                "completion_tokens",
+                                "cached_tokens",
+                                "cache_write_tokens",
+                            )
+                        }
+                    )
+                    row["usage"].append(
+                        {
+                            "seq": event["seq"],
+                            "purpose": purpose,
+                            **current,
+                            "renormalized": any(current[k] != usage.get(k) for k in current),
+                        }
+                    )
                 elif event["kind"] == "full_agent_tool":
-                    row["tools"].append({"name": payload.get("name"), "success": "error" not in payload.get("result", {})})
+                    row["tools"].append(
+                        {"name": payload.get("name"), "success": "error" not in payload.get("result", {})}
+                    )
             result["turns"].append(row)
     return result
 

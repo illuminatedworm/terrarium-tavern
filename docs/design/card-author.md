@@ -89,6 +89,6 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 
 旧 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层；多卡操作必须明确目标。旧 new-context 只复制完成的单卡草稿，不复制旧聊天或未提交修改。
 
-打开 schema 1/2 数据库先只读验证并创建 `before-card-editor-v3-*.sqlite3` 备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源，随后与参谋数据表初始化一同升级到 schema 4，再继续升级到 schema 5；schema 6 原地把 `card_editor_*` 表改名为 `card_author_*`，见[设置存储](../reference/settings-api.md#数据库与设置迁移)。回退旧程序使用升级前备份。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
+打开 schema 1/2 数据库先只读验证并创建升级前备份。编辑迁移在事务内保留旧会话 ID、卡片基准、聊天、撤销与资源；schema 6 原地把 `card_editor_*` 表改名为 `card_author_*`，见[设置存储](../reference/settings-api.md#数据库与设置迁移)。回退旧程序使用升级前备份。备份包含进度；清理保护未保存及待续数据，资源回收考虑引用、草稿、撤销快照和正式故事。
 
 界面：[CardWorkspace.vue](../../web/components/character/CardWorkspace.vue)。运行和上下文：[editor_run.py](../../src/tavern/character/editor_run.py)、[editor_context.py](../../src/tavern/character/editor_context.py)。回归：[test_card_authoring.py](../../tests/backend/test_card_authoring.py)、[test_card_author_alignment.py](../../tests/backend/test_card_author_alignment.py)、[浏览器验收](../../tests/browser/browser_card_authoring.py)。真实模型评测显式运行 tools/evaluate_card_author.py，使用隔离数据与累计 60 请求计数，报告仅保存到忽略目录。

@@ -30,4 +30,6 @@ def test_backup_restore_preserves_story_assets_after_card_deletion(tmp_path):
     restored = restore(archive, tmp_path / "restored")
     assert restored.cards() == []
     assert restored.session_card(session["id"]) == store.session_card(session["id"])
-    assert (restored.root / "blobs" / card["original"]).read_bytes() == (store.root / "blobs" / card["original"]).read_bytes()
+    assert (restored.root / "blobs" / card["original"]).read_bytes() == (
+        store.root / "blobs" / card["original"]
+    ).read_bytes()

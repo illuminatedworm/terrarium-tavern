@@ -16,7 +16,7 @@ const links = computed(() => webSources([{ web_sources: props.sources }]));
 </template>
 <style scoped>
 .web-sources {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin-block: 8px;
   overflow-wrap: anywhere;

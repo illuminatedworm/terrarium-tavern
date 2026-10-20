@@ -27,6 +27,7 @@ class TurnAgent:
         self.compiled = None
         self.calls = 0
         from tavern.memories.history_recall import HistoryBudget
+
         self.history_recall_budget = HistoryBudget()
         self.settings = (settings or store.settings()).for_role("foreground")
         self.settings.cache_scope = session["id"]
@@ -62,9 +63,15 @@ class TurnAgent:
             replay_records=load_trace(self.store, self.session["id"], self.history),
         )
         prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
-        if self.compiled["estimated_tokens"] > self.settings.context_tokens - self.settings.reply_tokens - 2048:
-            self.store.event(self.tid, "context_warning", {"purpose": "writer",
-                                                       "message": "正文请求估算超出模型上下文，仍完整发送"})
+        if (
+            self.compiled["estimated_tokens"]
+            > self.settings.context_tokens - self.settings.reply_tokens - 2048
+        ):
+            self.store.event(
+                self.tid,
+                "context_warning",
+                {"purpose": "writer", "message": "正文请求估算超出模型上下文，仍完整发送"},
+            )
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
 
@@ -77,6 +84,7 @@ class TurnAgent:
             # Compatibility entry delegates to the dedicated compiler; never
             # install maintenance instructions into Writer's context.
             from tavern.memories.memory import Tracker
+
             return await Tracker(self.store).maintain(self, provider)
         owner = self
         self.calls = 0
@@ -106,40 +114,69 @@ class TurnAgent:
                 try:
                     context = owner.compile()
                     from tavern.conversation.half_compaction import enabled, install
+
                     if enabled(owner.settings) and not owner.compact_checked:
                         owner.compact_checked = True
-                        if (owner.settings.compact_auto and context["estimated_tokens"] > owner.settings.context_tokens
-                                and context["_replay_complete"]):
+                        if (
+                            owner.settings.compact_auto
+                            and context["estimated_tokens"] > owner.settings.context_tokens
+                            and context["_replay_complete"]
+                        ):
                             from tavern.conversation.compaction import prepare_turn
+
                             narrative_context = provider.request_context
                             capture = getattr(provider, "capture", None)
+
                             def maintenance_event(kind, payload):
-                                owner.store.event(owner.tid, kind, {**payload, "purpose": "context_maintenance"})
+                                owner.store.event(
+                                    owner.tid, kind, {**payload, "purpose": "context_maintenance"}
+                                )
+
                             async def progress(value):
-                                maintenance_event("context_replay", {k: value[k] for k in ("batches", "processed", "total")})
+                                maintenance_event(
+                                    "context_replay", {k: value[k] for k in ("batches", "processed", "total")}
+                                )
                                 maintenance_event("usage", {"usage": value["usage"][-1], "calls": 1})
                                 owner.compact_calls += 1
-                            configure_operation(provider, owner.operation_contexts.new("context_maintenance"),
-                                                maintenance_event, "context_maintenance")
+
+                            configure_operation(
+                                provider,
+                                owner.operation_contexts.new("context_maintenance"),
+                                maintenance_event,
+                                "context_maintenance",
+                            )
                             if hasattr(provider, "capture"):
-                                provider.capture = lambda payload: maintenance_event("provider_request", payload)
+                                provider.capture = lambda payload: maintenance_event(
+                                    "provider_request", payload
+                                )
                             try:
-                                checkpoint = await prepare_turn(context, owner.settings, provider, save=progress)
+                                checkpoint = await prepare_turn(
+                                    context, owner.settings, provider, save=progress
+                                )
                                 install(owner.snapshot, checkpoint, context, owner.history)
                             finally:
-                                configure_operation(provider, narrative_context,
-                                    lambda kind, payload: owner.store.event(owner.tid, kind, payload), "narrative")
+                                configure_operation(
+                                    provider,
+                                    narrative_context,
+                                    lambda kind, payload: owner.store.event(owner.tid, kind, payload),
+                                    "narrative",
+                                )
                                 if hasattr(provider, "capture"):
                                     provider.capture = capture
                             context = owner.compile()
                             maintenance_event("context_compacted", {"message": "云端已压缩已完成的交流"})
                     compiled = model_messages(context)
                     provider.request_context.diagnostics = copy.deepcopy(context.get("context_ledger", {}))
-                    provider.request_context.window_id = context.get("half_agent_record", {}).get("window", "")
+                    provider.request_context.window_id = context.get("half_agent_record", {}).get(
+                        "window", ""
+                    )
                     owner.store.set_turn(owner.tid, preview=json.dumps(context, ensure_ascii=False))
                     if context.get("context_ledger", {}).get("rebuild_reason"):
-                        owner.store.event(owner.tid, "context_baseline", {
-                            "purpose": "narrative", **context["context_ledger"]})
+                        owner.store.event(
+                            owner.tid,
+                            "context_baseline",
+                            {"purpose": "narrative", **context["context_ledger"]},
+                        )
                     return provider_messages(provider, compiled, owner.settings)
                 except Exception as error:
                     from kohakuterrarium.modules.plugin import PluginBlockError
@@ -164,8 +201,12 @@ class TurnAgent:
                 ),
             )
         purpose = "narrative"
-        configure_operation(provider, self.operation_contexts.new(purpose),
-                            lambda kind, payload: self.store.event(self.tid, kind, payload), purpose)
+        configure_operation(
+            provider,
+            self.operation_contexts.new(purpose),
+            lambda kind, payload: self.store.event(self.tid, kind, payload),
+            purpose,
+        )
         config = AgentConfig(
             name="terrarium-tavern-writer",
             system_prompt=self.settings.system_prompt,
@@ -188,9 +229,7 @@ class TurnAgent:
                 tools=[],
                 plugins=[ContextPlugin()],
                 io="headless",
-                session=self.store.root
-                / "runs"
-                / f"{self.tid}.kohakutr",
+                session=self.store.root / "runs" / f"{self.tid}.kohakutr",
             )
             self.agent = creature.agent
             async for event in creature.run_stream(self.request.text or "继续剧情"):
@@ -205,8 +244,12 @@ class TurnAgent:
                     self.store.event(
                         self.tid,
                         "activity",
-                        {"kind": event.kind, "message": event.detail, "metadata": event.metadata,
-                         "purpose": "narrative"},
+                        {
+                            "kind": event.kind,
+                            "message": event.detail,
+                            "metadata": event.metadata,
+                            "purpose": "narrative",
+                        },
                     )
             if result is None or result.status != "ok":
                 raise ValueError(
@@ -218,14 +261,19 @@ class TurnAgent:
                 {
                     "purpose": "narrative",
                     "calls": self.calls,
-                    "usage": (provider.usage_history[-1] if self.compact_calls and getattr(provider, "usage_history", [])
-                              else getattr(provider, "reported_usage", None) or result.usage or {}),
+                    "usage": (
+                        provider.usage_history[-1]
+                        if self.compact_calls and getattr(provider, "usage_history", [])
+                        else getattr(provider, "reported_usage", None) or result.usage or {}
+                    ),
                     "duration_s": result.duration_s,
                 },
             )
             if not result.text.strip():
                 raise ValueError("模型没有返回正文。请降低思考强度或增大单次输出上限；本轮未提交。")
-            clean, self.retrieval_query, diagnostics = split_retrieval(result.text, self.settings.retrieval.query_chars)
+            clean, self.retrieval_query, diagnostics = split_retrieval(
+                result.text, self.settings.retrieval.query_chars
+            )
             self.clean_response = clean
             self.native_response = copy.deepcopy(getattr(provider, "last_native_response", None))
             tail = parser.feed("", final=True)

@@ -18,14 +18,21 @@ GUIDE = Path(__file__).parents[2] / "src/tavern/skills/adapt-card-to-tavern/refe
 
 
 def recipe():
-    return [json.loads(block) for block in re.findall(r"```json\n([\s\S]*?)\n```", GUIDE.read_text(encoding="utf-8"))]
+    return [
+        json.loads(block)
+        for block in re.findall(r"```json\n([\s\S]*?)\n```", GUIDE.read_text(encoding="utf-8"))
+    ]
 
 
 def document():
     rule, _ = recipe()
-    return {"name": "正则前端夹具", "first_mes": "客人来到柜台。", "alternate_greetings": [],
-            "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]},
-            "extensions": {"regex_scripts": [rule], "unknown": {"preserve": True}}}
+    return {
+        "name": "正则前端夹具",
+        "first_mes": "客人来到柜台。",
+        "alternate_greetings": [],
+        "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]},
+        "extensions": {"regex_scripts": [rule], "unknown": {"preserve": True}},
+    }
 
 
 async def test_published_recipe_is_available_written_and_tested_through_editor_tools(tmp_path):
@@ -36,13 +43,21 @@ async def test_published_recipe_is_available_written_and_tested_through_editor_t
     editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     rule, probe = recipe()
-    provider = ToolLLM([
-        ("read_skill", {"resource": "references/regex-display.md"}),
-        ("read_field", {"card_ref": "C1", "path": "/extensions"}),
-        ("patch_draft", {"card_ref": "C1", "comment": "保留原状态界面并绑定 MVU", "operations": [
-            {"op": "add", "path": "/extensions/regex_scripts/-", "value": rule}]}),
-        ("test_draft", probe),
-    ])
+    provider = ToolLLM(
+        [
+            ("read_skill", {"resource": "references/regex-display.md"}),
+            ("read_field", {"card_ref": "C1", "path": "/extensions"}),
+            (
+                "patch_draft",
+                {
+                    "card_ref": "C1",
+                    "comment": "保留原状态界面并绑定 MVU",
+                    "operations": [{"op": "add", "path": "/extensions/regex_scripts/-", "value": rule}],
+                },
+            ),
+            ("test_draft", probe),
+        ]
+    )
     try:
         result = await run(editor, workspace["id"], provider)
         assert result["status"] == "completed", result["error"]
@@ -108,19 +123,31 @@ async def test_display_document_ready_and_literal_markup_values(tmp_path):
     doc = document()
     doc["character_book"]["entries"][0]["content"] = "Money: '0'"
     rule = doc["extensions"]["regex_scripts"][0]
-    rule["replaceString"] = rule["replaceString"].replace(
-        "<script>", "<script>document.addEventListener('DOMContentLoaded', () => {").replace("</script>", "});</script>")
+    rule["replaceString"] = (
+        rule["replaceString"]
+        .replace("<script>", "<script>document.addEventListener('DOMContentLoaded', () => {")
+        .replace("</script>", "});</script>")
+    )
     value = '</script><div id="injected">文本</div>'
-    result = await probe_card(Store(tmp_path), {"ref": "C1", "document": doc},
-                              samples=['```\n普通叙事代码块\n```\n客人进门。\n'],
-                              display_assertions=[{"sample_index": 1, "selector": "#money", "text": "0", "after_text": value}],
-                              state_patch=[{"op": "replace", "path": "/Money", "value": value}])
+    result = await probe_card(
+        Store(tmp_path),
+        {"ref": "C1", "document": doc},
+        samples=["```\n普通叙事代码块\n```\n客人进门。\n"],
+        display_assertions=[{"sample_index": 1, "selector": "#money", "text": "0", "after_text": value}],
+        state_patch=[{"op": "replace", "path": "/Money", "value": value}],
+    )
     assert result["status"] == "passed", result
     assert result["checks"][-1]["assertions"][0]["actual"] == value
 
 
-@pytest.mark.parametrize("rules", [None, [{"regex": "x", "replacement": "y"}],
-                                  [{"findRegex": "x", "replaceString": "<script>1</script>", "placement": ["2"], "disabled": "false"}]])
+@pytest.mark.parametrize(
+    "rules",
+    [
+        None,
+        [{"regex": "x", "replacement": "y"}],
+        [{"findRegex": "x", "replaceString": "<script>1</script>", "placement": ["2"], "disabled": "false"}],
+    ],
+)
 def test_regex_diagnostics_explain_ignored_or_invalid_fields_without_mutating(rules):
     doc = document()
     doc["extensions"]["regex_scripts"] = rules

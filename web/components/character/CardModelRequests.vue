@@ -20,7 +20,7 @@ defineProps<{ requests: EditorAction[] }>();
   padding: 0;
   margin: 0;
   color: var(--text-muted);
-  font: 11px/1.6 var(--font-ui);
+  font: var(--fs-xs) / 1.6 var(--font-ui);
 }
 .cw-model-requests li {
   display: flex;

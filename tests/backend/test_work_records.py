@@ -44,8 +44,16 @@ def test_event_list_is_compact_paged_and_excludes_narrative_data(tmp_path):
     tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="events", expected_revision=0))
     store.event(tid, "maintenance_started", {})
     secret_large_content = "FULL_INPUT_DATA" * 10000
-    seq = store.event(tid, "provider_request", {"purpose": "maintenance", "model": "fixture",
-                                              "messages": [{"role": "user", "content": secret_large_content}], "tools": []})
+    seq = store.event(
+        tid,
+        "provider_request",
+        {
+            "purpose": "maintenance",
+            "model": "fixture",
+            "messages": [{"role": "user", "content": secret_large_content}],
+            "tools": [],
+        },
+    )
     store.event(tid, "activity", {"kind": "tool_started", "message": "read_state"})
     store.event(tid, "provider_request", {"purpose": "narrative", "messages": []})
     store.event(tid, "activity", {"kind": "narrative_call"})
@@ -55,7 +63,10 @@ def test_event_list_is_compact_paged_and_excludes_narrative_data(tmp_path):
     first = store.work_events(session["id"], tid, limit=2)
     second = store.work_events(session["id"], tid, after=first["next"], limit=2)
     assert [e["kind"] for e in first["items"] + second["items"]] == [
-        "maintenance_started", "provider_request", "activity", "committed",
+        "maintenance_started",
+        "provider_request",
+        "activity",
+        "committed",
     ]
     assert first["items"][1]["bytes"] > 100000
     assert "FULL_INPUT_DATA" not in json.dumps(first)

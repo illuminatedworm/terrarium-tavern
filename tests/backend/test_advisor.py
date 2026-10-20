@@ -1,4 +1,5 @@
 """Advisor authorization, complete context, branch ownership and recovery."""
+
 import copy
 
 import pytest
@@ -22,7 +23,15 @@ def setup(tmp_path, mode="full_agent"):
 
 async def ask(advisor, sid, provider, text="现在应该怎么办？", resume=None):
     advisor.provider_factory = lambda: provider
-    run = advisor.submit(sid, ConsultationRequest(text=text, expected_revision=advisor.data.get(sid)["revision"], operation_id=uid(), resume_run_id=resume))
+    run = advisor.submit(
+        sid,
+        ConsultationRequest(
+            text=text,
+            expected_revision=advisor.data.get(sid)["revision"],
+            operation_id=uid(),
+            resume_run_id=resume,
+        ),
+    )
     await advisor.tasks[run["id"]]
     return advisor.data.run(run["id"])
 
@@ -49,7 +58,9 @@ async def test_readonly_chat_and_complete_history(tmp_path, mode):
 
 async def test_preference_commits_and_respects_latest_revision(tmp_path):
     _, store, session, advisor = setup(tmp_path)
-    provider = ToolLLM([("update_turn_preference", {"action": "append", "content": "多写对话", "request_ref": "Q1"})])
+    provider = ToolLLM(
+        [("update_turn_preference", {"action": "append", "content": "多写对话", "request_ref": "Q1"})]
+    )
     result = await ask(advisor, session["id"], provider, "把多写对话加入本轮偏好")
     assert result["status"] == "completed", result
     assert store.session(session["id"])["turn_preference"] == "多写对话"
@@ -58,8 +69,13 @@ async def test_preference_commits_and_respects_latest_revision(tmp_path):
 
 async def test_offers_are_visible_calls_without_story_writes(tmp_path):
     _, store, session, advisor = setup(tmp_path)
-    provider = ToolLLM([("read_story_context", {"field": "title"}), ("offer_titles", {"titles": [" 雨夜来客 "], "request_ref": "Q1"}),
-                        ("offer_inputs", {"options": []})])
+    provider = ToolLLM(
+        [
+            ("read_story_context", {"field": "title"}),
+            ("offer_titles", {"titles": [" 雨夜来客 "], "request_ref": "Q1"}),
+            ("offer_inputs", {"options": []}),
+        ]
+    )
     result = await ask(advisor, session["id"], provider, "给对话起几个标题")
     assert result["status"] == "completed", result
     after = store.session(session["id"])
@@ -79,7 +95,12 @@ class Failure(ToolLLM):
 
 async def test_failed_preference_is_staged_and_resume_is_exactly_once(tmp_path):
     _, store, session, advisor = setup(tmp_path)
-    failed = await ask(advisor, session["id"], Failure([("update_turn_preference", {"action": "append", "content": "悬念", "request_ref": "Q1"})]), "加入偏好：悬念")
+    failed = await ask(
+        advisor,
+        session["id"],
+        Failure([("update_turn_preference", {"action": "append", "content": "悬念", "request_ref": "Q1"})]),
+        "加入偏好：悬念",
+    )
     assert failed["resumable"]
     assert store.session(session["id"])["turn_preference"] == ""
     completed = await ask(advisor, session["id"], ToolLLM([]), "", failed["id"])
@@ -90,11 +111,21 @@ async def test_failed_preference_is_staged_and_resume_is_exactly_once(tmp_path):
 
 async def test_discard_never_applies_staged_preference(tmp_path):
     app, store, session, advisor = setup(tmp_path)
-    await ask(advisor, session["id"], Failure([("update_turn_preference", {"action": "replace", "content": "旧提案", "request_ref": "Q1"})]), "替换偏好")
+    await ask(
+        advisor,
+        session["id"],
+        Failure(
+            [("update_turn_preference", {"action": "replace", "content": "旧提案", "request_ref": "Q1"})]
+        ),
+        "替换偏好",
+    )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
-        response = await client.post(f"/api/sessions/{session['id']}/advisor/discard", json={
-            "expected_revision": advisor.data.get(session["id"])["revision"],
-        })
+        response = await client.post(
+            f"/api/sessions/{session['id']}/advisor/discard",
+            json={
+                "expected_revision": advisor.data.get(session["id"])["revision"],
+            },
+        )
         assert response.status_code == 200, response.text
     assert store.session(session["id"])["turn_preference"] == ""
     assert not advisor.public(session["id"])["run"]["resumable"]

@@ -1,4 +1,5 @@
 """Window-local evidence of complete card values; never sent to the model."""
+
 import jsonpointer
 
 from tavern.core.cache_policy import fingerprint
@@ -19,7 +20,9 @@ def remember(reads, ref, document, path):
 
     def visit(value, pointer):
         records[pointer] = fingerprint(value)
-        children = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+        children = (
+            value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else []
+        )
         for key, child in children:
             if not hidden_field(str(key)):
                 visit(child, pointer + "/" + str(key).replace("~", "~0").replace("/", "~1"))
@@ -55,10 +58,16 @@ def reconcile(reads, cards):
 def after_patch(reads, ref, before, after, operations):
     """Carry known deterministic writes without blessing unseen array neighbours."""
     paths = [op[key] for op in operations for key in ("path", "from") if key in op]
-    covering = [path for path in reads.get(ref, {})
-                if all(contains(path, target) for target in paths) and known(reads, ref, before, path)
-                and not any((op["op"] == "remove" and op["path"] == path)
-                            or (op["op"] == "move" and op["from"] == path) for op in operations)]
+    covering = [
+        path
+        for path in reads.get(ref, {})
+        if all(contains(path, target) for target in paths)
+        and known(reads, ref, before, path)
+        and not any(
+            (op["op"] == "remove" and op["path"] == path) or (op["op"] == "move" and op["from"] == path)
+            for op in operations
+        )
+    ]
     if covering:
         path = min(covering, key=len)
         try:
@@ -70,8 +79,11 @@ def after_patch(reads, ref, before, after, operations):
         if op["op"] not in {"add", "replace", "copy", "move"}:
             continue
         try:
-            value = (jsonpointer.resolve_pointer(before, op["from"]) if op["op"] in {"copy", "move"}
-                     else op["value"])
+            value = (
+                jsonpointer.resolve_pointer(before, op["from"])
+                if op["op"] in {"copy", "move"}
+                else op["value"]
+            )
             path = op["path"]
             if path.endswith("/-"):
                 parent = path.rpartition("/")[0]

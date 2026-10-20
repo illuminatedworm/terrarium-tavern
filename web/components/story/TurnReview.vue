@@ -72,7 +72,7 @@ function valueAt(value: unknown, path: string) {
 }
 .review-values span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .review-values pre {
   max-height: 240px;

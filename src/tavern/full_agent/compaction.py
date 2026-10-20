@@ -1,4 +1,5 @@
 """Full Agent handoff conversion and window-local read permissions."""
+
 import copy
 
 from tavern.conversation.compaction import canonical, checkpoint_items, hashes, replay_batch, replay_groups
@@ -33,19 +34,32 @@ async def rebuild_local(compiled, settings, provider, *, progress=None, save=Non
     header, body = compiled["_replay_header"], compiled["_replay_body"]
     starts = compiled["_replay_starts"]
     groups = replay_groups(body, starts)
-    identity = fingerprint({"header": header, "body": body, "starts": starts,
-                            "tools": compiled["tools"], "origin": response_origin(settings),
-                            "limit": settings.context_tokens, "handoff_tokens": settings.full_agent_config.handoff_tokens})
+    identity = fingerprint(
+        {
+            "header": header,
+            "body": body,
+            "starts": starts,
+            "tools": compiled["tools"],
+            "origin": response_origin(settings),
+            "limit": settings.context_tokens,
+            "handoff_tokens": settings.full_agent_config.handoff_tokens,
+        }
+    )
     state = copy.deepcopy(progress or {})
     if state.get("identity") != identity:
         state = {"identity": identity, "cursor": 0, "retained": 0, "handoff": "", "batches": 0, "usage": []}
     position = state["cursor"]
     while position < len(groups):
-        memory = ([{"role": "system", "content": "<tavern_memory>\n" + state["handoff"] + "\n</tavern_memory>"}]
-                  if state["handoff"] else [])
-        retained = [m for g in groups[state["retained"]:position] for m in g]
+        memory = (
+            [{"role": "system", "content": "<tavern_memory>\n" + state["handoff"] + "\n</tavern_memory>"}]
+            if state["handoff"]
+            else []
+        )
+        retained = [m for g in groups[state["retained"] : position] for m in g]
         prefix = header + memory + retained
-        end, batch = replay_batch(groups, position, prefix, settings, compiled["tools"], settings.context_tokens)
+        end, batch = replay_batch(
+            groups, position, prefix, settings, compiled["tools"], settings.context_tokens
+        )
         messages = prefix + batch
         if request_tokens(messages, settings, compiled["tools"]) < settings.context_tokens:
             position = end
@@ -53,9 +67,14 @@ async def rebuild_local(compiled, settings, provider, *, progress=None, save=Non
         text, usage = await make_handoff({"messages": messages}, settings, provider)
         position = end
         # Keep the last whole exchange, including its tools and anchored lore.
-        state.update(cursor=position, retained=max(0, position - 1), handoff=text,
-                     batches=state["batches"] + 1,
-                     processed=sum(len(g) for g in groups[:position]), total=len(body))
+        state.update(
+            cursor=position,
+            retained=max(0, position - 1),
+            handoff=text,
+            batches=state["batches"] + 1,
+            processed=sum(len(g) for g in groups[:position]),
+            total=len(body),
+        )
         state["usage"].append(copy.deepcopy(usage))
         if save:
             await save(copy.deepcopy(state))

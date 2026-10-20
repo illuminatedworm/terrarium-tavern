@@ -43,45 +43,81 @@ def test_defaults_and_custom_prompts():
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
     assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
-    assert all("用户对行动结果的描述，不自动决定其他人物的反应" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT))
+    assert all(
+        "用户对行动结果的描述，不自动决定其他人物的反应" in prompt
+        for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT)
+    )
     assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
     assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
     # Keep the source excerpts as evidence; only the requested boundary markers
     # and references to omitted ST wrappers differ from these saved originals.
-    source = json.loads((Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8"))
+    source = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8")
+    )
     kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True, filler_text="用户填充原文")
     for field in ("clear_prompt", "identity_prompt", "info_prompt", "thinking_prompt", "disclaimer_text"):
         expected = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[field], flags=re.S)
         if field == "clear_prompt":
-            expected = expected.replace("</clear>", "---").replace("after <Interleaving>", "after the Markdown separator")
+            expected = expected.replace("</clear>", "---").replace(
+                "after <Interleaving>", "after the Markdown separator"
+            )
         elif field == "info_prompt":
             expected = expected.replace("<info>", "---")
         elif field == "thinking_prompt":
-            expected = (expected.replace("<Interleaving>", "---").replace("</Interleaving>", "---")
-                        .replace("<interactive_input>", "当前用户输入").replace("<char_guide>", "角色设定"))
+            expected = (
+                expected.replace("<Interleaving>", "---")
+                .replace("</Interleaving>", "---")
+                .replace("<interactive_input>", "当前用户输入")
+                .replace("<char_guide>", "角色设定")
+            )
         assert getattr(kemini, field) == expected
     transport = source["transport_prompt"].replace("${toolName}", TOOL_NAME)
     assert kemini.transport_prompt == transport
     frames = prefix_frames(kemini)
     assert [m["source"] for m in frames] == list(PREFIX_SOURCES)
     assert [m["role"] for m in frames] == ["user", "system", "user", "system"]
-    assert [m["content"] for m in frames] == [kemini.filler_text, kemini.clear_prompt, source["identity_prompt"], kemini.info_prompt]
-    assert control_text(kemini) == "\n\n".join([
-        kemini.thinking_prompt, kemini.content_prompt, kemini.disclaimer_text, transport, kemini.output_prompt])
+    assert [m["content"] for m in frames] == [
+        kemini.filler_text,
+        kemini.clear_prompt,
+        source["identity_prompt"],
+        kemini.info_prompt,
+    ]
+    assert control_text(kemini) == "\n\n".join(
+        [
+            kemini.thinking_prompt,
+            kemini.content_prompt,
+            kemini.disclaimer_text,
+            transport,
+            kemini.output_prompt,
+        ]
+    )
     assert "你会在</think>后直接以<thinking>进行首次思考" in kemini.output_prompt
     assert kemini.output_prompt.endswith("---") and "不少于1000字" in kemini.content_prompt
-    assert not any(tag in control_text(kemini) for tag in ("<Interleaving>", "<plot_guide>", "<char_guide>", "殷仙龄"))
+    assert not any(
+        tag in control_text(kemini) for tag in ("<Interleaving>", "<plot_guide>", "<char_guide>", "殷仙龄")
+    )
     declaration = transport_tools([], kemini)[0]["function"]
     assert declaration["description"] == source["tool_description"]
-    assert declaration["parameters"] == {"type": "object", "properties": {"content": {
-        "type": "string", "description": source["content_description"]}}, "required": ["content"]}
+    assert declaration["parameters"] == {
+        "type": "object",
+        "properties": {"content": {"type": "string", "description": source["content_description"]}},
+        "required": ["content"],
+    }
     # Upgrading settings adds visible fields without replacing saved user text.
     old = SettingsDocument().model_dump()
     old["version"] = 5
     old["shared"]["kemini"]["identity_prompt"] = "已保存的身份"
-    added = ("clear_prompt", "info_prompt", "transport_prompt", "tool_description", "content_description",
-             "roleplay_prompt", "content_prompt", "output_prompt")
+    added = (
+        "clear_prompt",
+        "info_prompt",
+        "transport_prompt",
+        "tool_description",
+        "content_description",
+        "roleplay_prompt",
+        "content_prompt",
+        "output_prompt",
+    )
     for field in added:
         old["shared"]["kemini"].pop(field)
     migrated = migrate_settings(old)
@@ -98,7 +134,9 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
     raw = store.settings_document().model_dump()
     raw["version"] = 6
     fields = raw["shared"]["kemini"]
-    source = json.loads((Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8"))
+    source = json.loads(
+        (Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8")
+    )
     for key in ("clear_prompt", "info_prompt", "thinking_prompt"):
         fields[key] = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[key], flags=re.S)
     for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
@@ -118,13 +156,14 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
         assert getattr(upgraded.shared.kemini, key) == fields[key]
     for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
         assert getattr(upgraded.shared.kemini, key) == getattr(KeminiConfig(), key)
-    backups = list(tmp_path.glob("before-kemini-tail-v7-*.sqlite3"))
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     import sqlite3
+
     with sqlite3.connect(backups[0]) as db:
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     assert Store(tmp_path).settings_document() == upgraded
-    assert list(tmp_path.glob("before-kemini-tail-v7-*.sqlite3")) == backups
+    assert list(tmp_path.glob("before-upgrade-*.sqlite3")) == backups
 
 
 def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text(tmp_path):
@@ -143,7 +182,15 @@ def test_saved_legacy_retrieval_default_is_upgraded_without_changing_custom_text
     assert Store(tmp_path).settings().retrieval.protocol_prompt == "自定义检索协议"
 
 
-@pytest.mark.parametrize("fixture", ["advisor_prompt_before_independent.txt", "advisor_prompt_before_gui.txt", "advisor_prompt_before_agent_name.txt", "advisor_prompt_before_tag_map.txt"])
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        "advisor_prompt_before_independent.txt",
+        "advisor_prompt_before_gui.txt",
+        "advisor_prompt_before_agent_name.txt",
+        "advisor_prompt_before_tag_map.txt",
+    ],
+)
 def test_advisor_default_upgrade_preserves_custom_text_and_is_idempotent(tmp_path, fixture):
     from tavern.advisor.config import SYSTEM
     from tavern.storage.store import Store
@@ -174,24 +221,41 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             response = (await client.get("/api/settings")).json()
-            assert {item["scope"] for item in response["prompt_definitions"]} == {"full_agent", "half_agent", "shared"}
-            system_prompts = {item["scope"]: item for item in response["prompt_definitions"]
-                              if item["path"] == "system_prompt"}
+            assert {item["scope"] for item in response["prompt_definitions"]} == {
+                "full_agent",
+                "half_agent",
+                "shared",
+            }
+            system_prompts = {
+                item["scope"]: item
+                for item in response["prompt_definitions"]
+                if item["path"] == "system_prompt"
+            }
             assert system_prompts["full_agent"]["default"] == FULL_AGENT_PROMPT
             assert system_prompts["half_agent"]["default"] == DEFAULT_SYSTEM_PROMPT
             assert "叙事、连续性与可选剧情规划原则" in system_prompts["full_agent"]["description"]
-            assert "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
+            assert (
+                "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
+            )
             assert "前台 Writer" in system_prompts["half_agent"]["description"]
             for scope in ("full_agent", "half_agent", "shared"):
                 prompts = [item for item in response["prompt_definitions"] if item["scope"] == scope]
                 changes = {item["path"]: "CUSTOM " + scope + item["path"] for item in prompts}
-                saved = await client.patch(f"/api/settings/{scope}", json={"expected_revision": response["revisions"][scope], "changes": changes})
+                saved = await client.patch(
+                    f"/api/settings/{scope}",
+                    json={"expected_revision": response["revisions"][scope], "changes": changes},
+                )
                 assert saved.status_code == 200, saved.text
                 response = (await client.get("/api/settings")).json()
                 for item in prompts:
                     assert read_path(response[scope], item["path"]) == changes[item["path"]]
-                restored = await client.patch(f"/api/settings/{scope}", json={"expected_revision": response["revisions"][scope],
-                    "changes": {item["path"]: item["default"] for item in prompts}})
+                restored = await client.patch(
+                    f"/api/settings/{scope}",
+                    json={
+                        "expected_revision": response["revisions"][scope],
+                        "changes": {item["path"]: item["default"] for item in prompts},
+                    },
+                )
                 assert restored.status_code == 200, restored.text
                 response = restored.json()
                 for item in prompts:
@@ -201,16 +265,37 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
 
 
 def test_custom_instructions_and_memory_reach_wire_messages():
-    settings = Settings(system_prompt="RP CUSTOM", preference_prompt="PREF CUSTOM",
-                        regenerate_prompt="REGEN CUSTOM", retrieval={"channels": ["keyword"],
-                        "protocol_prompt": "PROTOCOL CUSTOM", "query_prompt": "QUERY CUSTOM"})
-    result = compile_context({"name": "角色"}, {"id": "s", "persona": "玩家",
-        "turn_preference": "放缓节奏", "recipe": ContextRecipe().model_dump()}, [],
+    settings = Settings(
+        system_prompt="RP CUSTOM",
+        preference_prompt="PREF CUSTOM",
+        regenerate_prompt="REGEN CUSTOM",
+        retrieval={
+            "channels": ["keyword"],
+            "protocol_prompt": "PROTOCOL CUSTOM",
+            "query_prompt": "QUERY CUSTOM",
+        },
+    )
+    result = compile_context(
+        {"name": "角色"},
+        {"id": "s", "persona": "玩家", "turn_preference": "放缓节奏", "recipe": ContextRecipe().model_dump()},
+        [],
         {"state": {}, **memory_snapshot("昨日抵达灯塔", "约定明日见面")},
-        "继续", settings, "seed", turn_instruction="多用对白")
+        "继续",
+        settings,
+        "seed",
+        turn_instruction="多用对白",
+    )
     text = "\n".join(m["content"] for m in result["messages"])
-    for expected in ["RP CUSTOM", "PREF CUSTOM\n放缓节奏", "REGEN CUSTOM\n多用对白",
-                     "PROTOCOL CUSTOM", "QUERY CUSTOM", "昨日抵达灯塔", "约定明日见面", "<tavern_memory>"]:
+    for expected in [
+        "RP CUSTOM",
+        "PREF CUSTOM\n放缓节奏",
+        "REGEN CUSTOM\n多用对白",
+        "PROTOCOL CUSTOM",
+        "QUERY CUSTOM",
+        "昨日抵达灯塔",
+        "约定明日见面",
+        "<tavern_memory>",
+    ]:
         assert expected in text
     assert render_memory({}) == ""
     assert "<tavern_retrieval>" in query_instruction(settings.retrieval)
@@ -263,8 +348,16 @@ async def test_probe_uses_saved_prompt_overrides(tmp_path, monkeypatch):
     monkeypatch.setattr(tavern.scripting.agent, "make_provider", make_provider)
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
-            saved = await client.patch("/api/settings/half_agent", json={"expected_revision": 0, "changes": {
-                "probe_system_prompt": "PROBE CUSTOM", "probe_marker_prompt": "MARKER CUSTOM TAVERN_MID_42"}})
+            saved = await client.patch(
+                "/api/settings/half_agent",
+                json={
+                    "expected_revision": 0,
+                    "changes": {
+                        "probe_system_prompt": "PROBE CUSTOM",
+                        "probe_marker_prompt": "MARKER CUSTOM TAVERN_MID_42",
+                    },
+                },
+            )
             assert saved.status_code == 200
             response = await client.post("/api/settings/probe")
             assert response.status_code == 200, response.text

@@ -126,8 +126,8 @@ onBeforeUnmount(() => {
   padding: 0;
   margin: 8px 0 12px 52px;
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  font: 12px/1.6 var(--font-ui);
+  border-radius: var(--radius-sm);
+  font: var(--fs-sm) / 1.6 var(--font-ui);
   color: var(--text-secondary);
   min-width: 0;
 }
@@ -154,7 +154,7 @@ onBeforeUnmount(() => {
 .agent-activity > summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 .activity-title {
   flex-shrink: 0;
@@ -162,7 +162,7 @@ onBeforeUnmount(() => {
 }
 .activity-name {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 .activity-preview {
@@ -197,12 +197,12 @@ onBeforeUnmount(() => {
 }
 .activity-part h3 {
   margin: 12px 0 7px;
-  font: 600 12px var(--font-ui);
+  font: 600 var(--fs-sm) var(--font-ui);
   color: var(--text-secondary);
 }
 .activity-note {
   color: var(--text-muted);
-  font: 11px/1.7 var(--font-ui);
+  font: var(--fs-xs) / 1.7 var(--font-ui);
   margin: 12px 0 0;
 }
 .activity-part pre {
@@ -211,12 +211,12 @@ onBeforeUnmount(() => {
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 12px/1.7 monospace;
+  font: var(--fs-sm) / 1.7 monospace;
   color: var(--text-secondary);
 }
 .activity-part button {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 @container (max-width: 380px) {
   .activity-name {

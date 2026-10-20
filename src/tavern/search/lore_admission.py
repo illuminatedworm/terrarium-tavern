@@ -3,6 +3,7 @@
 These are explainable rules, not calibrated probabilities. Ranking never grants
 admission by itself. A common/body-only short key cannot establish a subject.
 """
+
 import re
 from collections import Counter
 
@@ -21,10 +22,16 @@ def keyword_evidence(entries, query, user_input):
                 continue
             explicit = key.startswith("/") and key.rfind("/") > 0
             explicit |= bool(entry.get("use_regex") and re.search(r"[\^$*+?{}\[\]|()]", key))
-            common = frequencies[key.casefold()] >= 3 and frequencies[key.casefold()] / max(1, len(entries)) > .1
+            common = (
+                frequencies[key.casefold()] >= 3 and frequencies[key.casefold()] / max(1, len(entries)) > 0.1
+            )
             subject = matches(key, heading, entry)
-            item = {"key": key, "source": "input" if matches(key, user_input, entry) else "clue",
-                    "subject": subject, "common": common}
+            item = {
+                "key": key,
+                "source": "input" if matches(key, user_input, entry) else "clue",
+                "subject": subject,
+                "common": common,
+            }
             hits.append(item)
             if explicit or (len(key.strip()) >= 2 and (subject or not common)):
                 useful.append(item)
@@ -44,8 +51,11 @@ def recursive_candidates(entries, accepted, examined, depth):
     for entry in entries:
         if entry["id"] in examined or entry.get("excludeRecursion"):
             continue
-        sources = [p["id"] for p in parents if any(matches(k, p.get("content", ""), entry)
-                                                 for k in entry.get("keys", []))]
+        sources = [
+            p["id"]
+            for p in parents
+            if any(matches(k, p.get("content", ""), entry) for k in entry.get("keys", []))
+        ]
         if sources:
             found[entry["id"]] = {"recursive_parents": sources, "recursion_depth": depth}
     return found

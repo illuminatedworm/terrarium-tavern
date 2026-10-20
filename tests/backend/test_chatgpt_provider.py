@@ -15,22 +15,46 @@ from tavern.scripting.native_response import prepare_messages
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 from tests.backend.chatgpt_fixtures import ACCESS, IdentityFixture, completed, seed_account, sse
 
-TOOLS = [{"type": "function", "function": {"name": name, "description": "测试工具",
-    "parameters": {"type": "object", "properties": {}, "additionalProperties": False}}} for name in ("lookup", "new_context")]
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": "测试工具",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    }
+    for name in ("lookup", "new_context")
+]
 
 
 async def test_account_efforts_include_xhigh_and_are_sent_without_remapping(tmp_path):
     service = IdentityFixture().service(tmp_path)
     account_id, account = seed_account(service)
-    details = model_details({"slug": "fixture", "default_reasoning_level": "low",
-        "supported_reasoning_levels": [{"effort": level} for level in ("low", "medium", "high", "xhigh", "max", "ultra")]})
-    assert [level["effort"] for level in details["supported_reasoning_levels"]] == ["low", "medium", "high", "xhigh", "max"]
+    details = model_details(
+        {
+            "slug": "fixture",
+            "default_reasoning_level": "low",
+            "supported_reasoning_levels": [
+                {"effort": level} for level in ("low", "medium", "high", "xhigh", "max", "ultra")
+            ],
+        }
+    )
+    assert [level["effort"] for level in details["supported_reasoning_levels"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
     assert details["unavailable_reasoning_levels"][0]["effort"] == "ultra"
     service.remember_models(account_id, account["generation"], [details])
     wire = []
+
     def route(request):
         wire.append(json.loads(request.content))
         return sse()
+
     service.http_transport = httpx.MockTransport(route)
     settings = configuration(service, account_id, account)
     settings.reasoning_effort = "xhigh"
@@ -50,11 +74,27 @@ async def test_account_efforts_include_xhigh_and_are_sent_without_remapping(tmp_
 
 
 def configuration(service, account_id, account):
-    settings = Settings(auth_mode="chatgpt_subscription", chatgpt_account_id=account_id, model="fixture", use_proxy=False,
-        api_mode="chat_completions", base_url="https://untrusted.example/v9", api_path="v9", api_key="unused-key",
-        temperature=0.8, top_p=0.9, reply_tokens=1024, reasoning_effort="high",
-        cache={"mode": "runtime", "preset": "custom", "field": "prompt_cache_breakpoint",
-               "value": {"mode": "explicit"}, "request": {"prompt_cache_options": {"mode": "explicit"}}})
+    settings = Settings(
+        auth_mode="chatgpt_subscription",
+        chatgpt_account_id=account_id,
+        model="fixture",
+        use_proxy=False,
+        api_mode="chat_completions",
+        base_url="https://untrusted.example/v9",
+        api_path="v9",
+        api_key="unused-key",
+        temperature=0.8,
+        top_p=0.9,
+        reply_tokens=1024,
+        reasoning_effort="high",
+        cache={
+            "mode": "runtime",
+            "preset": "custom",
+            "field": "prompt_cache_breakpoint",
+            "value": {"mode": "explicit"},
+            "request": {"prompt_cache_options": {"mode": "explicit"}},
+        },
+    )
     settings._chatgpt, settings._auth_generation = service, account["generation"]
     return settings
 
@@ -65,11 +105,13 @@ async def test_public_wire_is_streamed_allowlisted_complete_and_stable_across_to
     account_id, account = seed_account(service)
     settings = configuration(service, account_id, account)
     wire = []
+
     async def route(request):
         if str(request.url) != API_ROOT + "/responses":
             return await identity(request)
         wire.append(request)
         return sse()
+
     service.http_transport = httpx.MockTransport(route)
     capture = []
     context = ProviderRequestContext(str(uuid.uuid4()), "operation", "window", "device")
@@ -77,10 +119,21 @@ async def test_public_wire_is_streamed_allowlisted_complete_and_stable_across_to
     provider = await make_provider(settings, capture.append, request_context=context)
     try:
         text = "原文" * 60000 + "不能丢失的尾部"
-        messages = [{"role": "system", "content": text}, {"role": "user", "content": "继续"},
-                    {"role": "system", "content": "中途插入的完整规则"}]
-        first = await provider.chat_complete(messages, max_tokens=3, extra_body={
-            "temperature": 2, "max_output_tokens": 1, "previous_response_id": "must-not-send", "metadata": {"x": "y"}})
+        messages = [
+            {"role": "system", "content": text},
+            {"role": "user", "content": "继续"},
+            {"role": "system", "content": "中途插入的完整规则"},
+        ]
+        first = await provider.chat_complete(
+            messages,
+            max_tokens=3,
+            extra_body={
+                "temperature": 2,
+                "max_output_tokens": 1,
+                "previous_response_id": "must-not-send",
+                "metadata": {"x": "y"},
+            },
+        )
         assert first.content == "完成" and first.usage["total_tokens"] == 25
         body = json.loads(wire[0].content)
         assert str(wire[0].url) == API_ROOT + "/responses"
@@ -101,7 +154,9 @@ async def test_public_wire_is_streamed_allowlisted_complete_and_stable_across_to
         await provider.chat_complete(messages)
         assert wire[1].headers["authorization"] == "Bearer fixture-access-1"
         assert response_origin(provider.settings) == origin
-        replay, invalid = prepare_messages([{"role": "assistant", "content": "完成", "_native_response": native}], origin)
+        replay, invalid = prepare_messages(
+            [{"role": "assistant", "content": "完成", "_native_response": native}], origin
+        )
         assert not invalid and replay[0]["_native_response"] == native
         await service.logout(account_id)
         with pytest.raises(ChatGPTError, match="sign_in_required"):
@@ -116,18 +171,24 @@ async def test_namespace_tools_forced_selection_and_lossless_native_continuation
     account_id, account = seed_account(service)
     settings = configuration(service, account_id, account)
     wire = []
+
     def route(request):
         wire.append(json.loads(request.content))
         if len(wire) == 1:
             payload = completed("", [("lookup", {})])
-            payload["output"].insert(0, {"type": "reasoning", "id": "r1", "encrypted_content": "encrypted-fixture", "summary": []})
+            payload["output"].insert(
+                0, {"type": "reasoning", "id": "r1", "encrypted_content": "encrypted-fixture", "summary": []}
+            )
             return sse(payload)
         return sse(completed("工具续答完成"))
+
     service.http_transport = httpx.MockTransport(route)
     provider = await make_provider(settings)
     try:
-        first = await provider.chat_complete([{"role": "user", "content": "查阅资料"}],
-            extra_body={"tools": TOOLS, "tool_choice": {"type": "function", "function": {"name": "lookup"}}})
+        first = await provider.chat_complete(
+            [{"role": "user", "content": "查阅资料"}],
+            extra_body={"tools": TOOLS, "tool_choice": {"type": "function", "function": {"name": "lookup"}}},
+        )
         assert not first.content
         assert [(call.id, call.name) for call in provider.last_tool_calls] == [("call-0", "lookup")]
         assert wire[0]["tool_choice"] == "required"
@@ -135,10 +196,16 @@ async def test_namespace_tools_forced_selection_and_lossless_native_continuation
         assert [tool["name"] for tool in wire[0]["tools"][0]["tools"]] == ["lookup"]
         native = copy.deepcopy(provider.last_native_response)
         tool_result = "完整资料" * 40000 + "工具结果尾部"
-        messages = [{"role": "user", "content": "查阅资料"},
-                    {"role": "assistant", "content": "", "tool_calls": [{"id": "call-0", "function": {"name": "lookup", "arguments": "{}"}}],
-                     "_native_response": native},
-                    {"role": "tool", "tool_call_id": "call-0", "content": tool_result}]
+        messages = [
+            {"role": "user", "content": "查阅资料"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call-0", "function": {"name": "lookup", "arguments": "{}"}}],
+                "_native_response": native,
+            },
+            {"role": "tool", "tool_call_id": "call-0", "content": tool_result},
+        ]
         assert "".join([part async for part in provider.chat(messages, tools=TOOLS)]) == "工具续答完成"
         assert wire[1]["input"][1]["encrypted_content"] == "encrypted-fixture"
         assert wire[1]["input"][2]["namespace"] == "tavern"
@@ -148,7 +215,9 @@ async def test_namespace_tools_forced_selection_and_lossless_native_continuation
         await provider.close()
 
 
-@pytest.mark.parametrize("namespace,name", [("another_app", "lookup"), (None, "lookup"), ("tavern", "unapproved")])
+@pytest.mark.parametrize(
+    "namespace,name", [("another_app", "lookup"), (None, "lookup"), ("tavern", "unapproved")]
+)
 async def test_unapproved_tool_response_is_never_accepted(tmp_path, namespace, name):
     service = IdentityFixture().service(tmp_path)
     account_id, account = seed_account(service)
@@ -164,12 +233,15 @@ async def test_unapproved_tool_response_is_never_accepted(tmp_path, namespace, n
         await provider.close()
 
 
-@pytest.mark.parametrize("failure", ["limit", "incomplete", "missing_completion", "error", "redirect", "region"])
+@pytest.mark.parametrize(
+    "failure", ["limit", "incomplete", "missing_completion", "error", "redirect", "region"]
+)
 async def test_failed_and_interrupted_streams_do_not_complete_or_fallback(tmp_path, failure, monkeypatch):
     monkeypatch.setenv("TAVERN_API_KEY", "must-not-fallback-to-this-key")
     service = IdentityFixture().service(tmp_path)
     account_id, account = seed_account(service)
     calls = []
+
     def route(request):
         calls.append(request)
         if failure == "redirect":
@@ -178,13 +250,22 @@ async def test_failed_and_interrupted_streams_do_not_complete_or_fallback(tmp_pa
             return httpx.Response(403, json={"detail": "region restriction " + ACCESS})
         events = [{"type": "response.output_text.delta", "delta": "未完成草稿"}]
         if failure == "limit":
-            events.append({"type": "response.failed", "response": {"error": {
-                "code": "subscription_sharing_usage_limit_exceeded", "message": ACCESS}}})
+            events.append(
+                {
+                    "type": "response.failed",
+                    "response": {
+                        "error": {"code": "subscription_sharing_usage_limit_exceeded", "message": ACCESS}
+                    },
+                }
+            )
         elif failure == "incomplete":
             events.append({"type": "response.incomplete", "response": {"status": "incomplete"}})
         elif failure == "error":
-            events.append({"type": "error", "code": "subscription_sharing_usage_unavailable", "message": "fixture"})
+            events.append(
+                {"type": "error", "code": "subscription_sharing_usage_unavailable", "message": "fixture"}
+            )
         return sse(events=events)
+
     service.http_transport = httpx.MockTransport(route)
     provider = await make_provider(configuration(service, account_id, account))
     errors = []
@@ -236,7 +317,9 @@ async def test_jwt_shaped_model_text_and_encrypted_reasoning_are_not_redacted(tm
     account_id, account = seed_account(service)
     encoded = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJzdG9yeSJ9.c2lnbmF0dXJl"
     payload = completed("角色道具上的完整示例：" + encoded)
-    payload["output"].insert(0, {"type": "reasoning", "id": "r1", "encrypted_content": encoded, "summary": []})
+    payload["output"].insert(
+        0, {"type": "reasoning", "id": "r1", "encrypted_content": encoded, "summary": []}
+    )
     payload["diagnostics"] = {"authorization": "Bearer " + ACCESS}
     service.http_transport = httpx.MockTransport(lambda _: sse(payload))
     provider = await make_provider(configuration(service, account_id, account))

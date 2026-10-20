@@ -1,4 +1,5 @@
 """Safe actionable errors; raw OAuth responses and bearer credentials stay private."""
+
 import re
 
 from tavern.chatgpt import USAGE_URL
@@ -15,15 +16,33 @@ MESSAGES = {
     "chatpass_v2_invalid_authorization_context": "ChatGPT 授权上下文无效，请重新登录",
     "subscription_sharing_user_unavailable": "暂时无法获取 ChatGPT 账号信息，请稍后重试",
 }
-TERMINAL_REFRESH = {"invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired",
-                    "refresh_token_invalidated", "refresh_token_invalid", "refresh_token_reused"}
+TERMINAL_REFRESH = {
+    "invalid_grant",
+    "invalid_refresh_token",
+    "token_expired",
+    "refresh_token_expired",
+    "refresh_token_invalidated",
+    "refresh_token_invalid",
+    "refresh_token_reused",
+}
 
 
 def redact(value, secrets=()):
     if isinstance(value, dict):
-        return {key: "[REDACTED]" if key.lower() in {
-            "authorization", "access_token", "refresh_token", "id_token", "id_token_hint", "code_verifier",
-        } else redact(item, secrets) for key, item in value.items()}
+        return {
+            key: "[REDACTED]"
+            if key.lower()
+            in {
+                "authorization",
+                "access_token",
+                "refresh_token",
+                "id_token",
+                "id_token_hint",
+                "code_verifier",
+            }
+            else redact(item, secrets)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [redact(item, secrets) for item in value]
     if isinstance(value, str):
@@ -39,24 +58,46 @@ class ChatGPTError(ValueError):
     def __init__(self, message, *, code="chatgpt_error", status=None, request_id=None, diagnostic=None):
         self.code, self.status, self.request_id = code, status, request_id
         self.diagnostic = diagnostic or {}
-        suffix = (f"（{code}" + (f"，HTTP {status}" if status else "")
-                  + (f"，request ID: {request_id}" if request_id else "") + ")")
+        suffix = (
+            f"（{code}"
+            + (f"，HTTP {status}" if status else "")
+            + (f"，request ID: {request_id}" if request_id else "")
+            + ")"
+        )
         super().__init__(message + suffix)
 
     def public(self):
-        return {"detail": str(self), "code": self.code, "upstream_status": self.status,
-                "request_id": self.request_id, "usage_url": USAGE_URL}
+        return {
+            "detail": str(self),
+            "code": self.code,
+            "upstream_status": self.status,
+            "request_id": self.request_id,
+            "usage_url": USAGE_URL,
+        }
 
 
 def response_error(payload, status=None, request_id=None, *, secrets=()):
     source = payload.get("error", {}) if isinstance(payload, dict) else {}
     code = source.get("code") or source.get("type") if isinstance(source, dict) else source
-    code = code if isinstance(code, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,120}", code) else "chatgpt_request_failed"
+    code = (
+        code
+        if isinstance(code, str) and re.fullmatch(r"[a-zA-Z0-9_.-]{1,120}", code)
+        else "chatgpt_request_failed"
+    )
     request_id = redact(request_id, secrets)
-    message = MESSAGES.get(code, {401: "ChatGPT 授权未被接受，请检查账号权限或重新登录",
-        403: "ChatGPT 拒绝此请求，请检查账号、工作区权限及服务地区",
-        429: "ChatGPT 请求达到限制，请管理用量或稍后重试",
-        503: "ChatGPT 服务暂不可用，请稍后重试"}.get(status, "ChatGPT 请求未完成"))
-    return ChatGPTError(message, code=code, status=status, request_id=request_id,
-                       diagnostic={"status": status, "request_id": request_id,
-                                   "body": redact(payload, secrets)})
+    message = MESSAGES.get(
+        code,
+        {
+            401: "ChatGPT 授权未被接受，请检查账号权限或重新登录",
+            403: "ChatGPT 拒绝此请求，请检查账号、工作区权限及服务地区",
+            429: "ChatGPT 请求达到限制，请管理用量或稍后重试",
+            503: "ChatGPT 服务暂不可用，请稍后重试",
+        }.get(status, "ChatGPT 请求未完成"),
+    )
+    return ChatGPTError(
+        message,
+        code=code,
+        status=status,
+        request_id=request_id,
+        diagnostic={"status": status, "request_id": request_id, "body": redact(payload, secrets)},
+    )

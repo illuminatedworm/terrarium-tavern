@@ -1,4 +1,5 @@
 """Story-only response transport; never dispatches or repairs business tools."""
+
 import json
 import re
 
@@ -9,9 +10,14 @@ from tavern.core.kemini import TOOL_NAME, KeminiConfig
 
 class AuxiliaryParser:
     def __init__(self, config: KeminiConfig):
-        self.tags = {tag: kind for enabled, tag, kind in (
-            (config.enabled, "thinking", "thinking"),
-            (config.enabled and config.normal_disclaimer_enabled, "disclaimer", "disclaimer")) if enabled}
+        self.tags = {
+            tag: kind
+            for enabled, tag, kind in (
+                (config.enabled, "thinking", "thinking"),
+                (config.enabled and config.normal_disclaimer_enabled, "disclaimer", "disclaimer"),
+            )
+            if enabled
+        }
         self.buffer, self.hidden, self.current = "", "", ""
         self.fence = ""
         self.parts = []
@@ -20,12 +26,17 @@ class AuxiliaryParser:
         self.buffer += text
         output = []
         while self.buffer:
-            markers = ([f"</{self.hidden}>"] if self.hidden else [self.fence] if self.fence else
-                       [*[f"<{tag}>" for tag in self.tags], "```", "~~~"])
+            markers = (
+                [f"</{self.hidden}>"]
+                if self.hidden
+                else [self.fence]
+                if self.fence
+                else [*[f"<{tag}>" for tag in self.tags], "```", "~~~"]
+            )
             matches = [(self.buffer.find(marker), marker) for marker in markers if marker in self.buffer]
             if matches:
                 index, marker = min(matches)
-                before, self.buffer = self.buffer[:index], self.buffer[index + len(marker):]
+                before, self.buffer = self.buffer[:index], self.buffer[index + len(marker) :]
                 if marker in ("```", "~~~"):
                     output.append(before + marker)
                     self.fence = "" if self.fence else marker
@@ -37,8 +48,19 @@ class AuxiliaryParser:
                     output.append(before)
                     self.hidden = marker[1:-1]
                 continue
-            hold = max((n for marker in markers for n in range(1, len(marker))
-                        if self.buffer.endswith(marker[:n])), default=0) if not final else 0
+            hold = (
+                max(
+                    (
+                        n
+                        for marker in markers
+                        for n in range(1, len(marker))
+                        if self.buffer.endswith(marker[:n])
+                    ),
+                    default=0,
+                )
+                if not final
+                else 0
+            )
             ready = self.buffer[:-hold] if hold else self.buffer
             self.buffer = self.buffer[-hold:] if hold else ""
             if self.hidden:
@@ -53,6 +75,7 @@ class AuxiliaryParser:
 
 class ArgumentText:
     """Decode only the schema's content string, holding incomplete JSON escapes."""
+
     def __init__(self):
         self.buffer, self.started, self.done, self.high = "", False, False, ""
 
@@ -62,7 +85,7 @@ class ArgumentText:
             match = re.match(r'^\s*\{\s*"content"\s*:\s*"', self.buffer)
             if not match:
                 return ""  # Full JSON validation, not speculative repair, decides at completion.
-            self.buffer, self.started = self.buffer[match.end():], True
+            self.buffer, self.started = self.buffer[match.end() :], True
         output, at = [], 0
         while at < len(self.buffer) and not self.done:
             char = self.buffer[at]
@@ -75,7 +98,7 @@ class ArgumentText:
                 width = 6 if self.buffer[at + 1] == "u" else 2
                 if at + width > len(self.buffer):
                     break
-                char = json.loads('"' + self.buffer[at:at + width] + '"')
+                char = json.loads('"' + self.buffer[at : at + width] + '"')
                 at += width
             else:
                 at += 1
@@ -131,7 +154,9 @@ class KeminiReply:
                 if event.get("type") == "content_block_start" and block.get("type") == "tool_use":
                     self.names[event["index"]] = block["name"]
                 elif event.get("type") == "content_block_delta":
-                    carried += self._arguments(event["index"], "", (event.get("delta") or {}).get("partial_json") or "")
+                    carried += self._arguments(
+                        event["index"], "", (event.get("delta") or {}).get("partial_json") or ""
+                    )
             else:
                 # Requests never enable Vertex streamFunctionCallArguments, so
                 # Gemini delivers each functionCall with its complete args once.
@@ -139,8 +164,11 @@ class KeminiReply:
                     for part in candidate.get("content", {}).get("parts", []):
                         call = part.get("functionCall") or {}
                         args = call.get("args")
-                        if (call.get("name") == TOOL_NAME and isinstance(args, dict)
-                                and isinstance(args.get("content"), str)):
+                        if (
+                            call.get("name") == TOOL_NAME
+                            and isinstance(args, dict)
+                            and isinstance(args.get("content"), str)
+                        ):
                             carried += args["content"]
             delta = self.parser.feed(carried)
         self.emitted += delta
@@ -173,4 +201,4 @@ class KeminiReply:
         return clean, calls
 
     def tail(self, text: str) -> str:
-        return text[len(self.emitted):]
+        return text[len(self.emitted) :]

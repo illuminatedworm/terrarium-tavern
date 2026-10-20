@@ -1,4 +1,5 @@
 """Validated local images; durable editor messages carry references, never base64."""
+
 import base64
 import copy
 import warnings
@@ -29,7 +30,11 @@ def image_metadata(extension: str, data: bytes) -> ImageMetadata:
                     raise ValueError("图片实际格式与扩展名不符，请选择 PNG、JPEG 或静态 WebP。")
                 if getattr(image, "n_frames", 1) != 1:
                     raise ValueError("暂不支持动图，请选择静态 PNG、JPEG 或 WebP 图片。")
-                metadata = {"mime_type": MIME_TYPES[image.format], "width": image.width, "height": image.height}
+                metadata = {
+                    "mime_type": MIME_TYPES[image.format],
+                    "width": image.width,
+                    "height": image.height,
+                }
                 image.verify()
             # verify() alone does not decode JPEG pixels or detect all truncation.
             with Image.open(BytesIO(data)) as image:
@@ -63,7 +68,9 @@ def request_preview(value):
         result["image_url"]["url"] = omitted
     elif kind == "input_image":
         result["image_url"] = omitted
-    elif kind == "image" and isinstance(value.get("source"), dict) and value["source"].get("type") == "base64":
+    elif (
+        kind == "image" and isinstance(value.get("source"), dict) and value["source"].get("type") == "base64"
+    ):
         result["source"]["data"] = omitted
     if isinstance(value.get("inlineData"), dict):
         result["inlineData"]["data"] = omitted
@@ -99,7 +106,9 @@ def materialize_images(messages: list[dict], store, wid: str, files: list[dict])
                     metadata = image_metadata(file["extension"], data)
                     if any(file.get(key) != value for key, value in metadata.items()):
                         raise ValueError(f"图片附件 {ref} 格式或尺寸已改变，请重新选择。")
-                    loaded[ref] = "data:" + metadata["mime_type"] + ";base64," + base64.b64encode(data).decode("ascii")
+                    loaded[ref] = (
+                        "data:" + metadata["mime_type"] + ";base64," + base64.b64encode(data).decode("ascii")
+                    )
                 content.append({"type": "image_url", "image_url": {"url": loaded[ref]}})
             item["content"] = content
             if "runtime_content" in item:
@@ -126,7 +135,9 @@ def portrait_png(store, wid: str, file: dict) -> str:
     if file["extension"] != ".png":
         buffer = BytesIO()
         with Image.open(BytesIO(data)) as image:
-            (image if image.mode in ("RGB", "RGBA", "L", "LA", "P") else image.convert("RGBA")).save(buffer, "PNG")
+            (image if image.mode in ("RGB", "RGBA", "L", "LA", "P") else image.convert("RGBA")).save(
+                buffer, "PNG"
+            )
         data = buffer.getvalue()
     return store.blob(data)
 

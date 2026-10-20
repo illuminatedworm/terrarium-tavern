@@ -242,7 +242,7 @@ async function action(check: boolean) {
         </div>
       </div>
       <div class="profile-actions">
-        <button class="primary" :disabled="busy" @click="action(false)">
+        <button :disabled="busy" @click="action(false)">
           {{ fetching ? '正在更新…' : '更新模型列表' }}</button
         ><button :disabled="busy" @click="action(true)">
           {{ busy && !fetching ? '正在检查…' : '检查连接' }}

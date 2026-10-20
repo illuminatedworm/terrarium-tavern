@@ -1,4 +1,5 @@
 """Images reach each HTTP protocol unchanged, including the separate subscription route."""
+
 import base64
 import copy
 import json
@@ -17,22 +18,37 @@ from tests.backend.test_chatgpt_provider import configuration
 from tests.backend.test_half_agent_alignment import sse
 from tests.backend.test_unified_cache import reply
 
-IMAGES = [("image/png", base64.b64encode(b"first-image-bytes").decode()),
-          ("image/webp", base64.b64encode(b"second-image-bytes").decode())]
-TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}}]
+IMAGES = [
+    ("image/png", base64.b64encode(b"first-image-bytes").decode()),
+    ("image/webp", base64.b64encode(b"second-image-bytes").decode()),
+]
+TOOLS = [
+    {"type": "function", "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}}
+]
 
 
 def messages():
-    content = [{"type": "text", "text": "第一张图片"},
-               {"type": "image_url", "image_url": {"url": f"data:{IMAGES[0][0]};base64,{IMAGES[0][1]}"}},
-               {"type": "text", "text": "第二张图片"},
-               {"type": "image_url", "image_url": {"url": f"data:{IMAGES[1][0]};base64,{IMAGES[1][1]}"}}]
-    return runtime_messages([
-        {"role": "system", "content": "固定规则"}, {"role": "user", "content": content},
-        {"role": "assistant", "content": "读取资料", "tool_calls": [
-            {"id": "call1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
-        {"role": "tool", "tool_call_id": "call1", "content": '{"result":"完整资料尾部"}'},
-    ], "card_author")
+    content = [
+        {"type": "text", "text": "第一张图片"},
+        {"type": "image_url", "image_url": {"url": f"data:{IMAGES[0][0]};base64,{IMAGES[0][1]}"}},
+        {"type": "text", "text": "第二张图片"},
+        {"type": "image_url", "image_url": {"url": f"data:{IMAGES[1][0]};base64,{IMAGES[1][1]}"}},
+    ]
+    return runtime_messages(
+        [
+            {"role": "system", "content": "固定规则"},
+            {"role": "user", "content": content},
+            {
+                "role": "assistant",
+                "content": "读取资料",
+                "tool_calls": [
+                    {"id": "call1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call1", "content": '{"result":"完整资料尾部"}'},
+        ],
+        "card_author",
+    )
 
 
 def response(api, stream):
@@ -41,8 +57,11 @@ def response(api, stream):
         return httpx.Response(200, json=payload)
     if api in ("anthropic", "responses"):
         return sse(api, payload)
-    events = ([{"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}], "usage": payload["usage"]}]
-              if api == "chat_completions" else [payload])
+    events = (
+        [{"choices": [{"delta": {"content": "OK"}, "finish_reason": "stop"}], "usage": payload["usage"]}]
+        if api == "chat_completions"
+        else [payload]
+    )
     data = "".join("data: " + json.dumps(event) + "\n\n" for event in events)
     if api == "chat_completions":
         data += "data: [DONE]\n\n"
@@ -79,8 +98,15 @@ def assert_images(body, api, expected=IMAGES):
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
 @pytest.mark.parametrize("mode", ["stream", "non_stream"])
 async def test_real_wire_preserves_images_and_tool_history(api, mode):
-    cfg = Settings(api_mode=api, model="fixture", api_key="fixture-key", base_url="https://fixture.test",
-                   use_proxy=False, model_request_mode=mode, cache={"mode": "cloud"})
+    cfg = Settings(
+        api_mode=api,
+        model="fixture",
+        api_key="fixture-key",
+        base_url="https://fixture.test",
+        use_proxy=False,
+        model_request_mode=mode,
+        cache={"mode": "cloud"},
+    )
     cfg._adapter_lane = "card_author"
     wire = []
 
@@ -88,7 +114,9 @@ async def test_real_wire_preserves_images_and_tool_history(api, mode):
         wire.append(json.loads(request.content))
         return response(api, mode == "stream")
 
-    provider = ModelTransport(cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    provider = ModelTransport(
+        cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
     original = messages()
     before = copy.deepcopy(original)
     try:
@@ -99,7 +127,12 @@ async def test_real_wire_preserves_images_and_tool_history(api, mode):
         assert "_editor_image_refs" not in serialized and "runtime_content" not in serialized
         assert original == before
         if api == "responses":
-            assert [p["type"] for p in rows[1]["content"]] == ["input_text", "input_image", "input_text", "input_image"]
+            assert [p["type"] for p in rows[1]["content"]] == [
+                "input_text",
+                "input_image",
+                "input_text",
+                "input_image",
+            ]
         if api == "gemini":
             assert rows[0]["role"] == "user"
     finally:
@@ -129,14 +162,21 @@ async def test_subscription_has_its_own_image_wire_and_retains_namespace(tmp_pat
         assert body["stream"] is True
         assert body["tools"][0]["type"] == "namespace"
         assert body["tools"][0]["name"] == "tavern"
-        assert all(item["namespace"] == "tavern" for item in rows if item.get("type") in ("function_call", "function_call_output"))
+        assert all(
+            item["namespace"] == "tavern"
+            for item in rows
+            if item.get("type") in ("function_call", "function_call_output")
+        )
         assert not any(key in body for key in ("max_output_tokens", "temperature", "prompt_cache_breakpoint"))
     finally:
         await provider.close()
 
 
 def test_multimodal_wrapping_is_lossless_and_base64_is_not_text_tokens():
-    cfg = Settings(message_adapter={"mappings": {"responses": {"custom": {"role": "user", "wrap": True}}}}, api_mode="responses")
+    cfg = Settings(
+        message_adapter={"mappings": {"responses": {"custom": {"role": "user", "wrap": True}}}},
+        api_mode="responses",
+    )
     original = messages()[1]
     original["message_type"] = "custom"
     adapted = adapt_messages([original], cfg)[0][0]
@@ -151,12 +191,17 @@ def test_multimodal_wrapping_is_lossless_and_base64_is_not_text_tokens():
 @pytest.mark.parametrize("api", ["responses", "anthropic", "gemini"])
 async def test_unknown_nontext_blocks_are_rejected_instead_of_dropped(api):
     cfg = Settings(api_mode=api, model="fixture", api_key="fixture", use_proxy=False)
+
     def no_request(request):
         raise AssertionError("unsupported content must fail before HTTP")
 
-    provider = ModelTransport(cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(no_request)))
+    provider = ModelTransport(
+        cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(no_request))
+    )
     try:
         with pytest.raises(ValueError, match="不能丢弃非文本"):
-            provider._request([{"role": "user", "content": [{"type": "unhandled_media", "data": "must-not-disappear"}]}])
+            provider._request(
+                [{"role": "user", "content": [{"type": "unhandled_media", "data": "must-not-disappear"}]}]
+            )
     finally:
         await provider.close()

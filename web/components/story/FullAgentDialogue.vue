@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
 .agent-dialogue-notice {
   margin: 12px 0 16px 52px;
   color: var(--text-muted);
-  font: 12px/1.7 var(--font-ui);
+  font: var(--fs-sm) / 1.7 var(--font-ui);
 }
 @media (max-width: 620px) {
   .agent-dialogue-notice {

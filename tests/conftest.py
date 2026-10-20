@@ -1,4 +1,5 @@
 """Test-process tweaks shared by every suite."""
+
 import sqlite3
 
 _connect = sqlite3.connect

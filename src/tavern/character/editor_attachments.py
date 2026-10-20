@@ -1,4 +1,5 @@
 """Browser-selected reference files, owned by one Card Author conversation."""
+
 import hashlib
 import json
 import re
@@ -7,9 +8,28 @@ from pathlib import Path
 
 from tavern.character.editor_files import MAX_FILE_BYTES
 from tavern.character.editor_images import IMAGE_FORMATS, image_metadata
+from tavern.core.errors import NotFound
 
-EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".tsv", ".json", ".json5", ".yaml", ".yml",
-              ".xml", ".html", ".log", ".ini", ".toml", ".rst", ".docx", ".xlsx", *IMAGE_FORMATS}
+EXTENSIONS = {
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".json5",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".html",
+    ".log",
+    ".ini",
+    ".toml",
+    ".rst",
+    ".docx",
+    ".xlsx",
+    *IMAGE_FORMATS,
+}
 
 
 def attachment_path(store, wid, item):
@@ -39,7 +59,14 @@ def attach_file(edits, wid, revision, filename, data):
             files = workspace.setdefault("files", [])
             if len(files) >= 20 or sum(f["size_bytes"] for f in files) + len(data) > 128 * 1024**2:
                 raise ValueError("本对话附件最多 20 个、合计 128 MiB；请移除待发送附件或新建对话。")
-            item = {"ref": f"F{workspace['next_ref']}", "name": name, "extension": extension, "size_bytes": len(data), "message_ref": None, **metadata}
+            item = {
+                "ref": f"F{workspace['next_ref']}",
+                "name": name,
+                "extension": extension,
+                "size_bytes": len(data),
+                "message_ref": None,
+                **metadata,
+            }
             target = attachment_path(edits.store, wid, item)
             target.parent.mkdir(parents=True, exist_ok=True)
             # A process crash may leave the next (never committed) file behind.
@@ -62,8 +89,15 @@ def attach_file(edits, wid, revision, filename, data):
 def remove_files(store, wid, files, *, conversation_deleted=False):
     if conversation_deleted:
         directory = attachment_path(store, wid, {"ref": "F1", "extension": ".txt"}).parent
-        files = [{"ref": p.stem, "extension": p.suffix} for p in directory.iterdir()
-                 if re.fullmatch(r"F[1-9]\d*", p.stem) and p.suffix in EXTENSIONS] if directory.is_dir() else []
+        files = (
+            [
+                {"ref": p.stem, "extension": p.suffix}
+                for p in directory.iterdir()
+                if re.fullmatch(r"F[1-9]\d*", p.stem) and p.suffix in EXTENSIONS
+            ]
+            if directory.is_dir()
+            else []
+        )
     for item in files:
         path = attachment_path(store, wid, item)
         path.unlink(missing_ok=True)
@@ -78,7 +112,7 @@ def detach_file(edits, wid, revision, ref):
         files = workspace.get("files", [])
         item = next((f for f in files if f["ref"] == ref), None)
         if item is None:
-            raise KeyError("文件引用不存在")
+            raise NotFound("文件引用不存在")
         if item.get("message_ref"):
             raise ValueError("已发送附件随历史消息保留，不能从输入区移除。")
         workspace["files"] = [f for f in files if f["ref"] != ref]
@@ -88,16 +122,32 @@ def detach_file(edits, wid, revision, ref):
 
 
 def file_metadata(files):
-    return [{key: f[key] for key in ("ref", "name", "extension", "size_bytes", "mime_type", "width", "height") if key in f} for f in files]
+    return [
+        {
+            key: f[key]
+            for key in ("ref", "name", "extension", "size_bytes", "mime_type", "width", "height")
+            if key in f
+        }
+        for f in files
+    ]
 
 
 def message_content(text, files):
     if not files:
         return text
-    instructions = ("图片按附件列表中的图片顺序随本条消息直接提供；"
-                    if any(f["extension"] in IMAGE_FORMATS for f in files) else "")
-    return (text + "\n\n本条用户消息的附件（" + instructions + "文本或文档使用 ref 作为 read_text_file/read_document 的 path；"
-            "按需读取，后续消息不代表重新提交或要求重复读取）：\n" + json.dumps(file_metadata(files), ensure_ascii=False))
+    instructions = (
+        "图片按附件列表中的图片顺序随本条消息直接提供；"
+        if any(f["extension"] in IMAGE_FORMATS for f in files)
+        else ""
+    )
+    return (
+        text
+        + "\n\n本条用户消息的附件（"
+        + instructions
+        + "文本或文档使用 ref 作为 read_text_file/read_document 的 path；"
+        "按需读取，后续消息不代表重新提交或要求重复读取）：\n"
+        + json.dumps(file_metadata(files), ensure_ascii=False)
+    )
 
 
 def migrate_message_attachments(store):
@@ -110,14 +160,17 @@ def migrate_message_attachments(store):
             if not legacy:
                 continue
             owners = {}
-            for event in db.execute("""SELECT e.payload,r.request FROM card_edit_events e
+            for event in db.execute(
+                """SELECT e.payload,r.request FROM card_edit_events e
                 JOIN card_edit_runs r ON r.id=e.run WHERE r.workspace=? AND e.kind='tool_started'
-                ORDER BY e.seq""", (row["id"],)):
+                ORDER BY e.seq""",
+                (row["id"],),
+            ):
                 value = json.loads(event["payload"])
                 if value.get("tool") not in {"read_text_file", "read_document"}:
                     continue
                 try:
-                    ref = json.loads(value.get("arguments", "{}" )).get("path")
+                    ref = json.loads(value.get("arguments", "{}")).get("path")
                 except (ValueError, AttributeError, TypeError):
                     continue
                 source = json.loads(event["request"]).get("_input_ref")

@@ -12,13 +12,25 @@ from tests.support.memory_fixtures import memory_output, memory_snapshot
 
 
 def history(n, size=0):
-    return [{"id": f"m{i}", "role": "assistant" if i % 2 == 0 else "user",
-             "raw": f"原文{i}" + "界" * size, "model": f"原文{i}" + "界" * size} for i in range(n)]
+    return [
+        {
+            "id": f"m{i}",
+            "role": "assistant" if i % 2 == 0 else "user",
+            "raw": f"原文{i}" + "界" * size,
+            "model": f"原文{i}" + "界" * size,
+        }
+        for i in range(n)
+    ]
 
 
 def session():
-    return {"id": "s", "persona": "用户", "persona_data": {},
-            "lore_injection_mode": "conversation", "recipe": ContextRecipe().model_dump()}
+    return {
+        "id": "s",
+        "persona": "用户",
+        "persona_data": {},
+        "lore_injection_mode": "conversation",
+        "recipe": ContextRecipe().model_dump(),
+    }
 
 
 def request(mode="send"):
@@ -37,6 +49,7 @@ def archiver(calls):
         if kind == "memory":
             return memory_output(messages), {}
         return json.dumps({"narrative": "过去的剧情", "facts": [{"text": "事实", "source_ids": ["m0"]}]}), {}
+
     return generate
 
 
@@ -49,7 +62,9 @@ async def test_periodic_archives_do_not_move_window_and_regeneration_never_maint
     assert snap["memory_archive"]["covered_count"] == 9
     assert len(window_history(history(9), snap)[0]) == 9
     original = copy.deepcopy(snap)
-    await manager.prepare("t", {}, session(), history(9), snap, request("regenerate"), config(), archiver(calls))
+    await manager.prepare(
+        "t", {}, session(), history(9), snap, request("regenerate"), config(), archiver(calls)
+    )
     assert snap == original and len(calls) == 1
     await manager.prepare("t", {}, session(), history(13), snap, request(), config(), archiver(calls))
     assert snap["context_window"]["covered_count"] == 5
@@ -82,8 +97,10 @@ async def test_invalid_critical_evidence_preserves_window(tmp_path):
     manager = Tracker(Store(tmp_path))
     snap = {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}}
     original = copy.deepcopy(snap)
+
     async def summarize(messages, **kwargs):
         return memory_output(messages, invalid=True), {}
+
     with pytest.raises(ValueError, match="原窗口"):
         await manager.prepare("t", {}, session(), history(13), snap, request(), config(), summarize)
     assert snap == original
@@ -117,8 +134,9 @@ async def test_periodic_timeout_has_visible_diagnostic(tmp_path):
     async def timed_out(_, **kwargs):
         raise TimeoutError()
 
-    await manager.prepare("timeout-turn", {}, session(), history(9), snap, request(),
-                          config(memory_timeout=120), timed_out)
+    await manager.prepare(
+        "timeout-turn", {}, session(), history(9), snap, request(), config(memory_timeout=120), timed_out
+    )
     assert snap["memory_warning"] == "记忆模型请求超过 120 秒未完成"
     failed = [event for event in store.events("timeout-turn") if event["kind"] == "memory_failed"]
     assert failed[0]["payload"]["message"] == snap["memory_warning"]
@@ -127,8 +145,12 @@ async def test_periodic_timeout_has_visible_diagnostic(tmp_path):
 async def test_cap_forces_memory_coverage_before_period(tmp_path):
     manager = Tracker(Store(tmp_path))
     messages = history(13)
-    snap = {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {},
-            "memory_archive": {"covered_count": 1, "fingerprint": fingerprint(messages[:1]), "last_round": 6}}
+    snap = {
+        "state": {},
+        "memory_document": {"version": 1, "records": []},
+        "lore": {},
+        "memory_archive": {"covered_count": 1, "fingerprint": fingerprint(messages[:1]), "last_round": 6},
+    }
     calls = []
     await manager.prepare("t", {}, session(), messages, snap, request(), config(), archiver(calls))
     assert snap["context_window"]["covered_count"] == 5
@@ -140,15 +162,22 @@ async def test_cap_forces_memory_coverage_before_period(tmp_path):
 @pytest.mark.parametrize("mode", ["messages", "tokens"])
 async def test_both_enabled_modes_obey_cap(tmp_path, mode):
     snap = {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}}
-    await Tracker(Store(tmp_path)).prepare("t", {}, session(), history(13), snap,
-                                                request(), config(chunk_mode=mode), archiver([]))
+    await Tracker(Store(tmp_path)).prepare(
+        "t", {}, session(), history(13), snap, request(), config(chunk_mode=mode), archiver([])
+    )
     assert len(window_history(history(13), snap)[0]) + 1 < 12
 
 
 async def test_token_pressure_trims_early_and_window_off_retains_everything(tmp_path):
     manager = Tracker(Store(tmp_path))
-    cfg = Settings(context_tokens=10000, reply_tokens=128, background={"context_tokens":32768,"reply_tokens":1024},
-                   history_message_cap=40, chunk_size=10, memory_interval_turns=5)
+    cfg = Settings(
+        context_tokens=10000,
+        reply_tokens=128,
+        background={"context_tokens": 32768, "reply_tokens": 1024},
+        history_message_cap=40,
+        chunk_size=10,
+        memory_interval_turns=5,
+    )
     messages = history(11, size=800)
     snap = {"state": {}, "memory_document": {"version": 1, "records": []}, "lore": {}}
     await manager.prepare("t", {}, session(), messages, snap, request(), cfg, archiver([]))
@@ -163,12 +192,16 @@ async def test_token_pressure_trims_early_and_window_off_retains_everything(tmp_
 
 
 def test_trimmed_history_keeps_memory_even_when_recipe_block_disabled():
-    messages=history(9)
-    state={**memory_snapshot('已经发生的重要剧情'), 'context_window':{
-        'covered_count':5,'fingerprint':fingerprint(messages[:5])}}
-    current=session()
-    for block in current['recipe']['blocks']:
-        if block['source']=='memory':
-            block['enabled']=False
-    result=compile_context({},current,messages,state,'继续',config(),'protected-memory')
-    assert any(item['source']=='memory' and '已经发生的重要剧情' in item['content'] for item in result['trace'])
+    messages = history(9)
+    state = {
+        **memory_snapshot("已经发生的重要剧情"),
+        "context_window": {"covered_count": 5, "fingerprint": fingerprint(messages[:5])},
+    }
+    current = session()
+    for block in current["recipe"]["blocks"]:
+        if block["source"] == "memory":
+            block["enabled"] = False
+    result = compile_context({}, current, messages, state, "继续", config(), "protected-memory")
+    assert any(
+        item["source"] == "memory" and "已经发生的重要剧情" in item["content"] for item in result["trace"]
+    )

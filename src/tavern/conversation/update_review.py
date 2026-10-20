@@ -1,4 +1,5 @@
 """Review only actual variables and card content; commit every turn atomically."""
+
 import json
 
 import jsonpatch
@@ -23,11 +24,23 @@ def review_snapshot(snapshot, document=None):
 
 def review_changes(before, after, document=None):
     old, new = review_snapshot(before, document), review_snapshot(after, document)
-    labels = {"variables": "剧情变量", "script_variables": "脚本变量",
-              "character": "角色设定", "lorebook": "世界书"}
-    return [{"kind": key, "label": label, "before": old[key], "after": new[key],
-             "operations": jsonpatch.make_patch(old[key], new[key]).patch}
-            for key, label in labels.items() if old[key] != new[key]]
+    labels = {
+        "variables": "剧情变量",
+        "script_variables": "脚本变量",
+        "character": "角色设定",
+        "lorebook": "世界书",
+    }
+    return [
+        {
+            "kind": key,
+            "label": label,
+            "before": old[key],
+            "after": new[key],
+            "operations": jsonpatch.make_patch(old[key], new[key]).patch,
+        }
+        for key, label in labels.items()
+        if old[key] != new[key]
+    ]
 
 
 def finish_turn(store, tid, session, pending, snapshot, *, draft=None):
@@ -47,7 +60,8 @@ def finish_turn(store, tid, session, pending, snapshot, *, draft=None):
         if draft is not None:
             fields["draft"] = draft
         store.set_turn(tid, **fields)
-        store.event(tid, "awaiting_review", {"before": pending["before"], "after": snapshot,
-                                            "changes": changes})
+        store.event(
+            tid, "awaiting_review", {"before": pending["before"], "after": snapshot, "changes": changes}
+        )
     else:
         store.commit_turn(tid, pending)

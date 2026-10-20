@@ -5,6 +5,7 @@ operations do not delete records. Tombstones prevent an old prompt from reviving
 user-deleted content. Source hashes detect edits; they deliberately do not trigger
 automatic rereading of an already archived source.
 """
+
 import copy
 import hashlib
 import json
@@ -13,8 +14,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-CATEGORIES = {"current": "当前进展", "episode": "变化与经历", "open": "未完成事项",
-              "uncertain": "待确认内容", "manual": "手工记忆"}
+CATEGORIES = {
+    "current": "当前进展",
+    "episode": "变化与经历",
+    "open": "未完成事项",
+    "uncertain": "待确认内容",
+    "manual": "手工记忆",
+}
 
 
 def usage_fields(usage):
@@ -34,8 +40,7 @@ def source_hash(message):
     snap = message.get("snapshot", {})
     if isinstance(snap, str):
         snap = json.loads(snap)
-    return digest([message.get("model", message.get("raw", "")), snap.get("state", {}),
-                   snap.get("content")])
+    return digest([message.get("model", message.get("raw", "")), snap.get("state", {}), snap.get("content")])
 
 
 class Evidence(BaseModel):
@@ -112,8 +117,15 @@ def with_source_status(memory, history):
     for r in result["records"]:
         for source in r.get("sources", []):
             m = by_id.get(source["message_id"])
-            source["state"] = ("missing" if m is None else "unverified" if not source.get("fingerprint")
-                               else "valid" if source_hash(m) == source["fingerprint"] else "changed")
+            source["state"] = (
+                "missing"
+                if m is None
+                else "unverified"
+                if not source.get("fingerprint")
+                else "valid"
+                if source_hash(m) == source["fingerprint"]
+                else "changed"
+            )
         r["source_stale"] = any(s["state"] in ("changed", "missing") for s in r.get("sources", []))
     return result
 
@@ -127,8 +139,11 @@ def manual_edit(memory, edit):
     if edit.action == "add":
         if not edit.content.strip():
             raise ValueError("记忆内容不能为空")
-        result["records"].append(Record(category=edit.category, content=edit.content.strip(),
-                                         kind=edit.kind, manual=True).model_dump())
+        result["records"].append(
+            Record(
+                category=edit.category, content=edit.content.strip(), kind=edit.kind, manual=True
+            ).model_dump()
+        )
     else:
         record = next((r for r in result["records"] if r["id"] == edit.id), None)
         if record is None or record["status"] == "deleted":
@@ -139,8 +154,10 @@ def manual_edit(memory, edit):
             record["deleted_hash"] = digest(record["content"].strip())
             # Keep message identity separate so a fork can remap it even though
             # the deleted excerpt itself no longer occupies every later snapshot.
-            record["deleted_sources"] = [{"message_id": s["message_id"], "excerpt_hash": digest(s["excerpt"])}
-                                         for s in record["sources"]]
+            record["deleted_sources"] = [
+                {"message_id": s["message_id"], "excerpt_hash": digest(s["excerpt"])}
+                for s in record["sources"]
+            ]
             record["content"] = record["content"][:256]
             record["sources"] = []
             record["setting_refs"] = []

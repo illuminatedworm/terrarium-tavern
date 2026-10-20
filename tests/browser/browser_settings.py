@@ -1,4 +1,5 @@
 """Settings acceptance entry point."""
+
 import asyncio
 
 from tests.browser.browser_settings_redesign import main

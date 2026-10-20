@@ -1,4 +1,5 @@
 """Saving and review never grant permission to edit story content."""
+
 from typing import Annotated, Literal
 
 from pydantic import BeforeValidator

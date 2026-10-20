@@ -32,7 +32,7 @@ const emit = defineEmits<{ remove: [record: LoreRecord] }>();
   margin: 0 0 20px 52px;
   padding: 10px 0;
   border-block: 1px solid var(--border-subtle);
-  font: 12px/1.7 var(--font-ui);
+  font: var(--fs-sm) / 1.7 var(--font-ui);
 }
 .lore-injection-records > summary {
   display: flex;
@@ -88,7 +88,7 @@ const emit = defineEmits<{ remove: [record: LoreRecord] }>();
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-  font: 13px/1.8 var(--font-ui);
+  font: var(--fs-md) / 1.8 var(--font-ui);
 }
 @media (max-width: 620px) {
   .lore-injection-records {

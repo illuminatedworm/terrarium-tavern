@@ -14,8 +14,11 @@ def response_error(response: httpx.Response, secret: str) -> httpx.HTTPStatusErr
         payload = None
     source = payload.get("error", payload) if isinstance(payload, dict) else payload
     if isinstance(source, dict):
-        codes = [str(source[key]) for key in ("code", "status", "type")
-                 if isinstance(source.get(key), (str, int)) and source[key] not in ("", "error")]
+        codes = [
+            str(source[key])
+            for key in ("code", "status", "type")
+            if isinstance(source.get(key), (str, int)) and source[key] not in ("", "error")
+        ]
         message = source.get("message") or source.get("detail") or ""
         detail = (" / ".join(codes) + "：" if codes else "") + (message if isinstance(message, str) else "")
     elif isinstance(source, str):
@@ -28,5 +31,6 @@ def response_error(response: httpx.Response, secret: str) -> httpx.HTTPStatusErr
     if len(detail) > DETAIL_LIMIT:
         detail = detail[:DETAIL_LIMIT] + "…（仅显示错误片段）"
     label = f"模型请求失败（HTTP {response.status_code} {response.reason_phrase}）"
-    return httpx.HTTPStatusError(label + ("：" + detail if detail else ""),
-                                 request=response.request, response=response)
+    return httpx.HTTPStatusError(
+        label + ("：" + detail if detail else ""), request=response.request, response=response
+    )

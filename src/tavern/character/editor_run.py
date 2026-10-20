@@ -1,4 +1,5 @@
 """Recoverable native tool loop, isolated from all roleplay sessions."""
+
 import asyncio
 import copy
 import json
@@ -28,7 +29,9 @@ class EditorRun:
         self.environment = workspace.get("environment")
         self.files = copy.deepcopy([f for f in workspace.get("files", []) if f.get("message_ref")])
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
-        self.working = copy.deepcopy(progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]})
+        self.working = copy.deepcopy(
+            progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
+        )
         self.base = copy.deepcopy(progress["base"] if progress else self.working)
         self.current_refs = list(progress["current_refs"] if progress else [])
         if self.request.get("_input_ref") and self.request["_input_ref"] not in self.current_refs:
@@ -41,19 +44,35 @@ class EditorRun:
         self.pending_calls = copy.deepcopy(progress.get("pending_calls") if progress else None)
         saved = copy.deepcopy(progress["context"] if progress else self.edits.context(self.wid))
         self.rolled = bool(progress and progress.get("rolled"))
-        self.web_session = WebSession(self.cfg.card_author_config.web.mode, self.cfg, "card_author", self.event,
-                                      failed=bool(progress and progress.get("web_fallback")))
+        self.web_session = WebSession(
+            self.cfg.card_author_config.web.mode,
+            self.cfg,
+            "card_author",
+            self.event,
+            failed=bool(progress and progress.get("web_fallback")),
+        )
         self.definitions = self.web_session.definitions(tool_definitions())
-        self.web = WebTools(self.cfg.web, self.cfg.network, service.web_transport,
-                            mode=self.cfg.card_author_config.web.mode, event=self.event)
+        self.web = WebTools(
+            self.cfg.web,
+            self.cfg.network,
+            service.web_transport,
+            mode=self.cfg.card_author_config.web.mode,
+            event=self.event,
+        )
         # Steering must close an old batch before a new user message reaches the
         # provider. Never execute a stale proposed mutation after changed intent.
         if progress and self.request.get("text", "").strip() and self.pending_calls:
             returned = {r["tool_call_id"] for r in self.pending_calls.get("results", [])}
             for call in self.pending_calls["assistant"].get("tool_calls", []):
                 if call["id"] not in returned:
-                    result = {"role": "tool", "tool_call_id": call["id"], "_tool_error": True,
-                              "content": dump({"cancelled": True, "message": "用户补充了新要求，此调用尚未执行，请重新判断"})}
+                    result = {
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "_tool_error": True,
+                        "content": dump(
+                            {"cancelled": True, "message": "用户补充了新要求，此调用尚未执行，请重新判断"}
+                        ),
+                    }
                     saved["messages"].append(result)
                     self.trace.append(result)
             self.pending_calls = None
@@ -63,8 +82,13 @@ class EditorRun:
         # unfinished round, so an explicit continue does not restart at 1.
         self.calls = 0
         self.requests = progress.get("requests", 0) if progress else 0
-        self.request_context = ProviderRequestContext(self.wid, rid, self.context.epoch, self.store.device_id(),
-            sent_breakpoints=self.store.cache_breakpoint_history(self.wid, "card_author"))
+        self.request_context = ProviderRequestContext(
+            self.wid,
+            rid,
+            self.context.epoch,
+            self.store.device_id(),
+            sent_breakpoints=self.store.cache_breakpoint_history(self.wid, "card_author"),
+        )
         self.request_context.diagnostics = {"rebuild_reason": self.context.reason}
         self.cfg.cache_scope, self.cfg.cache_window = self.wid, self.context.epoch
 
@@ -79,11 +103,24 @@ class EditorRun:
         return copy.deepcopy(history[-1] if history else getattr(provider, "last_usage", {}) or {})
 
     def save(self):
-        self.edits.save_progress(self.wid, self.rid, {"working": self.working, "base": self.base,
-            "current_refs": self.current_refs, "context": self.context.saved(), "trace": self.trace,
-            "pending_calls": self.pending_calls, "persona_reads": self.persona_reads,
-            "persona_changes": self.persona_changes, "calls": self.calls, "requests": self.requests, "rolled": self.rolled,
-            "web_fallback": self.web_session.failed})
+        self.edits.save_progress(
+            self.wid,
+            self.rid,
+            {
+                "working": self.working,
+                "base": self.base,
+                "current_refs": self.current_refs,
+                "context": self.context.saved(),
+                "trace": self.trace,
+                "pending_calls": self.pending_calls,
+                "persona_reads": self.persona_reads,
+                "persona_changes": self.persona_changes,
+                "calls": self.calls,
+                "requests": self.requests,
+                "rolled": self.rolled,
+                "web_fallback": self.web_session.failed,
+            },
+        )
 
     def web_fallback(self):
         self.definitions = self.web_session.definitions(tool_definitions())
@@ -100,7 +137,10 @@ class EditorRun:
     def response(self, provider, text, calls):
         message = {"role": "assistant", "content": text}
         if calls:
-            message["tool_calls"] = [{"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}} for c in calls]
+            message["tool_calls"] = [
+                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+                for c in calls
+            ]
         message.update(copy.deepcopy(getattr(provider, "last_assistant_extra_fields", {}) or {}))
         native = getattr(provider, "last_native_response", None)
         if native:
@@ -121,16 +161,34 @@ class EditorRun:
             name, args = call["function"]["name"], call["function"]["arguments"]
             action = f"{self.rid}:{call['id']}"
             started = time.monotonic()
-            self.event("tool_started", {"action_id": action, "tool": name, "arguments": args[:4000], "arguments_truncated": len(args) > 4000})
+            self.event(
+                "tool_started",
+                {
+                    "action_id": action,
+                    "tool": name,
+                    "arguments": args[:4000],
+                    "arguments_truncated": len(args) > 4000,
+                },
+            )
             status = "completed"
             try:
-                if (self.context.must_rollover or batch.get("forced")) and (name != "new_context" or len(calls) != 1):
+                if (self.context.must_rollover or batch.get("forced")) and (
+                    name != "new_context" or len(calls) != 1
+                ):
                     raise ValueError("上下文已满，只能单独调用 new_context")
                 if len(calls) != 1 and any(c["function"]["name"] == "new_context" for c in calls):
                     raise ValueError("new_context 必须单独调用，当前混合批次不执行")
                 result = await self.tools.execute(name, args)
             except asyncio.CancelledError:
-                self.event("tool_finished", {"action_id": action, "tool": name, "status": "cancelled", "detail": "工具中断，尚未提交"})
+                self.event(
+                    "tool_finished",
+                    {
+                        "action_id": action,
+                        "tool": name,
+                        "status": "cancelled",
+                        "detail": "工具中断，尚未提交",
+                    },
+                )
                 raise
             except Exception as error:
                 status = "error"
@@ -146,9 +204,18 @@ class EditorRun:
             self.trace.append(result_message)
             # State plus paired result are one persisted fact; resumes skip it.
             self.save()
-            self.event("tool_finished", {"action_id": action, "tool": name, "status": status,
-                "result": encoded[:4000], "detail": result.get("error", ""), "result_truncated": len(encoded) > 4000,
-                "duration_ms": round((time.monotonic() - started) * 1000)})
+            self.event(
+                "tool_finished",
+                {
+                    "action_id": action,
+                    "tool": name,
+                    "status": status,
+                    "result": encoded[:4000],
+                    "detail": result.get("error", ""),
+                    "result_truncated": len(encoded) > 4000,
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                },
+            )
         for ref in batch.get("image_history", []):
             self.context.recall_images(ref)
         self.pending_calls = None
@@ -164,7 +231,11 @@ class EditorRun:
     def archived_trace(self):
         result = []
         for message in self.trace:
-            item = {k: copy.deepcopy(v) for k, v in message.items() if k in {"role", "content", "tool_calls", "tool_call_id", "_tool_error", "web_sources"}}
+            item = {
+                k: copy.deepcopy(v)
+                for k, v in message.items()
+                if k in {"role", "content", "tool_calls", "tool_call_id", "_tool_error", "web_sources"}
+            }
             if isinstance(item.get("content"), str):
                 item["content"] = self.context.view.restore(item["content"])
             for call in item.get("tool_calls", []):
@@ -188,22 +259,40 @@ class EditorRun:
                 previous = next((c for c in workspace["cards"] if c["ref"] == item["ref"]), None)
                 # Portrait edits live in the container source, outside the card JSON,
                 # but must be undone as the same complete round as text edits.
-                if previous and (previous["document"] != item["document"]
-                                 or portrait_digest(previous["source"]) != portrait_digest(item["source"])):
+                if previous and (
+                    previous["document"] != item["document"]
+                    or portrait_digest(previous["source"]) != portrait_digest(item["source"])
+                ):
                     self.edits.version(db, self.wid, previous, self.request["text"])
-            changed = workspace["cards"] != self.working["cards"] or workspace["state"] != self.working["state"]
+            changed = (
+                workspace["cards"] != self.working["cards"] or workspace["state"] != self.working["state"]
+            )
             workspace.update(self.working)
             self.edits.write(db, workspace, increment=changed)
             history_ref = self.edits.message(db, self.wid, "assistant", response, self.rid)
             self.context.seen.append(history_ref)
             self.context.update("final_ref", history_ref, "上条最终回复的历史引用：")
-            db.execute("INSERT OR REPLACE INTO card_edit_contexts VALUES (?,?)", (self.wid, dump(self.context.saved())))
-            db.execute("INSERT OR REPLACE INTO card_author_traces VALUES (?,?)", (self.rid, dump(self.archived_trace())))
+            db.execute(
+                "INSERT OR REPLACE INTO card_edit_contexts VALUES (?,?)",
+                (self.wid, dump(self.context.saved())),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO card_author_traces VALUES (?,?)",
+                (self.rid, dump(self.archived_trace())),
+            )
             db.execute("DELETE FROM card_author_progress WHERE workspace=?", (self.wid,))
-            db.execute("UPDATE card_edit_runs SET status='completed',response=? WHERE id=?", (response, self.rid))
+            db.execute(
+                "UPDATE card_edit_runs SET status='completed',response=? WHERE id=?", (response, self.rid)
+            )
         reports = [{"card_ref": c["ref"], **validation_report(c["document"])} for c in self.working["cards"]]
-        self.event("completed", {"validation": reports[0] if len(reports) == 1 else reports,
-                                 "usage": self.usage(provider), "calls": self.calls})
+        self.event(
+            "completed",
+            {
+                "validation": reports[0] if len(reports) == 1 else reports,
+                "usage": self.usage(provider),
+                "calls": self.calls,
+            },
+        )
 
     async def run(self, provider):
         configure_operation(provider, self.request_context, self.event, "card_author")
@@ -224,22 +313,42 @@ class EditorRun:
             self.save()
             tokens = self.context.tokens()
             self.event("model_call", {"call": self.requests, "model": self.cfg.model})
-            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
-                                         "model": self.cfg.model, **self.context.image_stats()})
+            self.event(
+                "context_stats",
+                {
+                    "estimated_tokens": tokens,
+                    "context_limit": self.cfg.context_tokens,
+                    "model": self.cfg.model,
+                    **self.context.image_stats(),
+                },
+            )
             text = ""
             options = {"parallel_tool_calls": False}
             if self.context.must_rollover:
                 options["tool_choice"] = {"type": "function", "function": {"name": "new_context"}}
             outbound = await asyncio.to_thread(materialize_images, messages, self.store, self.wid, self.files)
-            async for chunk in self.web_session.chat(provider, provider_messages(provider, outbound, self.cfg), tool_definitions(),
-                                                    extra_body=options, on_fallback=self.web_fallback):
+            async for chunk in self.web_session.chat(
+                provider,
+                provider_messages(provider, outbound, self.cfg),
+                tool_definitions(),
+                extra_body=options,
+                on_fallback=self.web_fallback,
+            ):
                 if chunk is None:
                     text = ""
                 elif chunk:
                     text += chunk
                     self.event("text", {"text": chunk})
-            self.event("context_stats", {"estimated_tokens": tokens, "context_limit": self.cfg.context_tokens,
-                                         "model": self.cfg.model, "usage": self.usage(provider), **self.context.image_stats()})
+            self.event(
+                "context_stats",
+                {
+                    "estimated_tokens": tokens,
+                    "context_limit": self.cfg.context_tokens,
+                    "model": self.cfg.model,
+                    "usage": self.usage(provider),
+                    **self.context.image_stats(),
+                },
+            )
             calls = getattr(provider, "last_tool_calls", []) or []
             if len(calls) > 16 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
                 raise ValueError("无效的工具调用序列，本轮进度保留")
@@ -253,7 +362,17 @@ class EditorRun:
             assistant = self.response(provider, text, calls)
             if not calls:
                 if self.context.must_rollover:
-                    self.context.messages.extend([assistant, {"role": "system", "message_type": "reply_correction", "runtime_phase": "body", "content": "回复未提交，当前必须先单独调用 new_context 换窗。"}])
+                    self.context.messages.extend(
+                        [
+                            assistant,
+                            {
+                                "role": "system",
+                                "message_type": "reply_correction",
+                                "runtime_phase": "body",
+                                "content": "回复未提交，当前必须先单独调用 new_context 换窗。",
+                            },
+                        ]
+                    )
                     continue
                 if not text.strip():
                     raise ValueError("模型没有返回完整说明，本轮进度保留")

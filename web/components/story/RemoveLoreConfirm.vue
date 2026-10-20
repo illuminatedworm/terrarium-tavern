@@ -70,7 +70,7 @@ onBeforeUnmount(() => {
 .lore-remove {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .lore-popconfirm {
   position: fixed;
@@ -81,11 +81,11 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--surface-panel);
   color: var(--text-primary);
-  box-shadow: 0 8px 30px #0006;
-  font: 13px/1.7 var(--font-ui);
+  box-shadow: var(--shadow-pop);
+  font: var(--fs-md) / 1.7 var(--font-ui);
   white-space: normal;
 }
 .lore-popconfirm p {

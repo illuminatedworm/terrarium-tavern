@@ -105,7 +105,7 @@ async function add() {
 .preset-empty {
   margin: 28px 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.7;
 }
 .preset-editor {
@@ -129,11 +129,11 @@ async function add() {
 }
 .preset-settings-save span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .preset-validation,
 .preset-error {
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }

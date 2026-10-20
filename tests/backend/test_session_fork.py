@@ -17,16 +17,29 @@ def story(tmp_path):
     session = store.new_session(SessionCreate(card_id=card["id"]))
     parent = session["head"]
     with store.connection() as db:
-        for role, text in [("user", "推开门"), ("assistant", "欢迎"),
-                           ("user", "走向灯塔"), ("assistant", "后来")]:
+        for role, text in [
+            ("user", "推开门"),
+            ("assistant", "欢迎"),
+            ("user", "走向灯塔"),
+            ("assistant", "后来"),
+        ]:
             mid = uid()
-            snapshot = {"state": {"place": text}, "memory_document": {"version": 1, "records": []}, "lore": {"visits": 2},
-                        "scopes": {"message:0": {"note": "保留"}}, "content": {"document": card["document"]}}
-            db.execute("INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
-                       (mid, session["id"], parent, role, text, text, text, dump(snapshot), 1))
+            snapshot = {
+                "state": {"place": text},
+                "memory_document": {"version": 1, "records": []},
+                "lore": {"visits": 2},
+                "scopes": {"message:0": {"note": "保留"}},
+                "content": {"document": card["document"]},
+            }
+            db.execute(
+                "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
+                (mid, session["id"], parent, role, text, text, text, dump(snapshot), 1),
+            )
             parent = mid
-        db.execute("UPDATE sessions SET head=?,revision=2,persona_data=? WHERE id=?",
-                   (parent, dump({"description": "旅人"}), session["id"]))
+        db.execute(
+            "UPDATE sessions SET head=?,revision=2,persona_data=? WHERE id=?",
+            (parent, dump({"description": "旅人"}), session["id"]),
+        )
     return store, store.session(session["id"])
 
 
@@ -89,19 +102,30 @@ def test_selected_progress_retains_equivalent_backend_model_context(story):
     store, original = story
     selected = original["messages"][2]
     selected["snapshot"]["context_window"] = {
-        "covered_count": 1, "fingerprint": fingerprint(original["messages"][:1]),
-
+        "covered_count": 1,
+        "fingerprint": fingerprint(original["messages"][:1]),
     }
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(selected["snapshot"]), selected["id"]))
     fork = store.fork_session(original["id"], selected["id"], original["revision"])
-    at_progress = original | {"head": selected["id"], "messages": original["messages"][:3],
-                              "snapshot": selected["snapshot"]}
+    at_progress = original | {
+        "head": selected["id"],
+        "messages": original["messages"][:3],
+        "snapshot": selected["snapshot"],
+    }
     document = selected["snapshot"]["content"]["document"]
-    expected = compile_context(document, at_progress, at_progress["messages"],
-                               at_progress["snapshot"], "继续", store.settings(), "same-seed")
-    actual = compile_context(document, fork, fork["messages"], fork["snapshot"],
-                             "继续", store.settings(), "same-seed")
+    expected = compile_context(
+        document,
+        at_progress,
+        at_progress["messages"],
+        at_progress["snapshot"],
+        "继续",
+        store.settings(),
+        "same-seed",
+    )
+    actual = compile_context(
+        document, fork, fork["messages"], fork["snapshot"], "继续", store.settings(), "same-seed"
+    )
     assert actual["messages"] == expected["messages"]
     assert fork["snapshot"]["scopes"] == selected["snapshot"]["scopes"]
     assert fork["snapshot"]["lore"] == selected["snapshot"]["lore"]
@@ -109,9 +133,11 @@ def test_selected_progress_retains_equivalent_backend_model_context(story):
 
 def test_fork_rejects_stale_foreign_and_running_requests_without_partial_writes(story):
     store, original = story
-    for head, revision, exception in [(original["head"], 1, Conflict),
-                                      ("foreign", 2, ValueError),
-                                      (original["messages"][1]["id"], 2, ValueError)]:
+    for head, revision, exception in [
+        (original["head"], 1, Conflict),
+        ("foreign", 2, ValueError),
+        (original["messages"][1]["id"], 2, ValueError),
+    ]:
         with pytest.raises(exception):
             store.fork_session(original["id"], head, revision)
     store.create_turn(original["id"], TurnRequest(text="运行中", operation_id="running", expected_revision=2))
@@ -124,8 +150,10 @@ async def test_fork_endpoint_returns_independent_conversation(story):
     store, original = story
     app = create_app(store.root)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        response = await client.post(f"/api/sessions/{original['id']}/fork",
-                                     json={"message_id": original["messages"][2]["id"], "expected_revision": 2})
+        response = await client.post(
+            f"/api/sessions/{original['id']}/fork",
+            json={"message_id": original["messages"][2]["id"], "expected_revision": 2},
+        )
         assert response.status_code == 201
         assert len(response.json()["messages"]) == 3
         assert response.json()["id"] != original["id"]
@@ -135,8 +163,10 @@ async def test_title_endpoint_updates_session_and_list(story):
     store, original = story
     app = create_app(store.root)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
-        response = await client.put(f"/api/sessions/{original['id']}/title",
-                                    json={"title": "另一条线", "expected_revision": original["revision"]})
+        response = await client.put(
+            f"/api/sessions/{original['id']}/title",
+            json={"title": "另一条线", "expected_revision": original["revision"]},
+        )
         assert response.status_code == 200
         assert response.json()["title"] == "另一条线"
         listing = await client.get("/api/sessions")

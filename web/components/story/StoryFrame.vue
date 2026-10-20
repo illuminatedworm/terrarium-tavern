@@ -55,8 +55,13 @@ let suspensionTimer: ReturnType<typeof setTimeout> | undefined;
 let boot: { html: string; assets: { url: string; blob: Blob }[] } | undefined;
 let imageRequests = new AbortController();
 const release = (items: { release: () => void }[]) => items.splice(0).forEach((item) => item.release());
-const baseStyle =
-  'html{background:#222326;scrollbar-width:thin;scrollbar-color:#50515c transparent}body{margin:0;color:#b9b7be;font:15px system-ui}button{cursor:pointer}*{box-sizing:border-box}';
+// Card frames are isolated documents and cannot read host variables, so the host
+// tokens are resolved once and written into the frame's fallback stylesheet.
+function baseStyle() {
+  const tokens = getComputedStyle(document.documentElement);
+  const token = (name: string) => tokens.getPropertyValue(name).trim();
+  return `html{background:${token('--surface-panel')};scrollbar-width:thin;scrollbar-color:${token('--scrollbar')} transparent}body{margin:0;color:${token('--text-secondary')};font:15px system-ui}button{cursor:pointer}*{box-sizing:border-box}`;
+}
 function data() {
   return {
     ui: true,
@@ -218,7 +223,7 @@ async function build(force = false) {
     scripts = `<script src="${sdkAsset.url}"><\/script><script src="${historyAsset.url}"><\/script><script>TavernRuntime.mountFrame(TavernRuntime,${options});<\/script>`;
   }
   const policy = `default-src 'none'; script-src ${sdk ? "'unsafe-inline' 'unsafe-eval' blob:" : "'none'"}; style-src 'unsafe-inline' data: blob:; img-src data: blob:; font-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'`;
-  const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${baseStyle}</style>${scripts}</head><body>${markup.html}</body></html>`;
+  const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${baseStyle()}</style>${scripts}</head><body>${markup.html}</body></html>`;
   boot = sdk ? { html: documentHtml, assets: transfers.map(({ url, blob }) => ({ url, blob })) } : undefined;
   source.value = sdk ? frameBoot(token) : documentHtml;
 }

@@ -4,6 +4,7 @@ Text is counted using an actual tokenizer, never bytes/characters divided by a
 constant. Chat framing and unknown providers remain estimates; provider usage is
 the authority after a request. Vocabularies are bundled for offline operation.
 """
+
 import base64
 import gzip
 import hashlib
@@ -31,8 +32,14 @@ def counting_info(settings=None):
         source = "model_mapping" if selected in SUPPORTED else "reference_fallback"
         if selected not in SUPPORTED:
             selected = "o200k_base"
-    return {"unit": "tokens", "tokenizer": selected, "source": source, "estimated": True,
-            "message_framing": "estimated", "model": model}
+    return {
+        "unit": "tokens",
+        "tokenizer": selected,
+        "source": source,
+        "estimated": True,
+        "message_framing": "estimated",
+        "model": model,
+    }
 
 
 @lru_cache(maxsize=2)
@@ -41,9 +48,15 @@ def encoding(name):
     raw = gzip.decompress((DATA / f"{name}.tiktoken.gz").read_bytes())
     if hashlib.sha256(raw).hexdigest() != metadata["sha256"]:
         raise ValueError("Token 分词器词表校验失败，请重新安装")
-    ranks = {base64.b64decode(token): int(rank) for token, rank in (line.split() for line in raw.splitlines())}
-    return tiktoken.Encoding(name=name, pat_str=metadata["pat_str"], mergeable_ranks=ranks,
-                             special_tokens=metadata["special_tokens"])
+    ranks = {
+        base64.b64decode(token): int(rank) for token, rank in (line.split() for line in raw.splitlines())
+    }
+    return tiktoken.Encoding(
+        name=name,
+        pat_str=metadata["pat_str"],
+        mergeable_ranks=ranks,
+        special_tokens=metadata["special_tokens"],
+    )
 
 
 @lru_cache(maxsize=1024)
@@ -62,21 +75,34 @@ def message_tokens(message, settings=None):
     native = message.get("_native_response")
     if native:
         # Ciphertext length is not the model's rendered context length.
-        visible = [{k: v for k, v in item.items() if k != "encrypted_content"}
-                   for item in native["items"] if item.get("type") != "compaction"]
-        return (count_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":")), settings)
-                + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING)
+        visible = [
+            {k: v for k, v in item.items() if k != "encrypted_content"}
+            for item in native["items"]
+            if item.get("type") != "compaction"
+        ]
+        return (
+            count_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":")), settings)
+            + count_text(message.get("role", ""), settings)
+            + MESSAGE_FRAMING
+        )
     content = message.get("content") or ""
     if isinstance(content, list):
         # Base64 is transport encoding, not rendered model text. Vision usage
         # is unknown locally and is reported separately from this text estimate.
-        content = [part for part in content if not isinstance(part, dict) or part.get("type") not in ("image_url", "input_image", "image")
-                   and "inlineData" not in part]
+        content = [
+            part
+            for part in content
+            if not isinstance(part, dict)
+            or part.get("type") not in ("image_url", "input_image", "image")
+            and "inlineData" not in part
+        ]
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
     cost = count_text(content, settings) + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING
     # Context tracing fields are local metadata, never part of the model input.
-    extra = {key: message[key] for key in ("name", "tool_calls", "tool_call_id", "function_call") if key in message}
+    extra = {
+        key: message[key] for key in ("name", "tool_calls", "tool_call_id", "function_call") if key in message
+    }
     if extra:
         cost += count_text(json.dumps(extra, ensure_ascii=False, separators=(",", ":")), settings)
     return cost

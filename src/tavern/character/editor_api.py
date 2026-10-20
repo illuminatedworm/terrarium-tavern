@@ -1,4 +1,5 @@
 """Public conversation-oriented authoring API; all mutations check a revision."""
+
 import copy
 import json
 from types import SimpleNamespace
@@ -92,12 +93,15 @@ def register_conversation_routes(app, editor):
 
     @app.post(base + "/{wid}/references")
     async def attach(wid: str, payload: Reference):
-        return editor.edits.attach(wid, payload.card_id, payload.expected_revision, payload.document, payload.expected_card_revision)
+        return editor.edits.attach(
+            wid, payload.card_id, payload.expected_revision, payload.document, payload.expected_card_revision
+        )
 
     @app.post(base + "/{wid}/files")
     async def upload_file(wid: str, expected_revision: int = Form(...), file: UploadFile = File(...)):
         from tavern.character.editor_attachments import attach_file
         from tavern.character.editor_files import MAX_FILE_BYTES
+
         try:
             with editor.store.connection() as db:
                 editor.edits.check(db, wid, expected_revision)
@@ -113,6 +117,7 @@ def register_conversation_routes(app, editor):
     @app.delete(base + "/{wid}/files/{ref}")
     async def remove_file(wid: str, ref: str, payload: Revision):
         from tavern.character.editor_attachments import detach_file
+
         return detach_file(editor.edits, wid, payload.expected_revision, ref)
 
     @app.delete(base + "/{wid}/references/{ref}")
@@ -121,7 +126,9 @@ def register_conversation_routes(app, editor):
 
     @app.post(base + "/{wid}/persona-references")
     async def attach_persona(wid: str, payload: PersonaReference):
-        return editor.edits.attach_persona(wid, payload.persona_id, payload.expected_revision, payload.expected_persona_version)
+        return editor.edits.attach_persona(
+            wid, payload.persona_id, payload.expected_revision, payload.expected_persona_version
+        )
 
     @app.delete(base + "/{wid}/persona-references/{ref}")
     async def detach_persona(wid: str, ref: str, payload: Revision):
@@ -174,39 +181,70 @@ def register_conversation_routes(app, editor):
     async def tools(wid: str):
         editor.edits.conversation(wid)
         from tavern.web.cloud import WebSession
+
         cfg = editor_runtime_config(editor.store, wid, {})
         progress = editor.edits.progress(wid)
-        return WebSession(cfg.card_author_config.web.mode, cfg, "card_author",
-                          failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
+        return WebSession(
+            cfg.card_author_config.web.mode,
+            cfg,
+            "card_author",
+            failed=bool(progress and progress.get("web_fallback")),
+        ).definitions(tool_definitions())
 
     @app.get(base + "/{wid}/context")
     async def context(wid: str):
         workspace = editor.edits.conversation(wid)
-        return {"revision": workspace["revision"], "state": workspace["state"],
-                "pending": workspace["pending"] is not None,
-                "confirmed_briefs": [{"card_ref": c["ref"], "text": c["brief"]} for c in workspace["cards"] if c.get("brief")]}
+        return {
+            "revision": workspace["revision"],
+            "state": workspace["state"],
+            "pending": workspace["pending"] is not None,
+            "confirmed_briefs": [
+                {"card_ref": c["ref"], "text": c["brief"]} for c in workspace["cards"] if c.get("brief")
+            ],
+        }
 
     def preview_owner(wid, payload):
         workspace = editor.edits.conversation(wid)
         with editor.store.connection() as db:
             environment = editor.edits.environment_snapshot(db, workspace)
         progress = editor.edits.progress(wid)
-        working = progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
-        owner = SimpleNamespace(store=editor.store, edits=editor.edits, wid=wid, rid="preview", legacy=False,
+        working = (
+            progress["working"] if progress else {"cards": workspace["cards"], "state": workspace["state"]}
+        )
+        owner = SimpleNamespace(
+            store=editor.store,
+            edits=editor.edits,
+            wid=wid,
+            rid="preview",
+            legacy=False,
             environment=environment,
             files=copy.deepcopy(workspace.get("files", [])),
-            working=copy.deepcopy(working), cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
-            definitions=tool_definitions(), current_refs=progress.get("current_refs", []) if progress else [],
+            working=copy.deepcopy(working),
+            cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
+            definitions=tool_definitions(),
+            current_refs=progress.get("current_refs", []) if progress else [],
             pending_calls=copy.deepcopy(progress.get("pending_calls")) if progress else None,
             trace=copy.deepcopy(progress.get("trace", [])) if progress else [],
-            persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {}, request={}, reads={})
+            persona_changes=copy.deepcopy(progress.get("persona_changes", {})) if progress else {},
+            request={},
+            reads={},
+        )
         from tavern.web.cloud import WebSession
-        owner.definitions = WebSession(owner.cfg.card_author_config.web.mode, owner.cfg, "card_author",
-                                       failed=bool(progress and progress.get("web_fallback"))).definitions(tool_definitions())
-        owner.context = EditorContext(copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner)
+
+        owner.definitions = WebSession(
+            owner.cfg.card_author_config.web.mode,
+            owner.cfg,
+            "card_author",
+            failed=bool(progress and progress.get("web_fallback")),
+        ).definitions(tool_definitions())
+        owner.context = EditorContext(
+            copy.deepcopy(progress["context"] if progress else editor.edits.context(wid)), owner
+        )
         owner.tools = EditorTools(owner)
         if payload.text:
-            owner.context.add_message("user", payload.text, [f for f in workspace.get("files", []) if not f.get("message_ref")])
+            owner.context.add_message(
+                "user", payload.text, [f for f in workspace.get("files", []) if not f.get("message_ref")]
+            )
         return owner
 
     @app.post(base + "/{wid}/stats")
@@ -216,14 +254,21 @@ def register_conversation_routes(app, editor):
         with editor.store.connection() as db:
             # The newest usage-bearing call wins, including failed/resumable
             # turns; an omitted cache counter must never reuse an older value.
-            row = db.execute("""SELECT e.payload FROM card_edit_events e JOIN card_edit_runs r ON r.id=e.run
+            row = db.execute(
+                """SELECT e.payload FROM card_edit_events e JOIN card_edit_runs r ON r.id=e.run
                 WHERE r.workspace=? AND e.kind IN ('context_stats','completed')
-                AND json_type(e.payload,'$.usage')='object' ORDER BY e.seq DESC LIMIT 1""", (wid,)).fetchone()
-        return {"estimated_tokens": owner.context.tokens(), "context_limit": owner.cfg.context_tokens,
-                "model": owner.cfg.model, "token_counting": counting_info(owner.cfg),
-                **owner.context.image_stats(),
-                "usage": json.loads(row[0]).get("usage") if row else None,
-                "cache_usage": editor.edits.conversation_cache_usage(wid)}
+                AND json_type(e.payload,'$.usage')='object' ORDER BY e.seq DESC LIMIT 1""",
+                (wid,),
+            ).fetchone()
+        return {
+            "estimated_tokens": owner.context.tokens(),
+            "context_limit": owner.cfg.context_tokens,
+            "model": owner.cfg.model,
+            "token_counting": counting_info(owner.cfg),
+            **owner.context.image_stats(),
+            "usage": json.loads(row[0]).get("usage") if row else None,
+            "cache_usage": editor.edits.conversation_cache_usage(wid),
+        }
 
     @app.post(base + "/{wid}/preview")
     async def preview(wid: str, payload: Preview):
@@ -232,13 +277,34 @@ def register_conversation_routes(app, editor):
         from tavern.character.editor_attachments import file_metadata
         from tavern.character.editor_images import IMAGE_REFS
         from tavern.core.message_adapter import WIRE_FIELDS, adapt_messages, adapter_snapshot
-        messages = [{**{k: v for k, v in message.items() if k in WIRE_FIELDS},
-                     **({"attachments": file_metadata([f for f in owner.files if f["ref"] in message[IMAGE_REFS]])}
-                        if message.get(IMAGE_REFS) else {})}
-                    for message in adapt_messages(messages, owner.cfg)[0]]
-        tools = ([d for d in owner.definitions if d.get("function", {}).get("name") == "new_context"]
-                 if owner.context.must_rollover else owner.definitions)
-        return {"messages": messages, "adapter_revision": adapter_snapshot(owner.cfg)["revision"], "tools": tools, "estimated_tokens": owner.context.tokens(),
-                "context_limit": owner.cfg.context_tokens, "preview_only": True,
-                **owner.context.image_stats(),
-                "note": "只读预览；图片仅展示附件引用、格式与尺寸，实际请求发送原图。尚未执行模型和工具，不包含后续工具读取结果。未保存的环境快照仅供预览，首次发送时才固定。"}
+
+        messages = [
+            {
+                **{k: v for k, v in message.items() if k in WIRE_FIELDS},
+                **(
+                    {
+                        "attachments": file_metadata(
+                            [f for f in owner.files if f["ref"] in message[IMAGE_REFS]]
+                        )
+                    }
+                    if message.get(IMAGE_REFS)
+                    else {}
+                ),
+            }
+            for message in adapt_messages(messages, owner.cfg)[0]
+        ]
+        tools = (
+            [d for d in owner.definitions if d.get("function", {}).get("name") == "new_context"]
+            if owner.context.must_rollover
+            else owner.definitions
+        )
+        return {
+            "messages": messages,
+            "adapter_revision": adapter_snapshot(owner.cfg)["revision"],
+            "tools": tools,
+            "estimated_tokens": owner.context.tokens(),
+            "context_limit": owner.cfg.context_tokens,
+            "preview_only": True,
+            **owner.context.image_stats(),
+            "note": "只读预览；图片仅展示附件引用、格式与尺寸，实际请求发送原图。尚未执行模型和工具，不包含后续工具读取结果。未保存的环境快照仅供预览，首次发送时才固定。",
+        }

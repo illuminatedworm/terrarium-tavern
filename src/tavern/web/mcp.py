@@ -1,4 +1,5 @@
 """Small Streamable HTTP client restricted to Exa search and page fetch."""
+
 import json
 
 URL = "https://mcp.exa.ai/mcp"
@@ -25,7 +26,9 @@ class ExaMCP:
         if "text/event-stream" in response.headers.get("content-type", ""):
             packets = []
             for block in response.text.replace("\r\n", "\n").split("\n\n"):
-                data = "\n".join(line[5:].lstrip(" ") for line in block.splitlines() if line.startswith("data:"))
+                data = "\n".join(
+                    line[5:].lstrip(" ") for line in block.splitlines() if line.startswith("data:")
+                )
                 if data:
                     packets.append(json.loads(data))
         else:
@@ -44,8 +47,14 @@ class ExaMCP:
         if name not in {"web_search_exa", "web_fetch_exa"}:
             raise ValueError("Exa 工具不在允许范围内")
         try:
-            init = await self.rpc("initialize", {"protocolVersion": VERSION, "capabilities": {},
-                "clientInfo": {"name": "TerrariumTavern", "version": "1.0"}})
+            init = await self.rpc(
+                "initialize",
+                {
+                    "protocolVersion": VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "TerrariumTavern", "version": "1.0"},
+                },
+            )
             if init.get("protocolVersion") not in {VERSION, "2025-06-18", "2024-11-05"}:
                 raise ValueError("Exa MCP 协议版本不受支持")
             self.headers["MCP-Protocol-Version"] = init["protocolVersion"]
@@ -84,6 +93,9 @@ class ExaMCP:
     @staticmethod
     def text(result):
         content = result.get("content")
-        if not isinstance(content, list) or any(not isinstance(p, dict) or p.get("type") != "text" or not isinstance(p.get("text"), str) for p in content):
+        if not isinstance(content, list) or any(
+            not isinstance(p, dict) or p.get("type") != "text" or not isinstance(p.get("text"), str)
+            for p in content
+        ):
             raise ValueError("Exa 返回了无法完整读取的内容格式")
         return "\n".join(part["text"] for part in content)

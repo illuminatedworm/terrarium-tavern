@@ -1,4 +1,5 @@
 """Revision-checked adapter changes can be saved while a model call is running."""
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.core.message_adapter import catalog
@@ -17,7 +18,11 @@ def register_message_adapter_routes(app, store):
         if lane not in ("foreground", "background", "full_agent", "card_author", "advisor"):
             raise ValueError("未知模型调用链")
         recipe = recipe_types(store.settings_document().half_agent.context_recipe.model_dump())
-        extra = [b["message_type"] for b in recipe["blocks"] if b.get("message_type")] if lane == "foreground" else []
+        extra = (
+            [b["message_type"] for b in recipe["blocks"] if b.get("message_type")]
+            if lane == "foreground"
+            else []
+        )
         return catalog(lane, extra)
 
     @app.get("/api/sessions/{sid}/message-adapter")

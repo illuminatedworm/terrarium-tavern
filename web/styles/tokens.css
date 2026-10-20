@@ -4,9 +4,11 @@
    Palette: graphite neutrals (no hue cast) with warm, paper-like text, an ivory
    primary action and a single cool periwinkle accent for focus, selection and
    live state. Cache-breakpoint gold and context-category colours are semantic and
-   do not follow the scheme. To restyle the app, edit the channel group only. */
+   do not follow the scheme. To restyle the app, edit the palette group only: hues
+   that need alpha variants are "R G B" channels, solid surfaces and text are plain
+   colours. Everything below the palette derives from it. */
 :root {
-  /* ---- Palette channels ("R G B") ---- */
+  /* ---- Palette ---- */
   --canvas-rgb: 12 13 15;
   --glass-rgb: 21 22 25;
   --glass-hi-rgb: 30 31 35;
@@ -24,6 +26,30 @@
   --warning-rgb: 230 194 136;
   /* Kemini experiment conversations: a muted plum ring, never a text badge. */
   --experiment-rgb: 200 150 196;
+  --success-rgb: 143 208 170;
+  --surface-base: #141517;
+  --surface-sidebar: #17181b;
+  --surface-panel: #1c1d21;
+  --surface-input: #101113;
+  --surface-hover: #24262a;
+  --surface-active: #2c2e33;
+  --border-strong: #4c4f57;
+  --text-strong: #fff;
+  --text-primary: #ebe9e4;
+  --text-secondary: #b6b4af;
+  --text-muted: #8c8b89;
+  --text-faint: #696a6d;
+  --text-story: #d9d6cf;
+  --text-dialogue: #cdd8ec;
+  --on-accent: #10131a;
+  --scrollbar: #45484f;
+  /* Semantic colours: they keep their meaning under any scheme. */
+  --cache-gold-rgb: 242 185 40;
+  --cache-gold-light: #ffe184;
+  --cache-gold-text: #d8ad39;
+  --cache-gold-deep: #674b12;
+  --find-rgb: 237 197 114;
+  --on-find: #24211b;
 
   /* ---- Derived colours ---- */
   --canvas: rgb(var(--canvas-rgb));
@@ -42,39 +68,25 @@
     rgb(var(--experiment-rgb) / 0.18),
     rgb(var(--experiment-rgb) / 0) 75%
   );
-  --surface-base: #141517;
-  --surface-sidebar: #17181b;
-  --surface-panel: #1c1d21;
-  --surface-input: #101113;
-  --surface-hover: #24262a;
-  --surface-active: #2c2e33;
   /* Hairlines are translucent so they read the same on glass and on solid panes. */
   --border-subtle: rgb(255 255 255 / 0.06);
   --border-control: rgb(255 255 255 / 0.1);
-  --border-strong: #4c4f57;
-  --text-primary: #ebe9e4;
-  --text-secondary: #b6b4af;
-  --text-muted: #8c8b89;
-  --text-faint: #696a6d;
-  --text-story: #d9d6cf;
-  --text-dialogue: #cdd8ec;
   --ivory: rgb(var(--ivory-rgb));
-  --on-ivory: #141517;
+  --on-ivory: var(--surface-base);
   --accent: rgb(var(--accent-rgb));
   --accent-hover: rgb(var(--accent-hover-rgb));
   --accent-soft: rgb(var(--accent-rgb) / 0.14);
   --accent-glow: rgb(var(--accent-rgb) / 0.32);
-  --on-accent: #10131a;
   --moss: rgb(var(--moss-rgb));
   --focus-ring: rgb(var(--focus-rgb));
-  --scrollbar: #45484f;
   --danger: rgb(var(--danger-rgb));
   --danger-surface: rgb(var(--danger-rgb) / 0.12);
   --danger-edge: rgb(var(--danger-rgb) / 0.32);
-  --success: #8fd0aa;
+  --success: rgb(var(--success-rgb));
   --warning: rgb(var(--warning-rgb));
-  --cache-gold: #f2b928;
-  --cache-gold-light: #ffe184;
+  --cache-gold: rgb(var(--cache-gold-rgb));
+  --find-match: rgb(var(--find-rgb) / 0.23);
+  --find-current: rgb(var(--find-rgb));
   /* Context categories: context-preview rows, budget bar and memory cards. */
   --ctx-rules: #78a8d4;
   --ctx-lore: #b58bd4;
@@ -105,12 +117,22 @@
   --fs-sm: 12.5px;
   --fs-md: 13.5px;
   --fs-base: 14px;
+  /* Comfortable control text: composer input, picker rows, small titles. */
+  --fs-ui: 15px;
   --fs-lg: 16px;
   --fs-xl: 19px;
+  --fs-title: 22px;
   --fs-2xl: 26px;
+  --fs-3xl: 32px;
   --fs-display: 44px;
 
+  /* ---- Breakpoints ----
+     Media queries cannot read custom properties, so the width steps are listed here
+     and used literally: 420 (small phone), 620 (phone: left drawer), 760 (tablet:
+     right drawer), 1000 / 1200 (compact desktop), 1400 (wide sidebar panel). */
+
   /* ---- Shape & motion ---- */
+  --radius-2xs: 3px;
   --radius-xs: 6px;
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -121,6 +143,16 @@
   --control-h-sm: 28px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur: 0.18s;
+
+  /* ---- Layers ----
+     Page-level stacking for surfaces teleported to <body>. Small z-index values
+     inside a component only order its own children and stay local. */
+  --z-modal: 1000;
+  --z-popover: 1300;
+  --z-dialog: 1500;
+  --z-confirm: 2000;
+  --z-tooltip: 10000;
+  --z-toast: 100000;
 
   /* ---- Elevation ---- */
   --shadow-soft: 0 10px 30px -14px rgb(0 0 0 / 0.6);

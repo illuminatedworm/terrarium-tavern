@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from tavern.conversation.compaction import compact_once, rebuild
 from tavern.core.cache_policy import fingerprint
+from tavern.core.errors import NotFound
 from tavern.core.message_adapter import adapter_snapshot, bind_adapter
 from tavern.core.models import TurnRequest
 from tavern.core.provider import make_provider
@@ -40,7 +41,7 @@ class ContextOperations:
         with self.store.connection() as db:
             row = db.execute("SELECT * FROM context_operations WHERE id=?", (operation_id,)).fetchone()
         if row is None:
-            raise KeyError("上下文操作不存在")
+            raise NotFound("上下文操作不存在")
         value = dict(row)
         payload = json.loads(value.pop("payload"))
         value.update(
@@ -134,13 +135,24 @@ class ContextOperations:
             snapshot = copy.deepcopy(session["snapshot"])
             half = session["agent_mode"] == "half_agent"
             from tavern.conversation.half_compaction import STATE, install
+
             state = snapshot.setdefault(STATE, {}) if half else full_state(snapshot)
             role = "foreground" if half else "full_agent"
-            settings = bind_adapter(self.store.session_settings(session).for_role(role), self.store, "story", session["id"])
+            settings = bind_adapter(
+                self.store.session_settings(session).for_role(role), self.store, "story", session["id"]
+            )
             from tavern.scripting.request_context import response_origin
+
             def identity(config):
-                return fingerprint([config.model_dump(), adapter_snapshot(config), response_origin(config),
-                                    response_origin(config.for_role("background")) if half else None])
+                return fingerprint(
+                    [
+                        config.model_dump(),
+                        adapter_snapshot(config),
+                        response_origin(config),
+                        response_origin(config.for_role("background")) if half else None,
+                    ]
+                )
+
             source_settings = identity(settings)
             if payload.get("source_settings", source_settings) != source_settings:
                 raise Conflict("整理设置或官方连接已改变，不能继续旧操作；请重新发起")
@@ -156,13 +168,18 @@ class ContextOperations:
                 "document", self.store.session_card(session["id"])["document"]
             )
             request = TurnRequest(operation_id=op["operation"], expected_revision=session["revision"])
-            tools = [] if half else tool_definitions(
-                request, source, settings.full_agent_config, settings=settings, document=document
+            tools = (
+                []
+                if half
+                else tool_definitions(
+                    request, source, settings.full_agent_config, settings=settings, document=document
+                )
             )
 
             def compile_current():
                 if half:
                     from tavern.conversation.half_context_operations import compile_sources
+
                     return compile_sources(self.store, source, snapshot, document, settings)
                 return compile_window(
                     document,
@@ -179,6 +196,7 @@ class ContextOperations:
             compiled = compile_current()
             if half and strategy == "openai_compact":
                 from tavern.conversation.half_compaction import completed_context
+
                 compiled = completed_context(compiled)
             self.save(oid, payload)
 
@@ -186,8 +204,11 @@ class ContextOperations:
                 async def chat_complete(_, *args, **kwargs):
                     nonlocal provider
                     if provider is None:
-                        provider = (self.provider_factory(settings) if self.provider_factory
-                                    else await make_provider(settings))
+                        provider = (
+                            self.provider_factory(settings)
+                            if self.provider_factory
+                            else await make_provider(settings)
+                        )
                     return await provider.chat_complete(*args, **kwargs)
 
                 def __getattr__(_, name):
@@ -207,33 +228,61 @@ class ContextOperations:
 
             if op["kind"] == "enable_local" and half:
                 from tavern.conversation.half_context_operations import rebuild_local as rebuild_half_local
+
                 async def save_local(value):
                     payload["replay"] = value
                     payload["progress"] = {key: value[key] for key in ("batches", "processed", "total")}
                     payload["usage"] = copy.deepcopy(value["usage"])
                     self.save(oid, payload)
+
                 snapshot, replay = await rebuild_half_local(
-                    self.store, oid, source, snapshot, document, settings,
-                    provider_factory=self.provider_factory, progress=payload.get("replay"),
-                    save=save_local, retrieval=self.retrieval)
+                    self.store,
+                    oid,
+                    source,
+                    snapshot,
+                    document,
+                    settings,
+                    provider_factory=self.provider_factory,
+                    progress=payload.get("replay"),
+                    save=save_local,
+                    retrieval=self.retrieval,
+                )
                 payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
             elif op["kind"] == "enable_local":
-                replay = await rebuild_local(compiled, settings, lazy_provider,
-                                             progress=payload.get("replay"), save=save_progress)
-                state["handoff"] = {"text": replay["handoff"], "revision": state["handoff"]["revision"] + 1,
-                                    "stale": False}
-                state["window"] = {"id": uid(), "number": state["window"]["number"] + 1,
-                                   "start": replay["history_start"], "replay_history": True}
+                replay = await rebuild_local(
+                    compiled, settings, lazy_provider, progress=payload.get("replay"), save=save_progress
+                )
+                state["handoff"] = {
+                    "text": replay["handoff"],
+                    "revision": state["handoff"]["revision"] + 1,
+                    "stale": False,
+                }
+                state["window"] = {
+                    "id": uid(),
+                    "number": state["window"]["number"] + 1,
+                    "start": replay["history_start"],
+                    "replay_history": True,
+                }
                 payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
-            elif (compiled["compact_requires_rebuild"] or op["kind"] == "enable_compact"
-                  or half and not compiled["compaction_opaque"]):
+            elif (
+                compiled["compact_requires_rebuild"]
+                or op["kind"] == "enable_compact"
+                or half
+                and not compiled["compaction_opaque"]
+            ):
                 # Manual re-compaction can start from the existing checkpoint,
                 # but rebuilding from originals is required on identity changes.
                 checkpoint, replay = await rebuild(
-                    compiled, settings, lazy_provider, progress=payload.get("replay"), save=save_progress,
-                    force=op["kind"] == "compact" or half and compiled["estimated_tokens"] > settings.context_tokens,
+                    compiled,
+                    settings,
+                    lazy_provider,
+                    progress=payload.get("replay"),
+                    save=save_progress,
+                    force=op["kind"] == "compact"
+                    or half
+                    and compiled["estimated_tokens"] > settings.context_tokens,
                 )
                 state["compaction"] = checkpoint
                 if half:
@@ -241,11 +290,19 @@ class ContextOperations:
                 payload["compacted"] = any(i.get("type") == "compaction" for i in checkpoint["items"])
                 payload["usage"] = replay["usage"]
                 payload["converted"] = bool(replay["batches"])
-                if half and compiled["_replay_complete"] and compiled["estimated_tokens"] > settings.context_tokens and not payload["compacted"]:
+                if (
+                    half
+                    and compiled["_replay_complete"]
+                    and compiled["estimated_tokens"] > settings.context_tokens
+                    and not payload["compacted"]
+                ):
                     raise ValueError("历史超过窗口上限，但服务端未生成压缩状态；原上下文保持不变")
             elif op["kind"] == "compact":
-                checkpoint, usage = (await compact_once(compiled, settings, lazy_provider)
-                                     if not half or compiled["_replay_complete"] else (None, {}))
+                checkpoint, usage = (
+                    await compact_once(compiled, settings, lazy_provider)
+                    if not half or compiled["_replay_complete"]
+                    else (None, {})
+                )
                 if checkpoint:
                     state["compaction"] = checkpoint
                     if half:
@@ -255,9 +312,13 @@ class ContextOperations:
                 payload["converted"] = True
             if hasattr(provider, "usage_history"):
                 payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)
-            if response_origin(self.store.session_settings(session).for_role(role)) != response_origin(settings):
+            if response_origin(self.store.session_settings(session).for_role(role)) != response_origin(
+                settings
+            ):
                 raise Conflict("整理期间官方连接已改变，未替换当前上下文；请重新整理")
-            current_settings = bind_adapter(self.store.session_settings(session).for_role(role), self.store, "story", session["id"])
+            current_settings = bind_adapter(
+                self.store.session_settings(session).for_role(role), self.store, "story", session["id"]
+            )
             if identity(current_settings) != source_settings:
                 raise Conflict("整理期间上下文设置已改变，未替换当前上下文；请重新整理")
             with self.store.connection() as db:

@@ -1,4 +1,5 @@
 """Replay OpenAI breakpoints at content boundaries that were actually sent."""
+
 import copy
 import hashlib
 import json
@@ -21,16 +22,24 @@ def boundaries(body, api):
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
 
-    add({key: body[key] for key in ("tools", "tool_choice", "instructions", "reasoning", "reasoning_effort")
-         if key in body})
+    add(
+        {
+            key: body[key]
+            for key in ("tools", "tool_choice", "instructions", "reasoning", "reasoning_effort")
+            if key in body
+        }
+    )
     for index, item in enumerate(body.get("input" if api == "responses" else "messages", [])):
         content = item.get("content")
         if not isinstance(content, (str, list)):
             add(item)
             continue
         add({key: value for key, value in item.items() if key != "content"})
-        parts = ([{"type": "input_text" if api == "responses" else "text", "text": content}]
-                 if isinstance(content, str) else content)
+        parts = (
+            [{"type": "input_text" if api == "responses" else "text", "text": content}]
+            if isinstance(content, str)
+            else content
+        )
         for part_index, part in enumerate(parts):
             add({key: value for key, value in part.items() if key != FIELD})
             yield digest.hexdigest(), index, part_index, item, parts, part
@@ -38,9 +47,16 @@ def boundaries(body, api):
 
 
 def marked_boundaries(body, api):
-    return [{"prefix_sha256": prefix, "message_index": index, "content_index": part_index,
-             "value": copy.deepcopy(part[FIELD])}
-            for prefix, index, part_index, _, _, part in boundaries(body, api) if FIELD in part]
+    return [
+        {
+            "prefix_sha256": prefix,
+            "message_index": index,
+            "content_index": part_index,
+            "value": copy.deepcopy(part[FIELD]),
+        }
+        for prefix, index, part_index, _, _, part in boundaries(body, api)
+        if FIELD in part
+    ]
 
 
 class SentBreakpoints:
@@ -59,8 +75,11 @@ class SentBreakpoints:
 
     def remember(self, identity, boundaries):
         known = self.entries.setdefault(identity, {})
-        added = {entry["prefix_sha256"]: entry["value"] for entry in boundaries
-                 if known.get(entry["prefix_sha256"]) != entry["value"]}
+        added = {
+            entry["prefix_sha256"]: entry["value"]
+            for entry in boundaries
+            if known.get(entry["prefix_sha256"]) != entry["value"]
+        }
         if added:
             if self.save:
                 self.save(identity, added)

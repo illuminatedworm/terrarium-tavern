@@ -25,12 +25,12 @@ defineProps<{ text: string; label: string }>();
 }
 .prompt-prefix::before {
   inset: 0;
-  border-radius: 7px 0 0;
+  border-radius: var(--radius-xs) 0 0;
   background: var(--border-control);
 }
 .prompt-prefix::after {
   inset: 1px;
-  border-radius: 6px 0 0;
+  border-radius: var(--radius-xs) 0 0;
   background: var(--surface-input);
 }
 .prompt-prefix > pre {
@@ -44,7 +44,7 @@ defineProps<{ text: string; label: string }>();
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 </style>

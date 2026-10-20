@@ -1,4 +1,5 @@
 """Batch policy from saved settings through model messages, wire and draft execution."""
+
 import json
 
 import httpx
@@ -23,9 +24,13 @@ async def test_batch_setting_defaults_migrates_and_persists_both_values(tmp_path
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         before = (await client.get("/api/settings")).json()
         assert before["full_agent"]["tools"]["parallel_tool_calls"] is True
-        changed = await client.patch("/api/settings/full_agent", json={
-            "expected_revision": before["revisions"]["full_agent"],
-            "changes": {"tools.parallel_tool_calls": False}})
+        changed = await client.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": before["revisions"]["full_agent"],
+                "changes": {"tools.parallel_tool_calls": False},
+            },
+        )
         assert changed.status_code == 200, changed.text
         after = changed.json()
         assert after["full_agent"]["tools"]["parallel_tool_calls"] is False
@@ -34,13 +39,21 @@ async def test_batch_setting_defaults_migrates_and_persists_both_values(tmp_path
         reopened = Store(tmp_path)
         assert reopened.settings_document().full_agent.tools.parallel_tool_calls is False
         assert reopened.settings("full_agent").full_agent_config.parallel_tool_calls is False
-        invalid = await client.patch("/api/settings/full_agent", json={
-            "expected_revision": after["revisions"]["full_agent"],
-            "changes": {"tools.parallel_tool_calls": "false"}})
+        invalid = await client.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": after["revisions"]["full_agent"],
+                "changes": {"tools.parallel_tool_calls": "false"},
+            },
+        )
         assert invalid.status_code == 400
-        enabled = await client.patch("/api/settings/full_agent", json={
-            "expected_revision": after["revisions"]["full_agent"],
-            "changes": {"tools.parallel_tool_calls": True}})
+        enabled = await client.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": after["revisions"]["full_agent"],
+                "changes": {"tools.parallel_tool_calls": True},
+            },
+        )
         assert enabled.status_code == 200, enabled.text
         assert Store(tmp_path).settings("full_agent").full_agent_config.parallel_tool_calls is True
 
@@ -58,8 +71,10 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
     settings = store.settings("full_agent")
     service = runtime(store)
     requests = []
-    actions = [("write_handoff", {"content": "Keep the harbor appointment."}),
-               ("write_note", {"key": "appointment", "content": "Visit harbor", "kind": "plan"})]
+    actions = [
+        ("write_handoff", {"content": "Keep the harbor appointment."}),
+        ("write_note", {"key": "appointment", "content": "Visit harbor", "kind": "plan"}),
+    ]
 
     def transport(request):
         payload = json.loads(request.content)
@@ -68,35 +83,70 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
         if api_mode == "chat_completions":
             message = {"role": "assistant", "content": "" if first else "Narrative"}
             if first:
-                message["tool_calls"] = [{"id": f"call_{i}", "type": "function", "function": {
-                    "name": name, "arguments": json.dumps(args)}} for i, (name, args) in enumerate(actions)]
+                message["tool_calls"] = [
+                    {
+                        "id": f"call_{i}",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(args)},
+                    }
+                    for i, (name, args) in enumerate(actions)
+                ]
             result = {"choices": [{"message": message, "finish_reason": "tool_calls" if first else "stop"}]}
         elif api_mode == "responses":
-            output = ([{"type": "function_call", "call_id": f"call_{i}", "name": name,
-                        "arguments": json.dumps(args)} for i, (name, args) in enumerate(actions)] if first else
-                      [{"type": "message", "role": "assistant", "content": [
-                          {"type": "output_text", "text": "Narrative"}]}])
+            output = (
+                [
+                    {
+                        "type": "function_call",
+                        "call_id": f"call_{i}",
+                        "name": name,
+                        "arguments": json.dumps(args),
+                    }
+                    for i, (name, args) in enumerate(actions)
+                ]
+                if first
+                else [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Narrative"}],
+                    }
+                ]
+            )
             result = {"status": "completed", "output": output}
         elif api_mode == "anthropic":
-            content = ([{"type": "tool_use", "id": f"call_{i}", "name": name, "input": args}
-                        for i, (name, args) in enumerate(actions)] if first else
-                       [{"type": "text", "text": "Narrative"}])
+            content = (
+                [
+                    {"type": "tool_use", "id": f"call_{i}", "name": name, "input": args}
+                    for i, (name, args) in enumerate(actions)
+                ]
+                if first
+                else [{"type": "text", "text": "Narrative"}]
+            )
             result = {"content": content, "stop_reason": "tool_use" if first else "end_turn"}
         else:
-            parts = ([{"functionCall": {"id": f"call_{i}", "name": name, "args": args}}
-                      for i, (name, args) in enumerate(actions)] if first else [{"text": "Narrative"}])
+            parts = (
+                [
+                    {"functionCall": {"id": f"call_{i}", "name": name, "args": args}}
+                    for i, (name, args) in enumerate(actions)
+                ]
+                if first
+                else [{"text": "Narrative"}]
+            )
             if first:
                 parts[0]["thoughtSignature"] = "Zml4dHVyZS1zaWduYXR1cmU="
             result = {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
         return httpx.Response(200, json=result)
 
-    provider = ModelTransport(settings, "fixture", http_client=httpx.AsyncClient(
-        transport=httpx.MockTransport(transport), trust_env=False))
+    provider = ModelTransport(
+        settings,
+        "fixture",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(transport), trust_env=False),
+    )
     try:
         result, current = await turn(service, session, provider)
         assert result["status"] == "committed", result["error"]
         assert len(requests) == 2
-        prompt = ("允许单次回复提出多个工具调用" if enabled else "每次回复最多提出一个工具调用")
+        prompt = "允许单次回复提出多个工具调用" if enabled else "每次回复最多提出一个工具调用"
         assert prompt in json.dumps(requests[0], ensure_ascii=False)
         if api_mode in ("chat_completions", "responses"):
             assert requests[0]["parallel_tool_calls"] is enabled
@@ -110,8 +160,11 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
                 envelopes = [json.loads(r["output"]) for r in results]
         elif api_mode == "anthropic":
             assert requests[0]["tool_choice"]["disable_parallel_tool_use"] is (not enabled)
-            results = [m for m in requests[1]["messages"] if
-                       any(p.get("type") == "tool_result" for p in m["content"])]
+            results = [
+                m
+                for m in requests[1]["messages"]
+                if any(p.get("type") == "tool_result" for p in m["content"])
+            ]
             assert len(results) == 1 and results[0]["role"] == "user"
             assert [p["tool_use_id"] for p in results[0]["content"]] == ["call_0", "call_1"]
             assert all(p.get("is_error", False) is (not enabled) for p in results[0]["content"])
@@ -119,13 +172,17 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
         else:
             # GenerateContent has no parallel toggle: never send invented fields.
             assert requests[0]["toolConfig"]["functionCallingConfig"] == {"mode": "AUTO"}
-            result_messages = [m for m in requests[1]["contents"] if
-                               any("functionResponse" in p for p in m["parts"])]
+            result_messages = [
+                m for m in requests[1]["contents"] if any("functionResponse" in p for p in m["parts"])
+            ]
             assert len(result_messages) == 1 and result_messages[0]["role"] == "user"
             parts = [p for m in requests[1]["contents"] for p in m["parts"]]
             results = [p["functionResponse"] for p in parts if "functionResponse" in p]
             assert [r["id"] for r in results] == ["call_0", "call_1"]
-            assert next(p for p in parts if "functionCall" in p)["thoughtSignature"] == "Zml4dHVyZS1zaWduYXR1cmU="
+            assert (
+                next(p for p in parts if "functionCall" in p)["thoughtSignature"]
+                == "Zml4dHVyZS1zaWduYXR1cmU="
+            )
             envelopes = [r["response"] for r in results]
         assert len(envelopes) == 2 and all(r["ok"] is enabled for r in envelopes)
         assert "_tool_error" not in json.dumps(requests)

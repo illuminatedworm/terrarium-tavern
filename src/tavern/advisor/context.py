@@ -1,4 +1,5 @@
 """A read-only story snapshot and a separately managed consultation window."""
+
 import copy
 
 from tavern.character.cards import lore_entries, normalize
@@ -42,10 +43,27 @@ def runtime_config(store, session, options):
 
 
 def freeze_story(store, session):
-    document = (session["snapshot"].get("content") or {}).get("document") or store.session_card(session["id"])["document"]
-    return {key: copy.deepcopy(session.get(key)) for key in (
-        "id", "revision", "head", "agent_mode", "channel_origin", "persona", "persona_data", "turn_preference",
-        "plot_enabled", "context_strategy", "snapshot", "messages", "title")} | {"document": copy.deepcopy(document)}
+    document = (session["snapshot"].get("content") or {}).get("document") or store.session_card(
+        session["id"]
+    )["document"]
+    return {
+        key: copy.deepcopy(session.get(key))
+        for key in (
+            "id",
+            "revision",
+            "head",
+            "agent_mode",
+            "channel_origin",
+            "persona",
+            "persona_data",
+            "turn_preference",
+            "plot_enabled",
+            "context_strategy",
+            "snapshot",
+            "messages",
+            "title",
+        )
+    } | {"document": copy.deepcopy(document)}
 
 
 def sources(story):
@@ -68,10 +86,30 @@ def recent_history(history, count):
 
 def memory_rows(story):
     memory = with_source_status(read_memory(story["snapshot"]), story["messages"])
-    refs = {m["id"]: f"H{i+1}" for i, m in enumerate(story["messages"])}
-    return [{"ref": f"R{i+1}", **{k: r[k] for k in ("category", "kind", "content", "status", "manual", "source_stale", "people", "known_to", "story_time") if k in r},
-             "sources": [refs[s["message_id"]] for s in r.get("sources", []) if s.get("message_id") in refs]}
-            for i, r in enumerate(memory["records"]) if r["status"] not in ("deleted", "superseded")]
+    refs = {m["id"]: f"H{i + 1}" for i, m in enumerate(story["messages"])}
+    return [
+        {
+            "ref": f"R{i + 1}",
+            **{
+                k: r[k]
+                for k in (
+                    "category",
+                    "kind",
+                    "content",
+                    "status",
+                    "manual",
+                    "source_stale",
+                    "people",
+                    "known_to",
+                    "story_time",
+                )
+                if k in r
+            },
+            "sources": [refs[s["message_id"]] for s in r.get("sources", []) if s.get("message_id") in refs],
+        }
+        for i, r in enumerate(memory["records"])
+        if r["status"] not in ("deleted", "superseded")
+    ]
 
 
 def expanded(story, text, message=None):
@@ -83,32 +121,77 @@ def expanded(story, text, message=None):
 def background(story, config):
     card = normalize(story["document"])
     header = [{"role": "system", "message_type": "root_system", "content": config.system_prompt}]
-    for field in ("name", "description", "personality", "scenario", "system_prompt", "post_history_instructions", "mes_example"):
+    for field in (
+        "name",
+        "description",
+        "personality",
+        "scenario",
+        "system_prompt",
+        "post_history_instructions",
+        "mes_example",
+    ):
         if card.get(field):
-            header.append({"role": "system", "content": f"<story_reference field='{field}'>\n{expanded(story, card[field])}\n</story_reference>"})
-    header.append({"role": "system", "content": f"<user_character>\n{story['persona']}\n{(story.get('persona_data') or {}).get('description', '')}\n</user_character>"})
+            header.append(
+                {
+                    "role": "system",
+                    "content": f"<story_reference field='{field}'>\n{expanded(story, card[field])}\n</story_reference>",
+                }
+            )
+    header.append(
+        {
+            "role": "system",
+            "content": f"<user_character>\n{story['persona']}\n{(story.get('persona_data') or {}).get('description', '')}\n</user_character>",
+        }
+    )
     for entry in lore_entries(story["document"], "writer"):
         if entry["enabled"] and entry.get("constant") and "[initvar]" not in entry.get("comment", "").lower():
-            header.append({"role": "system", "content": "<lorebook>\n" + expanded(story, entry["content"]) + "\n</lorebook>"})
-    dynamic = [{"role": "system", "content": "<turn_preference>\n" + story.get("turn_preference", "") + "\n</turn_preference>"}]
+            header.append(
+                {
+                    "role": "system",
+                    "content": "<lorebook>\n" + expanded(story, entry["content"]) + "\n</lorebook>",
+                }
+            )
+    dynamic = [
+        {
+            "role": "system",
+            "content": "<turn_preference>\n" + story.get("turn_preference", "") + "\n</turn_preference>",
+        }
+    ]
     full = story["snapshot"].get("full_agent", {})
     if story["agent_mode"] == "full_agent":
         handoff = full.get("handoff", {})
         if handoff.get("text") and story.get("context_strategy") != "openai_compact":
-            dynamic.append({"role": "system", "content": "<handoff stale='" + str(bool(handoff.get("stale"))) + "'>\n" + handoff["text"] + "\n</handoff>"})
+            dynamic.append(
+                {
+                    "role": "system",
+                    "content": "<handoff stale='"
+                    + str(bool(handoff.get("stale")))
+                    + "'>\n"
+                    + handoff["text"]
+                    + "\n</handoff>",
+                }
+            )
     else:
         # Full records, never a token-budget abridgement of selected memory.
         rendered = render_document({"records": memory_rows(story)})
         if rendered:
             dynamic.append({"role": "system", "content": "<story_memory>\n" + rendered + "\n</story_memory>"})
     recent = recent_history(story["messages"], config.recent_exchanges)
-    refs = {m["id"]: f"H{i+1}" for i, m in enumerate(story["messages"])}
+    refs = {m["id"]: f"H{i + 1}" for i, m in enumerate(story["messages"])}
     for message in recent:
         for entry in story["snapshot"].get("lore_injections", []):
             if entry.get("anchor_id") == message["id"] and not entry.get("manually_removed"):
-                dynamic.append({"role": "system", "content": "<lorebook>\n" + entry["content"] + "\n</lorebook>"})
-        dynamic.append({"role": "system", "content": f"<story_history ref='{refs[message['id']]}' role='{message['role']}'>\n"
-                        + expanded(story, message.get("model", message["raw"]), message) + "\n</story_history>"})
+                dynamic.append(
+                    {"role": "system", "content": "<lorebook>\n" + entry["content"] + "\n</lorebook>"}
+                )
+        dynamic.append(
+            {
+                "role": "system",
+                "content": f"<story_history ref='{refs[message['id']]}' role='{message['role']}'>\n"
+                + expanded(story, message.get("model", message["raw"]), message)
+                + "\n</story_history>",
+            }
+        )
     for message in header[1:]:
         message["message_type"] = "advisor_reference"
     for message in dynamic:
@@ -117,8 +200,16 @@ def background(story, config):
 
 
 def context_identity(cfg, config):
-    return fingerprint([1, response_origin(cfg), config.system_prompt, config.context_strategy, cfg.context_tokens,
-                        cfg.message_adapter.model_dump()])
+    return fingerprint(
+        [
+            1,
+            response_origin(cfg),
+            config.system_prompt,
+            config.context_strategy,
+            cfg.context_tokens,
+            cfg.message_adapter.model_dump(),
+        ]
+    )
 
 
 def consultation_body(exchanges, story):
@@ -128,7 +219,13 @@ def consultation_body(exchanges, story):
         outdated = any(current.get(mid) != value for mid, value in exchange["story_sources"].items())
         body.append({"role": "user", "content": exchange["user_text"]})
         if outdated:
-            body.append({"role": "system", "message_type": "advisor_notice", "content": "以下旧咨询基于已变更的剧情，仅供回顾讨论；不能当作当前剧情事实。"})
+            body.append(
+                {
+                    "role": "system",
+                    "message_type": "advisor_notice",
+                    "content": "以下旧咨询基于已变更的剧情，仅供回顾讨论；不能当作当前剧情事实。",
+                }
+            )
         body.extend(copy.deepcopy(exchange["trace"]))
     return body
 
@@ -136,14 +233,19 @@ def consultation_body(exchanges, story):
 def compile_context(story, config, cfg, exchanges, context, pending, definitions, view=None):
     if view is None:
         import json
+
         view = ModelView()
-        view.reserved = set(context.get("reserved", [])) | set(HANDLE.findall(json.dumps([story, exchanges, context.get("summary", ""), pending])))
+        view.reserved = set(context.get("reserved", [])) | set(
+            HANDLE.findall(json.dumps([story, exchanges, context.get("summary", ""), pending]))
+        )
         for raw in context.get("view", []):
             view.bind(raw)
     header, dynamic, refs = background(story, config)
     identity = context_identity(cfg, config)
     current_sources = sources(story)
-    usable = context.get("identity") == identity and all(current_sources.get(mid) == value for mid, value in context.get("sources", {}).items())
+    usable = context.get("identity") == identity and all(
+        current_sources.get(mid) == value for mid, value in context.get("sources", {}).items()
+    )
     # Appending new story turns keeps the older consultation summary valid as
     # discussion history. Editing/removing its source forces reconstruction.
     selected = exchanges
@@ -151,14 +253,34 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
         selected = [e for e in exchanges if e["seq"] > context["through"]]
     body = consultation_body(selected, story)
     if usable and context.get("summary"):
-        header.append({"role": "system", "message_type": "advisor_summary", "content": "<consultation_summary>\n" + context["summary"] + "\n</consultation_summary>"})
+        header.append(
+            {
+                "role": "system",
+                "message_type": "advisor_summary",
+                "content": "<consultation_summary>\n" + context["summary"] + "\n</consultation_summary>",
+            }
+        )
     portable_messages = view.messages(header + dynamic + body + pending)
     if usable and context.get("checkpoint"):
         from tavern.conversation.compaction import opaque_message
-        portable_messages = view.messages(header + dynamic) + [opaque_message(context["checkpoint"], cfg)] + view.messages(body + pending)
+
+        portable_messages = (
+            view.messages(header + dynamic)
+            + [opaque_message(context["checkpoint"], cfg)]
+            + view.messages(body + pending)
+        )
     tokens = request_tokens(portable_messages, cfg, definitions)
-    result = {"messages": portable_messages, "trace": portable_messages, "estimated_tokens": tokens, "context_limit": cfg.context_tokens,
-            "token_counting": counting_info(cfg), "recent_refs": refs, "recent_exchanges": config.recent_exchanges,
-            "summary": context.get("summary", "") if usable else "", "context_valid": usable,
-            "opaque": bool(usable and context.get("checkpoint")), "tools": definitions}
+    result = {
+        "messages": portable_messages,
+        "trace": portable_messages,
+        "estimated_tokens": tokens,
+        "context_limit": cfg.context_tokens,
+        "token_counting": counting_info(cfg),
+        "recent_refs": refs,
+        "recent_exchanges": config.recent_exchanges,
+        "summary": context.get("summary", "") if usable else "",
+        "context_valid": usable,
+        "opaque": bool(usable and context.get("checkpoint")),
+        "tools": definitions,
+    }
     return project_context(result, cfg, tools=definitions)

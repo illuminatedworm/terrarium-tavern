@@ -1,4 +1,5 @@
 """Half Agent mode transitions: original sources and Tracker coverage, never handoff."""
+
 import copy
 from dataclasses import asdict
 
@@ -20,9 +21,18 @@ from tavern.tracker.workflow import finalize_sources, install_coverage
 
 
 def compile_sources(store, session, snapshot, document, settings):
-    return compile_context(document, session, session["messages"], snapshot, "", settings, "context-operation",
-                           replay_records=load_trace(store, session["id"], session["messages"]), read_only=True,
-                           retrieval=empty_retrieval())
+    return compile_context(
+        document,
+        session,
+        session["messages"],
+        snapshot,
+        "",
+        settings,
+        "context-operation",
+        replay_records=load_trace(store, session["id"], session["messages"]),
+        read_only=True,
+        retrieval=empty_retrieval(),
+    )
 
 
 def empty_retrieval():
@@ -30,13 +40,25 @@ def empty_retrieval():
     return {"entries": [], "ids": [], "rankings": {}, "diagnostics": [], "query": ""}
 
 
-async def rebuild_local(store, oid, session, snapshot, document, settings, *, provider_factory=None,
-                        progress=None, save=None, retrieval=None):
+async def rebuild_local(
+    store,
+    oid,
+    session,
+    snapshot,
+    document,
+    settings,
+    *,
+    provider_factory=None,
+    progress=None,
+    save=None,
+    retrieval=None,
+):
     history = session["messages"]
     records = load_trace(store, session["id"], history)
     cfg = settings.for_role("background")
-    identity = fingerprint([history, snapshot, settings.model_dump(), adapter_snapshot(settings),
-                            response_origin(cfg)])
+    identity = fingerprint(
+        [history, snapshot, settings.model_dump(), adapter_snapshot(settings), response_origin(cfg)]
+    )
     state = copy.deepcopy(progress or {})
     if state.get("identity") != identity:
         draft = copy.deepcopy(snapshot)
@@ -45,21 +67,43 @@ async def rebuild_local(store, oid, session, snapshot, document, settings, *, pr
         draft.pop(STATE, None)
         if not window_valid(draft.get("memory_archive"), history):
             draft.pop("memory_archive", None)
-        state = {"identity": identity, "snapshot": draft, "batches": 0, "processed": 0,
-                 "total": len(history), "usage": [], "history_budget": {}, "review_calls": 0}
+        state = {
+            "identity": identity,
+            "snapshot": draft,
+            "batches": 0,
+            "processed": 0,
+            "total": len(history),
+            "usage": [],
+            "history_budget": {},
+            "review_calls": 0,
+        }
     draft = state["snapshot"]
     history_budget = HistoryBudget(**state["history_budget"])
     budget = CallBudget(manual=True, review=state["review_calls"], history=history_budget)
     expanded = archive_history(history, document, session["persona"])
 
     while True:
-        count, compiled = plan_window(document, session, history, draft, "", settings, oid,
-                                      empty_retrieval(), replay_records=records, read_only=True)
+        count, compiled = plan_window(
+            document,
+            session,
+            history,
+            draft,
+            "",
+            settings,
+            oid,
+            empty_retrieval(),
+            replay_records=records,
+            read_only=True,
+        )
         covered = draft.get("memory_archive", {}).get("covered_count", 0)
         if count <= covered:
             if count:
                 from tavern.memories.memory import fingerprint as history_fingerprint
-                draft["context_window"] = {"covered_count": count, "fingerprint": history_fingerprint(history[:count])}
+
+                draft["context_window"] = {
+                    "covered_count": count,
+                    "fingerprint": history_fingerprint(history[:count]),
+                }
             draft["lore"], draft["lore_injections"] = compiled["next_lore"], compiled["next_lore_injections"]
             state.update(processed=len(history), snapshot=draft)
             return draft, state
@@ -67,16 +111,46 @@ async def rebuild_local(store, oid, session, snapshot, document, settings, *, pr
         # Preserve the same citation boundary as before_story: a record may
         # already cite a newer exchange than the proposed exit boundary.
         positions = {m["id"]: i + 1 for i, m in enumerate(history)}
-        target = max(count, max((positions.get(ref["message_id"], 0)
-            for row in read_memory(draft)["records"] for ref in row.get("sources", [])), default=0))
+        target = max(
+            count,
+            max(
+                (
+                    positions.get(ref["message_id"], 0)
+                    for row in read_memory(draft)["records"]
+                    for ref in row.get("sources", [])
+                ),
+                default=0,
+            ),
+        )
         while target < len(history) and history[target - 1]["role"] != "assistant":
             target += 1
-        end, _, _, _ = plan_batch(history[:target], expanded[:target], covered, read_memory(draft),
-                                  document, cfg, session["persona"])
-        provider = (provider_factory(cfg) if provider_factory
-                    else await make_provider(cfg, request_timeout=settings.memory_timeout))
-        task = TrackerTask(store, oid, settings, session, document, history[:end], draft,
-                           phase="rebuild", memory=True, history_budget=history_budget, provider=provider)
+        end, _, _, _ = plan_batch(
+            history[:target],
+            expanded[:target],
+            covered,
+            read_memory(draft),
+            document,
+            cfg,
+            session["persona"],
+        )
+        provider = (
+            provider_factory(cfg)
+            if provider_factory
+            else await make_provider(cfg, request_timeout=settings.memory_timeout)
+        )
+        task = TrackerTask(
+            store,
+            oid,
+            settings,
+            session,
+            document,
+            history[:end],
+            draft,
+            phase="rebuild",
+            memory=True,
+            history_budget=history_budget,
+            provider=provider,
+        )
         task.retrieval = retrieval
 
         def event(kind, payload):

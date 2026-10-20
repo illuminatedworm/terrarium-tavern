@@ -1,4 +1,5 @@
 """Real transport deltas remain provisional across Full Agent transaction boundaries."""
+
 import asyncio
 import json
 
@@ -22,10 +23,21 @@ def terminal(reason="stop"):
 
 def tool_events(name="write_handoff", arguments=None):
     args = json.dumps(arguments or {"content": "已确认的工具进度"}, ensure_ascii=False)
-    return [{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1",
-                "function": {"name": name, "arguments": args[:5]}}]}}]},
-            {"choices": [{"delta": {"tool_calls": [{"index": 0,
-                "function": {"arguments": args[5:]}}]}}]}, terminal("tool_calls")]
+    return [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "id": "call-1", "function": {"name": name, "arguments": args[:5]}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args[5:]}}]}}]},
+        terminal("tool_calls"),
+    ]
 
 
 class Gate:
@@ -45,8 +57,11 @@ class WireStream(httpx.AsyncByteStream):
             elif isinstance(piece, Exception):
                 raise piece
             else:
-                yield piece if isinstance(piece, bytes) else (
-                    "data: " + json.dumps(piece, ensure_ascii=False) + "\n\n").encode()
+                yield (
+                    piece
+                    if isinstance(piece, bytes)
+                    else ("data: " + json.dumps(piece, ensure_ascii=False) + "\n\n").encode()
+                )
 
     async def aclose(self):
         self.closed = True
@@ -61,17 +76,27 @@ def connect(store, service, *streams, api="chat_completions", mode="stream", sta
         body = json.loads(request.content)
         bodies.append(body)
         assert bool(body.get("stream")) is (mode == "stream")
-        return httpx.Response(status, headers={"content-type": "text/event-stream"},
-                              stream=streams[len(bodies) - 1])
+        return httpx.Response(
+            status, headers={"content-type": "text/event-stream"}, stream=streams[len(bodies) - 1]
+        )
 
-    provider = ModelTransport(settings, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)))
+    provider = ModelTransport(
+        settings, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
+    )
     service.full.provider_factory = lambda: provider
     return provider, bodies
 
 
 def submit(service, session, **kwargs):
-    return service.submit(session["id"], TurnRequest(text="继续故事", expected_revision=session["revision"],
-        operation_id=kwargs.pop("operation_id", "stream-test"), **kwargs))["id"]
+    return service.submit(
+        session["id"],
+        TurnRequest(
+            text="继续故事",
+            expected_revision=session["revision"],
+            operation_id=kwargs.pop("operation_id", "stream-test"),
+            **kwargs,
+        ),
+    )["id"]
 
 
 def replay(store, tid):
@@ -94,8 +119,12 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
     settings.shared.kemini.content_description = "自定义参数说明末尾"
     store.save_settings(settings)
     first = WireStream(*tool_events())
-    last = WireStream(*tool_events("kemini_emit_story", {
-        "content": "<thinking>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"}))
+    last = WireStream(
+        *tool_events(
+            "kemini_emit_story",
+            {"content": "<thinking>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"},
+        )
+    )
     provider, sent = connect(store, service, first, last)
     provider.settings.kemini.enabled = True  # Production providers take the Kemini conversation's settings.
     try:
@@ -105,29 +134,48 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
         current = store.session(session["id"])
         message = current["messages"][-1]
         assert message["raw"] == message["model"] == message["display"] == replay(store, tid) == "最终正文"
-        assert message["auxiliary"] == [{"kind": "thinking", "text": "创作安排"}, {"kind": "disclaimer", "text": "声明"}]
+        assert message["auxiliary"] == [
+            {"kind": "thinking", "text": "创作安排"},
+            {"kind": "disclaimer", "text": "声明"},
+        ]
         assert current["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
         kemini = settings.shared.kemini
-        prefix = [{"role": "user", "content": text} for text in
-                  (kemini.filler_text, kemini.clear_prompt, kemini.identity_prompt, kemini.info_prompt)]
+        prefix = [
+            {"role": "user", "content": text}
+            for text in (kemini.filler_text, kemini.clear_prompt, kemini.identity_prompt, kemini.info_prompt)
+        ]
         assert sent[0]["messages"][:4] == sent[1]["messages"][:4] == prefix
         assert kemini.transport_prompt in json.dumps(sent[0]["messages"], ensure_ascii=False)
-        declaration = next(t["function"] for t in sent[0]["tools"] if t["function"]["name"] == "kemini_emit_story")
+        declaration = next(
+            t["function"] for t in sent[0]["tools"] if t["function"]["name"] == "kemini_emit_story"
+        )
         assert declaration["description"] == kemini.tool_description
         assert declaration["parameters"]["properties"]["content"]["description"] == kemini.content_description
         assert all(m["role"] != "system" for m in sent[0]["messages"])
-        assert not any(e["kind"] == "full_agent_tool_started" and e["payload"].get("name") == "kemini_emit_story"
-                       for e in store.events(tid))
+        assert not any(
+            e["kind"] == "full_agent_tool_started" and e["payload"].get("name") == "kemini_emit_story"
+            for e in store.events(tid)
+        )
         preview = store.turn(tid)["preview"]
         assert "kemini_emit_story" in str(preview["tools"])
-        assert all(row["cache_static"] for row in preview["trace"] if row["source"] in
-                   ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info"))
+        assert all(
+            row["cache_static"]
+            for row in preview["trace"]
+            if row["source"] in ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info")
+        )
         sources = [row["source"] for row in preview["trace"]]
         assert sources[:5] == ["kemini_filler", "kemini_clear", "kemini_identity", "kemini_info", "rules"]
-        assert sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
-        assert not next(row for row in preview["trace"] if row["source"] == "kemini_acknowledgement")["cache_static"]
-        assert any(e["kind"] == "kemini_auxiliary" and e["payload"]["items"] == message["auxiliary"] for e in store.events(tid))
+        assert (
+            sources.index("input") < sources.index("kemini_acknowledgement") < sources.index("kemini_control")
+        )
+        assert not next(row for row in preview["trace"] if row["source"] == "kemini_acknowledgement")[
+            "cache_static"
+        ]
+        assert any(
+            e["kind"] == "kemini_auxiliary" and e["payload"]["items"] == message["auxiliary"]
+            for e in store.events(tid)
+        )
         assert Store(tmp_path).session(session["id"])["messages"][-1]["auxiliary"] == message["auxiliary"]
     finally:
         await service.close()
@@ -145,7 +193,9 @@ async def test_prefix_debug_observes_tool_continuation_and_survives_provider_rec
         tid = submit(service, session)
         await service.tasks[tid]
         assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
-        reports = [event["payload"] for event in store.events(tid) if event["kind"] == "full_agent_prefix_debug"]
+        reports = [
+            event["payload"] for event in store.events(tid) if event["kind"] == "full_agent_prefix_debug"
+        ]
         assert len(reports) == 2 and reports[0]["parameters"] == []
         parameters = {item["parameter"]: item for item in reports[1]["parameters"]}
         assert parameters["tools"]["status"] == "identical"
@@ -186,7 +236,9 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
         assert store.turn(tid)["status"] == "running"
         assert store.turn(tid)["draft"] == replay(store, tid) == "尚未完成的"
         assert store.session(session["id"])["head"] == session["head"]
-        assert not any(item["message"]["role"] == "assistant" for item in store.full_agent_progress(tid)["new_trace"])
+        assert not any(
+            item["message"]["role"] == "assistant" for item in store.full_agent_progress(tid)["new_trace"]
+        )
         gate.release.set()
         await service.tasks[tid]
         result, current = store.turn(tid), store.session(session["id"])
@@ -204,10 +256,18 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
         await service.close()
 
 
-@pytest.mark.parametrize("tail", [
-    [], [httpx.ReadError("fixture disconnect")], [{"error": {"message": "fixture upstream error"}}],
-    [terminal(), delta("非法追加")], [b"data: {broken\n\n"], [terminal("length")],
-], ids=["eof", "read_error", "error_event", "late_content", "invalid_json", "length"])
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [],
+        [httpx.ReadError("fixture disconnect")],
+        [{"error": {"message": "fixture upstream error"}}],
+        [terminal(), delta("非法追加")],
+        [b"data: {broken\n\n"],
+        [terminal("length")],
+    ],
+    ids=["eof", "read_error", "error_event", "late_content", "invalid_json", "length"],
+)
 async def test_interface_failure_never_commits_partial_text_or_tools(tmp_path, tail):
     store, service, session = game(tmp_path, "chat_completions")
     stream = WireStream(delta("未完成片段"), *tail)
@@ -272,10 +332,14 @@ async def test_mixed_text_and_tools_move_out_of_preview_before_next_response(tmp
         tool_gate.release.set()
         await asyncio.wait_for(next_gate.reached.wait(), 5)
         assert store.turn(tid)["draft"] == replay(store, tid) == ""
-        assert any(e["kind"] == "full_agent_assistant" and e["payload"]["content"] == "先整理一下"
-                   for e in store.events(tid))
+        assert any(
+            e["kind"] == "full_agent_assistant" and e["payload"]["content"] == "先整理一下"
+            for e in store.events(tid)
+        )
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
-        assert store.full_agent_progress(tid)["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
+        assert (
+            store.full_agent_progress(tid)["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
+        )
         next_gate.release.set()
         await service.tasks[tid]
         assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]
@@ -289,8 +353,12 @@ async def test_mixed_text_and_tools_move_out_of_preview_before_next_response(tmp
 async def test_rule_rejection_clears_preview_even_if_the_next_request_fails(tmp_path):
     store, service, session = game(tmp_path, "chat_completions")
     gate = Gate()
-    _, sent = connect(store, service, WireStream(delta("尚未更新变量的正文"), terminal()),
-                      WireStream(gate, httpx.ReadError("fixture")))
+    _, sent = connect(
+        store,
+        service,
+        WireStream(delta("尚未更新变量的正文"), terminal()),
+        WireStream(gate, httpx.ReadError("fixture")),
+    )
     try:
         tid = submit(service, session, update_variables=True)
         await asyncio.wait_for(gate.reached.wait(), 5)
@@ -309,8 +377,11 @@ async def test_rule_rejection_clears_preview_even_if_the_next_request_fails(tmp_
 async def test_responses_terminal_text_replaces_delta_preview_without_duplication(tmp_path):
     store, service, session = game(tmp_path, "responses")
     from tests.backend.chatgpt_fixtures import completed
-    stream = WireStream({"type": "response.output_text.delta", "delta": "临时显示"},
-                        {"type": "response.completed", "response": completed("完整权威正文")})
+
+    stream = WireStream(
+        {"type": "response.output_text.delta", "delta": "临时显示"},
+        {"type": "response.completed", "response": completed("完整权威正文")},
+    )
     connect(store, service, stream, api="responses")
     try:
         tid = submit(service, session)

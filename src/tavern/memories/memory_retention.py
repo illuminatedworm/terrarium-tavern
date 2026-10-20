@@ -40,28 +40,42 @@ def retain_memory(memory, history, settings, *, event=None):
     removed = {"callback": [], "current": [], "episode_age": [], "episode_budget": []}
 
     def eligible(record):
-        if record.get("manual") or record.get("source_stale") or record["status"] in ("deleted", "superseded"):
+        if (
+            record.get("manual")
+            or record.get("source_stale")
+            or record["status"] in ("deleted", "superseded")
+        ):
             return False
         for source in record.get("sources", []):
             message = messages.get(source["message_id"])
-            if message is None or not source.get("fingerprint") or source_hash(message) != source["fingerprint"]:
+            if (
+                message is None
+                or not source.get("fingerprint")
+                or source_hash(message) != source["fingerprint"]
+            ):
                 return False
         return True
 
     def age_key(record):
-        return max((positions.get(s["message_id"], (-1, -1)) for s in record.get("sources", [])),
-                   default=(-1, -1))
+        return max(
+            (positions.get(s["message_id"], (-1, -1)) for s in record.get("sources", [])), default=(-1, -1)
+        )
 
     def retire(record, reason):
         record["status"] = "superseded"
         removed[reason].append(record["id"])
 
     callbacks = [r for r in records if r.get("callback") and r["status"] == "active" and eligible(r)]
-    while callbacks and (len(callbacks) > 3 or count_text("\n".join(r["content"] for r in callbacks), settings) > 300):
+    while callbacks and (
+        len(callbacks) > 3 or count_text("\n".join(r["content"] for r in callbacks), settings) > 300
+    ):
         retire(callbacks.pop(0), "callback")
 
-    current = [r for r in records if r["category"] == "current" and r["status"] not in ("deleted", "superseded")
-               and not r.get("manual")]
+    current = [
+        r
+        for r in records
+        if r["category"] == "current" and r["status"] not in ("deleted", "superseded") and not r.get("manual")
+    ]
     removable_current = sorted((r for r in current if eligible(r)), key=age_key)
     while len(current) > settings.memory_current_max_records and removable_current:
         oldest = removable_current.pop(0)
@@ -88,6 +102,14 @@ def retain_memory(memory, history, settings, *, event=None):
     result["records"] = [r for r in records if is_retained_record(r)]
     if event and any(removed.values()):
         counts = {key: len(value) for key, value in removed.items()}
-        event("memory_retention", {"purpose": "memory", "counts": counts, "record_ids": removed,
-                                   "message": "记忆准出：" + "、".join(f"{key} {count}" for key, count in counts.items() if count)})
+        event(
+            "memory_retention",
+            {
+                "purpose": "memory",
+                "counts": counts,
+                "record_ids": removed,
+                "message": "记忆准出："
+                + "、".join(f"{key} {count}" for key, count in counts.items() if count),
+            },
+        )
     return result

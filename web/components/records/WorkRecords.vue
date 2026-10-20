@@ -296,18 +296,18 @@ useTimedError(error);
   gap: 10px;
   margin: 8px 0;
   color: var(--text-muted);
-  font: 11px/1.6 var(--font-ui);
+  font: var(--fs-xs) / 1.6 var(--font-ui);
   overflow-wrap: anywhere;
 }
 .work-debug-meta button {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .work-raw-json {
   max-height: 520px;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font: 12px/1.7 monospace;
+  font: var(--fs-sm) / 1.7 monospace;
 }
 </style>

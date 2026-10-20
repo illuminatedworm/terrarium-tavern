@@ -5,7 +5,7 @@
 ```mermaid
 flowchart TD
     UI[Vue 界面] --> API[FastAPI 与模式路由]
-    API --> HALF[Half Agent Runtime]
+    API --> HALF[Roleplay Runtime · Half Agent]
     API --> FULL[Full Agent Runtime]
     API --> EDIT[制卡 agent]
     API --> ADVISOR[参谋 agent]
@@ -26,7 +26,7 @@ flowchart TD
 | 制卡 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_author.py](../../src/tavern/character/card_author.py)；用户审阅后保存书架卡片 |
 | 参谋 agent | 查阅故事、咨询与联网；按明确要求更新本轮偏好 | [advisor/runtime.py](../../src/tavern/advisor/runtime.py)；使用独立咨询记录和偏好草稿 |
 | Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
-| Half Agent Runtime | 回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
+| Roleplay Runtime | Half Agent 的回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
 | 模式路由 | 将故事操作交给对应引擎 | [application/modes.py](../../src/tavern/application/modes.py)；Full Agent 不调用 Writer／Tracker 编排 |
 
 Writer 和 Tracker 的调用及草稿交换由 Runtime 统一编排。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
@@ -53,7 +53,7 @@ SQLite 是剧情和状态的权威来源。消息通过父节点构成历史，�
 
 设置文档按 `full_agent`、`half_agent` 和 `shared` 持久化，运行时使用一次操作的配置快照。Writer、Tracker、Full Agent、参谋 agent 和制卡 agent 各有独立模型配置。“后台工作记录”按回合汇集 Runtime 事件。
 
-数据库为 schema 6；schema 1–5 先备份再迁移，其他版本在写入前报错。设置字段及迁移见[设置 API](../reference/settings-api.md)。
+数据库格式版本、升级前备份与迁移规则见[设置 API](../reference/settings-api.md#数据库与设置迁移)；不支持的版本在写入前报错。
 
 剧情快照持续保留，恢复和回复版本切换使用对应快照。详细诊断可以清理，但剧情、分支及恢复所需记录不作为旧日志删除。存储策略见[安装与维护](../guides/maintenance.md#清理与资源保留)。
 

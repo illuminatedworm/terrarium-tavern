@@ -1,4 +1,5 @@
 """Actionable tool argument feedback without validator internals or input echoes."""
+
 import copy
 
 from tavern.full_agent.protocol import ToolError
@@ -29,14 +30,27 @@ def issue_text(issue):
         return f"缺少必填参数 {path}"
     if kind == "extra_forbidden":
         return f"不接受参数 {path}，请删除"
-    types = {"string_type": "字符串", "int_type": "整数", "int_parsing": "整数",
-             "float_type": "数字", "float_parsing": "数字", "bool_type": "布尔值（true/false）",
-             "bool_parsing": "布尔值（true/false）", "list_type": "数组", "dict_type": "对象",
-             "model_type": "对象", "model_attributes_type": "对象"}
+    types = {
+        "string_type": "字符串",
+        "int_type": "整数",
+        "int_parsing": "整数",
+        "float_type": "数字",
+        "float_parsing": "数字",
+        "bool_type": "布尔值（true/false）",
+        "bool_parsing": "布尔值（true/false）",
+        "list_type": "数组",
+        "dict_type": "对象",
+        "model_type": "对象",
+        "model_attributes_type": "对象",
+    }
     if kind in types:
         return f"{field}必须是{types[kind]}"
-    bounds = {"greater_than": ("gt", "大于"), "greater_than_equal": ("ge", "大于或等于"),
-              "less_than": ("lt", "小于"), "less_than_equal": ("le", "小于或等于")}
+    bounds = {
+        "greater_than": ("gt", "大于"),
+        "greater_than_equal": ("ge", "大于或等于"),
+        "less_than": ("lt", "小于"),
+        "less_than_equal": ("le", "小于或等于"),
+    }
     if kind in bounds:
         key, relation = bounds[kind]
         return f"{field}必须{relation} {context[key]}"

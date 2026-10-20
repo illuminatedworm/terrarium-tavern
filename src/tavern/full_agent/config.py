@@ -59,15 +59,24 @@ class FullAgentConfig(BaseModel):
 def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False):
     # Gemini has no native single-call switch. Keep the instruction and runtime
     # guard consistent for every provider, including relays ignoring API flags.
-    batching = ("允许单次回复提出多个工具调用；相互独立、参数已确定的操作应合并提出。"
-                "需要根据前一个结果判断或填写参数的操作，须等结果返回后再调用。"
-                if config.parallel_tool_calls else
-                "当前已关闭单次多工具调用；每次回复最多提出一个工具调用，等待结果返回后再继续。")
-    memory = ("" if compact else "\nnew_context 必须单独调用，混合批次全部不执行。"
-              "<tavern_memory> 是换窗后继续工作的交接摘要，保留当前场景、重要经历、约束、未决事项和必要检索线索；"
-              "以当前有效版本为基础更新，不承载完整长期笔记或未来大纲。")
-    planning = ("剧情规划已开启。<tavern_plot> 提供当前有效大纲；首次为空时先用 write_plot 建纲，再回复正文。"
-                "阶段完成、关键转折、用户偏离或依据变化时按需修订，不必每轮重写。用户编辑后仍是可继续调整的草稿；"
-                "重新开启时先结合当前进展核对。最新有效更新或成功写入取代此前版本。" if plot_enabled else
-                "剧情规划已关闭。不要维护作者大纲或依据此前大纲安排剧情；保留的历史规划仅是旧过程记录，不再生效。")
+    batching = (
+        "允许单次回复提出多个工具调用；相互独立、参数已确定的操作应合并提出。"
+        "需要根据前一个结果判断或填写参数的操作，须等结果返回后再调用。"
+        if config.parallel_tool_calls
+        else "当前已关闭单次多工具调用；每次回复最多提出一个工具调用，等待结果返回后再继续。"
+    )
+    memory = (
+        ""
+        if compact
+        else "\nnew_context 必须单独调用，混合批次全部不执行。"
+        "<tavern_memory> 是换窗后继续工作的交接摘要，保留当前场景、重要经历、约束、未决事项和必要检索线索；"
+        "以当前有效版本为基础更新，不承载完整长期笔记或未来大纲。"
+    )
+    planning = (
+        "剧情规划已开启。<tavern_plot> 提供当前有效大纲；首次为空时先用 write_plot 建纲，再回复正文。"
+        "阶段完成、关键转折、用户偏离或依据变化时按需修订，不必每轮重写。用户编辑后仍是可继续调整的草稿；"
+        "重新开启时先结合当前进展核对。最新有效更新或成功写入取代此前版本。"
+        if plot_enabled
+        else "剧情规划已关闭。不要维护作者大纲或依据此前大纲安排剧情；保留的历史规划仅是旧过程记录，不再生效。"
+    )
     return TOOL_PROTOCOL + memory + "\n" + planning + "\n" + batching

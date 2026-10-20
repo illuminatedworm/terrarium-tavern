@@ -380,7 +380,7 @@ onBeforeUnmount(() => {
   height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: transparent;
 }
@@ -412,7 +412,7 @@ onBeforeUnmount(() => {
   right: max(39px, calc(var(--dialogue-right-gutter) - 64px));
   top: 50%;
   transform: translateY(-50%);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 3px;
   display: grid;
   gap: 4px;
@@ -425,7 +425,7 @@ onBeforeUnmount(() => {
 }
 .find-trigger {
   top: 14px;
-  border-radius: 10px !important;
+  border-radius: var(--radius-sm) !important;
 }
 .dialogue-find {
   position: absolute;
@@ -455,7 +455,7 @@ onBeforeUnmount(() => {
   background: transparent;
   padding: 5px 2px;
   color: var(--text-primary);
-  font: 13px/1.5 var(--font-ui);
+  font: var(--fs-md) / 1.5 var(--font-ui);
   box-shadow: none;
 }
 .find-row input:focus {
@@ -465,7 +465,7 @@ onBeforeUnmount(() => {
   border-color: rgb(var(--focus-rgb) / 0.5);
 }
 .find-count {
-  font: 11px/1.5 var(--font-ui);
+  font: var(--fs-xs) / 1.5 var(--font-ui);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -474,7 +474,7 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 8px 12px 10px;
   border-top: 1px solid var(--border-subtle);
-  font: 12px/1.6 var(--font-ui);
+  font: var(--fs-sm) / 1.6 var(--font-ui);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -483,9 +483,9 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
 }
 .find-preview mark {
-  background: #e6bf7040;
-  color: #f3d79e;
-  border-radius: 2px;
+  background: var(--find-match);
+  color: color-mix(in srgb, var(--find-current) 70%, var(--text-strong));
+  border-radius: var(--radius-2xs);
 }
 @media (max-width: 620px) {
   .message-jumps,
@@ -522,11 +522,11 @@ onBeforeUnmount(() => {
 </style>
 <style>
 ::highlight(dialogue-matches) {
-  background: #d4af563b;
+  background: var(--find-match);
   color: inherit;
 }
 ::highlight(dialogue-current) {
-  background: #edc572;
-  color: #24211b;
+  background: var(--find-current);
+  color: var(--on-find);
 }
 </style>

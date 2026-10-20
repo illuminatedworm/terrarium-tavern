@@ -53,7 +53,7 @@ const effective = computed(
 <style scoped>
 .policy-help {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   line-height: 1.75;
   margin: 8px 0 16px;
 }

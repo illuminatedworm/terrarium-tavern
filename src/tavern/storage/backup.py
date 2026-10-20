@@ -47,7 +47,13 @@ def restore(source: Path, destination: Path):
             raise ValueError("不支持的备份版本")
         for name, digest in manifest["files"].items():
             path = PurePosixPath(name)
-            if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name or ".chatgpt" in path.parts:
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or "\\" in name
+                or ":" in name
+                or ".chatgpt" in path.parts
+            ):
                 raise ValueError("备份包含非法路径")
             if hashlib.sha256(archive.read(name)).hexdigest() != digest:
                 raise ValueError("备份校验失败")

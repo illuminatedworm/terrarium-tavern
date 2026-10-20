@@ -1,4 +1,5 @@
 """Resume accepted work without replaying completed tool failures."""
+
 import copy
 import json
 
@@ -43,11 +44,11 @@ def resume_progress(progress):
     result = copy.deepcopy(progress)
     result["continuation"], changed = without_failed_tools(result["continuation"])
     # Filter trace records with the same pairing rules, retaining their windows.
-    messages = [{**item["message"], "_resume_window_id": item["window_id"]}
-                for item in result["new_trace"]]
+    messages = [{**item["message"], "_resume_window_id": item["window_id"]} for item in result["new_trace"]]
     messages, _ = without_failed_tools(messages)
-    result["new_trace"] = [{"window_id": message.pop("_resume_window_id"), "message": message}
-                           for message in messages]
+    result["new_trace"] = [
+        {"window_id": message.pop("_resume_window_id"), "message": message} for message in messages
+    ]
     if changed:
         # Opaque provider routing may retain the failed request prefix.
         result.get("request_context", {}).pop("routing", None)

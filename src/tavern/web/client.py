@@ -1,4 +1,5 @@
 """Portable public-web tools independent of the selected model vendor."""
+
 import asyncio
 import json
 import re
@@ -101,9 +102,13 @@ class WebTools:
         transport = self.transport
         if transport is None and proxy is None and not configured:
             transport = PublicHTTPTransport()
-        return httpx.AsyncClient(proxy=proxy,
-            trust_env=False, timeout=self.config.timeout_seconds, transport=transport,
-            headers={"User-Agent": "TerrariumTavern/1.0 (reference reader)"})
+        return httpx.AsyncClient(
+            proxy=proxy,
+            trust_env=False,
+            timeout=self.config.timeout_seconds,
+            transport=transport,
+            headers={"User-Agent": "TerrariumTavern/1.0 (reference reader)"},
+        )
 
     async def request(self, client, method, url, *, params=None, body=None, headers=None, configured=False):
         self.require_enabled()
@@ -117,8 +122,12 @@ class WebTools:
                 if size > MAX_BYTES:
                     raise ValueError("网页或服务响应超过 8 MiB 读取上限，未返回截断内容")
                 chunks.append(chunk)
-            copied = {k: v for k, v in response.headers.items() if k not in {"content-encoding", "content-length"}}
-            return httpx.Response(response.status_code, headers=copied, content=b"".join(chunks), request=response.request)
+            copied = {
+                k: v for k, v in response.headers.items() if k not in {"content-encoding", "content-length"}
+            }
+            return httpx.Response(
+                response.status_code, headers=copied, content=b"".join(chunks), request=response.request
+            )
 
     async def fetch(self, url, *, params=None, configured=False):
         self.require_enabled()
@@ -130,7 +139,9 @@ class WebTools:
             async with self.client(configured=configured) as client:
                 async with client.stream("GET", url, params=params) as response:
                     if response.is_redirect:
-                        url = await public_url(urljoin(str(response.url), response.headers.get("location", "")))
+                        url = await public_url(
+                            urljoin(str(response.url), response.headers.get("location", ""))
+                        )
                         params = None
                         configured = False
                         continue
@@ -141,18 +152,32 @@ class WebTools:
                         if size > MAX_BYTES:
                             raise ValueError("网页超过 8 MiB 读取上限，未返回截断内容")
                         chunks.append(chunk)
-                    headers = {k: v for k, v in response.headers.items() if k not in {"content-encoding", "content-length"}}
-                    return httpx.Response(response.status_code, headers=headers, content=b"".join(chunks), request=response.request)
+                    headers = {
+                        k: v
+                        for k, v in response.headers.items()
+                        if k not in {"content-encoding", "content-length"}
+                    }
+                    return httpx.Response(
+                        response.status_code,
+                        headers=headers,
+                        content=b"".join(chunks),
+                        request=response.request,
+                    )
         raise ValueError("网页重定向次数过多")
 
     async def legacy_search(self, name, query, limit):
         if name == "searxng":
             endpoint = self.config.searxng.endpoint
-            response = await self.fetch(endpoint.rstrip("/") + "/search", params={"q": query, "format": "json"}, configured=True)
+            response = await self.fetch(
+                endpoint.rstrip("/") + "/search", params={"q": query, "format": "json"}, configured=True
+            )
             if not isinstance(response.json().get("results"), list):
                 raise ValueError("SearXNG 搜索响应无效")
-            rows = [{"title": r.get("title", ""), "url": r["url"], "snippet": r.get("content", "")}
-                    for r in response.json().get("results", []) if r.get("url")]
+            rows = [
+                {"title": r.get("title", ""), "url": r["url"], "snippet": r.get("content", "")}
+                for r in response.json().get("results", [])
+                if r.get("url")
+            ]
         else:
             response = await self.fetch("https://html.duckduckgo.com/html/", params={"q": query})
             parser = SearchResults()
@@ -175,15 +200,23 @@ class WebTools:
             raise ValueError("此网页工具只读取 HTML 或文本，暂不支持二进制文件")
         if not text.strip():
             raise ValueError("网页没有可读取文本，可能需要登录或执行脚本")
-        return {"url": str(response.url), "title": title, "text": text,
-                "source_truncated": response.status_code == 206 or "content-range" in response.headers}
+        return {
+            "url": str(response.url),
+            "title": title,
+            "text": text,
+            "source_truncated": response.status_code == 206 or "content-range" in response.headers,
+        }
 
     def auth(self, name):
         config = getattr(self.config, name)
         if config.auth_mode == "api_key":
             if not config.api_key.strip():
                 raise ValueError("自有 key 模式尚未配置密钥")
-            return {"x-api-key": config.api_key} if name == "exa" else {"Authorization": "Bearer " + config.api_key}
+            return (
+                {"x-api-key": config.api_key}
+                if name == "exa"
+                else {"Authorization": "Bearer " + config.api_key}
+            )
         return {} if name == "exa" else {"X-Tavily-Access-Mode": "keyless"}
 
     def safe_error(self, error):
@@ -192,8 +225,12 @@ class WebTools:
             return "服务请求超时"
         if isinstance(error, httpx.HTTPStatusError):
             code = error.response.status_code
-            return {401: "密钥无效或未获授权", 403: "服务拒绝访问", 402: "服务额度不足",
-                    429: "服务限流或额度已用完"}.get(code, f"服务 HTTP {code}")
+            return {
+                401: "密钥无效或未获授权",
+                403: "服务拒绝访问",
+                402: "服务额度不足",
+                429: "服务限流或额度已用完",
+            }.get(code, f"服务 HTTP {code}")
         if isinstance(error, httpx.HTTPError):
             return "服务网络连接失败"
         if isinstance(error, (json.JSONDecodeError, KeyError, TypeError, AttributeError)):
@@ -207,9 +244,13 @@ class WebTools:
 
     async def attempt(self, operation, call, *, transform, service=None):
         self.require_enabled()
-        candidates = [name for name in self.config.order if getattr(self.config, name).enabled
-                      and (name != "searxng" or self.config.searxng.endpoint.strip())
-                      and (operation == "search" or name in {"exa", "tavily"})]
+        candidates = [
+            name
+            for name in self.config.order
+            if getattr(self.config, name).enabled
+            and (name != "searxng" or self.config.searxng.endpoint.strip())
+            and (operation == "search" or name in {"exa", "tavily"})
+        ]
         if operation == "read":
             candidates.append("local")
         if service is not None:
@@ -220,7 +261,12 @@ class WebTools:
         for name in candidates:
             self.serial += 1
             auth_mode = getattr(getattr(self.config, name, None), "auth_mode", "none")
-            info = {"operation": operation, "service": name, "auth_mode": auth_mode, "action_id": f"local-web-{self.serial}"}
+            info = {
+                "operation": operation,
+                "service": name,
+                "auth_mode": auth_mode,
+                "action_id": f"local-web-{self.serial}",
+            }
             self.event("web_activity", {**info, "status": "started"})
             try:
                 # One timeout bounds the entire MCP handshake and call, not each packet.
@@ -245,53 +291,87 @@ class WebTools:
                 return {**result, "service": name, "auth_mode": auth_mode, "attempts": model_attempts}
             attempts.append({**info, "status": "error", "reason": reason})
             self.event("web_activity", {**info, "status": "error", "reason": reason})
-        prefix = "指定网页提取服务不可用；如需换服务，请从 offset=0 重读：" if service else "所有联网服务均不可用："
-        raise ValueError(prefix + ("；".join(f"{a['service']}：{a['reason']}" for a in attempts) or "未启用搜索服务"))
+        prefix = (
+            "指定网页提取服务不可用；如需换服务，请从 offset=0 重读："
+            if service
+            else "所有联网服务均不可用："
+        )
+        raise ValueError(
+            prefix + ("；".join(f"{a['service']}：{a['reason']}" for a in attempts) or "未启用搜索服务")
+        )
 
     async def search(self, query, limit, objective=None):
         self.require_enabled()
         args = WebSearch(query=query, limit=limit, objective=objective)
+
         async def call(name):
             if name not in {"exa", "tavily"}:
                 return await self.legacy_search(name, query, limit)
             async with self.client() as client:
                 if name == "exa":
                     mcp = ExaMCP(client, self.request, self.auth(name))
-                    payload = await mcp.call("web_search_exa", {"query": query, "numResults": limit}, objective=objective or query)
+                    payload = await mcp.call(
+                        "web_search_exa", {"query": query, "numResults": limit}, objective=objective or query
+                    )
                     return {"query": query, "results": exa_search_rows(mcp.text(payload))}
-                response = await self.request(client, "POST", "https://api.tavily.com/search", headers=self.auth(name),
-                    body={"query": query, "max_results": limit, "search_depth": "basic",
-                          "include_answer": False, "include_raw_content": False})
+                response = await self.request(
+                    client,
+                    "POST",
+                    "https://api.tavily.com/search",
+                    headers=self.auth(name),
+                    body={
+                        "query": query,
+                        "max_results": limit,
+                        "search_depth": "basic",
+                        "include_answer": False,
+                        "include_raw_content": False,
+                    },
+                )
                 data = response.json()
                 if not isinstance(data.get("results"), list):
                     raise ValueError("Tavily 搜索响应无效")
-                rows = [{"title": row.get("title", ""), "url": row["url"], "snippet": row.get("content", "")}
-                        for row in data["results"]]
-                if any(not isinstance(row["title"], str) or not isinstance(row["snippet"], str) for row in rows):
+                rows = [
+                    {"title": row.get("title", ""), "url": row["url"], "snippet": row.get("content", "")}
+                    for row in data["results"]
+                ]
+                if any(
+                    not isinstance(row["title"], str) or not isinstance(row["snippet"], str) for row in rows
+                ):
                     raise ValueError("Tavily 搜索摘要格式无效")
                 return {"query": query, "results": rows}
+
         return await self.attempt("search", call, transform=lambda result: search_result(result, args.limit))
 
     async def read(self, url, offset=0, limit=READ_DEFAULT_LIMIT, *, service=None):
         self.require_enabled()
         args = WebRead(url=url, offset=offset, limit=limit, service=service)
         await public_url(url)
+
         async def call(name):
             if name == "local":
                 return await self.local_read(url)
             async with self.client() as client:
                 if name == "exa":
                     mcp = ExaMCP(client, self.request, self.auth(name))
-                    payload = await mcp.call("web_fetch_exa", {"urls": [url], "maxCharacters": EXA_MAX_CHARACTERS})
+                    payload = await mcp.call(
+                        "web_fetch_exa", {"urls": [url], "maxCharacters": EXA_MAX_CHARACTERS}
+                    )
                     text = mcp.text(payload)
                     if not text.strip() or text.startswith("No content found"):
                         raise ValueError("Exa 未返回网页正文")
-                    truncated = (len(text) >= EXA_MAX_CHARACTERS
-                                 or bool(re.search(r"(?i)\[(?:content )?truncated\]|\[truncated at", text))
-                                 or payload.get("truncated") is True)
+                    truncated = (
+                        len(text) >= EXA_MAX_CHARACTERS
+                        or bool(re.search(r"(?i)\[(?:content )?truncated\]|\[truncated at", text))
+                        or payload.get("truncated") is True
+                    )
                     return {"url": url, "text": text, "source_truncated": True if truncated else None}
-                response = await self.request(client, "POST", "https://api.tavily.com/extract", headers=self.auth(name),
-                    body={"urls": [url], "format": "markdown", "extract_depth": "basic"})
+                response = await self.request(
+                    client,
+                    "POST",
+                    "https://api.tavily.com/extract",
+                    headers=self.auth(name),
+                    body={"urls": [url], "format": "markdown", "extract_depth": "basic"},
+                )
                 data = response.json()
                 rows = data.get("results")
                 if data.get("failed_results") or not isinstance(rows, list) or len(rows) != 1:
@@ -303,5 +383,10 @@ class WebTools:
                 await public_url(row["url"])
                 truncated = row.get("truncated") if type(row.get("truncated")) is bool else None
                 return {"url": row["url"], "text": text, "source_truncated": truncated}
-        return await self.attempt("read", call, transform=lambda result: read_result(result, args.offset, args.limit),
-                                  service=args.service)
+
+        return await self.attempt(
+            "read",
+            call,
+            transform=lambda result: read_result(result, args.offset, args.limit),
+            service=args.service,
+        )

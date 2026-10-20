@@ -53,7 +53,7 @@
 用户确认新版本号后，在同一个提交中修改以下全部位置，并用 `rg` 搜索旧版本号，确认没有遗漏：
 
 - `package.json`、`package-lock.json`（根项目两处）、`pyproject.toml`、`uv.lock` 中的本项目条目。
-- `src/tavern/application/api.py` 中的 FastAPI 版本和健康检查版本。
+- `src/tavern/application/api.py` 中的 `VERSION` 常量（FastAPI 与健康检查共用）。
 - `README.md` 的版本徽标与正文、`docs/README.md`、`docs/guides/maintenance.md`。
 - `docs/changelog.md`：更新“当前版本”和标签表，新增版本小节，写主要变化；有迁移、依赖或行为变化时写“升级注意”。
 

@@ -1,13 +1,18 @@
 """Branch-local model-authored memory; no extraction or summarization jobs."""
+
 import copy
 import hashlib
 import uuid
 
 
 def new_state():
-    return {"version": 1, "window": {"id": uuid.uuid4().hex, "number": 1, "start": 0},
-            "handoff": {"text": "", "revision": 0, "stale": False}, "notes": {},
-            "plot": {"text": "", "revision": 0}}
+    return {
+        "version": 1,
+        "window": {"id": uuid.uuid4().hex, "number": 1, "start": 0},
+        "handoff": {"text": "", "revision": 0, "stale": False},
+        "notes": {},
+        "plot": {"text": "", "revision": 0},
+    }
 
 
 def full_state(snapshot):
@@ -29,7 +34,9 @@ def note_view(note, history):
         if found:
             sources.append(f"H{found[0]}")
     return {k: copy.deepcopy(note[k]) for k in ("key", "content", "kind", "status", "revision")} | {
-        "sources": sources, "stale": bool(stale)}
+        "sources": sources,
+        "stale": bool(stale),
+    }
 
 
 def rollover(state, history, handoff, keep_recent):
@@ -37,8 +44,7 @@ def rollover(state, history, handoff, keep_recent):
     start = max(state["window"]["start"], len(history) - keep_recent)
     if 0 < start < len(history) and history[start]["role"] == "assistant":
         start -= 1
-    state["handoff"] = {"text": handoff, "revision": state["handoff"]["revision"] + 1,
-                           "stale": False}
+    state["handoff"] = {"text": handoff, "revision": state["handoff"]["revision"] + 1, "stale": False}
     state["window"] = {"id": uuid.uuid4().hex, "number": state["window"]["number"] + 1, "start": start}
 
 

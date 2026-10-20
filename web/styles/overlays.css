@@ -12,7 +12,7 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -71,7 +71,7 @@
   border-radius: 50%;
   background: rgb(255 255 255 / 0.05);
   color: var(--text-secondary);
-  font-size: 20px;
+  font-size: var(--fs-xl);
   line-height: 1;
 }
 .modal .close:hover:not(:disabled) {
@@ -81,14 +81,14 @@
 .modal h2 {
   margin-bottom: 10px;
   padding-right: 40px;
-  font-size: 22px;
+  font-size: var(--fs-title);
 }
 .modal h3 {
   margin-top: 25px;
   color: var(--text-primary);
 }
 .modal p {
-  font-size: 13px;
+  font-size: var(--fs-md);
   line-height: 1.85;
 }
 .modal .eyebrow {
@@ -127,18 +127,18 @@
   height: min(870px, 90dvh);
 }
 .context-management-modal .full-agent-notes {
-  font-size: 15px;
+  font-size: var(--fs-ui);
   line-height: 1.6;
 }
 .context-management-modal .full-agent-notes h3 {
-  font-size: 20px;
+  font-size: var(--fs-xl);
 }
 .context-management-modal .full-agent-notes .inspector-note {
-  font-size: 14px;
+  font-size: var(--fs-base);
   margin: 12px 0;
 }
 .context-management-modal .full-agent-notes label {
-  font-size: 15px;
+  font-size: var(--fs-ui);
 }
 @media (max-width: 760px) {
   .modal-scroll {
@@ -184,7 +184,7 @@
   width: 56px;
   height: 56px;
   margin-bottom: 18px;
-  border-radius: 17px;
+  border-radius: var(--radius-lg);
   color: var(--ivory);
   background:
     radial-gradient(120% 120% at 28% 18%, rgb(var(--focus-rgb) / 0.42), transparent 62%),
@@ -234,7 +234,7 @@
 }
 .context-meter-figure strong {
   color: var(--accent-hover);
-  font-size: 44px;
+  font-size: var(--fs-display);
   font-weight: 400;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -335,7 +335,7 @@ p.context-footnote {
   min-height: 40px;
   padding: 8px 14px;
   border: 1px solid color-mix(in srgb, var(--context-color) 38%, transparent);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: rgb(var(--well-rgb) / 0.4);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
@@ -463,7 +463,7 @@ p.context-footnote {
   margin-top: 18px;
 }
 .context-diagnostics summary {
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 .context-diagnostics summary small {
   float: right;
@@ -546,7 +546,7 @@ p.context-footnote {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   background: rgb(0 0 0 / 0.24);
   box-shadow:
     inset 0 0 0 1px var(--border-subtle),
@@ -556,7 +556,7 @@ p.context-footnote {
   min-height: 28px;
   padding: 3px 14px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   font-size: var(--fs-sm);
@@ -616,8 +616,8 @@ p.context-footnote {
   border: 1px solid var(--border-control);
   margin-top: 14px;
   padding: 14px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-sm);
 }
 .context-block small {
   float: right;
@@ -687,7 +687,7 @@ p.context-footnote {
   flex-shrink: 0;
   width: 24px;
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 .branch .branch-role {
@@ -696,7 +696,7 @@ p.context-footnote {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .branch .branch-excerpt {
   flex: 1;
@@ -704,12 +704,12 @@ p.context-footnote {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-story);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .branch .branch-current {
   flex-shrink: 0;
   color: var(--accent-hover);
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
 }
 .fork-preview {
   padding: 14px 16px;
@@ -718,7 +718,7 @@ p.context-footnote {
   border-radius: var(--radius-md);
 }
 .fork-preview strong {
-  font-size: 13px;
+  font-size: var(--fs-md);
   font-weight: 500;
 }
 .fork-preview p {
@@ -755,7 +755,7 @@ p.context-footnote {
 }
 .delete-confirm-popover {
   position: fixed;
-  z-index: 1300;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   width: 280px;
@@ -763,18 +763,18 @@ p.context-footnote {
   overflow: auto;
   padding: 16px;
   border-color: var(--danger-edge);
-  border-radius: 14px;
+  border-radius: var(--radius-md);
 }
 .delete-confirm-popover h3 {
   margin: 0 0 8px;
   overflow-wrap: anywhere;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .delete-confirm-popover p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   line-height: 1.65;
 }
 .delete-confirm-popover > div:last-child {
@@ -786,7 +786,7 @@ p.context-footnote {
 }
 .delete-confirm-popover button {
   padding: 6px 11px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .delete-confirm-popover .popover-arrow {
   position: absolute;
@@ -812,8 +812,8 @@ p.context-footnote {
   max-width: calc(100vw - 16px);
   max-height: calc(100dvh - 16px);
   overflow: auto;
-  border-radius: 14px;
-  font: 13px/1.7 var(--font-ui);
+  border-radius: var(--radius-md);
+  font: var(--fs-md) / 1.7 var(--font-ui);
 }
 .edit-choice-menu {
   width: 188px;
@@ -849,7 +849,7 @@ p.context-footnote {
 }
 .edit-save-question button {
   padding: 6px 11px;
-  font: 12px/1.5 var(--font-ui);
+  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 .editor-restore-confirm {
   position: fixed;
@@ -859,8 +859,8 @@ p.context-footnote {
   max-height: calc(100dvh - 16px);
   overflow: auto;
   padding: 14px;
-  border-radius: 14px;
-  font: 13px/1.6 var(--font-ui);
+  border-radius: var(--radius-md);
+  font: var(--fs-md) / 1.6 var(--font-ui);
 }
 .editor-restore-confirm p {
   margin: 8px 0 12px;
@@ -871,20 +871,20 @@ p.context-footnote {
 }
 .editor-restore-confirm button {
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 /* Tooltips live in body so scroll containers cannot clip their text. */
 .field-tooltip {
   position: fixed;
-  z-index: 10000;
+  z-index: var(--z-tooltip);
   box-sizing: border-box;
   width: max-content;
   max-width: min(302px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow-wrap: anywhere;
   padding: 8px 11px;
-  border-radius: 10px;
-  font-size: 11.5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
   font-weight: 400;
   line-height: 1.55;
   white-space: normal;
@@ -893,7 +893,7 @@ p.context-footnote {
 /* Shared transient notification surface, including modal dialogs. */
 .app-notification {
   position: fixed;
-  z-index: 100000;
+  z-index: var(--z-toast);
   top: 22px;
   left: 50%;
   transform: translateX(-50%);
@@ -903,7 +903,7 @@ p.context-footnote {
   overflow: auto;
   padding: 10px 20px;
   border-radius: var(--radius-lg);
-  font-size: 13px;
+  font-size: var(--fs-md);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   pointer-events: none;

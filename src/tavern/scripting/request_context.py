@@ -1,4 +1,5 @@
 """Local conversation identity, independent of prompt-cache markers or transport."""
+
 import json
 import os
 from dataclasses import dataclass, field
@@ -11,14 +12,23 @@ from tavern.scripting.sent_breakpoints import SentBreakpoints
 def response_origin(settings, key=None):
     """Bind opaque provider state to its actual credential, endpoint and model."""
     if settings.auth_mode == "chatgpt_subscription":
-        return {"api": "responses", "model": settings.model,
-                "endpoint": "https://api.openai.com/v1/responses",
-                "credential": fingerprint(["chatgpt_subscription", settings.chatgpt_account_id,
-                                           settings._auth_generation])}
+        return {
+            "api": "responses",
+            "model": settings.model,
+            "endpoint": "https://api.openai.com/v1/responses",
+            "credential": fingerprint(
+                ["chatgpt_subscription", settings.chatgpt_account_id, settings._auth_generation]
+            ),
+        }
     key = key if key is not None else settings.api_key or os.environ.get("TAVERN_API_KEY", "")
-    return {"api": settings.api_mode, "model": settings.model,
-            "endpoint": endpoint(settings.base_url, settings.api_mode, settings.model, api_path=settings.api_path),
-            "credential": fingerprint(key)}
+    return {
+        "api": settings.api_mode,
+        "model": settings.model,
+        "endpoint": endpoint(
+            settings.base_url, settings.api_mode, settings.model, api_path=settings.api_path
+        ),
+        "credential": fingerprint(key),
+    }
 
 
 @dataclass
@@ -55,12 +65,24 @@ class ProviderRequestContext:
             if isinstance(metadata, dict):
                 custom = settings.cache.request.get("metadata", {})
                 user_id = custom.get("user_id") if isinstance(custom, dict) else None
-                metadata.setdefault("user_id", user_id if user_id is not None else json.dumps({
-                    "device_id": self.device_id, "account_uuid": "", "session_id": self.session_id,
-                }, separators=(",", ":")))
+                metadata.setdefault(
+                    "user_id",
+                    user_id
+                    if user_id is not None
+                    else json.dumps(
+                        {
+                            "device_id": self.device_id,
+                            "account_uuid": "",
+                            "session_id": self.session_id,
+                        },
+                        separators=(",", ":"),
+                    ),
+                )
         elif settings.api_mode == "responses":
-            body.setdefault("prompt_cache_key", settings.cache.request.get(
-                "prompt_cache_key", settings.prompt_cache_key or self.session_id))
+            body.setdefault(
+                "prompt_cache_key",
+                settings.cache.request.get("prompt_cache_key", settings.prompt_cache_key or self.session_id),
+            )
 
     def receive(self, api, headers):
         # Codex pins the first routing state for the logical turn. Later responses
@@ -72,10 +94,16 @@ class ProviderRequestContext:
         if api not in ("anthropic", "responses"):
             return False
         error = payload.get("error", {}) if isinstance(payload, dict) else {}
-        text = (str(error.get("message", "")) + " " + str(error.get("param", ""))
-                if isinstance(error, dict) else str(error)).lower()
-        fields = ("metadata", "user_id", "x-claude-code-session-id") if api == "anthropic" else (
-            "prompt_cache_key", "session-id", "thread-id", "x-codex-turn-state")
+        text = (
+            str(error.get("message", "")) + " " + str(error.get("param", ""))
+            if isinstance(error, dict)
+            else str(error)
+        ).lower()
+        fields = (
+            ("metadata", "user_id", "x-claude-code-session-id")
+            if api == "anthropic"
+            else ("prompt_cache_key", "session-id", "thread-id", "x-codex-turn-state")
+        )
         return any(field in text for field in fields)
 
     def saved(self):
@@ -83,9 +111,14 @@ class ProviderRequestContext:
 
     def audit(self):
         state = self.routing.get("turn_state")
-        return {"session_id": self.session_id, "turn_id": self.turn_id, "window_id": self.window_id,
-                "turn_state_present": bool(state), "turn_state_sha256": fingerprint(state) if state else None,
-                **self.diagnostics}
+        return {
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "window_id": self.window_id,
+            "turn_state_present": bool(state),
+            "turn_state_sha256": fingerprint(state) if state else None,
+            **self.diagnostics,
+        }
 
 
 def identity_headers(headers):
@@ -107,9 +140,13 @@ class OperationContexts:
         sid = UUID(self.session_id)
         if purpose != "narrative":
             sid = uuid5(sid, "half_agent:" + purpose)
-        return ProviderRequestContext(str(sid), f"{self.turn_id}:{purpose}:{number}",
-                                      window_id, self.store.device_id(),
-                                      sent_breakpoints=self.store.cache_breakpoint_history(self.session_id, purpose))
+        return ProviderRequestContext(
+            str(sid),
+            f"{self.turn_id}:{purpose}:{number}",
+            window_id,
+            self.store.device_id(),
+            sent_breakpoints=self.store.cache_breakpoint_history(self.session_id, purpose),
+        )
 
 
 def configure_operation(provider, context, event, purpose):

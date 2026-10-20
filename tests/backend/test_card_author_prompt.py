@@ -1,4 +1,5 @@
 """Editable Card Author rules use one saved source across requests, previews and recovery."""
+
 import json
 import sqlite3
 
@@ -35,12 +36,12 @@ def test_old_configuration_keeps_existing_rules_and_is_backed_up_once(tmp_path):
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(raw),))
     reopened = Store(tmp_path)
     assert reopened.settings_document().shared.card_author_config.system_prompt == SYSTEM
-    backups = list(tmp_path.glob("settings-before-editor-prompt-*.sqlite3"))
+    backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
         assert json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]) == raw
     Store(tmp_path)
-    assert len(list(tmp_path.glob("settings-before-editor-prompt-*.sqlite3"))) == 1
+    assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
 
 async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_path):
@@ -51,13 +52,23 @@ async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_pat
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         opened = (await client.post("/api/settings/edit-sessions", json={})).json()
         old = opened["settings"]
-        definition = next(p for p in old["prompt_definitions"] if p["path"] == "card_author_config.system_prompt")
+        definition = next(
+            p for p in old["prompt_definitions"] if p["path"] == "card_author_config.system_prompt"
+        )
         assert definition["default"] == SYSTEM
-        saved = await client.patch("/api/settings/shared", json={"expected_revision": old["revisions"]["shared"],
-            "edit_session": opened["id"], "changes": {"card_author_config.system_prompt": custom}})
+        saved = await client.patch(
+            "/api/settings/shared",
+            json={
+                "expected_revision": old["revisions"]["shared"],
+                "edit_session": opened["id"],
+                "changes": {"card_author_config.system_prompt": custom},
+            },
+        )
         assert saved.status_code == 200, saved.text
         assert saved.json()["shared"]["advisor"] == old["shared"]["advisor"]
-        preview = await client.post(f"/api/card-author/conversations/{workspace['id']}/preview", json={"text": "讨论角色"})
+        preview = await client.post(
+            f"/api/card-author/conversations/{workspace['id']}/preview", json={"text": "讨论角色"}
+        )
         assert preview.status_code == 200, preview.text
         assert custom in list(strings(preview.json()["messages"]))
         assert SYSTEM not in list(strings(preview.json()["messages"]))
@@ -65,8 +76,10 @@ async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_pat
         assert (await run(editor, workspace["id"], provider))["status"] == "completed"
         assert custom in list(strings(provider.call_log[0]))
         assert Store(tmp_path).settings_document().shared.card_author_config.system_prompt == custom
-        undone = await client.post(f"/api/settings/edit-sessions/{opened['id']}/undo", json={
-            "page": "shared.editor", "expected_revision": saved.json()["revisions"]["shared"]})
+        undone = await client.post(
+            f"/api/settings/edit-sessions/{opened['id']}/undo",
+            json={"page": "shared.editor", "expected_revision": saved.json()["revisions"]["shared"]},
+        )
         assert undone.status_code == 200, undone.text
         assert undone.json()["shared"]["card_author_config"]["system_prompt"] == SYSTEM
     await editor.close()
@@ -74,7 +87,9 @@ async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_pat
 
 
 @pytest.mark.parametrize("api", ["responses", "anthropic"])
-async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next_turn(tmp_path, monkeypatch, api):
+async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next_turn(
+    tmp_path, monkeypatch, api
+):
     editor = Editor(tmp_path, monkeypatch, api)
     doc = editor.store.settings_document()
     prompt = "自定义规则开始\n" + "保留用户原文与资料。" * 5000 + "\n规则尾部 {{char}} {{user}}"
@@ -82,7 +97,9 @@ async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next
     doc.shared.card_author_config.system_prompt = prompt
     editor.store.save_settings(doc)
     try:
-        await editor.run([editor.tool(1, "new_context", {"content": "已讨论方向，继续任务。"}), blocks(api, "完成")])
+        await editor.run(
+            [editor.tool(1, "new_context", {"content": "已讨论方向，继续任务。"}), blocks(api, "完成")]
+        )
         for request in editor.requests:
             body = json.loads(request.content)
             assert prompt in list(strings(body))
@@ -116,14 +133,25 @@ async def test_prompt_change_on_resume_preserves_staged_edit_without_repeating_w
     editor = CardAuthorService(store)
     card = import_fixture(store)
     workspace = editor.edits.create(card["id"])
+
     class Interrupted(Batches):
         async def chat(self, messages, **kwargs):
             if self.call_count:
                 raise RuntimeError("模拟断线")
             async for chunk in super().chat(messages, **kwargs):
                 yield chunk
-    first = Interrupted([[("read_field", {"card_ref": "C1", "path": "/description"}),
-        ("set_text_field", {"card_ref": "C1", "path": "/description", "text": "待提交的设定", "comment": "用户要求"})]])
+
+    first = Interrupted(
+        [
+            [
+                ("read_field", {"card_ref": "C1", "path": "/description"}),
+                (
+                    "set_text_field",
+                    {"card_ref": "C1", "path": "/description", "text": "待提交的设定", "comment": "用户要求"},
+                ),
+            ]
+        ]
+    )
     failed = await run(editor, workspace["id"], first)
     assert failed["status"] == "error"
     assert editor.edits.get(workspace["id"])["document"]["description"] == "原人物设定"
@@ -147,5 +175,7 @@ def test_prompt_survives_settings_export_and_import(tmp_path):
     doc.shared.card_author_config.system_prompt = "需要迁移的自定义提示词"
     source.save_settings(doc)
     package, blobs = read_package(export_package(source, ExportSelection(settings=True)), target)
-    import_package(target, package, blobs, restore_settings=True, expected_revisions=target.settings_document().revisions)
+    import_package(
+        target, package, blobs, restore_settings=True, expected_revisions=target.settings_document().revisions
+    )
     assert target.settings_document().shared.card_author_config.system_prompt == "需要迁移的自定义提示词"

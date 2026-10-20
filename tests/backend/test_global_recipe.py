@@ -37,8 +37,15 @@ def test_new_sessions_copy_global_recipe_and_remain_independent(tmp_path):
     assert store.session(second["id"])["recipe"] == custom.model_dump()
     second["recipe"]["blocks"][0]["content"] = "内存中修改"
     assert store.session(second["id"])["recipe"] == custom.model_dump()
-    compiled = compile_context(character["document"], first, first["messages"], first["snapshot"],
-                               "继续", store.settings(), "global-recipe")
+    compiled = compile_context(
+        character["document"],
+        first,
+        first["messages"],
+        first["snapshot"],
+        "继续",
+        store.settings(),
+        "global-recipe",
+    )
     assert next(m["content"] for m in compiled["trace"] if m["source"] == "global_note") == "全局编排 A"
 
 
@@ -79,16 +86,37 @@ def test_saved_recipe_preserves_individual_block_positions(tmp_path):
     source = store.new_session(SessionCreate(card_id=character["id"]))
     old = source["recipe"]
     by_source = {block["source"]: block for block in old["blocks"]}
-    old["blocks"] = [by_source[name] for name in (
-        "rules", "lore_before", "description", "persona", "lore_after", "examples",
-        "memory", "history", "author_note", "state", "input", "post")]
+    old["blocks"] = [
+        by_source[name]
+        for name in (
+            "rules",
+            "lore_before",
+            "description",
+            "persona",
+            "lore_after",
+            "examples",
+            "memory",
+            "history",
+            "author_note",
+            "state",
+            "input",
+            "post",
+        )
+    ]
     with store.connection() as db:
         db.execute("UPDATE sessions SET recipe=? WHERE id=?", (json.dumps(old), source["id"]))
     current = store.session(source["id"])
     sources = [block["source"] for block in current["recipe"]["blocks"]]
     assert sources == [block["source"] for block in old["blocks"]]
-    compiled = compile_context(character["document"], current, current["messages"], current["snapshot"],
-                               "继续", store.settings(), "old-recipe")
+    compiled = compile_context(
+        character["document"],
+        current,
+        current["messages"],
+        current["snapshot"],
+        "继续",
+        store.settings(),
+        "old-recipe",
+    )
     trace_sources = [item["source"] for item in compiled["trace"]]
     last_history = max(i for i, source in enumerate(trace_sources) if source == "history")
     assert trace_sources[last_history + 1] == "state"
@@ -101,7 +129,10 @@ async def test_global_settings_and_dialogue_reset_api(tmp_path):
     character = card(store)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         global_recipe = recipe("通过设置保存")
-        response = await client.patch("/api/settings/half_agent", json={"expected_revision": 0, "changes": {"context_recipe": global_recipe.model_dump()}})
+        response = await client.patch(
+            "/api/settings/half_agent",
+            json={"expected_revision": 0, "changes": {"context_recipe": global_recipe.model_dump()}},
+        )
         assert response.status_code == 200
         source = store.new_session(SessionCreate(card_id=character["id"]))
         assert source["recipe"] == global_recipe.model_dump()
@@ -109,10 +140,17 @@ async def test_global_settings_and_dialogue_reset_api(tmp_path):
         url = f"/api/sessions/{source['id']}/recipe"
         response = await client.put(url, json={"recipe": custom.model_dump(), "expected_revision": 0})
         assert response.json()["recipe"] == custom.model_dump()
-        assert (await client.get('/api/settings')).json()["half_agent"]["context_recipe"] == global_recipe.model_dump()
+        assert (await client.get("/api/settings")).json()["half_agent"][
+            "context_recipe"
+        ] == global_recipe.model_dump()
         assert (await client.put(url, json={"use_global": True, "expected_revision": 0})).status_code == 409
         response = await client.put(url, json={"use_global": True, "expected_revision": 1})
         assert response.status_code == 200 and response.json()["recipe"] == global_recipe.model_dump()
         invalid = global_recipe.model_dump()
         invalid["blocks"][0]["role"] = "invalid"
-        assert (await client.patch('/api/settings/half_agent', json={"expected_revision": 1, "changes": {"context_recipe": invalid}})).status_code == 400
+        assert (
+            await client.patch(
+                "/api/settings/half_agent",
+                json={"expected_revision": 1, "changes": {"context_recipe": invalid}},
+            )
+        ).status_code == 400

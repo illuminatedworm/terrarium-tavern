@@ -19,42 +19,96 @@ SYSTEM_PROMPT = """你是后台 MVU 变量分析员。根据当前变量、近�
 无变化返回 []。不要输出正文、分析或 Markdown。"""
 
 
-async def analyze_variables(store, tid, settings, history, state, user_text, narrative, provider_factory=None,
-                            *, document=None, persona="用户", request_context=None, scopes=None):
+async def analyze_variables(
+    store,
+    tid,
+    settings,
+    history,
+    state,
+    user_text,
+    narrative,
+    provider_factory=None,
+    *,
+    document=None,
+    persona="用户",
+    request_context=None,
+    scopes=None,
+):
     cfg = settings.for_role("background") if hasattr(settings, "for_role") else settings
     rules = []
     for entry in variable_rule_entries(document or {"name": ""}):
         content = macros(entry.get("content", ""), normalize(document), persona, state, scopes)
-        rules.append({"id": entry["id"], "content": content,
-                      "version": hashlib.sha256(json.dumps(entry, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
-                      "tokens": count_text(content, cfg)})
+        rules.append(
+            {
+                "id": entry["id"],
+                "content": content,
+                "version": hashlib.sha256(
+                    json.dumps(entry, sort_keys=True, ensure_ascii=False).encode()
+                ).hexdigest(),
+                "tokens": count_text(content, cfg),
+            }
+        )
     messages = [
         {"role": "system", "message_type": "root_system", "content": SYSTEM_PROMPT},
-        *([{"role": "system", "message_type": "variable_mvu_rules", "content": wrap_mvu_rules("本轮 MVU 规则（输出仍须遵循 JSON Patch 数组协议）：\n" +
-              "\n\n".join(r["content"] for r in rules))}] if rules else []),
-        {"role": "user", "content": json.dumps({
-            "current_variables": state_for_model(state).get("stat_data", {}),
-            "recent_history": [
-                {"role": m["role"], "content": m.get("model", m["raw"])}
-                for m in history[-RECENT_MESSAGES:]
-            ],
-            "current_turn": {"user": user_text, "assistant": narrative},
-        }, ensure_ascii=False)},
+        *(
+            [
+                {
+                    "role": "system",
+                    "message_type": "variable_mvu_rules",
+                    "content": wrap_mvu_rules(
+                        "本轮 MVU 规则（输出仍须遵循 JSON Patch 数组协议）：\n"
+                        + "\n\n".join(r["content"] for r in rules)
+                    ),
+                }
+            ]
+            if rules
+            else []
+        ),
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "current_variables": state_for_model(state).get("stat_data", {}),
+                    "recent_history": [
+                        {"role": m["role"], "content": m.get("model", m["raw"])}
+                        for m in history[-RECENT_MESSAGES:]
+                    ],
+                    "current_turn": {"user": user_text, "assistant": narrative},
+                },
+                ensure_ascii=False,
+            ),
+        },
     ]
     messages = runtime_messages(messages, "background")
-    input_tokens = request_tokens(adapt_messages(messages, cfg)[0], cfg) if hasattr(cfg, "context_tokens") else None
-    store.event(tid, "variable_rules", {"purpose": "variables", "entries": rules, "estimated_input_tokens": input_tokens})
+    input_tokens = (
+        request_tokens(adapt_messages(messages, cfg)[0], cfg) if hasattr(cfg, "context_tokens") else None
+    )
+    store.event(
+        tid,
+        "variable_rules",
+        {"purpose": "variables", "entries": rules, "estimated_input_tokens": input_tokens},
+    )
     if input_tokens is not None and input_tokens + cfg.reply_tokens + 2048 > cfg.context_tokens:
-        store.event(tid, "context_warning", {"purpose": "variables",
-                                             "message": "MVU 请求估算超出模型上下文，仍完整发送"})
+        store.event(
+            tid,
+            "context_warning",
+            {"purpose": "variables", "message": "MVU 请求估算超出模型上下文，仍完整发送"},
+        )
     store.event(tid, "variable_update_started", {"purpose": "variables"})
-    provider = provider_factory() if provider_factory else await make_provider(
-        cfg,
-        lambda payload: store.event(tid, "provider_request", {**payload, "purpose": "variables"}),
+    provider = (
+        provider_factory()
+        if provider_factory
+        else await make_provider(
+            cfg,
+            lambda payload: store.event(tid, "provider_request", {**payload, "purpose": "variables"}),
+        )
     )
     if request_context:
         from tavern.scripting.request_context import configure_operation
-        configure_operation(provider, request_context, lambda kind, payload: store.event(tid, kind, payload), "variables")
+
+        configure_operation(
+            provider, request_context, lambda kind, payload: store.event(tid, kind, payload), "variables"
+        )
     try:
         outgoing = provider_messages(provider, messages, cfg) if hasattr(cfg, "api_mode") else messages
         result = await asyncio.wait_for(provider.chat_complete(outgoing), settings.memory_timeout)
