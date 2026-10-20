@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { notification, notify } from '../../web/lib/notifications';
 import { createRenderer, defineComponent, nextTick, ref } from 'vue';
-import { useStartupWarmup } from '../../web/composables/useStartupWarmup';
+import { useModelWarmup } from '../../web/composables/useModelWarmup';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../web/lib/api', () => ({ api: request }));
@@ -20,11 +20,11 @@ const renderer = createRenderer<any, any>({
 const apps: ReturnType<typeof renderer.createApp>[] = [];
 function mountWarmup() {
   const open = ref(true);
-  let warmup!: ReturnType<typeof useStartupWarmup>;
+  let warmup!: ReturnType<typeof useModelWarmup>;
   const app = renderer.createApp(
     defineComponent({
       setup() {
-        warmup = useStartupWarmup(() => open.value);
+        warmup = useModelWarmup(() => open.value);
         return () => null;
       },
     }),
@@ -122,5 +122,31 @@ it('tracks submissions that finish after closing and combines simultaneous compl
   await starting;
   expect(notification.value).toBe('Embedding 预热完成；Reranker 预热完成');
   expect(request).toHaveBeenCalledTimes(2);
+  expect(warmup.running.value).toBe(false);
+});
+
+it('notifies a warmup started from settings and keeps earlier jobs observed', async () => {
+  vi.useFakeTimers();
+  const embedding = { id: 'embedding-job', kind: 'warmup:embedding', status: 'running' };
+  const reranker = { id: 'reranker-job', kind: 'warmup:reranker', status: 'running' };
+  let jobs: Array<Record<string, string>> = [embedding];
+  request.mockImplementation(async (url: string) =>
+    url === '/local-models'
+      ? { jobs }
+      : { ...(url.includes('/embedding/') ? embedding : reranker), status: 'queued' },
+  );
+  const { open, warmup } = mountWarmup();
+  open.value = false;
+  expect(await warmup.start(['embedding'])).toHaveLength(1);
+  jobs = [embedding, reranker];
+  await warmup.start(['reranker']);
+  expect(warmup.jobs.value.map((job) => job.id)).toEqual(['embedding-job', 'reranker-job']);
+
+  jobs = [
+    { ...embedding, status: 'complete' },
+    { ...reranker, status: 'error', error: '显存不足' },
+  ];
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(notification.value).toBe('Embedding 预热完成；Reranker 预热失败：显存不足');
   expect(warmup.running.value).toBe(false);
 });

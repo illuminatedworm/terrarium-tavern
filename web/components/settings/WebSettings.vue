@@ -77,7 +77,7 @@ function move(index: number, delta: number) {
       HTML／文本读取作为最终备选，超过 8 MiB 明确报错。
     </p>
     <p class="muted">免 key 有服务商限额；自有 key 使用所属账号的额度，本应用不升级套餐。</p>
-    <p class="muted">本地接入跟随「网络与代理 → 模型接口请求使用代理」，不跟随提供商开关。</p>
+    <p class="muted">本地接入跟随下方「代理 → 模型接口使用代理」，不跟随提供商开关。</p>
   </div>
 </template>
 <style scoped>

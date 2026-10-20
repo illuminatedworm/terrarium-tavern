@@ -150,11 +150,9 @@ def page_catalog():
         ("advisor", "参谋 agent", ["advisor"]),
         ("editor", "制卡 agent", ["card_author", "card_author_config"]),
         ("preference_presets", "常用偏好", ["preference_presets"]),
-        ("web", "联网服务", ["web"]),
+        ("web", "联网与代理", ["web", "network", "model_request_mode"]),
         ("local", "本地模型", ["local_models"]),
-        ("network", "网络与代理", ["network", "model_request_mode"]),
-        ("storage", "存储与维护", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
-        ("data_transfer", "数据导入导出", []),
+        ("storage", "数据与存储", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
         ("misc", "杂项", ["send_shortcut", "debug_failed_requests", "debug_full_agent_prefix", "kemini"]),
     ]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})

@@ -13,7 +13,7 @@ import {
   watch,
 } from 'vue';
 import { useContextOperations } from './composables/useContextOperations';
-import { useStartupWarmup, type LocalModelStatus, type StartupModels } from './composables/useStartupWarmup';
+import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
@@ -274,7 +274,7 @@ function closePanel() {
   else panel.value = '';
 }
 const startupModels = ref<StartupModels | null>(null);
-const startupWarmup = useStartupWarmup(() => panel.value === 'warmup');
+const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
 const contextStats = ref<StoryContextPreview | null>(null);
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
@@ -3090,9 +3090,12 @@ useTimedError(error);
           <StartupWarmup
             v-if="panel === 'warmup' && startupModels"
             :status="startupModels"
-            :warmup="startupWarmup"
+            :warmup="modelWarmup"
             @close="panel = ''"
-            @settings="panel = 'settings'"
+            @settings="
+              settingsInitialPage = 'shared.local';
+              panel = 'settings';
+            "
           />
           <SettingsPanel
             v-if="panel === 'settings'"
@@ -3100,6 +3103,7 @@ useTimedError(error);
             :initial-mode="session?.agent_mode"
             :initial-channel="settingsChannel || session?.channel_origin || undefined"
             :initial-page="settingsInitialPage"
+            :warmup="modelWarmup"
             :effort-options="effortOptions"
             @updated="settings = $event"
             @imported="afterDataImport"

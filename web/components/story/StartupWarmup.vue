@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import {
   localModelLabels as labels,
   type StartupModels,
-  type StartupWarmupState,
-} from '../../composables/useStartupWarmup';
+  type ModelWarmupState,
+} from '../../composables/useModelWarmup';
 
-const props = defineProps<{ status: StartupModels; warmup: StartupWarmupState }>();
+const props = defineProps<{ status: StartupModels; warmup: ModelWarmupState }>();
 defineEmits<{ close: []; settings: [] }>();
 const models = props.status.enabled;
-const { jobs, pending, submitted, error, running } = props.warmup;
+const { pending, error } = props.warmup;
 const available = models.filter((purpose) => props.status.models[purpose].downloaded);
 const missing = models.filter((purpose) => !props.status.models[purpose].downloaded);
+// The shared observer also tracks warmups started from settings; this dialog shows its own models.
+const jobs = computed(() =>
+  props.warmup.jobs.value.filter((job) => available.some((purpose) => job.kind === `warmup:${purpose}`)),
+);
+const submitted = computed(() => jobs.value.length > 0);
+const running = computed(() => jobs.value.some((job) => ['queued', 'running'].includes(job.status)));
 onMounted(() => {
   localStorage.setItem('tavern-warmup-startup', props.status.startup_id);
 });
@@ -27,7 +33,7 @@ onMounted(() => {
   <p v-if="missing.length" class="muted">
     {{
       available.length ? `${missing.map((purpose) => labels[purpose]).join('、')} 尚未下载，` : ''
-    }}请到设置中的“混合召回与本地模型”页面下载模型。
+    }}请到“设置 → 通用 → 本地模型”下载模型。
   </p>
   <p class="muted">
     {{
@@ -35,24 +41,17 @@ onMounted(() => {
     }}也可继续使用；不可用的检索或重排通道会降级。已保存的世界书向量缓存仍可复用。
   </p>
   <AppNotification v-for="job in jobs" :key="`error-${job.id}`" :message="job.error || ''" />
-  <p
-    v-for="job in jobs.filter((j: any) => j.status !== 'error')"
-    :key="job.id"
-    role="status"
-    :class="{ error: job.status === 'error' }"
-  >
+  <p v-for="job in jobs.filter((j) => j.status !== 'error')" :key="job.id" role="status">
     {{ labels[job.kind.split(':')[1]] }}：{{
       (
         {
           queued: '排队中',
           running: '预热中…',
           complete: '预热完成',
-          error: '预热失败',
           cancelled: '已取消',
         } as any
       )[job.status]
     }}
-    {{ job.error || '' }}
   </p>
   <AppNotification :message="error" />
   <div class="actions">

@@ -1433,6 +1433,90 @@
   color: var(--text-secondary);
   font-size: var(--fs-sm);
 }
+/* Local models: one compact card per model, side by side. */
+.local-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.local-model-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 0.018);
+}
+.local-model-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-primary);
+  font-size: var(--fs-base);
+}
+.local-model-state {
+  flex: none;
+  padding: 1px 9px;
+  border-radius: var(--radius-pill);
+  background: rgb(var(--warning-rgb) / 0.12);
+  color: var(--warning);
+  font-size: var(--fs-2xs);
+}
+.local-model-state.ready {
+  background: rgb(var(--success-rgb) / 0.12);
+  color: var(--success);
+}
+.local-model-state.missing {
+  background: rgb(255 255 255 / 0.05);
+  color: var(--text-muted);
+}
+.local-model-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+.settings-detail .local-model-card .muted {
+  margin: 0;
+}
+.local-model-card .actions small {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.local-index-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.local-index-row > label {
+  flex: 1;
+}
+.local-index-row > button {
+  flex: none;
+  min-height: 36px;
+}
+.local-job + .local-job {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+.settings-detail .local-job p {
+  max-width: none;
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+.local-job-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.local-job-progress progress {
+  flex: 1;
+  min-width: 0;
+}
 .provider-editor > details {
   padding: 0;
   border: 0;
@@ -1446,5 +1530,13 @@
 @media (max-width: 760px) {
   .storage-report {
     grid-template-columns: 1fr 1fr;
+  }
+  .local-model-grid,
+  .local-model-fields {
+    grid-template-columns: 1fr;
+  }
+  .local-index-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

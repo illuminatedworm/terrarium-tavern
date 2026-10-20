@@ -61,7 +61,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 Chat Completions 流式响应兼容在结束后追加 `delta: {}` 的重复收尾包（结束原因为 `stop` 或与首次相同），保留首次结束原因与已收集的工具调用，并继续接收用量统计；结束后新增正文、推理或工具参数仍会报错，不提交回合。
 
-`shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.network` 设置页面，支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点使用各自请求。
+`shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.web` 设置页面（“联网与代理”），支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点使用各自请求。
 
 `shared.debug_failed_requests` 为严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次操作生效。开启后保留失败模型生成请求的原始 HTTP 证据，成功请求不落盘。`GET /api/debug/failed-requests?offset=0` 按时间倒序返回每页最多 100 条的 HTTP 信息及记录总数；`offset` 是从 0 开始的记录偏移条数，默认 0、下界包含 0，无固定上界，越过末尾返回空列表。`GET /api/debug/failed-requests/{UUID}` 下载对应 ZIP，不提供任意路径访问。记录格式、正文限额、脱敏及清理规则见[杂项设置](../guides/settings.md#杂项)。
 
@@ -101,7 +101,7 @@ Content-Type: application/json
 
 ## 个人数据包
 
-全局设置页面标识为 `shared.data_transfer`，不参与普通字段写入和页级撤回。
+导入导出位于全局设置页面 `shared.storage`（“数据与存储”），不参与普通字段写入；该页的撤回只作用于存储限额字段。
 
 | 接口 | 请求与响应 |
 |---|---|

@@ -4,7 +4,7 @@ import { notify } from '../lib/notifications';
 import { useTimedError } from './useTimedError';
 
 export type LocalModelPurpose = 'embedding' | 'reranker';
-interface WarmupJob {
+export interface WarmupJob {
   id: string;
   kind: string;
   status: 'queued' | 'running' | 'complete' | 'error' | 'cancelled';
@@ -26,12 +26,16 @@ export const localModelLabels: Record<string, string> = {
   reranker: 'Reranker',
 };
 
-/** The app owns observation so closing the startup dialog keeps submitted jobs visible. */
-export function useStartupWarmup(isOpen: () => boolean) {
+/**
+ * Every warmup — from the startup dialog or the local model settings — is submitted here.
+ * The app owns observation so jobs keep being tracked after their dialog or page closes, and
+ * completion is announced once unless the startup dialog is open to show it inline.
+ */
+export function useModelWarmup(isStartupOpen: () => boolean) {
   const jobs = ref<WarmupJob[]>([]);
-  const pending = ref(false),
-    submitted = ref(false),
+  const submitting = ref(0),
     error = ref('');
+  const pending = computed(() => submitting.value > 0);
   const running = computed(() => jobs.value.some((job) => ['queued', 'running'].includes(job.status)));
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -39,16 +43,19 @@ export function useStartupWarmup(isOpen: () => boolean) {
   function updateJobs(updated: WarmupJob[]) {
     const notices: string[] = [];
     for (const job of updated) {
-      if (isOpen() || jobs.value.find((previous) => previous.id === job.id)?.status === job.status) continue;
+      if (isStartupOpen() || jobs.value.find((previous) => previous.id === job.id)?.status === job.status)
+        continue;
       const label = localModelLabels[job.kind.split(':')[1]];
       if (job.status === 'complete') notices.push(`${label} 预热完成`);
       else if (job.status === 'error') notices.push(`${label} 预热失败：${job.error}`);
     }
-    jobs.value = updated;
+    jobs.value = [...jobs.value.filter((job) => !updated.some((item) => item.id === job.id)), ...updated];
     if (notices.length) notify(notices.join('；'));
   }
 
   async function refresh() {
+    // A new submission restarts polling; keep a single chain.
+    clearTimeout(timer);
     try {
       const status = await api('/local-models');
       if (disposed) return;
@@ -57,26 +64,27 @@ export function useStartupWarmup(isOpen: () => boolean) {
     } catch (e) {
       if (disposed) return;
       error.value = String(e);
-      if (!isOpen()) notify(error.value);
+      if (!isStartupOpen()) notify(error.value);
     }
   }
 
-  async function start(available: LocalModelPurpose[]) {
-    if (pending.value || submitted.value) return;
-    pending.value = true;
+  /** Returns the jobs that were accepted so callers can show them immediately. */
+  async function start(purposes: LocalModelPurpose[]) {
+    submitting.value++;
     error.value = '';
     const results = await Promise.allSettled(
-      available.map((purpose) => api(`/local-models/${purpose}/warmup`, {})),
+      purposes.map((purpose) => api(`/local-models/${purpose}/warmup`, {}) as Promise<WarmupJob>),
     );
-    if (disposed) return;
-    updateJobs(results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : [])));
+    submitting.value--;
+    if (disposed) return [];
+    const accepted = results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []));
+    updateJobs(accepted);
     error.value = results
       .flatMap((result) => (result.status === 'rejected' ? [String(result.reason)] : []))
       .join('\n');
-    if (error.value && !isOpen()) notify(error.value);
-    submitted.value = true;
-    pending.value = false;
+    if (error.value && !isStartupOpen()) notify(error.value);
     if (running.value) await refresh();
+    return accepted;
   }
 
   onBeforeUnmount(() => {
@@ -84,6 +92,6 @@ export function useStartupWarmup(isOpen: () => boolean) {
     clearTimeout(timer);
   });
   useTimedError(error);
-  return { jobs, pending, submitted, error, running, start };
+  return { jobs, pending, error, running, start };
 }
-export type StartupWarmupState = ReturnType<typeof useStartupWarmup>;
+export type ModelWarmupState = ReturnType<typeof useModelWarmup>;

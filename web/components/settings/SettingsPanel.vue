@@ -43,11 +43,13 @@ import CardAuthorSettings from './CardAuthorSettings.vue';
 import WebSettings from './WebSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { blankChannelProfile, channelProviders, profileKey, type Channel } from '../../lib/channels';
+import type { ModelWarmupState } from '../../composables/useModelWarmup';
 const props = defineProps<{
   initialMode?: string;
   initialPage?: string;
   initialChannel?: Channel;
   effortOptions: Array<{ value: string; label: string }>;
+  warmup: ModelWarmupState;
 }>();
 const emit = defineEmits<{
   updated: [settings: SettingsDocument];
@@ -228,7 +230,7 @@ const searchable = computed(() => {
           : [...historyFields, ...memoryFields]
         : p.key === 'retrieval'
           ? [...loreFields, ...retrievalFields, ...retrievalAdvanced]
-          : p.key === 'network'
+          : p.key === 'web'
             ? networkFields
             : p.key === 'misc'
               ? miscFields
@@ -365,22 +367,16 @@ onMounted(async () => {
             <h3>{{ page?.label }}</h3>
           </div>
           <button
-            v-if="page && page.key !== 'data_transfer'"
+            v-if="page"
             class="quiet"
-            :disabled="busy || !editor.pageChanged(page)"
+            :disabled="busy || transferBusy || !editor.pageChanged(page)"
             @click="editor.undo(page)"
           >
             <Icon name="refresh" :size="15" />撤回本页修改
           </button>
         </div>
         <p class="settings-scope-note">
-          {{
-            page?.key === 'data_transfer'
-              ? '备份个人数据，或导入后继续故事。'
-              : scope === 'shared'
-                ? '这些资源由两种模式共用。'
-                : '参数独立保存，成功保存后用于下一轮。'
-          }}
+          {{ scope === 'shared' ? '这些资源由两种模式共用。' : '参数独立保存，成功保存后用于下一轮。' }}
         </p>
         <section
           v-if="page"
@@ -638,20 +634,35 @@ onMounted(async () => {
               恢复默认文本
             </button>
           </CardAuthorSettings>
-          <WebSettings v-else-if="page.key === 'web'" :value="draft.shared.web" />
-          <LocalResourceSettings
-            v-else-if="page.key === 'local'"
-            :settings="draft.shared"
-            :flush="editor.flush"
-          />
-          <template v-else-if="page.key === 'network'">
-            <h4>请求方式</h4>
+          <template v-else-if="page.key === 'web'">
+            <h4>联网服务</h4>
+            <WebSettings :value="draft.shared.web" />
+            <h4>模型请求方式</h4>
             <SettingsFields :value="draft.shared" :fields="requestFields" layout="rows" />
             <h4>代理</h4>
             <SettingsFields :value="draft.shared" :fields="proxyFields" layout="rows" />
           </template>
-          <StorageSettings v-else-if="page.key === 'storage'" :settings="draft.shared" />
+          <LocalResourceSettings
+            v-else-if="page.key === 'local'"
+            :settings="draft.shared"
+            :flush="editor.flush"
+            :warmup="warmup"
+          />
+          <template v-else-if="page.key === 'storage'">
+            <DataTransferSettings
+              :flush="editor.flush"
+              @busy="transferBusy = $event"
+              @imported="afterImport"
+              @open-session="emit('openSession', $event)"
+            />
+            <h4>存储与清理</h4>
+            <StorageSettings :settings="draft.shared" />
+          </template>
           <template v-else-if="page.key === 'misc'">
+            <h4>输入</h4>
+            <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
+            <h4>调试</h4>
+            <SettingsFields :value="draft.shared" :fields="debugFields" layout="rows" />
             <KeminiSettings
               :value="draft.shared"
               :saved="saved!.shared"
@@ -662,19 +673,8 @@ onMounted(async () => {
               :text-errors="textErrors"
               :guard="guard"
             />
-            <h4>输入</h4>
-            <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
-            <h4>调试</h4>
-            <SettingsFields :value="draft.shared" :fields="debugFields" layout="rows" />
             <FailedRequestLogs />
           </template>
-          <DataTransferSettings
-            v-else-if="page.key === 'data_transfer'"
-            :flush="editor.flush"
-            @busy="transferBusy = $event"
-            @imported="afterImport"
-            @open-session="emit('openSession', $event)"
-          />
           <PreferencePresetSettings
             v-else-if="page.key === 'preference_presets'"
             :presets="editor.draftValue('shared', 'preference_presets')"

@@ -427,7 +427,7 @@ async def test_selection_persists_projects_to_all_roles_and_undo_restores_defaul
                 assert runtime.for_role(role).model_request_mode == "stream"
         undone = await client.post(
             f"/api/settings/edit-sessions/{session['id']}/undo",
-            json={"page": "shared.network", "expected_revision": changed.json()["revisions"]["shared"]},
+            json={"page": "shared.web", "expected_revision": changed.json()["revisions"]["shared"]},
         )
         assert undone.status_code == 200, undone.text
         assert undone.json()["shared"]["model_request_mode"] == "auto"
