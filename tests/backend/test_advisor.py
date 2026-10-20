@@ -1,6 +1,7 @@
 """Advisor authorization, complete context, branch ownership and recovery."""
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -54,6 +55,76 @@ async def test_readonly_chat_and_complete_history(tmp_path, mode):
     names = {d.name for d in provider.schemas[0]}
     assert not names & {"write_handoff", "write_note", "write_plot", "patch_state", "revise_content"}
     assert ("search_memory" in names) == (mode == "half_agent")
+
+
+async def test_history_spans_return_complete_messages_and_enforce_the_shared_limit():
+    from tavern.advisor.tools import AdvisorTools, definitions
+    from tavern.core.model_view import ModelView
+
+    messages = [
+        {
+            "id": uid(),
+            "role": "assistant" if index % 2 == 0 else "user",
+            "raw": f"原文 {index + 1}：" + "完整剧情" * 600 + "保留尾部",
+        }
+        for index in range(9)
+    ]
+    story = {
+        "agent_mode": "half_agent",
+        "document": {},
+        "persona": "用户",
+        "snapshot": {},
+        "messages": messages,
+    }
+    before = copy.deepcopy(story)
+    tools = AdvisorTools(
+        SimpleNamespace(story=story, definitions=definitions("half_agent"), view=ModelView(story))
+    )
+    result = await tools.execute("read_history", '{"ref":"H1-H8"}')
+    assert result == {
+        "messages": [
+            {"ref": f"H{index + 1}", "role": message["role"], "text": message["raw"]}
+            for index, message in enumerate(messages[:8])
+        ]
+    }
+    assert await tools.execute("read_history", '{"ref":"H1"}') == result["messages"][0]
+    with pytest.raises(ValueError, match="最多读取 8 条"):
+        await tools.execute("read_history", '{"ref":"H1-H9"}')
+    with pytest.raises(ValueError, match="没有此历史引用或区间"):
+        await tools.execute("read_history", '{"ref":"H8-H10"}')
+    assert story == before
+
+
+async def test_full_agent_reads_validate_versions_without_mutating_the_snapshot():
+    from tavern.advisor.config import AdvisorConfig
+    from tavern.advisor.context import background
+    from tavern.advisor.tools import AdvisorTools, ContextRead
+    from tavern.full_agent.state import new_state
+
+    story = {
+        "document": {"name": "Guide"},
+        "persona": "User",
+        "snapshot": {"full_agent": new_state()},
+        "agent_mode": "full_agent",
+        "messages": [],
+        "turn_preference": "",
+        "context_strategy": "new_context",
+    }
+    tools = AdvisorTools(SimpleNamespace(story=story))
+    args = ContextRead(field="handoff")
+    assert await tools.dispatch("read_story_context", args) == {"available": True, "content": ""}
+    state = story["snapshot"]["full_agent"]
+    state["handoff"]["current"] = [{"text": "旧交接完整保留", "kind": "fact", "refs": []}]
+    saved = copy.deepcopy(story["snapshot"])
+    assert "旧交接完整保留" in str(background(story, AdvisorConfig()))
+    assert "旧交接完整保留" in (await tools.dispatch("read_story_context", args))["content"]
+    assert story["snapshot"] == saved
+
+    state.update(version=1, handoff={"text": "旧格式", "revision": 0, "stale": False})
+    with pytest.raises(ValueError, match="格式版本 1 不受支持"):
+        background(story, AdvisorConfig())
+    with pytest.raises(ValueError, match="格式版本 1 不受支持"):
+        await tools.dispatch("read_story_context", args)
 
 
 async def test_preference_commits_and_respects_latest_revision(tmp_path):

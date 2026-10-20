@@ -4,6 +4,7 @@ import copy
 import json
 
 from tavern.core.cache_policy import fingerprint
+from tavern.full_agent.handoff import render_written_current
 from tavern.full_agent.protocol import saved
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
@@ -128,7 +129,9 @@ class ContextLedger:
         # matching tool result confirms that the local draft accepted it.
         if saved(result):
             if call["name"] == "write_handoff":
-                self.seen["handoff"] = args["content"]
+                # The model wrote the complete current handoff itself. Chapter
+                # operations are partial, so a changed ledger is still resent.
+                self.seen["handoff"] = render_written_current(args["current"])
             else:
                 previous = self.seen.get("plot", {})
                 self.seen["plot"] = {

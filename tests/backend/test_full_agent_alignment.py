@@ -16,7 +16,7 @@ from tavern.full_agent.tools import AgentTools
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.request_context import ProviderRequestContext
 from tavern.storage.store import Store
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, current_text, handoff, runtime, turn, written
 
 
 def config(api="anthropic", mode="runtime", **kwargs):
@@ -274,8 +274,8 @@ def handoff_frames(messages):
 
 def set_handoff(store, session, text):
     snapshot = copy.deepcopy(session["snapshot"])
-    memory = snapshot["full_agent"]["handoff"]
-    memory.update(text=text, revision=memory["revision"] + 1, stale=False)
+    revision = snapshot["full_agent"]["handoff"]["revision"]
+    snapshot["full_agent"]["handoff"] = {**written(session["messages"], text), "revision": revision + 1}
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
     return store.session(session["id"])
@@ -286,8 +286,8 @@ async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(
     session = set_handoff(store, session, "MEMORY_A")
     model = Model(
         ("read_state", {}),
-        ("write_handoff", {"content": "MEMORY_B"}),
-        ("write_handoff", {"content": "MEMORY_B"}),
+        ("write_handoff", {"current": [{"text": "MEMORY_B"}]}),
+        ("write_handoff", {"current": [{"text": "MEMORY_B"}]}),
         "narrative",
     )
     try:
@@ -302,7 +302,7 @@ async def test_runtime_frames_append_and_handoff_tool_does_not_duplicate_memory(
             assert sum("<tavern_context_status>" in m.get("content", "") for m in messages) == 1
             assert not any("还可调用模型" in m.get("content", "") for m in messages)
         assert "MEMORY_B" in json.dumps(requests[-1])
-        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_B"
+        assert current_text(current["snapshot"]["full_agent"]) == "MEMORY_B"
         baseline_epoch = result["preview"]["context_ledger"]["epoch"]
         for status_count in (2, 3):
             next_model = Model("next narrative")
@@ -530,7 +530,7 @@ async def test_window_inventory_tracks_note_changes_and_rollover(tmp_path):
         ("read_state", {}),
         ("write_note", {"key": "plan", "content": "下一步计划", "kind": "plan"}),
         ("archive_note", {"key": "plan"}),
-        ("new_context", {"handoff": "已归档计划，继续当前故事", "keep_recent": 0}),
+        ("new_context", {"handoff": handoff("已归档计划，继续当前故事"), "keep_recent": 0}),
         ("read_state", {}),
         "narrative",
     )
@@ -554,14 +554,15 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
     store, service, session = game(tmp_path)
     model = Model(
         ("write_note", {"key": "线索/钟楼", "content": "初版笔记", "kind": "plan"}),
-        ("new_context", {"handoff": "继续当前场景", "keep_recent": 0}),
+        ("new_context", {"handoff": handoff("继续当前场景"), "keep_recent": 0}),
         ("read_note", {"key": "线索/钟楼"}),
         ("write_note", {"key": "线索/钟楼", "content": "更新笔记正文", "kind": "hypothesis"}),
         ("write_note", {"key": "计划/港口", "content": "新计划", "kind": "plan"}),
         ("archive_note", {"key": "线索/钟楼"}),
         ("write_note", {"key": "线索/钟楼", "content": "重新启用笔记", "kind": "plan"}),
         ("read_note", {"key": "计划/港口"}),
-        ("new_context", {"handoff": "继续下一段场景", "keep_recent": 0}),
+        # Same turn: nothing new has left the window since the first rollover.
+        ("new_context", {"handoff": handoff("继续下一段场景", through=None), "keep_recent": 0}),
         "narrative",
     )
     try:
@@ -675,13 +676,13 @@ async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tm
         assert not any(m.get("source") in ("handoff", "plot") for m in first["preview"]["trace"])
         expected = []
         for value in ("", "MEMORY_A", "MEMORY_A", "MEMORY_B", "MEMORY_A", "", ""):
-            previous = session["snapshot"]["full_agent"]["handoff"]["text"]
+            previous = current_text(session["snapshot"]["full_agent"])
             session = set_handoff(store, session, value)
             model = Model("continue")
             result, session = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
             if previous != value:
-                expected.append(value)
+                expected.append(f"## 当前交接\n- {value} [H1]" if value else "")
             frames = [m for m in result["preview"]["trace"] if m.get("source") == "handoff"]
             assert [m["_runtime_context"]["value"] for m in frames] == expected
             assert len(handoff_frames(model.requests[0]["messages"])) == len(expected)
@@ -693,11 +694,13 @@ async def test_memory_updates_compare_effective_version_and_empty_is_explicit(tm
 async def test_failed_memory_write_and_explicit_repeated_reads_keep_tool_pairs(tmp_path):
     store, service, session = game(tmp_path)
     session = set_handoff(store, session, "MEMORY_A")
-    model = Model(("write_handoff", {"content": ""}), ("read_state", {}), ("read_state", {}), "done")
+    model = Model(
+        ("write_handoff", handoff("", through=None)), ("read_state", {}), ("read_state", {}), "done"
+    )
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
+        assert current_text(current["snapshot"]["full_agent"]) == "MEMORY_A"
         messages = model.requests[-1]["messages"]
         assert len(handoff_frames(messages)) == 1
         results = [m for m in messages if m["role"] == "tool"]
@@ -716,7 +719,9 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
             self.requests.append(copy.deepcopy(messages))
             self.last_tool_calls = [
                 SimpleNamespace(
-                    id=f"call-{index}", name="write_handoff", arguments=json.dumps({"content": value})
+                    id=f"call-{index}",
+                    name="write_handoff",
+                    arguments=json.dumps(handoff(value, through=None), ensure_ascii=False),
                 )
                 for index, value in enumerate(("MEMORY_A", "MEMORY_B"))
             ]
@@ -727,7 +732,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
 
     async def execute(tools, name, arguments):
         nonlocal interrupted
-        value = json.loads(arguments)["content"]
+        value = json.loads(arguments)["current"][0]["text"]
         if value == "MEMORY_B" and not interrupted:
             interrupted = True
             raise RuntimeError("synthetic interruption before second tool")
@@ -740,7 +745,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
         assert failed["status"] == "error"
         assert executed == ["MEMORY_A"]
         progress = store.full_agent_progress(failed["id"])
-        assert progress["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
+        assert current_text(progress["snapshot"]["full_agent"]) == "MEMORY_A"
     finally:
         await service.close()
     store = Store(store.root)
@@ -762,7 +767,7 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
         assert result["status"] == "committed", result["error"]
         assert executed == ["MEMORY_A", "MEMORY_B"]
         assert len(model.requests) == 1
-        assert store.session(session["id"])["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_B"
+        assert current_text(store.session(session["id"])["snapshot"]["full_agent"]) == "MEMORY_B"
     finally:
         await service.close()
 
@@ -1010,7 +1015,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             audit = result["preview"]["context_ledger"]
             epochs.append(audit["epoch"])
             assert len(handoff_frames(result["preview"]["messages"])) == 1
-            assert session["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_A"
+            assert current_text(session["snapshot"]["full_agent"]) == "MEMORY_A"
             assert "MODEL_PRIVATE_SIGNATURE" not in requests[-1].content.decode()
             if len(epochs) > 1:
                 assert audit["rebuild_reason"] == "provider_or_model_changed"
@@ -1029,12 +1034,13 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
     session = set_handoff(store, session, "MEMORY_A")
     try:
         _, session = await turn(service, session, Model("first"))
-        model = Model(("new_context", {"handoff": "MEMORY_B", "keep_recent": 0}), "after rollover")
+        model = Model(("new_context", {"handoff": handoff("MEMORY_B"), "keep_recent": 0}), "after rollover")
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         messages = model.requests[-1]["messages"]
-        assert len(handoff_frames(messages)) == 1
-        assert "MEMORY_B" in handoff_frames(messages)[0]["content"]
+        # The new window carries the chapter ledger and the current handoff.
+        assert len(handoff_frames(messages)) == 2
+        assert all("MEMORY_B" in frame["content"] for frame in handoff_frames(messages))
         assert "MEMORY_A" not in json.dumps(messages)
         edited = store.edit_message(session["id"], session["head"], "edited narrative", session["revision"])
         model = Model("continue")
@@ -1043,7 +1049,7 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
         assert result["preview"]["context_ledger"]["rebuild_reason"]
         assert "edited narrative" in json.dumps(model.requests[0]["messages"])
         assert "after rollover" not in json.dumps(model.requests[0]["messages"])
-        assert len(handoff_frames(model.requests[0]["messages"])) == 1
+        assert len(handoff_frames(model.requests[0]["messages"])) == 2
     finally:
         await service.close()
 
@@ -1103,7 +1109,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
                     "id": "fc_memory",
                     "call_id": "call_memory",
                     "name": "write_handoff",
-                    "arguments": '{"content":"MEMORY_B"}',
+                    "arguments": json.dumps(handoff("MEMORY_B", through=None)),
                 },
             ]
             if len(requests) == 1
@@ -1143,8 +1149,8 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         assert len(requests) == 3
         assert requests[2].headers["session-id"] == requests[0].headers["session-id"]
         assert requests[2].headers["x-codex-turn-state"] == "persisted-route"
-        state = store.session(session["id"])["snapshot"]["full_agent"]["handoff"]
-        assert state["text"] == "MEMORY_B" and state["revision"] == 1
+        state = store.session(session["id"])["snapshot"]["full_agent"]
+        assert current_text(state) == "MEMORY_B" and state["handoff"]["revision"] == 1
         body = json.loads(requests[2].content)
         assert any(i.get("encrypted_content") == "opaque-memory" for i in body["input"])
         assert sum(i.get("type") == "function_call_output" for i in body["input"]) == 1
@@ -1161,7 +1167,7 @@ async def test_legacy_tool_trace_is_upgraded_without_inventing_native_data(tmp_p
     store, service, session = game(tmp_path)
     try:
         _, session = await turn(
-            service, session, Model(("write_handoff", {"content": "MEMORY_B"}), "old narrative")
+            service, session, Model(("write_handoff", handoff("MEMORY_B", through=None)), "old narrative")
         )
         with store.connection() as db:
             rows = db.execute(

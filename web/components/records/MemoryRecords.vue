@@ -7,6 +7,8 @@ import { historyRefLabel } from '../../lib/storyHistory';
 
 const props = defineProps<{
   memory: any;
+  /** Archived episodes: not in the active projection, recalled into the Writer request by relevance. */
+  archived?: any[];
   disabled?: boolean;
   saving?: boolean;
   /** `cards` is the dialog layout: one card per record with its source messages. */
@@ -21,8 +23,9 @@ const categories: Record<string, string> = {
   open: '未完成事项',
   uncertain: '待确认内容',
   manual: '手工记忆',
+  archived: '已归档经历',
 };
-const editable = Object.entries(categories);
+const editable = Object.entries(categories).filter(([key]) => key !== 'archived');
 const search = ref('');
 const openGroups = ref(new Set<string>());
 const allGroups = computed(() =>
@@ -30,9 +33,12 @@ const allGroups = computed(() =>
     .map(([id, label]) => ({
       id,
       label,
-      records: (props.memory?.records || []).filter(
-        (r: any) => r.category === id && !['deleted', 'superseded'].includes(r.status),
-      ),
+      records:
+        id === 'archived'
+          ? (props.archived || []).map((r: any) => ({ ...r, archived: true }))
+          : (props.memory?.records || []).filter(
+              (r: any) => r.category === id && !['deleted', 'superseded'].includes(r.status),
+            ),
     }))
     .filter((g) => g.records.length),
 );
@@ -66,6 +72,7 @@ function edit(record?: any) {
   draft.value = {
     action: record ? 'edit' : 'add',
     id: record?.id,
+    archived: Boolean(record?.archived),
     category: record?.category || 'manual',
     kind: record?.kind || 'fact',
     content: record?.content || '',
@@ -81,6 +88,11 @@ function toggleSources(id: string) {
 function sourceLabel(record: any) {
   return historyRefLabel(record.sources.map((source: any) => props.refs?.get(source.message_id)));
 }
+function submit() {
+  const { archived, ...change } = draft.value;
+  // The API has no archive category: archived records always stay episodes.
+  emit('change', archived ? { ...change, category: 'episode' } : change);
+}
 function toggleGroup(id: string) {
   const next = new Set(openGroups.value);
   next.has(id) ? next.delete(id) : next.add(id);
@@ -92,8 +104,9 @@ function toggleGroup(id: string) {
   <div class="classified-memory" :class="{ 'memory-cards': layout === 'cards' }">
     <div class="memory-records-scroll">
       <p v-if="layout !== 'cards'" class="muted memory-help">记录剧情发展，不直接修改变量。</p>
-      <form v-if="draft" class="memory-editor" @submit.prevent="emit('change', { ...draft })">
-        <label
+      <form v-if="draft" class="memory-editor" @submit.prevent="submit">
+        <p v-if="draft.archived" class="muted">归档经历保持为经历，只修订文字与内容性质。</p>
+        <label v-else
           >分类<select v-model="draft.category" :disabled="saving">
             <option v-for="[key, label] in editable" :key="key" :value="key">{{ label }}</option>
           </select></label
@@ -130,10 +143,12 @@ function toggleGroup(id: string) {
           v-for="record in cards"
           :key="record.id"
           class="memory-card"
-          :class="`memory-${record.category}`"
+          :class="`memory-${record.archived ? 'archived' : record.category}`"
         >
           <header>
-            <span class="memory-card-category">{{ categories[record.category] }}</span
+            <span class="memory-card-category">{{
+              categories[record.archived ? 'archived' : record.category]
+            }}</span
             ><span v-if="record.manual" class="memory-chip">手工修订</span
             ><span v-if="record.status === 'completed'" class="memory-chip">已完成</span
             ><span v-if="record.kind === 'claim'" class="memory-chip">人物说法</span
@@ -168,11 +183,16 @@ function toggleGroup(id: string) {
           </header>
           <StoryProse :text="record.content" />
           <p
-            v-if="(record.story_time && record.story_time !== '未知') || record.known_to?.length"
+            v-if="
+              (record.story_time && record.story_time !== '未知') ||
+              record.known_to?.length ||
+              record.archived_round != null
+            "
             class="memory-card-meta"
           >
             <span v-if="record.story_time && record.story_time !== '未知'">时间：{{ record.story_time }}</span
             ><span v-if="record.known_to?.length">明确知情：{{ record.known_to.join('、') }}</span>
+            <span v-if="record.archived_round != null">归档时已完成 {{ record.archived_round }} 轮</span>
           </p>
           <div v-if="openSources.has(record.id)" class="memory-card-sources">
             <div v-for="(source, i) in record.sources" :key="i" class="memory-source">
@@ -201,7 +221,7 @@ function toggleGroup(id: string) {
         <p v-if="!allGroups.length" class="state-empty">暂无记忆记录</p>
         <p v-else-if="!groups.length" class="state-empty">没有匹配的记忆条目</p>
         <p class="memory-help memory-cards-help">
-          每条记忆都能回查来源，也可以手工修订。删除保留屏蔽标记，自动整理不会恢复同一条目；修改旧剧情只提示，需手动重新生成记忆才能核对旧内容。
+          每条记忆都能回查来源，也可以手工修订。活跃记忆删除后保留屏蔽标记，自动整理不会恢复同一条目；归档经历删除后不再召回，但手动重建可能重新生成同一事件。修改旧剧情只提示，需手动重新生成记忆才能核对旧内容。已归档经历不常驻正文请求，按当前剧情相关性召回。
         </p>
       </template>
       <template v-else>
@@ -221,6 +241,7 @@ function toggleGroup(id: string) {
               ><span v-if="record.kind === 'claim'">人物说法</span
               ><span v-if="record.kind === 'inference'">推断</span
               ><span v-if="record.source_stale">原文已修改，尚未重建</span>
+              <span v-if="record.archived_round != null">归档时已完成 {{ record.archived_round }} 轮</span>
             </div>
             <StoryProse :text="record.content" />
             <p v-if="record.story_time && record.story_time !== '未知'" class="muted">
@@ -266,7 +287,7 @@ function toggleGroup(id: string) {
         <p v-else-if="!groups.length" class="state-empty">没有匹配的记忆条目</p>
         <button :disabled="disabled || saving" @click="edit()">添加记忆条目</button>
         <p class="muted memory-help">
-          删除保留屏蔽标记，自动整理不会恢复同一条目。修改旧剧情只提示，需手动重新生成记忆才能核对旧内容。
+          活跃记忆删除后保留屏蔽标记，自动整理不会恢复同一条目；归档经历删除后不再召回，但手动重建可能重新生成同一事件。修改旧剧情只提示，需手动重新生成记忆才能核对旧内容。已归档经历不常驻正文请求，按当前剧情相关性召回。
         </p>
       </template>
     </div>
@@ -400,6 +421,9 @@ function toggleGroup(id: string) {
 }
 .memory-manual {
   --memory-color: var(--ctx-character);
+}
+.memory-archived {
+  --memory-color: var(--text-muted);
 }
 .memory-card header {
   display: flex;

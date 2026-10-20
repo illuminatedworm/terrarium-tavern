@@ -119,6 +119,8 @@ export interface Session {
   messages: StoryMessageRecord[];
   snapshot: JsonObject;
   memory_view: JsonObject;
+  /** Episodes retention moved out of the active projection; recalled by relevance. */
+  archived_memory: JsonObject[];
   turns: Pick<TurnRecord, 'id' | 'status' | 'draft' | 'error'>[];
   /** Only on the response to a message edit. */
   edit_affected_memory?: boolean;

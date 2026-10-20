@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,10 +16,63 @@ from tavern.application.modes import ModeRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.core.provider import make_provider
 from tavern.full_agent.context import compile_window, load_trace
+from tavern.full_agent.handoff import render_text
 from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.state import note_view
 from tavern.full_agent.tools import RESULT_FIELDS, AgentTools, result_field
 from tavern.storage.store import Store
+
+LAST = "H_LAST"  # Model resolves it to the last committed H from the request's status line.
+
+
+def handoff(text, *, through=LAST):
+    """Chaptered handoff arguments: a chapter through ``through`` (None: none) and one current point."""
+    chapters = (
+        [
+            {
+                "op": "add",
+                "through": through,
+                "title": "此前经过",
+                "points": [{"text": text, "refs": [through]}],
+            }
+        ]
+        if through
+        else []
+    )
+    return {"chapters": chapters, "current": [{"text": text, "refs": ["H1"]}]}
+
+
+def current_text(state):
+    """Joined current-handoff point texts of a Full Agent state."""
+    return "\n".join(p["text"] for p in state["handoff"]["current"])
+
+
+def written(history, text, refs=("H1",)):
+    """A stored handoff whose current part is ``text`` citing ``refs`` (empty text: empty handoff)."""
+    from tavern.full_agent.handoff import HandoffWrite, apply_write
+
+    empty = {"chapters": [], "current": [], "revision": 0}
+    if not text:
+        return empty
+    return apply_write(
+        empty, HandoffWrite.model_validate({"current": [{"text": text, "refs": list(refs)}]}), history
+    )
+
+
+def prepared(request_text, text):
+    """Summarize the requested batch without computing or repeating H references."""
+    chapters = (
+        [{"op": "add", "title": "此前经过", "points": [{"text": text}]}]
+        if re.search(r"覆盖到 H\d+", request_text)
+        else []
+    )
+    return {"chapters": chapters, "current": [{"text": text}]}
+
+
+def last_committed(messages):
+    text = "\n".join(str(m.get("content", "")) for m in messages)
+    found = re.findall(r"原始历史 H1(?:-H(\d+))?", text)
+    return f"H{found[-1] or 1}" if found else "H1"
 
 
 class Model:
@@ -36,10 +90,9 @@ class Model:
         self.last_tool_calls = []
         if isinstance(response, tuple):
             name, args = response
+            arguments = json.dumps(args, ensure_ascii=False).replace(LAST, last_committed(messages))
             self.last_tool_calls = [
-                SimpleNamespace(
-                    id=f"call{len(self.requests)}", name=name, arguments=json.dumps(args, ensure_ascii=False)
-                )
+                SimpleNamespace(id=f"call{len(self.requests)}", name=name, arguments=arguments)
             ]
             return SimpleNamespace(content="工作过程不会混入正文", usage={}, finish_comment="tool_calls")
         return SimpleNamespace(content=response, usage={}, finish_comment="stop")
@@ -154,7 +207,7 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
             "write_note",
             {"key": "约定/钟楼", "content": "玩家约定明天见面", "kind": "fact", "sources": ["H2"]},
         ),
-        ("new_context", {"handoff": "正在约定明天钟楼见面，保持温和叙事。", "keep_recent": 0}),
+        ("new_context", {"handoff": handoff("正在约定明天钟楼见面，保持温和叙事。"), "keep_recent": 0}),
         ("search_history", {"query": "我答应明天"}),
         "她点头应下，钟声从远处传来。",
     )
@@ -207,7 +260,10 @@ async def test_failure_and_cancellation_never_commit_draft_memory(story):
         result, current = await turn(
             service,
             session,
-            Model(("write_handoff", {"content": "不应该提交的交接笔记"}), RuntimeError("model disconnected")),
+            Model(
+                ("write_handoff", handoff("不应该提交的交接笔记", through=None)),
+                RuntimeError("model disconnected"),
+            ),
         )
         assert result["status"] == "error"
         assert current["revision"] == 0 and current["snapshot"] == session["snapshot"]
@@ -360,7 +416,7 @@ async def test_failed_request_after_rollover_resumes_new_window_without_replayin
             service,
             session,
             Model(
-                ("new_context", {"handoff": "钟楼约定已经发生", "keep_recent": 0}),
+                ("new_context", {"handoff": handoff("钟楼约定已经发生"), "keep_recent": 0}),
                 RuntimeError("model disconnected"),
             ),
         )
@@ -441,7 +497,7 @@ async def test_fork_regeneration_source_edits_and_delete(story):
             Model(
                 ("read_history", {"ref": "H2"}),
                 ("write_note", {"key": "见面", "content": "钟楼见面", "kind": "fact", "sources": ["H2"]}),
-                ("write_handoff", {"content": "约定已达成"}),
+                ("write_handoff", handoff("约定已达成", through=None)),
                 "第一版正文",
             ),
         )
@@ -463,7 +519,10 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
         switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
         edited = store.edit_message(first["id"], first["head"], "最新正文已修改。", switched["revision"])
-        assert edited["snapshot"]["full_agent"]["handoff"]["stale"]
+        # Staleness is per cited span; the edited reply is not cited by the handoff.
+        assert "来源已修改" not in render_text(
+            edited["snapshot"]["full_agent"]["handoff"], edited["messages"]
+        )
         assert not note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
         edited_input = store.edit_message(
             first["id"], first["messages"][1]["id"], "我们取消约定。", edited["revision"]
@@ -497,7 +556,7 @@ async def test_budget_step_limit_and_invalid_tools_roll_back(story):
     try:
         model = Model(
             ("patch_state", {"operations": [], "comment": "unauthorized"}),
-            ("new_context", {"handoff": "不能重置本回合调用额度"}),
+            ("new_context", {"handoff": handoff("不能重置本回合调用额度")}),
         )
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and "上限" in result["error"]
@@ -634,7 +693,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
         else:
             assert any(m.get("tool_call_id") == "x" and "error" in m["content"] for m in calls[1]["messages"])
         assert current["snapshot"]["full_agent"]["window"]["number"] == 1
-        assert not current["snapshot"]["full_agent"]["handoff"]["text"]
+        assert not current_text(current["snapshot"]["full_agent"])
     finally:
         await service.close()
 
@@ -652,6 +711,8 @@ async def test_empty_provider_error_keeps_diagnostic_type(story):
 
 
 async def test_full_api_preview_recovery_and_mode_boundaries(story):
+    from tavern.full_agent.handoff import HandoffWrite, apply_write
+
     store, session = story
     app = create_app(store.root)
     try:
@@ -666,7 +727,8 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             trace = requested.json()["trace"]
             input_index = next(i for i, item in enumerate(trace) if item["source"] == "input")
             assert trace[input_index + 1]["source"] == "turn_variable_instruction"
-            assert [item["source"] for item in trace][-2:] == ["handoff", "context_status"]
+            assert trace[-1]["source"] == "context_status"
+            assert not any(item["source"] == "handoff" for item in trace)  # Empty handoff has no frame.
             assert {tool["function"]["name"] for tool in requested.json()["tools"]} == {
                 tool["function"]["name"] for tool in preview.json()["tools"]
             }
@@ -675,19 +737,53 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             )
             assert exported.status_code == 200
             assert exported.json() == preview.json()["messages"]
-            assert {"role": "user", "content": "继续"} in exported.json()
+            assert {"role": "user", "content": "[H2]\n继续"} in exported.json()
             assert not any(x["source"] in ("memory", "retrieval_protocol") for x in preview.json()["trace"])
-            result = await client.put(
+            removed = await client.put(
                 f"/api/sessions/{session['id']}/full-agent/context",
-                json={"content": "人工交接", "new_window": True, "expected_revision": 0},
+                json={"content": "## 当前交接\n- 用户正文", "expected_revision": 0},
+            )
+            assert removed.status_code in (404, 405)
+            endpoint = f"/api/sessions/{session['id']}/full-agent/new-context"
+            assert (
+                await client.post(endpoint, json={"expected_revision": 0, "content": "不能写入交接"})
+            ).status_code == 422
+            uncovered = await client.post(endpoint, json={"keep_recent": 0, "expected_revision": 0})
+            assert uncovered.status_code == 400
+            assert "H1" in uncovered.text and "Agent" in uncovered.text
+            assert store.session(session["id"])["revision"] == 0
+            # The manual operation only reuses the stored model-written handoff.
+            snapshot = copy.deepcopy(session["snapshot"])
+            original = apply_write(
+                snapshot["full_agent"]["handoff"],
+                HandoffWrite.model_validate(handoff("已保存交接", through="H1")),
+                session["messages"],
+            )
+            snapshot["full_agent"]["handoff"] = original
+            with store.connection() as db:
+                db.execute(
+                    "UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"])
+                )
+            edited = store.edit_message(session["id"], session["head"], "修订后的开场", 0, notify_ai=False)
+            tid, _ = store.create_turn(
+                session["id"],
+                TurnRequest(operation_id="busy-window", expected_revision=edited["revision"], text="继续"),
+            )
+            assert (
+                await client.post(endpoint, json={"expected_revision": edited["revision"]})
+            ).status_code == 409
+            store.set_turn(tid, status="cancelled")
+            result = await client.post(
+                endpoint, json={"keep_recent": 0, "expected_revision": edited["revision"]}
             )
             assert result.status_code == 200
             assert result.json()["snapshot"]["full_agent"]["window"]["start"] == 1
+            assert result.json()["snapshot"]["full_agent"]["handoff"] == original
+            view = (await client.get(f"/api/sessions/{session['id']}/full-agent")).json()
+            assert view["handoff"] == {"text": render_text(original, edited["messages"])}
+            assert "来源已修改" in view["handoff"]["text"]
             assert (
-                await client.put(
-                    f"/api/sessions/{session['id']}/full-agent/context",
-                    json={"content": "过期请求", "expected_revision": 0},
-                )
+                await client.post(endpoint, json={"expected_revision": edited["revision"]})
             ).status_code == 409
             assert (
                 await client.get(f"/api/sessions/{session['id']}/memory/rebuild-estimate")
@@ -705,7 +801,7 @@ def test_notes_and_runtime_metadata_are_not_implicitly_in_context(story):
     snapshot = copy.deepcopy(session["snapshot"])
     snapshot["full_agent"]["notes"]["secret-note"] = {"content": "只能通过工具读取的长笔记"}
     snapshot["state"] = {"initialized_lorebooks": {"opaque-identity": "ledger-only"}}
-    snapshot["memory_document"] = {"version": 1, "records": [{"content": "legacy-memory"}]}
+    snapshot["memory_document"] = {"version": 2, "records": [{"content": "legacy-memory"}]}
     result = compile_window(
         store.session_card(session["id"])["document"],
         session,
@@ -877,7 +973,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
             "patch_state",
             {"operations": [{"op": "replace", "path": "/能量", "value": 4}], "comment": "本轮变化"},
         ),
-        ("write_handoff", {"content": "目前能量为4"}),
+        ("write_handoff", handoff("目前能量为4", through=None)),
         "洛伊带你来到观测窗。",
     )
     try:
@@ -1114,7 +1210,7 @@ async def test_note_update_and_reactivation_require_visible_version_after_rollov
     assert owner.state["notes"]["线索"]["revision"] == 2
     assert owner.state["notes"]["线索"]["status"] == "active"
     await call("write_note", key="线索", content=old["content"] + "，再次修订", kind="hypothesis")
-    rollover(owner.state, owner.history, "保留交接", 0)
+    rollover(owner.state, owner.history, written(owner.history, "保留交接"), 0)
     with pytest.raises(ValueError, match="read_note"):
         await call("write_note", key="线索", content=old["content"] + "，修正猜想", kind="hypothesis")
     await call("read_note", key="线索")
@@ -1132,7 +1228,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
             Model(
                 ("write_note", {"key": "线索", "content": "旧线索", "kind": "hypothesis"}),
                 ("write_note", {"key": "待办", "content": "旧待办", "kind": "plan"}),
-                ("write_handoff", {"content": "旧交接"}),
+                ("write_handoff", handoff("旧交接", through=None)),
                 "前一回合",
             ),
         )
@@ -1145,7 +1241,7 @@ async def test_repeated_regeneration_updates_notes_from_same_saved_baseline(stor
                 ("read_note", {"key": "线索"}),
                 ("write_note", {"key": "线索", "content": f"旧线索，加候选{index}", "kind": "hypothesis"}),
                 ("archive_note", {"key": "待办"}),
-                ("write_handoff", {"content": f"旧交接，加候选{index}"}),
+                ("write_handoff", handoff(f"旧交接，加候选{index}", through=None)),
                 f"正文候选{index}",
             )
             result, current = await turn(service, current, model, mode="send" if index == 0 else "regenerate")
@@ -1223,7 +1319,7 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
     settings.full_agent_config.note_tokens = 3072
     store.save_settings(settings)
     service = runtime(store)
-    model = Model(("write_handoff", {"content": "约定仍待兑现"}), "她点头。")
+    model = Model(("write_handoff", handoff("约定仍待兑现", through=None)), "她点头。")
     try:
         result, _ = await turn(service, session, model, update_variables=False, allow_content_edit=False)
         assert result["status"] == "committed", result["error"]
@@ -1237,10 +1333,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
             and m["content"].endswith("\n</user_character>")
             for m in wire["messages"]
         )
-        assert any(
-            m.get("content", "").startswith("<tavern_memory>") and m["content"].endswith("</tavern_memory>")
-            for m in wire["messages"]
-        )
+        # The successful write is already visible in its tool exchange; do not
+        # require a duplicate runtime handoff frame in the same window.
+        assert not any(m.get("content", "").startswith("<tavern_memory>") for m in wire["messages"])
         assert "约定仍待兑现" in json.dumps(wire["messages"], ensure_ascii=False)
         assert not any(
             "约定仍待兑现" in m.get("content", "") for m in wire["messages"] if m["role"] == "system"
@@ -1261,8 +1356,8 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call alone" in definitions["new_context"]["description"]
         assert set(definitions["new_context"]["parameters"]["properties"]) == {"handoff", "keep_recent"}
-        assert definitions["new_context"]["parameters"]["required"] == ["handoff"]
-        assert "content" in definitions["write_handoff"]["parameters"]["properties"]
+        assert "handoff" not in definitions["new_context"]["parameters"].get("required", [])
+        assert "current" in definitions["write_handoff"]["parameters"]["properties"]
         assert "offset" not in definitions["read_history"]["parameters"]["properties"]
         assert "Note contents are not automatically injected" in definitions["search_notes"]["description"]
     finally:
@@ -1495,16 +1590,16 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
     service = runtime(store)
     model = Model(
         "这条正文必须被否决",
-        ("write_handoff", {"content": "这个操作也必须被否决"}),
-        ("new_context", {"handoff": "换窗参数错误", "keep_recent": 99}),
-        ("new_context", {"handoff": "新交接保留必要经历", "keep_recent": 0}),
+        ("write_handoff", handoff("这个操作也必须被否决", through=None)),
+        ("new_context", {"handoff": handoff("换窗参数错误"), "keep_recent": 99}),
+        ("new_context", {"handoff": handoff("新交接保留必要经历"), "keep_recent": 0}),
         "换窗后继续回应玩家。",
     )
     try:
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
         assert current["messages"][-1]["raw"] == "换窗后继续回应玩家。"
-        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "新交接保留必要经历"
+        assert current_text(current["snapshot"]["full_agent"]) == "新交接保留必要经历"
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
         for request in model.requests[:4]:
             assert request["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
@@ -1633,7 +1728,7 @@ async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story
         assert preview["rollover_required"]
         assert all(tool["function"]["name"] != "kemini_emit_story" for tool in preview["tools"])
         follow = Model(
-            ("new_context", {"handoff": "上一轮场景发展已记录", "keep_recent": 0}), "继续新的对话。"
+            ("new_context", {"handoff": handoff("上一轮场景发展已记录"), "keep_recent": 0}), "继续新的对话。"
         )
         result, current = await turn(service, current, follow)
         assert result["status"] == "committed", result["error"]

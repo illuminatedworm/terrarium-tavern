@@ -68,13 +68,15 @@ export function historyRounds(messages: HistoryMessage[]): HistoryRound[] {
   return rounds;
 }
 
-/** Compact label for backend H refs: `H52`, `H41、H52` or `H3 等 4 条`; unknown refs count only. */
+/** Compact H labels; missing locations stay visible in the total source count. */
 export function historyRefLabel(refs: (string | undefined)[]) {
   const known = [...new Set(refs.filter((ref): ref is string => !!ref))].sort(
     (a, b) => Number(a.slice(1)) - Number(b.slice(1)),
   );
   if (!known.length) return `${refs.length} 处`;
-  return known.length <= 2 ? known.join('、') : `${known[0]} 等 ${known.length} 条`;
+  const label = known.length <= 2 ? known.join('、') : `${known[0]} 等 ${known.length} 条`;
+  const missing = refs.filter((ref) => !ref).length;
+  return missing ? `${label}（共 ${refs.length} 处，${missing} 处无法定位）` : label;
 }
 
 export function historySummary(message?: HistoryMessage) {

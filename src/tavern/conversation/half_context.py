@@ -19,6 +19,7 @@ DYNAMIC = {
     "author_note",
     "post",
     "memory",
+    "memory_recall",
     "state",
     "turn_instruction",
     "message_edit_notice",
@@ -30,6 +31,7 @@ LABELS = {
     "author_note": "作者注",
     "post": "角色后置要求",
     "memory": "记忆",
+    "memory_recall": "相关旧事",
     "state": "剧情状态",
     "turn_instruction": "本轮额外要求",
     "message_edit_notice": "原文编辑提醒",
@@ -83,13 +85,18 @@ def load_trace(store, sid, history):
 
 def descriptor(message):
     mid = message.get("message_id")
+    # The compiler records the exact prefix it added. Other leading H lines,
+    # including script overrides and assistant prose, participate in full.
+    content = message.get("content", "")
+    if "history_label" in message:
+        content = content[len(message["history_label"]) :]
     return {
         "message_id": mid,
         "anchor_id": message.get("anchor_id"),
         "sha256": fingerprint(
             [
                 message["role"],
-                message.get("content", ""),
+                content,
                 "dialogue" if mid else message.get("source"),
                 message.get("insertion_depth"),
             ]

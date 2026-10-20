@@ -35,7 +35,7 @@ def memory_snapshot(*texts):
     install_memory(
         snapshot,
         {
-            "version": 1,
+            "version": 2,
             "records": [Record(category="manual", content=text, manual=True).model_dump() for text in texts],
         },
     )

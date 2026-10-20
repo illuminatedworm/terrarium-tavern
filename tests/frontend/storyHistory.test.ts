@@ -77,7 +77,8 @@ it('groups completed exchanges and leaves greeting and pending input navigable',
 
 it('labels sources with backend H refs in branch order and counts unknown sources', () => {
   expect(historyRefLabel(['H52', 'H52'])).toBe('H52');
-  expect(historyRefLabel(['H52', undefined, 'H9'])).toBe('H9、H52');
+  expect(historyRefLabel(['H52', undefined, 'H9'])).toBe('H9、H52（共 3 处，1 处无法定位）');
+  expect(historyRefLabel(['H5', undefined, undefined])).toBe('H5（共 3 处，2 处无法定位）');
   expect(historyRefLabel(['H12', 'H3', 'H100'])).toBe('H3 等 3 条');
   expect(historyRefLabel([undefined, undefined])).toBe('2 处');
 });

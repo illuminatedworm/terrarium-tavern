@@ -14,6 +14,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# v2: retired episodes live in per-message ``memory_retired`` archive deltas
+# beside the active records (see memory_archive). Earlier formats are rejected.
+MEMORY_VERSION = 2
+
 CATEGORIES = {
     "current": "当前进展",
     "episode": "变化与经历",
@@ -73,16 +77,38 @@ class RecordEdit(BaseModel):
     kind: Literal["fact", "claim", "inference"] = "fact"
 
 
+def new_memory(records=()):
+    return {"version": MEMORY_VERSION, "records": list(records)}
+
+
 def read_memory(snapshot):
-    memory = snapshot.get("memory_document", {"version": 1, "records": []})
-    if memory.get("version") != 1:
-        raise ValueError("记忆格式不受支持")
+    memory = snapshot.get("memory_document", new_memory())
+    if memory.get("version") != MEMORY_VERSION:
+        raise ValueError(f"记忆格式版本 {memory.get('version')} 不受支持；此对话来自旧版本，请新建对话")
     return copy.deepcopy(memory)
 
 
 def is_retained_record(record):
     """Only a user's deletion leaves a tombstone in the current memory."""
     return record["status"] != "superseded" and (record["status"] != "deleted" or record.get("manual"))
+
+
+def render_record(record):
+    """Shared complete wording for active and recalled memory records."""
+    labels = []
+    if record.get("manual"):
+        labels.append("手工修订")
+    if record["kind"] != "fact":
+        labels.append({"claim": "角色说法，未当作客观事实", "inference": "有待核实的推断"}[record["kind"]])
+    if record.get("status") == "completed":
+        labels.append("已完成")
+    if record.get("source_stale"):
+        labels.append("原文已修改，尚未重建")
+    if record.get("known_to"):
+        labels.append("明确知情：" + "、".join(record["known_to"]))
+    if record.get("story_time") and record["story_time"] != "未知":
+        labels.append("时间：" + record["story_time"])
+    return "- " + ("（" + "；".join(labels) + "）" if labels else "") + record["content"]
 
 
 def render_document(memory):
@@ -92,20 +118,7 @@ def render_document(memory):
         for r in memory["records"]:
             if r["category"] != category or r["status"] in ("deleted", "superseded"):
                 continue
-            labels = []
-            if r.get("manual"):
-                labels.append("手工修订")
-            if r["kind"] != "fact":
-                labels.append({"claim": "角色说法，未当作客观事实", "inference": "有待核实的推断"}[r["kind"]])
-            if r["status"] == "completed":
-                labels.append("已完成")
-            if r.get("source_stale"):
-                labels.append("原文已修改，尚未重建")
-            if r.get("known_to"):
-                labels.append("明确知情：" + "、".join(r["known_to"]))
-            if r.get("story_time") and r["story_time"] != "未知":
-                labels.append("时间：" + r["story_time"])
-            lines.append("- " + ("（" + "；".join(labels) + "）" if labels else "") + r["content"])
+            lines.append(render_record(r))
         if lines:
             parts.append(title + "：\n" + "\n".join(lines))
     return "\n\n".join(parts)
@@ -131,7 +144,14 @@ def with_source_status(memory, history):
 
 
 def install_memory(snapshot, memory):
-    snapshot["memory_document"] = copy.deepcopy(memory)
+    """Install retention output, moving its retired episodes into the archive delta."""
+    from tavern.memories.memory_archive import RETIRING
+
+    memory = copy.deepcopy(memory)
+    retired = memory.pop("retired", [])
+    if retired:
+        snapshot.setdefault(RETIRING, []).extend(retired)
+    snapshot["memory_document"] = memory
 
 
 def manual_edit(memory, edit):

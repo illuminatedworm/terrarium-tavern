@@ -9,7 +9,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Conflict, Store, dump, uid
-from tests.backend.test_full_agent import Model, ScriptHost, runtime
+from tests.backend.test_full_agent import Model, ScriptHost, current_text, handoff, runtime, written
 from tests.backend.test_message_versions import generate
 
 
@@ -27,7 +27,7 @@ def story(tmp_path, request):
     text = "待重写的完整正文\n" * 1200 + "REFERENCE_END_MUST_SURVIVE"
     snapshot = copy.deepcopy(session["snapshot"])
     if request.param == "full_agent":
-        snapshot["full_agent"]["handoff"]["text"] = "HANDOFF_FROM_REPLACED_REPLY"
+        snapshot["full_agent"]["handoff"] = written(session["messages"], "HANDOFF_FROM_REPLACED_REPLY")
     with store.connection() as db:
         db.execute(
             "UPDATE messages SET model=?,snapshot=? WHERE id=?", (text, dump(snapshot), session["head"])
@@ -162,7 +162,9 @@ async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(stor
     store, session, text = story
     service = service_for(store, session)
     model = Model(
-        ("new_context", {"handoff": "本轮新交接", "keep_recent": 0}), ("read_state", {}), "replacement"
+        ("new_context", {"handoff": handoff("本轮新交接"), "keep_recent": 0}),
+        ("read_state", {}),
+        "replacement",
     )
     try:
         result, current = await run(service, session, model, mode="regenerate", regenerate_include_reply=True)
@@ -170,7 +172,7 @@ async def test_full_rollover_retains_reference_and_appends_expiry_next_turn(stor
         for messages in requests(model):
             assert sum(text in m.get("content", "") for m in messages) == 1
             assert "HANDOFF_FROM_REPLACED_REPLY" not in json.dumps(messages)
-        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "本轮新交接"
+        assert current_text(current["snapshot"]["full_agent"]) == "本轮新交接"
         next_model = Model("following")
         result, _ = await run(service, current, next_model)
         assert result["status"] == "committed", result["error"]

@@ -120,10 +120,20 @@ def test_defaults_and_custom_prompts():
     )
     for field in added:
         old["shared"]["kemini"].pop(field)
+    # Version 8 adds archive recall and handoff chapter limits.
+    old["half_agent"].pop("memory_recall_count")
+    old["half_agent"]["memory_recall_filter"] = True
+    old["full_agent"]["tools"].pop("chapter_tokens")
+    old["full_agent"]["tools"].pop("chapters_total_tokens")
     migrated = migrate_settings(old)
-    assert migrated.version == 7
+    assert migrated.version == 8
     assert migrated.shared.kemini.identity_prompt == "已保存的身份"
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
+    assert (migrated.half_agent.memory_recall_count, migrated.half_agent.memory_recall_filter) == (3, True)
+    assert (migrated.full_agent.tools.chapter_tokens, migrated.full_agent.tools.chapters_total_tokens) == (
+        512,
+        4096,
+    )
     assert migrate_settings(migrated.model_dump()) == migrated
 
 
@@ -149,7 +159,7 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     upgraded = Store(tmp_path).settings_document()
-    assert upgraded.version == 7 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    assert upgraded.version == 8 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
     assert upgraded.shared.kemini.clear_prompt == KeminiConfig().clear_prompt
     assert upgraded.shared.kemini.thinking_prompt == KeminiConfig().thinking_prompt
     for key in ("info_prompt", "filler_text", "enabled", "normal_disclaimer_enabled"):

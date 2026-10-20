@@ -2,7 +2,9 @@
 
 import copy
 import json
+from types import SimpleNamespace
 
+import httpx
 import pytest
 from kohakuterrarium.testing.llm import ScriptedLLM
 
@@ -13,6 +15,7 @@ from tavern.core.models import CardAuthorRequest, ContextRecipe, SessionCreate, 
 from tavern.core.tokens import count_text
 from tavern.memories.memory_evidence import evidence_pool
 from tavern.memories.memory_records import Record
+from tavern.memories.recall_filter import filter_messages, filter_recall
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store
 from tavern.tracker.task import TrackerTask
@@ -151,7 +154,7 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     snapshot = {
         "state": state,
         "memory_document": {
-            "version": 1,
+            "version": 2,
             "records": [
                 Record(
                     id=ID,
@@ -183,9 +186,15 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     assert ID not in macros("{{getvar::initialized_lorebooks}}", doc, "用户", state)
     # Script-triggered generation uses this exact compiler and messages view.
     nested = compile_context(
-        doc, session, [], snapshot, "继续", Settings(), ID, generate={"user_input": "继续"}
+        doc, session, [], snapshot, "继续", Settings(), ID, generate={"user_input": "继续"}, story_turn=False
     )
     assert ID not in json.dumps(nested["messages"]) and HASH not in json.dumps(nested["messages"])
+    # A story input keeps its future position; a nested input never becomes history.
+    inputs = [
+        next(m["content"] for m in context["messages"] if m["role"] == "user" and "继续" in m["content"])
+        for context in (compiled, nested)
+    ]
+    assert inputs == ["[H2]\n继续", "继续"]
 
 
 async def test_mvu_final_request_and_memory_auxiliary_state_exclude_bookkeeping():
@@ -375,3 +384,117 @@ def test_literal_handle_looking_text_is_not_mistaken_for_an_internal_identity():
     compact = view.expose(doc)
     assert compact["description"] != "@D1"
     assert view.restore(compact) == doc
+
+
+async def test_recall_filter_sees_short_refs_and_returns_record_ids(monkeypatch):
+    from tavern.application.service import RoleplayRuntime
+    from tavern.core.usage import aggregate_cache_usage
+    from tavern.memories.memory_archive import ARCHIVE
+
+    entries = [
+        Record(
+            id=ID,
+            category="episode",
+            content="守塔人交出钥匙",
+            sources=[{"message_id": KEY, "excerpt": "钥匙", "fingerprint": HASH}],
+        ).model_dump(),
+        Record(id=KEY, category="episode", content="集市买伞").model_dump(),
+    ]
+    history = [
+        {"id": ID, "role": "user", "raw": "走", "model": "走"},
+        {"id": KEY, "role": "assistant", "raw": "好", "model": "好"},
+    ]
+    messages, _ = filter_messages(entries, history, "去钟塔")
+    wire = json.dumps(messages, ensure_ascii=False)
+    assert all(value not in wire for value in (ID, KEY, HASH))
+    candidates = json.loads(messages[1]["content"])["memory_recall"]["candidates"]
+    assert [c["ref"] for c in candidates] == ["A1", "A2"]
+
+    class Provider:
+        def __init__(self, refs):
+            self.error = None
+            self.closed = 0
+            self.usage = {"prompt_tokens": 100, "completion_tokens": 20, "cached_tokens": 60}
+            self.last_tool_calls = [
+                type("Call", (), {"name": "select_recall", "arguments": json.dumps({"refs": refs})})()
+            ]
+
+        async def chat_complete(self, *args, **kwargs):
+            assert all(value not in json.dumps(args[0]) for value in (ID, KEY, HASH))
+            if self.error:
+                raise self.error
+            return SimpleNamespace(usage=self.usage)
+
+        async def close(self):
+            self.closed += 1
+
+    settings = Settings()
+    assert await filter_recall(Provider(["A1"]), entries, history, "去钟塔", settings) == [ID]
+    with pytest.raises(ValueError, match="未提供的候选"):
+        await filter_recall(Provider(["A3"]), entries, history, "去钟塔", settings)
+
+    events = []
+    provider = Provider(["A1"])
+    runtime = SimpleNamespace(
+        store=SimpleNamespace(event=lambda tid, kind, payload: events.append((kind, payload))),
+        tracker_provider_factory=lambda: provider,
+    )
+    settings.memory_recall_filter = True
+    prepared = {"memory_recall": {"ids": [ID], "diagnostics": []}}
+    args = (
+        runtime,
+        "turn",
+        settings,
+        history,
+        {ARCHIVE: entries},
+        "去钟塔",
+        prepared,
+        SimpleNamespace(new=lambda purpose: None),
+    )
+    session = {"id": "story", "persona": "用户", "recipe": ContextRecipe().model_dump()}
+
+    async def run_filter(**kwargs):
+        return await RoleplayRuntime.filter_memory_recall(*args, session=session, **kwargs)
+
+    result = await run_filter()
+    assert result["memory_recall"]["ids"] == [ID]
+    assert events[0][0] == "usage"
+    assert events[0][1]["usage"] == provider.usage
+    assert events[0][1]["purpose"] == "memory_recall" and events[0][1]["calls"] == 1
+    provider.error = httpx.ReadTimeout("offline")
+    assert await run_filter() is prepared
+    assert events[-1][0] == "memory_recall_filter" and events[-1][1]["kept_original"]
+    provider.error = None
+    provider.last_tool_calls[0].arguments = '{"refs":'
+    assert await run_filter() is prepared
+    assert "有效 JSON" in events[-1][1]["message"]
+    # A returned but malformed selection still consumed tokens; a failed transport has no response.
+    usages = [payload["usage"] for kind, payload in events if kind == "usage"]
+    assert usages == [provider.usage, provider.usage]
+    assert aggregate_cache_usage(usages) == {"prompt_tokens": 200, "cached_tokens": 120}
+    event_count = len(events)
+    provider.error = KeyError("implementation_bug")
+    with pytest.raises(KeyError, match="implementation_bug"):
+        await run_filter()
+    assert provider.closed == 4 and len(events) == event_count
+
+    async def unavailable(*args, **kwargs):
+        raise ValueError("后台账号刷新失败")
+
+    runtime.tracker_provider_factory = None
+    monkeypatch.setattr("tavern.core.provider.make_provider", unavailable)
+    assert await run_filter() is prepared
+    assert events[-1][1]["kept_original"] and "账号刷新失败" in events[-1][1]["message"]
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("Disabled memory must not create a filter provider")
+
+    monkeypatch.setattr("tavern.core.provider.make_provider", forbidden)
+    block = next(b for b in session["recipe"]["blocks"] if b["source"] == "memory")
+    block["enabled"] = False
+    assert await run_filter() is prepared
+    block["enabled"] = True
+    block["condition"] = "missing"
+    assert await run_filter() is prepared
+    block["condition"] = ""
+    assert await run_filter(generate={"ordered_prompts": ["user_input"]}) is prepared

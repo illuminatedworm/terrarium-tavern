@@ -27,6 +27,7 @@ const purposes: Record<string, string> = {
   full_agent: 'Full Agent',
   memory: '记忆整理',
   memory_review: '疑难复核',
+  memory_recall: '归档召回筛选',
   variables: 'MVU 变量',
   maintenance: '设定维护',
   tracker_pre: 'Tracker · 正文前',

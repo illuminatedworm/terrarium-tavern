@@ -133,6 +133,11 @@ def test_search_limit_counts_history_segments_and_radius_zero_reads_only_center(
     assert [item["ref"] for item in edge["rounds"]] == ["H1", "H2", "H3", "H4", "H5"]
     pending = HistoryRecall(history(), Settings(), HistoryBudget()).execute({"ref": "H6"})
     assert not pending["rounds"] and "H1-H5" in pending["error"]
+    messages = history()[:5]
+    for message, text in zip(messages[1:], ("foobar", "done", "foo", "bar"), strict=True):
+        message.update(raw=text, model=text)
+    result = HistoryRecall(messages, Settings(), HistoryBudget()).execute({"query": "foobar", "limit": 1})
+    assert [item["ref"] for item in result["matches"]] == ["H2"]
 
 
 async def test_three_tools_then_final_response_and_no_future_batch_visibility():
@@ -251,14 +256,14 @@ async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
         )
 
     result = await consolidate(
-        messages, cfg, generate, memory={"version": 1, "records": []}, start=9, budget=budget
+        messages, cfg, generate, memory={"version": 2, "records": []}, start=9, budget=budget
     )
     assert len(result["records"][0]["sources"]) == 2
     operation["record"]["sources"] = operation["record"]["sources"][:1]
     by_id = {m["id"]: m for m in messages}
     with pytest.raises(ValueError, match="batch_range"):
         apply_operations(
-            {"version": 1, "records": []},
+            {"version": 2, "records": []},
             {"operations": [operation]},
             by_id,
             by_id,

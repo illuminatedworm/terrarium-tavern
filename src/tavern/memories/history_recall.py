@@ -199,11 +199,11 @@ class HistoryRecall:
     def _search(self, query, terms, limit, result):
         matches = []
         for number, messages in enumerate(self.rounds):
-            normalized = _normalized("\n".join(m.get("model", m["raw"]) for m in messages))
-            covered = sum(term in normalized for term in terms)
-            if covered:
-                matches.append(((_normalized(query) in normalized, covered, number), messages))
-        for _, messages in sorted(matches, key=lambda match: match[0], reverse=True)[:limit]:
+            normalized = [_normalized(m.get("model", m["raw"])) for m in messages]
+            covered = sum(any(term in text for text in normalized) for term in terms)
+            if not covered:
+                continue
+            passages = []
             for m in messages:
                 parts = list(split_passages(m.get("model", m["raw"])))
                 hits = [i for i, text in enumerate(parts, 1) if any(t in _normalized(text) for t in terms)]
@@ -218,9 +218,15 @@ class HistoryRecall:
                     }
                 )
                 if hits:
-                    self._admit(
-                        result, "matches", m, hits, **({"partial": True} if len(hits) < len(parts) else {})
-                    )
+                    passages.append((m, hits, len(hits) < len(parts)))
+            # Only exchanges with actual message passages consume the limit.
+            # Joining messages first can invent a keyword across the speaker boundary.
+            if passages:
+                rank = (any(_normalized(query) in text for text in normalized), covered, number)
+                matches.append((rank, passages))
+        for _, passages in sorted(matches, key=lambda match: match[0], reverse=True)[:limit]:
+            for message, hits, partial in passages:
+                self._admit(result, "matches", message, hits, **({"partial": True} if partial else {}))
         if any(item.get("partial") for item in result["matches"]):
             result["notice"] += (
                 " partial=true 表示只返回该消息中含命中处的完整片段；需要上下文时用 ref 读取完整交流。"

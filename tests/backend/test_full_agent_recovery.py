@@ -13,7 +13,7 @@ from tavern.full_agent.activity import turn_items
 from tavern.full_agent.context import load_trace
 from tavern.full_agent.tools import AgentTools
 from tavern.storage.store import Store
-from tests.backend.test_full_agent import Model, runtime, tool_exchanges, turn
+from tests.backend.test_full_agent import Model, current_text, handoff, runtime, tool_exchanges, turn
 from tests.backend.test_full_agent_alignment import game, transport
 
 
@@ -94,6 +94,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
     if api == "gemini":
         settings = store.settings_document()
         settings.full_agent.model.model = "gemini-3-pro-preview"
+        settings.full_agent.model.cache.mode = "cloud"  # no explicit cache request in this fixture
         store.save_settings(settings)
     requests = []
 
@@ -106,7 +107,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
                 api,
                 [
                     ("bad", "read_history", {"reason": "BAD_ARGUMENT"}),
-                    ("accepted", "write_handoff", {"content": "MEMORY_ACCEPTED"}),
+                    ("accepted", "write_handoff", handoff("MEMORY_ACCEPTED", through=None)),
                 ],
                 marker="MIXED_NATIVE",
             )
@@ -183,8 +184,8 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
             ("read_state", "returned"),
         ]
         current = store.session(session["id"])
-        memory = current["snapshot"]["full_agent"]["handoff"]
-        assert memory["text"] == "MEMORY_ACCEPTED" and memory["revision"] == 1
+        memory = current["snapshot"]["full_agent"]
+        assert current_text(memory) == "MEMORY_ACCEPTED" and memory["handoff"]["revision"] == 1
         trace = tool_exchanges(load_trace(store, session["id"], current["messages"]))
         assert len(trace) == 4 and "BAD_ARGUMENT" not in json.dumps(trace)
         assert any(i["status"] == "error" for i in turn_items(store, session["id"], failed["id"]))
@@ -261,8 +262,8 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
                 SimpleNamespace(id=cid, name=name, arguments=json.dumps(args))
                 for cid, name, args in [
                     ("bad", "read_history", {"reason": "missing ref"}),
-                    ("accepted", "write_handoff", {"content": "MEMORY_A"}),
-                    ("unfinished", "write_handoff", {"content": "MEMORY_B"}),
+                    ("accepted", "write_handoff", handoff("MEMORY_A", through=None)),
+                    ("unfinished", "write_handoff", handoff("MEMORY_B", through=None)),
                 ]
             ]
             return SimpleNamespace(content="", usage={}, finish_reason="stop")
@@ -272,7 +273,7 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
 
     async def execute(tools, name, arguments):
         nonlocal interrupted
-        content = json.loads(arguments).get("content")
+        content = next((p["text"] for p in json.loads(arguments).get("current", [])), None)
         if content == "MEMORY_B" and not interrupted:
             interrupted = True
             raise RuntimeError("interrupted before execution")
@@ -304,6 +305,6 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         sent = model.requests[0]["messages"]
         assert [c["id"] for m in sent for c in m.get("tool_calls", [])] == ["accepted", "unfinished"]
         assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == ["accepted", "unfinished"]
-        assert store.session(session["id"])["snapshot"]["full_agent"]["handoff"]["text"] == "MEMORY_B"
+        assert current_text(store.session(session["id"])["snapshot"]["full_agent"]) == "MEMORY_B"
     finally:
         await service.close()

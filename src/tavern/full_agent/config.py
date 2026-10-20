@@ -9,7 +9,7 @@ TOOL_PROTOCOL = """Full Agent 工具协议（由运行时提供）
 剧情规划是独立的作者视角阶段大纲，记录尚未发生、可以调整的事件、转折、伏笔与推进条件。它不是事实、角色知识或工具授权，不应复制到 note 或 handoff 中充当记忆；旧 plan 类型笔记不得自动当作当前剧情大纲。
 修改笔记、变量、人物设定或世界书时，沿用你已知的当前版本，包括自动提供的资料、工具结果，以及你自己此前在工具调用中写出的内容。不清楚当前内容或不确定其是否仍然有效时，再按需读取。若工具返回 READ_REQUIRED，按提示补读后重试。
 patch_state 仅在本轮授权时必须成功一次，失败可修正重试，成功后不可重复；空补丁只确认无变化，不需要额外读取。
-H/L 是资料定位引用；版本、指纹和真实存储身份由后端维护，不需要自行生成或回传。
+H/L 是资料定位引用；剧情回复不加编号，assistant 原文不带 H 标记，精确编号可从 search_history/read_history 取得，不要猜测。版本、指纹和真实存储身份由后端维护，不需要自行生成或回传。
 错误返回 {ok:false,error:{code,message,retryable,next_action}}；retryable 表示修正原因后可重新调用，不代表原样重试。
 工具过程不属于剧情正文。"""
 
@@ -52,6 +52,8 @@ class FullAgentConfig(BaseModel):
     parallel_tool_calls: bool = Field(default=True, strict=True)
     pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
     handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
+    chapter_tokens: int = Field(default=512, ge=64, le=4096, strict=True)
+    chapters_total_tokens: int = Field(default=4096, ge=256, le=65536, strict=True)
     note_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)
     plot_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)
 

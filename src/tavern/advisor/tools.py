@@ -8,12 +8,12 @@ from pydantic import Field, StringConstraints
 
 from tavern.advisor.context import expanded, memory_rows
 from tavern.character.cards import normalize
-from tavern.core.history_refs import message_ref
+from tavern.core.history_refs import message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
 from tavern.full_agent.content import editable_entry, entry_rows, entry_view
-from tavern.full_agent.state import note_view
+from tavern.full_agent.state import note_view, read_full_state
+from tavern.full_agent.tools import HISTORY_SPAN, Arguments, Read, Search
 from tavern.full_agent.tools import SPECS as STORY_SPECS
-from tavern.full_agent.tools import Arguments, Read, Search
 from tavern.tracker.tools import SPECS as TRACKER_SPECS
 from tavern.web.tools import SPECS as WEB_SPECS
 
@@ -70,7 +70,7 @@ SPECS.update(
         "search_memory": TRACKER_SPECS["search_memory"],
         "read_story_context": (
             ContextRead,
-            "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent.",
+            "Read the current story handoff, future plot, turn preference, user persona or conversation title. Read-only; missing values stay absent. For handoff and plot, available means the field exists; content may be empty.",
         ),
         "search_consultation": (
             Search,
@@ -157,7 +157,7 @@ class AdvisorTools:
 
     async def dispatch(self, name, args):
         o, story = self.owner, self.owner.story
-        full = story["snapshot"].get("full_agent", {})
+        full = read_full_state(story["snapshot"]) if story["agent_mode"] == "full_agent" else {}
         if name in {"search_history", "read_history"}:
             rows = [
                 {
@@ -172,10 +172,16 @@ class AdvisorTools:
                     "matches": search(rows, args.query, args.limit),
                     "notice": "preview 仅用于定位；read_history 返回完整原文。",
                 }
-            row = next((r for r in rows if r["ref"] == args.ref), None)
-            if not row:
-                raise ValueError("当前分支没有此历史引用")
-            return row
+            span = parse_span_ref(args.ref)
+            if span is None or span[1] > len(rows):
+                raise ValueError("当前分支没有此历史引用或区间")
+            if span[1] - span[0] >= HISTORY_SPAN:
+                raise ValueError(
+                    f"一次最多读取 {HISTORY_SPAN} 条原文；请拆成多个不超过 {HISTORY_SPAN} 条的区间"
+                )
+            if span[0] < span[1]:
+                return {"messages": rows[span[0] - 1 : span[1]]}
+            return rows[span[0] - 1]
         if name == "read_character":
             return {
                 "ref": args.ref,
@@ -213,7 +219,7 @@ class AdvisorTools:
             cfg = o.cfg.model_copy(deep=True)
             cfg.retrieval.query_lookback = 0
             result = await o.service.retrieval.prepare(
-                story["document"], [], args.query, snap, cfg, story, o.rid
+                story["document"], [], args.query, snap, cfg, story, o.rid, record_collection=False
             )
             admitted = set(result.get("ids", []))
             return {
@@ -267,11 +273,18 @@ class AdvisorTools:
                     "description": (story.get("persona_data") or {}).get("description", ""),
                 }
             data = full.get(args.field)
+            if args.field == "handoff":
+                from tavern.full_agent.handoff import render_text
+
+                # Changed sources are marked inline on the affected points.
+                return {
+                    "available": data is not None,
+                    "content": render_text(data, story["messages"]) if data else "",
+                }
             return {
                 "available": data is not None,
                 "content": data.get("text", "") if data else "",
-                "stale": bool((data or {}).get("stale")),
-                **({"enabled": story["plot_enabled"]} if args.field == "plot" else {}),
+                "enabled": story["plot_enabled"],
             }
         if name == "read_state":
             state = state_for_model(story["snapshot"].get("state", {}))

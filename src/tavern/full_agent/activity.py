@@ -33,6 +33,18 @@ def tool_item(key, order, name, arguments):
     )
     if name == "write_plot":
         summary = "包含未来剧情，展开查看"
+    write = args.get("handoff") if name == "new_context" and isinstance(args, dict) else args
+    if name in ("write_handoff", "new_context") and isinstance(write, dict):
+        # Activity also reads rejected raw model arguments, before schema validation.
+        chapters = write.get("chapters")
+        titles = (
+            [op["title"] for op in chapters if isinstance(op, dict) and isinstance(op.get("title"), str)]
+            if isinstance(chapters, list)
+            else []
+        )
+        summary = "章节：" + "、".join(titles) if titles else "更新当前交接"
+    elif name == "new_context" and write is None:
+        summary = "沿用现有交接并换窗"
     return {
         "id": key,
         "order": order,

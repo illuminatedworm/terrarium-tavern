@@ -10,6 +10,7 @@ const props = defineProps<{
   disabled?: boolean;
   saving?: boolean;
   memoryView?: any;
+  archived?: any[];
   progress?: string;
   layout?: 'list' | 'cards';
 }>();
@@ -23,6 +24,7 @@ const refs = computed(() => new Map<string, string>(props.messages.map((m) => [m
     <MemoryRecords
       v-if="memoryView"
       :memory="memoryView"
+      :archived="archived"
       :disabled="disabled"
       :saving="saving"
       :layout="layout"

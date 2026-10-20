@@ -8,10 +8,18 @@ from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.full_agent.activity import turn_items
 from tavern.full_agent.agent import FullAgent
+from tavern.full_agent.handoff import (
+    HandoffError,
+    HandoffWrite,
+    apply_write,
+    render_text,
+    render_written_current,
+    require_coverage,
+)
 from tavern.full_agent.tools import SPECS
 from tavern.storage.store import Store
 from tests.backend import test_full_agent
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, current_text, handoff, runtime, turn
 
 story = test_full_agent.story
 
@@ -92,7 +100,11 @@ async def test_tool_comment_contract_repairs_old_arguments_and_preserves_activit
             {"ref": "H2", "48c2515daf9742308a8b50777d39dd75": "PRIVATE_INPUT"},
             ["不接受参数 @D", "请删除"],
         ),
-        ("new_context", {"handoff": "不得换窗", "keep_recent": 99}, ["参数 keep_recent 必须小于或等于 12"]),
+        (
+            "new_context",
+            {"handoff": handoff("不得换窗"), "keep_recent": 99},
+            ["参数 keep_recent 必须小于或等于 12"],
+        ),
         (
             "write_note",
             {"key": "test", "content": "未接受", "kind": "wrong"},
@@ -129,7 +141,8 @@ async def test_argument_errors_explain_repairs_without_executing_or_echoing_inpu
                 "input_type",
                 "PRIVATE_INPUT",
                 "48c2515daf9742308a8b50777d39dd75",
-                '"title"',
+                # Schema metadata titles; a chapter's own "title" property is a parameter.
+                '"title": "',
             )
         )
         for key in ("handoff", "notes", "window"):
@@ -257,10 +270,10 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})
             ).json()
             assert "write_handoff" not in {t["function"]["name"] for t in preview["tools"]}
-            model = Model(("write_handoff", {"content": "禁止写入"}), "正文")
+            model = Model(("write_handoff", handoff("禁止写入", through=None)), "正文")
             result, session = await turn(service, session, model)
             assert result["status"] == "committed", result["error"]
-            assert not session["snapshot"]["full_agent"]["handoff"]["text"]
+            assert not current_text(session["snapshot"]["full_agent"])
             assert "write_handoff" not in {
                 t["function"]["name"] for t in model.requests[0]["extra_body"]["tools"]
             }
@@ -375,6 +388,7 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
                 ("recall_lore", {"query": "旧港"}),
                 ("search_history", {"query": "开场"}),
                 ("read_history", {"ref": "H1"}),
+                ("read_history", {"ref": "H1-H2"}),
                 "继续。",
             )
             result, _ = await turn(service, session, model)
@@ -386,6 +400,8 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
             assert "preview" not in output[1]["data"]["matches"][0]
             assert "offset" not in output[1]["data"]["matches"][0]
             assert set(output[2]["data"]) == {"text"}
+            # The switch applies to every message of a span, including the current input.
+            assert [set(m) for m in output[3]["data"]["messages"]] == [{"text"}, {"text"}]
     finally:
         await service.close()
         await app.state.service.close()
@@ -467,3 +483,187 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
     )
     after = await tools.execute("read_character", json.dumps({"ref": "description"}))
     assert after["data"]["text"] == "After"
+
+
+def test_handoff_chapters_cover_sources_and_reject_old_formats():
+    from tavern.core.models import Settings
+    from tavern.full_agent.context import compile_window
+    from tavern.full_agent.state import full_state, new_state
+
+    history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(6)]
+    empty = {"chapters": [], "current": [], "revision": 0}
+
+    def write(handoff, chapters, current="仍在港口"):
+        return apply_write(
+            handoff,
+            HandoffWrite.model_validate(
+                {"chapters": chapters, "current": [{"text": current, "refs": ["H6"]}]}
+            ),
+            history,
+        )
+
+    def point(text, *refs):
+        return {"text": text, "refs": list(refs)}
+
+    first = write(
+        empty, [{"op": "add", "through": "H3", "title": "初到", "points": [point("借出戒指", "H2")]}]
+    )
+    with pytest.raises(HandoffError, match="不在所属章节"):
+        write(first, [{"op": "add", "through": "H6", "title": "夜航", "points": [point("上船", "H2")]}])
+    with pytest.raises(HandoffError) as gap:
+        require_coverage(first, history, 6)
+    assert gap.value.code == "HANDOFF_COVERAGE" and "H4-H6" in str(gap.value)
+    both = write(first, [{"op": "add", "through": "H6", "title": "夜航", "points": [point("上船", "H5-H6")]}])
+    require_coverage(both, history, 6)
+    # Without through, the Runtime endpoint may leave nothing new to archive.
+    with pytest.raises(HandoffError, match="章节已覆盖到 H6.*删去这个 add"):
+        write(both, [{"op": "add", "title": "无新内容", "points": [point("无")]}])
+    # Merge is the only way old chapters shrink; spans stay addressable.
+    merged = write(
+        both,
+        [
+            {
+                "op": "merge",
+                "chapters": ["C1", "C2"],
+                "title": "港口",
+                "points": [point("借戒指后上船", "H2", "H5-H6")],
+            }
+        ],
+    )
+    text = render_text(merged, history)
+    assert text == "## C1 港口 [H1-H6]\n- 借戒指后上船 [H2, H5-H6]\n\n## 当前交接\n- 仍在港口 [H6]"
+    # Read-only rendering preserves the model's complete prose without an
+    # intermediate editable grammar or converting literal text into references.
+    unusual = apply_write(
+        empty,
+        HandoffWrite(
+            chapters=[
+                {
+                    "op": "add",
+                    "title": '两行\n标题 "港口"',
+                    "points": [
+                        {"text": "第一行\n第二行"},
+                        {"text": "招呼 [Hello]"},
+                        {"text": "字面量 [H2]"},
+                        {"text": "（推断）这是引文", "kind": "inference", "refs": ["H2"]},
+                    ],
+                }
+            ],
+            current=[{"text": '"原话"\n仍保留', "refs": ["H3"]}, {"text": "（推断）只是文字"}],
+        ),
+        history,
+    )
+    rendered = render_text(unusual, history)
+    assert '两行\n标题 "港口"' in rendered
+    assert "第一行\n第二行" in rendered
+    assert "招呼 [Hello]" in rendered and "字面量 [H2]" in rendered
+    assert '"原话"\n仍保留' in rendered
+    assert not unusual["chapters"][0]["points"][2]["refs"]
+    assert render_written_current(
+        [{"text": '"原话"\n仍保留', "refs": ["H3"]}, {"text": "（推断）只是文字"}]
+    ) == render_text({"chapters": [], "current": unusual["current"]}, history)
+    # Unreleased v2 development states are rejected like v1, not migrated.
+    legacy = new_state()
+    legacy["version"] = 2
+    with pytest.raises(ValueError, match="格式版本 2 不受支持"):
+        full_state({"full_agent": legacy})
+    # Editing an original marks only the points citing it.
+    history[1]["raw"] = "改过的原文"
+    assert render_text(merged, history).count("来源已修改") == 1
+    revised = write(
+        merged,
+        [{"op": "revise", "chapter": "C1", "title": "港口", "points": [point("核对后的经过", "H2")]}],
+    )
+    assert revised["chapters"][0]["id"] == merged["chapters"][0]["id"]
+    assert "来源已修改" not in render_text(revised, history)
+    # Ordinary writes contain no mechanical H fields; Runtime supplies the exiting
+    # range, while current can carry this turn's instructions without a fake source.
+    plain = HandoffWrite.model_validate(
+        {
+            "chapters": [
+                {"op": "add", "title": "港口", "points": [{"text": "已借出戒指"}, {"text": "船票仍未找到"}]}
+            ],
+            "current": [{"text": "按本轮用户要求保持第一人称"}],
+        }
+    )
+    automatic = apply_write(empty, plain, history, archive_through=3)
+    require_coverage(automatic, history, 3)
+    assert automatic["chapters"][0]["end"] == history[2]["id"]
+    assert (
+        render_written_current(plain.model_dump()["current"]) == "## 当前交接\n- 按本轮用户要求保持第一人称"
+    )
+    plain_text = render_text(automatic, history)
+    assert (
+        plain_text
+        == "## C1 港口 [H1-H3]\n- 已借出戒指\n- 船票仍未找到\n\n## 当前交接\n- 按本轮用户要求保持第一人称"
+    )
+    history[1]["raw"] = "戒指已收回"
+    assert render_text(automatic, history).count("来源已修改") == 1
+    # Full-source replay must drop both handoff frames even when the baseline
+    # still matches (local -> cloud -> local with no intervening story request).
+    state = new_state()
+    state["window"]["number"] = 2
+    state["handoff"] = automatic
+    session, settings = {"id": "story", "persona": "User", "messages": history}, Settings()
+    snapshot = {"state": {}, "full_agent": state}
+    compiled = compile_window({}, session, history, snapshot, "", settings, [])
+    trace = [
+        {"message_id": history[-1]["id"], "window_id": state["window"]["id"], "message": item}
+        for item in compiled["context_additions"]
+    ]
+    replay = compile_window({}, session, history, snapshot, "", settings, [], trace=trace, replay_all=True)
+    assert replay["context_ledger"]["rebuild_reason"] is None
+    assert not any(m.get("source") in ("handoff", "handoff_chapters") for m in replay["trace"])
+
+
+async def test_new_context_reuses_handoff_and_checks_only_exiting_history():
+    import copy
+    from types import SimpleNamespace
+
+    from tavern.core.model_view import ModelView
+    from tavern.core.models import Settings
+    from tavern.full_agent.protocol import ToolError
+    from tavern.full_agent.state import new_state
+    from tavern.full_agent.tools import AgentTools, tool_definitions
+
+    # H1 is the greeting; H2-H7 are three complete user/assistant exchanges.
+    history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(7)]
+    request = TurnRequest(operation_id="optional-handoff", expected_revision=0)
+    owner = SimpleNamespace(
+        state=new_state(),
+        history=history,
+        settings=Settings(),
+        definitions=tool_definitions(request, {}),
+        model_view=ModelView({}),
+    )
+    tools = AgentTools(owner)
+    # Keeping all story messages needs no summary and must not invent one.
+    empty = copy.deepcopy(owner.state["handoff"])
+    await tools.execute("new_context", '{"keep_recent":7}')
+    assert owner.state["window"]["start"] == 0
+    assert owner.state["handoff"] == empty
+    await tools.execute(
+        "write_handoff",
+        json.dumps(
+            {
+                "chapters": [
+                    {"op": "add", "through": "H5", "title": "先前经历", "points": [{"text": "旧事已记录"}]}
+                ],
+                "current": [{"text": "继续最新交流"}],
+            }
+        ),
+    )
+    history[0]["raw"] = "用户修改了开场"
+    before = copy.deepcopy(owner.state["handoff"])
+    # keep_recent=1 expands to H6-H7, so coverage through H5 is sufficient.
+    await tools.execute("new_context", '{"keep_recent":1}')
+    assert owner.state["window"]["start"] == 5
+    assert owner.state["handoff"] == before
+    assert "来源已修改" in render_text(owner.state["handoff"], history)
+    # Retiring the previously retained exchange does require a chapter.
+    unchanged = copy.deepcopy(owner.state)
+    with pytest.raises(ToolError) as gap:
+        await tools.execute("new_context", '{"keep_recent":0}')
+    assert gap.value.result["error"]["code"] == "HANDOFF_COVERAGE"
+    assert "H6-H7" in str(gap.value)
+    assert owner.state == unchanged

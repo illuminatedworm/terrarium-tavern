@@ -61,6 +61,7 @@ const tab = defineModel<StateTab>('tab', { required: true });
       layout="cards"
       :snapshot="session.snapshot"
       :memory-view="session.memory_view"
+      :archived="session.archived_memory"
       :progress="progress"
       @change="emit('change', $event)"
       @cancel="emit('cancel')"

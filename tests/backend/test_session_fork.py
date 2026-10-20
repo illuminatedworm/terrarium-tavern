@@ -26,7 +26,7 @@ def story(tmp_path):
             mid = uid()
             snapshot = {
                 "state": {"place": text},
-                "memory_document": {"version": 1, "records": []},
+                "memory_document": {"version": 2, "records": []},
                 "lore": {"visits": 2},
                 "scopes": {"message:0": {"note": "保留"}},
                 "content": {"document": card["document"]},

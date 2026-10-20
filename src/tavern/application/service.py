@@ -4,11 +4,14 @@ import asyncio
 import copy
 import shutil
 
+import httpx
+
 from tavern.character.cards import regex_scripts
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.conversation.update_review import finish_turn
 from tavern.core.models import TurnRequest
 from tavern.memories.memory import Tracker, completed_rounds
+from tavern.memories.memory_records import new_memory
 from tavern.scripting.agent import Writer
 from tavern.scripting.dependencies import Dependencies
 from tavern.scripting.request_context import OperationContexts, configure_operation
@@ -49,6 +52,7 @@ class RoleplayRuntime:
                 "document", self.store.session_card(sid)["document"]
             )
             from tavern.memories.memory import window_history
+            from tavern.memories.memory_archive import read_archive
 
             visible, _ = window_history(session["messages"], session["snapshot"])
             await self.retrieval.prepare(
@@ -60,6 +64,7 @@ class RoleplayRuntime:
                 session,
                 "prepare",
                 index_only=True,
+                archive=read_archive(session["messages"]),
             )
 
         try:
@@ -164,7 +169,7 @@ class RoleplayRuntime:
 
         # A rebuild replaces automatic records only. User edits and deletions
         # remain explicit constraints, rather than being erased by re-extraction.
-        base = {"version": 1, "records": [r for r in read_memory(snapshot)["records"] if r.get("manual")]}
+        base = new_memory(r for r in read_memory(snapshot)["records"] if r.get("manual"))
         estimate = await asyncio.to_thread(
             estimate_batches, session["messages"], base, document, session["persona"], cfg
         )
@@ -196,6 +201,12 @@ class RoleplayRuntime:
         from tavern.memories.memory import fingerprint
 
         install_memory(snapshot, rebuilt)
+        # The rebuild re-derives automatic records from scratch, archive included:
+        # retire every inherited automatic entry, then add what this rebuild archived.
+        from tavern.memories.memory_archive import RETIRING, retire_all
+
+        retire_all(snapshot, session["messages"])
+        snapshot.setdefault(RETIRING, []).extend(task.snapshot.get(RETIRING, []))
         snapshot.pop("memory_warning", None)
         snapshot["memory_archive"] = {
             "covered_count": len(session["messages"]),
@@ -455,6 +466,88 @@ class RoleplayRuntime:
             if provider is not None:
                 await provider.close()
 
+    async def filter_memory_recall(
+        self, tid, settings, history, snapshot, user_input, prepared, contexts, *, session, generate=None
+    ):
+        """Optional Tracker pass over admitted archive recall; returns a new prepared result."""
+        from tavern.conversation.context import memory_enabled
+
+        recall = prepared.get("memory_recall")
+        if (
+            not settings.memory_recall_filter
+            or not recall
+            or not recall["ids"]
+            or not memory_enabled(session, snapshot, generate)
+        ):
+            return prepared
+        from tavern.core.provider import make_provider
+        from tavern.memories.memory_archive import read_archive
+        from tavern.memories.recall_filter import RecallFilterError, filter_recall
+
+        archive = {entry["id"]: entry for entry in read_archive(history, snapshot)}
+        candidates = [archive[rid] for rid in recall["ids"]]
+        cfg = settings.for_role("background")
+
+        def event(kind, payload):
+            self.store.event(tid, kind, payload)
+
+        factory = self.tracker_provider_factory
+        provider = None
+        try:
+            try:
+                provider = (
+                    factory()
+                    if factory
+                    else await make_provider(
+                        cfg,
+                        lambda value: event("provider_request", value),
+                        request_timeout=cfg.memory_timeout,
+                    )
+                )
+            except (httpx.HTTPError, TimeoutError, ValueError) as error:
+                # Missing credentials and account refresh failures occur before a
+                # transport exists; they share the optional filter's failure policy.
+                raise RecallFilterError(str(error)) from error
+            configure_operation(provider, contexts.new("memory_recall"), event, "memory_recall")
+            kept = await filter_recall(provider, candidates, history, user_input, cfg, event=event)
+        except RecallFilterError as error:
+            # The filter only narrows candidates that already passed admission; a
+            # failed or malformed answer keeps them and is reported, not hidden.
+            event(
+                "memory_recall_filter",
+                {
+                    "purpose": "memory_recall",
+                    "kept_original": True,
+                    "message": f"召回筛选失败，沿用阈值准入结果：{error}",
+                },
+            )
+            return prepared
+        finally:
+            if provider is not None:
+                await provider.close()
+        dropped = [rid for rid in recall["ids"] if rid not in kept]
+        event(
+            "memory_recall_filter",
+            {
+                "purpose": "memory_recall",
+                "kept": kept,
+                "dropped": dropped,
+                "message": f"召回筛选保留 {len(kept)} 条，移除 {len(dropped)} 条",
+            },
+        )
+        # The prepared result is cached by RetrievalEngine; never mutate it in place.
+        return {
+            **prepared,
+            "memory_recall": {
+                **recall,
+                "ids": kept,
+                "diagnostics": [
+                    *recall["diagnostics"],
+                    *({"id": rid, "reason": "Tracker 筛选未保留"} for rid in dropped),
+                ],
+            },
+        }
+
     async def run(self, tid):
         runtime = None
         try:
@@ -497,7 +590,7 @@ class RoleplayRuntime:
                 if history
                 else {
                     "state": {},
-                    "memory_document": {"version": 1, "records": []},
+                    "memory_document": new_memory(),
                     "lore": {},
                     "scopes": {},
                     "content": None,
@@ -547,6 +640,8 @@ class RoleplayRuntime:
 
                         nested_document = (snapshot.get("content") or {}).get("document", document)
                         visible, _ = window_history(history, snapshot, enabled=local_window_enabled(settings))
+                        from tavern.memories.memory_archive import read_archive
+
                         prepared = await self.retrieval.prepare(
                             nested_document,
                             visible,
@@ -555,6 +650,20 @@ class RoleplayRuntime:
                             settings,
                             session,
                             tid,
+                            archive=read_archive(history, snapshot),
+                            record_collection=False,
+                        )
+                        # Same recall as the main reply: admission, then the optional filter.
+                        prepared = await self.filter_memory_recall(
+                            tid,
+                            settings,
+                            history,
+                            snapshot,
+                            args.get("user_input", ""),
+                            prepared,
+                            contexts,
+                            session=session,
+                            generate=args,
                         )
                         context = compile_context(
                             nested_document,
@@ -566,7 +675,7 @@ class RoleplayRuntime:
                             tid,
                             generate=args,
                             retrieval=prepared,
-                            kemini_layer=False,
+                            story_turn=False,
                         )
                         from tavern.conversation.cache_breakpoint import model_messages
                         from tavern.core.message_adapter import provider_messages
@@ -634,6 +743,17 @@ class RoleplayRuntime:
                 document,
                 self.retrieval,
                 run_tracker,
+            )
+            prepared = await self.filter_memory_recall(
+                tid,
+                settings,
+                history,
+                snapshot,
+                req.text,
+                prepared,
+                contexts,
+                session=session,
+                generate=req.generate,
             )
             # Pre-story card edits must reach scripts too, without reinstalling
             # scripts or replaying initialization callbacks.

@@ -24,6 +24,7 @@ from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.protocols import native_messages
 from tavern.storage.message_adapters import recipe_types
 from tavern.storage.store import Conflict, Store
+from tests.support.history_labels import strip_label
 
 
 def config(**rules):
@@ -355,11 +356,12 @@ async def test_half_agent_partition_preserves_final_sdk_prefix_across_turns():
         story.cfg, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
     )
     try:
-        first = story.compile()
+        # These inputs are committed story turns; script generate inputs have no H position.
+        first = story.compile(generate=None)
         assert [row["source"] for row in first["trace"][:2]] == ["rules", "character"]
         await provider.chat_complete(model_messages(first))
         story.commit(first, "done")
-        second = story.compile()
+        second = story.compile(generate=None)
         assert second["context_ledger"]["rebuild_reason"] is None
         assert second["messages"][: len(first["messages"])] == first["messages"]
         await provider.chat_complete(model_messages(second))
@@ -547,7 +549,7 @@ async def test_genai_half_agent_data_positions_and_compatibility_roles_reach_sdk
             card_index = next(i for i, text in enumerate(content) if "Complete card description" in text)
             assert "<card_description>\nComplete card description\n</card_description>" in content[card_index]
             if position == "depth_zero":
-                assert card_index > content.index("灯塔")
+                assert card_index > next(i for i, text in enumerate(content) if strip_label(text) == "灯塔")
             else:
                 lore_index = next(i for i, text in enumerate(content) if "Complete lore text" in text)
                 if position == "before_card":
@@ -765,3 +767,53 @@ async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_withou
     finally:
         release.set()
         await service.close()
+
+
+def test_assistant_history_and_native_replay_preserve_original_text():
+    from tavern.scripting.native_response import attachment, message_digest
+    from tavern.scripting.protocols import openai_messages, response_input
+    from tests.backend.test_card_context_blocks import compile_mode
+
+    text = "[H12]\n屏幕上的代号。\n[H13]\n她输入密码，门开了。"
+    history = [
+        {"id": "opening", "role": "assistant", "raw": "开场"},
+        {"id": "user", "role": "user", "raw": "检查终端"},
+        {"id": "reply", "role": "assistant", "raw": text},
+    ]
+    # A literal label is part of the story, never omitted from attachment validation.
+    assert message_digest({"content": text}) != message_digest({"content": strip_label(text)})
+    for mode in ("half_agent", "full_agent"):
+        compiled = compile_mode(mode, {"name": "测试"}, history)
+        story = {m["message_id"]: m for m in compiled["trace"] if m.get("message_id")}
+        assert story["opening"]["content"] == "开场"
+        assert story["user"]["content"] == "[H2]\n检查终端"
+        assert story["reply"]["content"] == text
+        message = {"role": "assistant", "content": story["reply"]["content"]}
+        assert openai_messages([message])[0]["content"] == text
+        for api in ("anthropic", "responses"):
+            items = (
+                [
+                    {"type": "thinking", "thinking": "reasoning", "signature": "signed"},
+                    {"type": "text", "text": text},
+                ]
+                if api == "anthropic"
+                else [
+                    {"type": "reasoning", "id": "reason", "encrypted_content": "encrypted"},
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text}],
+                    },
+                ]
+            )
+            payload = {"content" if api == "anthropic" else "output": items}
+            native = {**message, "_native_response": attachment(payload, {"api": api}, message)}
+            replayed = (
+                native_messages([native], api)[1][0]["content"]
+                if api == "anthropic"
+                else response_input([native])
+            )
+            assert replayed == items
+        parts = [{"text": text}, {"text": "signed text", "thoughtSignature": "signed"}]
+        gemini = {**message, "reasoning_details": [{"provider": "gemini", "parts": parts}]}
+        assert native_messages([gemini], "gemini")[1] == [{"role": "model", "parts": parts}]

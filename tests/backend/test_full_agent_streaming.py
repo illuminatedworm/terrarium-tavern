@@ -9,7 +9,7 @@ import pytest
 from tavern.core.models import TurnRequest
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Conflict, Store
-from tests.backend.test_full_agent import Script, ScriptHost, runtime
+from tests.backend.test_full_agent import Script, ScriptHost, current_text, handoff, runtime
 from tests.backend.test_full_agent_alignment import game
 
 
@@ -22,7 +22,7 @@ def terminal(reason="stop"):
 
 
 def tool_events(name="write_handoff", arguments=None):
-    args = json.dumps(arguments or {"content": "已确认的工具进度"}, ensure_ascii=False)
+    args = json.dumps(arguments or handoff("已确认的工具进度", through=None), ensure_ascii=False)
     return [
         {
             "choices": [
@@ -138,7 +138,7 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
             {"kind": "thinking", "text": "创作安排"},
             {"kind": "disclaimer", "text": "声明"},
         ]
-        assert current["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
+        assert current_text(current["snapshot"]["full_agent"]) == "已确认的工具进度"
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
         kemini = settings.shared.kemini
         prefix = [
@@ -337,9 +337,7 @@ async def test_mixed_text_and_tools_move_out_of_preview_before_next_response(tmp
             for e in store.events(tid)
         )
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
-        assert (
-            store.full_agent_progress(tid)["snapshot"]["full_agent"]["handoff"]["text"] == "已确认的工具进度"
-        )
+        assert current_text(store.full_agent_progress(tid)["snapshot"]["full_agent"]) == "已确认的工具进度"
         next_gate.release.set()
         await service.tasks[tid]
         assert store.turn(tid)["status"] == "committed", store.turn(tid)["error"]

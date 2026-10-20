@@ -17,6 +17,10 @@ RECOVERY = {
     "MIXED_CONTEXT_CALLS": (True, "本批次未执行任何工具；单独调用 new_context。"),
     "PARALLEL_TOOL_CALLS_DISABLED": (True, "每次回复只提出一个工具调用，等待结果后再继续。"),
     "CONTEXT_ROLLOVER_REQUIRED": (True, "单独调用 new_context 后继续本轮。"),
+    "HANDOFF_COVERAGE": (
+        True,
+        "补齐实际退出范围的章节，或增大 keep_recent 保留未归档的完整交流，再单独调用 new_context。",
+    ),
 }
 
 

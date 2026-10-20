@@ -253,6 +253,8 @@ class Settings(BaseModel):
     memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
     memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
     memory_review_enabled: bool = Field(default=True, strict=True)
+    memory_recall_count: int = Field(default=3, ge=0, le=20, strict=True)
+    memory_recall_filter: bool = Field(default=False, strict=True)
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
 
     @model_validator(mode="after")

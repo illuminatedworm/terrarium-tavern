@@ -4,11 +4,15 @@ Story messages remain in the branch. Retention only removes automatic records
 from the current projection; manual records and source-stale records are never
 silently changed. Every pass uses the source's latest completed story round,
 not the model's wording or the time a consolidation request happened.
+
+Retired episodes leave under the transient ``retired`` key; ``install_memory``
+moves them into the snapshot's archive delta (see memory_archive).
 """
 
 import copy
 
 from tavern.core.tokens import count_text
+from tavern.memories.memory_archive import archive_entry
 from tavern.memories.memory_records import is_retained_record, render_document, source_hash
 
 
@@ -62,6 +66,9 @@ def retain_memory(memory, history, settings, *, event=None):
         )
 
     def retire(record, reason):
+        # Callback texture expires even when age or capacity, rather than its own cap, retires it.
+        if reason.startswith("episode") and not record.get("callback"):
+            result.setdefault("retired", []).append(archive_entry(record, total_rounds))
         record["status"] = "superseded"
         removed[reason].append(record["id"])
 

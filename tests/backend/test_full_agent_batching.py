@@ -11,7 +11,7 @@ from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store
 from tests.backend import test_full_agent
-from tests.backend.test_full_agent import runtime, turn
+from tests.backend.test_full_agent import current_text, handoff, runtime, turn
 
 story = test_full_agent.story
 
@@ -66,13 +66,16 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
     config.full_agent.tools.parallel_tool_calls = enabled
     config.full_agent.model.api_mode = api_mode
     config.full_agent.model.model = "fixture"
+    # The handoff schema makes this prefix long enough for Gemini explicit caching;
+    # this test covers tool batching, not cache creation requests.
+    config.full_agent.model.cache.mode = "cloud"
     config.shared.providers[0].api_key = "fixture"
     store.save_settings(config)
     settings = store.settings("full_agent")
     service = runtime(store)
     requests = []
     actions = [
-        ("write_handoff", {"content": "Keep the harbor appointment."}),
+        ("write_handoff", handoff("Keep the harbor appointment.", through=None)),
         ("write_note", {"key": "appointment", "content": "Visit harbor", "kind": "plan"}),
     ]
 
@@ -190,11 +193,11 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
             assert "is_error" not in json.dumps(requests)
         state = current["snapshot"]["full_agent"]
         if enabled:
-            assert state["handoff"]["text"] == actions[0][1]["content"]
+            assert state["handoff"]["current"][0]["text"] == actions[0][1]["current"][0]["text"]
             assert state["notes"]["appointment"]["content"] == "Visit harbor"
         else:
             assert all(r["error"]["code"] == "PARALLEL_TOOL_CALLS_DISABLED" for r in envelopes)
-            assert not state["handoff"]["text"] and not state["notes"]
+            assert not current_text(state) and not state["notes"]
     finally:
         await provider.close()
         await service.close()

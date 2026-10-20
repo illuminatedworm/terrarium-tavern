@@ -45,12 +45,17 @@ EXAMPLES = {
     ),
     "read_history": ({"ref": "H1"}, {"ref": "H1", "role": "user", "text": "我明天去港口。"}),
     "write_handoff": (
-        {"content": "明天去港口，相关笔记：计划/港口。"},
-        {"saved_to_draft": True, "window": 1, "notice": NOTICE},
+        {"current": [{"text": "明天去港口，相关笔记：计划/港口。"}]},
+        {"saved_to_draft": True, "window": 1, "chapters": [], "notice": NOTICE},
     ),
     "new_context": (
-        {"handoff": "明天去港口，相关笔记：计划/港口。", "keep_recent": 0},
-        {"saved_to_draft": True, "window": 2, "notice": NOTICE},
+        {},
+        {
+            "saved_to_draft": True,
+            "window": 2,
+            "chapters": [],
+            "notice": NOTICE,
+        },
     ),
     "search_notes": (
         {"query": "港口"},
@@ -140,8 +145,8 @@ def descriptions():
             "",
             "| 工具 | 追加文本全文 | 条件 |",
             "|---|---|---|",
-            "| `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |",
-            "| `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |",
+            "| `write_handoff` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 当前交接、单章与章节总量上限。 |",
+            "| `new_context` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 同上，适用于换窗时提交的交接。 |",
             "| `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |",
             "| `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |",
             "| `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |",

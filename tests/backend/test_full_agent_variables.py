@@ -16,7 +16,7 @@ from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.state import new_state
 from tavern.full_agent.tools import StatePatch
 from tavern.storage.store import Store
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, handoff, runtime, turn
 from tests.backend.test_full_agent_alignment import strip_local
 
 
@@ -156,7 +156,7 @@ async def test_rollover_reloads_rules_and_regeneration_and_forks_use_their_own_t
         assert result["status"] == "committed", result["error"]
         assert len(frames(regenerated.requests[0]["messages"])) == 1
         switched = Model(
-            ("new_context", {"handoff": "Keep current facts", "keep_recent": 0}),
+            ("new_context", {"handoff": handoff("Keep current facts"), "keep_recent": 0}),
             ("read_state", {}),
             empty_patch(),
             "After rollover",
@@ -243,7 +243,7 @@ async def test_frozen_macros_and_rules_survive_real_mvu_rollover_reopen_and_mode
                     "comment": "Narrative setting",
                 },
             ),
-            ("new_context", {"handoff": "Injury applied, continue narrative", "keep_recent": 0}),
+            ("new_context", {"handoff": handoff("Injury applied, continue narrative"), "keep_recent": 0}),
             RuntimeError("Disconnected"),
         )
         failed, unchanged = await turn(

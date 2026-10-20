@@ -12,7 +12,7 @@ from tavern.core.models import SessionCreate, TurnRequest
 from tavern.search.retrieval_config import ModelConnection, ModelProfile, Provider
 from tavern.storage.store import Store
 from tests.backend.test_card_author import ToolLLM
-from tests.backend.test_full_agent import Model, ScriptHost
+from tests.backend.test_full_agent import Model, ScriptHost, handoff
 
 
 def configured_app(path):
@@ -275,7 +275,7 @@ async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_wo
     service.full.runtime = ScriptHost()
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     models = [
-        Model(("write_handoff", {"content": "完整保留已完成的工作"}), ValueError("interrupted")),
+        Model(("write_handoff", handoff("完整保留已完成的工作", through=None)), ValueError("interrupted")),
         Model("完成正文"),
     ]
     connections = []

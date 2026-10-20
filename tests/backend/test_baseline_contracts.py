@@ -18,13 +18,13 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     card = store.import_card(b'{"name":"fixture","first_mes":"hello"}', "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     assert session["persona"] == "用户"
-    assert read_memory(session["snapshot"]) == {"version": 1, "records": []}
+    assert read_memory(session["snapshot"]) == {"version": 2, "records": []}
     reopened = Store(tmp_path)
     assert reopened.settings_document() == store.settings_document()
     assert reopened.settings().tracker_system_prompt == cfg.tracker_system_prompt
     assert reopened.session(session["id"]) == store.session(session["id"])
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "7"
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
         assert dict((r[1], r[3]) for r in db.execute("PRAGMA table_info(sessions)"))["card_data"] == 1
 
 
@@ -81,5 +81,6 @@ def test_source_protocol_accepts_only_exposed_short_references():
 
 
 def test_memory_document_version_is_validated():
-    with pytest.raises(ValueError, match="格式"):
-        read_memory({"memory_document": {"version": 2, "records": []}})
+    # Version 1 predates per-message archive deltas and is not migrated.
+    with pytest.raises(ValueError, match="版本 1 不受支持.*新建对话"):
+        read_memory({"memory_document": {"version": 1, "records": []}})

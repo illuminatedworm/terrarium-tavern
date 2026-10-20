@@ -121,6 +121,8 @@ class HalfSettings(AgentSettings):
     memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
     memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
     memory_review_enabled: bool = Field(default=True, strict=True)
+    memory_recall_count: int = Field(default=3, ge=0, le=20, strict=True)
+    memory_recall_filter: bool = Field(default=False, strict=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -192,7 +194,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[7] = 7
+    version: Literal[8] = 8
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -438,6 +440,16 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 if kemini.get(key) == old:
                     kemini[key] = defaults[key]
             changed_scopes.add("shared")
+        if raw["version"] == 7:
+            # Archive recall and handoff chapter limits start at their visible defaults.
+            raw["version"] = 8
+            half = raw.setdefault("half_agent", {})
+            for key in ("memory_recall_count", "memory_recall_filter"):
+                half.setdefault(key, HalfSettings.model_fields[key].default)
+            tools = raw.setdefault("full_agent", {}).setdefault("tools", {})
+            for key in ("chapter_tokens", "chapters_total_tokens"):
+                tools.setdefault(key, FullAgentConfig.model_fields[key].default)
+            changed_scopes.update(("full_agent", "half_agent"))
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

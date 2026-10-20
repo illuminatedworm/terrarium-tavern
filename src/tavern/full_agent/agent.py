@@ -315,7 +315,7 @@ class FullAgent:
                     t["function"]["name"] == "new_context" for t in self.definitions
                 ):
                     raise ValueError(
-                        "上下文已满，但 new_context 已关闭。请在工具页启用它，或在场景页手动保存并换新窗口。"
+                        "上下文已满，但 new_context 已关闭。请在工具页启用它；已有交接覆盖退出范围时，也可在场景页手动换新窗口。"
                     )
                 started = time.perf_counter()
                 tool_options = (

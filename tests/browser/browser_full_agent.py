@@ -10,7 +10,7 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
-from tests.backend.test_full_agent import Model
+from tests.backend.test_full_agent import Model, handoff
 
 
 async def main():
@@ -32,7 +32,7 @@ async def main():
                 "write_note",
                 {"key": "约定/钟楼", "content": "玩家答应明天见面", "kind": "fact", "sources": ["H2"]},
             ),
-            ("new_context", {"handoff": "约定明天钟楼见面，继续当前对话。", "keep_recent": 0}),
+            ("new_context", {"handoff": handoff("约定明天钟楼见面，继续当前对话。"), "keep_recent": 0}),
             "她点头应下，钟声从远处传来。",
         )
         sock = socket.socket()
@@ -254,14 +254,17 @@ async def main():
                 )
                 await expect(page.get_by_role("button", name="重新生成记忆", exact=True)).to_have_count(0)
                 await page.screenshot(path=str(output / "desktop.png"))
-                await notes.get_by_label("交接笔记（handoff）", exact=True).fill("人工确认：明天去钟楼。")
-                await notes.get_by_role("button", name="保存并换新窗口", exact=True).click()
+                handoff_view = notes.get_by_role("region", name="交接笔记（handoff）", exact=True)
+                await expect(handoff_view.locator("textarea")).to_have_count(0)
+                await expect(handoff_view).to_contain_text("约定明天钟楼见面")
+                await expect(notes.get_by_label("保留最近剧情消息（0–12 条）", exact=True)).to_have_value("2")
+                await notes.get_by_role("button", name="换新窗口", exact=True).click()
                 await expect(notes).to_contain_text("工作窗口 3")
                 await page.get_by_role("button", name="变量与记忆", exact=True).click()
                 modal = page.get_by_role("dialog")
-                await expect(modal.get_by_label("交接笔记（handoff）", exact=True)).to_have_value(
-                    "人工确认：明天去钟楼。"
-                )
+                await expect(
+                    modal.get_by_role("region", name="交接笔记（handoff）", exact=True)
+                ).to_contain_text("约定明天钟楼见面")
                 await page.set_viewport_size({"width": 390, "height": 844})
                 await page.screenshot(path=str(output / "mobile.png"))
                 assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -286,15 +289,15 @@ async def main():
                 # chronological message order when checking native tool pairs.
                 entries = history.locator(".context-entry")
                 await expect(entries.locator(".badge")).to_have_text(
-                    ["user", "assistant", "tool", "assistant"]
+                    ["user", "assistant", "user", "assistant", "tool", "assistant"]
                 )
-                await entries.nth(1).locator("summary").click()
-                await expect(entries.nth(1).locator("pre")).to_contain_text("read_note")
-                await expect(entries.nth(1).locator("pre")).to_contain_text("约定/钟楼")
-                await expect(entries.nth(1).locator("pre")).to_contain_text("工作过程不会混入正文")
-                await entries.nth(2).locator("summary").click()
-                await expect(entries.nth(2).locator("pre")).to_contain_text("玩家答应明天见面")
-                assert await entries.locator(".context-entry-position").all_text_contents() != ["位置 "] * 4
+                await entries.nth(3).locator("summary").click()
+                await expect(entries.nth(3).locator("pre")).to_contain_text("read_note")
+                await expect(entries.nth(3).locator("pre")).to_contain_text("约定/钟楼")
+                await expect(entries.nth(3).locator("pre")).to_contain_text("工作过程不会混入正文")
+                await entries.nth(4).locator("summary").click()
+                await expect(entries.nth(4).locator("pre")).to_contain_text("玩家答应明天见面")
+                assert await entries.locator(".context-entry-position").all_text_contents() != ["位置 "] * 6
                 await page.screenshot(path=str(output / "context-preview.png"))
                 await page.get_by_role("dialog").get_by_role("button", name="关闭", exact=True).click()
                 await page.get_by_role("button", name="Agent 工作记录", exact=True).click()

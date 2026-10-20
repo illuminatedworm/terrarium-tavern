@@ -12,7 +12,7 @@ from tavern.full_agent.protocol import ToolError, TurnError
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.storage.store import Conflict
 from tests.backend import test_full_agent, test_full_agent_content, test_full_agent_read_guards
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, current_text, handoff, runtime, turn
 from tests.backend.test_full_agent_read_guards import call
 
 story = test_full_agent.story
@@ -236,7 +236,7 @@ async def test_mixed_rollover_batch_has_no_side_effects(story, rollover_first):
     store, session = story
     service = runtime(store)
     calls = [
-        ("new_context", {"handoff": "Must not replace memory"}),
+        ("new_context", {"handoff": handoff("Must not replace memory")}),
         ("write_note", {"key": "forbidden", "content": "Must not save", "kind": "plan"}),
     ]
     if not rollover_first:
@@ -325,7 +325,7 @@ async def test_rejected_batch_cannot_become_an_executable_call_on_resume(story, 
         await service.tasks[resumed["id"]]
         assert store.turn(resumed["id"])["status"] == "committed"
         current = store.session(session["id"])["snapshot"]["full_agent"]
-        assert current["window"]["number"] == 1 and not current["handoff"]["text"] and not current["notes"]
+        assert current["window"]["number"] == 1 and not current_text(current) and not current["notes"]
         assert "MUST_NOT_REAPPEAR" not in str(model.requests)
     finally:
         await service.close()
@@ -388,7 +388,9 @@ async def test_call_limits_stay_out_of_context_with_custom_prompt_and_rollover(s
     service = runtime(store)
     try:
         model = Model(
-            ("read_state", {}), ("new_context", {"handoff": "Continue", "keep_recent": 0}), "Narrative"
+            ("read_state", {}),
+            ("new_context", {"handoff": handoff("Continue"), "keep_recent": 0}),
+            "Narrative",
         )
         result, current = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]

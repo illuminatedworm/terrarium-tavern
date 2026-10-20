@@ -14,7 +14,7 @@
 
 历史引用为当前分支有效 H 编号：H52 是当前分支第 52 条消息，开场白为 H1，当前用户输入按将要占据的位置编号；与 Half Agent Tracker、参谋 agent 和剧情界面显示的编号同一定义。世界书引用为 L 加正整数；它们是导航句柄，不写入剧情。read_note、write_note、archive_note 统一使用完整笔记 key。版本、指纹、真实 ID 和模型短编号映射由 Runtime 保存；模型不生成或回传这些机械字段。
 
-query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_state.path 最长 200 字符。handoff 和笔记正文为 1–64000 字符，不能为空白，另受配置中的 handoff_tokens／note_tokens 约束；comment 为必填的简短操作备注，1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
+query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_history 的 ref 可为单条 H 或闭区间 `H52-H58`，区间最多 8 条、两端都须在当前分支。read_state.path 最长 200 字符。笔记正文为 1–64000 字符，不能为空白，另受 note_tokens 约束；handoff 的限额见下文；comment 为必填的简短操作备注，1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
 
 patch_state 和 revise_content 的备注参数统一使用 comment，替代旧参数 reason；旧调用记录保留原样，新调用传 reason 会返回参数错误及当前参数定义。
 
@@ -71,7 +71,19 @@ write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 
 
 write_note 完整替换内容；覆盖已有键或 archive_note 归档前，当前完整正文须已在上下文，否则先 read_note。工具参数中的完整当前正文也算，成功写入后不必重复读取。新 key 无需读取，覆盖归档键重新激活。目录和搜索摘要不算完整正文。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
 
-handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。write_handoff 的 content 参数只替换笔记；`new_context` 使用 `handoff` 参数保存交接并同时换窗。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
+handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。它由章节和当前交接组成，结构见[handoff 章节](../design/full-agent.md#handoff-章节)。new_context 的 `handoff` 可省略或为 `null`（默认），表示沿用当前交接，不改内容、版本及来源指纹；只有需要更新时才传入。传入时的结构与 write_handoff 参数相同：
+
+- `chapters`：0–10 个按顺序执行的操作，C 编号指本次调用前的编号。`add` 通常只给标题和要点，起点自动接在上一章之后；省略 `through` 时，new_context 自动覆盖到最后一条退出消息，write_handoff 自动覆盖到最后一条已提交消息。只有主动语义分章时才用已知 H 填写 `through`，一次调用中省略终点的 add 应放在其他 add 之后。`revise` 改写一章的标题与要点，范围不变；`merge` 把 2–10 个相邻章节合并为一章，范围取并集。title 为 1–80 字符，每章 1–20 条要点。
+- `current`：1–30 条要点，整体替换当前交接。
+- 要点：`text` 1–2000 字符；`refs` 可省略、默认 `[]`，最多 4 个 H 引用或闭区间，章节引用须落在本章范围内；`kind` 为 fact（默认）或 inference。引用只用于有精确回查需要的已提交原文，不为文风、角色资料或当前输入拼凑 H；这些内容直接写入交接即可。assistant 正文不带位置标记，精确 H 从历史工具取得，不要求推算。
+- 限额：当前交接 handoff_tokens（默认 2048），单章 chapter_tokens（默认 512），全部章节 chapters_total_tokens（默认 4096），均按渲染后的文本计数。章节总量超限时返回 CONTENT_LIMIT，提示合并最旧的相邻章节。
+- new_context 先根据模型选择的 `keep_recent` 将保留边界扩展到完整交流，只要求章节覆盖最终保留起点之前的原文。保留的最近消息和当前输入不要求提前归档；全部历史保留时允许沿用空交接。实际退出范围未覆盖时返回 HANDOFF_COVERAGE，模型可补齐交接，或增加 keep_recent 保留尚未归档的交流。
+
+成功结果返回 `chapters`：当前每章的 C 编号、标题和范围，供同一窗口后续调用 revise／merge。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。
+
+例如 H1 为开场，H2–H7 为三组用户／AI 交流。选择 `keep_recent: 1` 时，最后一条 AI 回复会连同前一条用户消息一起保留，即 H6–H7；章节只需覆盖 H1–H5。现有章节已覆盖时可直接调用 `{"keep_recent":1}`，无需重写 handoff。
+
+用户界面只读展示 handoff。手动换窗接口 `POST /api/sessions/{sid}/full-agent/new-context` 只接受 `expected_revision` 和 `keep_recent`（0–12 条剧情消息，默认 2，同样扩展到完整交流），复用已保存交接并检查退出范围覆盖；它不接收 handoff 正文，不调用模型或修改来源状态。
 
 new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
 
@@ -130,3 +142,4 @@ new_context 必须单独调用。任何包含它的多工具批次都在执行�
 | `MIXED_CONTEXT_CALLS` | 是 | 本批次未执行任何工具；单独调用 new_context。 |
 | `PARALLEL_TOOL_CALLS_DISABLED` | 是 | 每次回复只提出一个工具调用，等待结果后再继续。 |
 | `CONTEXT_ROLLOVER_REQUIRED` | 是 | 单独调用 new_context 后继续本轮。 |
+| `HANDOFF_COVERAGE` | 是 | 补齐实际退出范围的章节，或增大 keep_recent 保留未归档的完整交流，再单独调用 new_context。 |

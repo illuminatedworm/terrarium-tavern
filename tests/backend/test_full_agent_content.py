@@ -174,7 +174,7 @@ async def test_target_reads_are_current_window_scoped_and_batch_failure_is_atomi
     assert owner.document == before and owner.tools.reads.records == reads
     await revise(owner, {"op": "set_character", "field": "description", "value": "After"})
     await revise(owner, {"op": "set_character", "field": "personality", "value": "Bold"})
-    rollover(owner.state, [], "Continue", 0)
+    rollover(owner.state, [], {"chapters": [], "current": [], "revision": 0}, 0)
     with pytest.raises(ValueError, match="read_lore_entry"):
         await revise(owner, {"op": "remove_lore", "ref": "L1"})
     await call(owner, "read_lore_entry", ref="L1")

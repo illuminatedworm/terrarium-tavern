@@ -232,6 +232,8 @@ def create_app(data_dir=None):
             record["phase"] = "preparing"
             service.retrieval.cache.clear()
             engine = service.full.retrieval if session["agent_mode"] == "full_agent" else service.retrieval
+            from tavern.memories.memory_archive import read_archive
+
             await engine.prepare(
                 document,
                 session["messages"],
@@ -241,6 +243,7 @@ def create_app(data_dir=None):
                 session,
                 "rebuild",
                 index_only=True,
+                archive=read_archive(session["messages"]) if session["agent_mode"] == "half_agent" else None,
             )
             jobs = [
                 task
@@ -257,7 +260,11 @@ def create_app(data_dir=None):
                 if failed:
                     raise ValueError(failed[0].get("error", "索引任务未完成"))
             record["message"] = (
-                "世界书索引准备完成"
+                (
+                    "世界书与归档经历索引准备完成"
+                    if session["agent_mode"] == "half_agent"
+                    else "世界书索引准备完成"
+                )
                 if "embedding" in config.retrieval.channels
                 else "关键词 / BM25 索引已准备；未启用向量通道，不生成向量条目"
             )
@@ -753,17 +760,14 @@ def create_app(data_dir=None):
         if store.session(sid)["agent_mode"] == "full_agent":
             raise ValueError("Full Agent 由模型管理笔记，不使用后台记忆重建")
         from tavern.memories.memory_engine import estimate_batches
-        from tavern.memories.memory_records import read_memory
+        from tavern.memories.memory_records import new_memory, read_memory
 
         session = store.session(sid)
         cfg = store.session_settings(session).for_role("background")
         document = (session["snapshot"].get("content") or {}).get(
             "document", store.session_card(sid)["document"]
         )
-        base = {
-            "version": 1,
-            "records": [r for r in read_memory(session["snapshot"])["records"] if r.get("manual")],
-        }
+        base = new_memory(r for r in read_memory(session["snapshot"])["records"] if r.get("manual"))
         import asyncio
 
         count = await asyncio.to_thread(

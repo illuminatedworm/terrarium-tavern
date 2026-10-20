@@ -22,6 +22,7 @@ from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_channels_compaction import compact_response
 from tests.backend.test_chatgpt_integration import connected_store, story
 from tests.backend.test_half_agent_alignment import Story
+from tests.support.history_labels import strip_label
 from tests.support.memory_fixtures import memory_snapshot
 from tests.support.tracker_model import TrackerModel
 
@@ -384,7 +385,7 @@ def test_role_remapping_does_not_separate_lore_from_its_source_exchange():
     assert len(groups) == 3
     lore_group = next(group for group in groups if any(row["content"] == "完整锚定资料" for row in group))
     assert lore_group[0]["role"] == "user" and lore_group[0]["content"] == "完整锚定资料"
-    assert lore_group[-1]["content"] == "首轮完整回复"
+    assert strip_label(lore_group[-1]["content"]) == "首轮完整回复"
 
 
 def test_reinjected_lore_gets_a_new_cooldown_on_its_next_compaction():

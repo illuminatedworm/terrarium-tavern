@@ -187,6 +187,9 @@ SOURCES = {
     "lore_before": "lore_injected",
     "lore_after": "lore_injected",
     "inject": "custom",
+    # Split dynamic frames keep their parent's message type and role mapping.
+    "memory_recall": "memory",
+    "handoff_chapters": "handoff",
 }
 
 

@@ -1,6 +1,7 @@
-import { createRenderer, defineComponent, nextTick, ref } from 'vue';
+import { createRenderer, defineComponent, nextTick, reactive, ref, ssrContextKey } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 import { useContextOperations } from '../../web/composables/useContextOperations';
+import FullAgentNotes from '../../web/components/story/FullAgentNotes.vue';
 
 const request = vi.hoisted(() => vi.fn());
 vi.mock('../../web/lib/api', () => ({ api: request }));
@@ -17,6 +18,79 @@ const renderer = createRenderer<any, any>({
   nextSibling: () => null,
 });
 describe('context operation completion', () => {
+  it('reuses the saved handoff without sending text and discards stale reads', async () => {
+    const reads: { resolve: (value: any) => void; reject: (reason: Error) => void }[] = [];
+    request.mockReset();
+    request.mockImplementation((url, body) =>
+      url.endsWith('/new-context')
+        ? Promise.resolve({ id: 'story', revision: body.expected_revision + 1 })
+        : new Promise((resolve, reject) => reads.push({ resolve, reject })),
+    );
+    const props = reactive({
+      session: { id: 'story', revision: 1, messages: [{}, {}, {}] },
+      disabled: false,
+    });
+    let panel: any;
+    // Exercise the actual component handlers in a mounted scope without a DOM
+    // or rendering unrelated notes/plot/context controls.
+    const app = renderer.createApp(
+      defineComponent({
+        setup() {
+          panel = (FullAgentNotes as any).setup(props, { expose() {}, emit: vi.fn() });
+          return () => null;
+        },
+      }),
+    );
+    app.provide(ssrContextKey, {});
+    app.mount({});
+    const notes = (text: string) => ({ handoff: { text }, notes: [] });
+    try {
+      props.session = { ...props.session, revision: 2 };
+      await nextTick();
+      reads.shift()!.resolve(notes('## 当前交接\n- 旧版本'));
+      await nextTick();
+      expect(panel.records.value).toBeNull();
+      await panel.newWindow();
+      expect(request.mock.calls.filter((call) => call[0].endsWith('/new-context'))).toHaveLength(0);
+      reads.shift()!.resolve(notes('## 当前交接\n- 新版本'));
+      await nextTick();
+      expect(panel.records.value.handoff.text).toContain('新版本');
+      expect(panel.keepRecent.value).toBe(2);
+      panel.keepRecent.value = 1;
+      await panel.newWindow();
+      const writes = request.mock.calls.filter((call) => call[0].endsWith('/new-context'));
+      expect(writes).toHaveLength(1);
+      expect(writes[0][1]).toEqual({ expected_revision: 2, keep_recent: 1 });
+      props.session = { ...props.session, revision: 3 };
+      await nextTick();
+      const displayed = panel.records.value;
+      expect(displayed.handoff.text).toContain('新版本');
+      expect(panel.loading.value).toBe(true);
+      expect(panel.canSwitch.value).toBe(false);
+      reads.shift()!.reject(new Error('读取失败'));
+      await nextTick();
+      expect(panel.error.value).toBe('读取失败');
+      expect(panel.records.value).toBe(displayed);
+      expect(panel.canSwitch.value).toBe(false);
+      await panel.newWindow();
+      expect(request.mock.calls.filter((call) => call[0].endsWith('/new-context'))).toHaveLength(1);
+      const retry = panel.refreshNotes();
+      expect(panel.records.value).toBe(displayed);
+      reads.shift()!.resolve(notes('## 当前交接\n- 已更新'));
+      await retry;
+      expect(panel.canSwitch.value).toBe(true);
+      props.session = { ...props.session, id: 'other', revision: 0 };
+      await nextTick();
+      expect(panel.records.value).toBeNull();
+      expect(panel.canSwitch.value).toBe(false);
+      reads.shift()!.resolve(notes('其他对话交接'));
+      await nextTick();
+      expect(panel.records.value.handoff.text).toBe('其他对话交接');
+    } finally {
+      app.unmount();
+    }
+  });
+
   it('keeps controls locked until the completed operation has installed its new revision', async () => {
     const session = ref({ id: 'story', channel_origin: 'chatgpt', agent_mode: 'half_agent', revision: 1 });
     let finish!: (value: any) => void;

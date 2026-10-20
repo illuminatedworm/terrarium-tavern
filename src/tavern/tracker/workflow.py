@@ -7,7 +7,8 @@ from tavern.conversation.half_compaction import local_window_enabled
 from tavern.conversation.half_context import load_trace
 from tavern.conversation.window import plan_window
 from tavern.memories.memory import completed_rounds, fingerprint, window_history, window_valid
-from tavern.memories.memory_records import read_memory, source_hash
+from tavern.memories.memory_archive import read_archive
+from tavern.memories.memory_records import install_memory, read_memory, source_hash
 from tavern.memories.memory_retention import retain_memory
 
 
@@ -28,11 +29,14 @@ async def before_story(
             snapshot.pop(key)
             store.event(tid, "memory_window_reset", {"kind": key, "reason": "维护来源不在当前分支"})
     try:
-        snapshot["memory_document"] = retain_memory(
-            read_memory(snapshot),
-            history,
-            settings,
-            event=lambda kind, payload: store.event(tid, kind, payload),
+        install_memory(
+            snapshot,
+            retain_memory(
+                read_memory(snapshot),
+                history,
+                settings,
+                event=lambda kind, payload: store.event(tid, kind, payload),
+            ),
         )
     except ValueError as error:
         snapshot["memory_warning"] = str(error)
@@ -48,6 +52,7 @@ async def before_story(
             session,
             tid,
             turn_number=sum(m["role"] == "user" for m in history) + 1,
+            archive=read_archive(history, snapshot),
         )
         count, _ = plan_window(
             document,

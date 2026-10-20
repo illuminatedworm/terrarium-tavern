@@ -6,6 +6,8 @@
 
 Half Agent 从有界的当前输入和最近回复线索构造查询，线索使用 `<tavern_retrieval>` 区块，由服务端从正文和 MVU 中分离保存。空输入或“继续”采用有界本地回退，不扫描全部历史。
 
+Half Agent 还用同一查询召回已归档的经历：BM25 加可选向量与重排，沿用本页的准入门槛，不走关键词通道。世界书与归档共用向量缓存，但分别判断索引是否就绪；一方新增或编辑条目不会停用另一方已就绪的向量通道。归档召回数量设为 0 时，不召回或准备归档向量。详见[归档与召回](../design/memory-consistency.md#归档与召回)。
+
 Full Agent 在每轮首次模型请求前自动检索，也可通过 `recall_lore` 自拟查询；它可以用 `set_retrieval_query` 保存下一轮线索，不要求最终正文附带标签。主动查询通过工具结果返回完整条目，自动检索维护中途注入记录。
 
 ## 候选如何进入上下文
@@ -79,7 +81,7 @@ INT8 使用 bitsandbytes 的 LLM.int8()，异常值阈值为 6，异常特征与
 - [search/retrieval.py](../../src/tavern/search/retrieval.py)、[lore_admission.py](../../src/tavern/search/lore_admission.py)：召回、融合与准入。
 - [retrieval_config.py](../../src/tavern/search/retrieval_config.py)：默认值和配置校验。
 - `GET /api/local-models` 与 `POST /api/local-models/{embedding|reranker}/{download|warmup}`：资源状态与任务。
-- `POST /api/sessions/{id}/retrieval/rebuild`：准备有效世界书索引，不执行查询。
+- `POST /api/sessions/{id}/retrieval/rebuild`：准备有效世界书索引，Half Agent 同时准备当前分支归档经历的向量索引；不执行查询。
 - `POST /api/sessions/{id}/preview`：只读上下文预览，不加载或推理神经模型。
 
 设置读写使用[分范围设置 API](../reference/settings-api.md)。检索质量评估和只读回放见[验证说明](../development/validation.md#检索与模型质量评估)。

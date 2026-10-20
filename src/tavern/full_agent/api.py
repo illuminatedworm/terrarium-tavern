@@ -9,15 +9,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tavern.core.models import TurnRequest
 from tavern.core.tokens import count_text
 from tavern.full_agent.activity import compact, message_items, part_page, turn_items
-from tavern.full_agent.state import full_state, note_view, rollover
-from tavern.full_agent.tools import RESULT_FIELDS, SPECS, Handoff, result_field, tool_definitions
+from tavern.full_agent.handoff import render_text, require_coverage
+from tavern.full_agent.state import full_state, note_view, rollover, rollover_start
+from tavern.full_agent.tools import RESULT_FIELDS, SPECS, result_field, tool_definitions
 from tavern.storage.store import Conflict, dump
 
 
-class ContextEdit(Handoff):
+class ContextRollover(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
     expected_revision: int = Field(ge=0)
-    new_window: bool = False
-    keep_recent: int = Field(default=0, ge=0, le=12)
+    keep_recent: int = Field(
+        default=2,
+        ge=0,
+        le=12,
+        description="Recent story messages to retain, 0–12 inclusive, default 2; expands to whole exchanges.",
+    )
 
 
 class ActivityQuery(BaseModel):
@@ -207,7 +213,7 @@ def register_full_agent_routes(app, store, context_operations=None):
             "channel_origin": session["channel_origin"],
             "compact_auto": session["compact_auto"],
             "context_operation": context_operations.latest(sid),
-            "handoff": state["handoff"],
+            "handoff": {"text": render_text(state["handoff"], session["messages"])},
             "plot_enabled": session["plot_enabled"],
             "plot": state["plot"],
             "plot_tokens": settings.full_agent_config.plot_tokens,
@@ -255,30 +261,18 @@ def register_full_agent_routes(app, store, context_operations=None):
                 )
         return store.session(sid)
 
-    @app.put("/api/sessions/{sid}/full-agent/context")
-    def edit_context(sid: str, edit: ContextEdit):
+    @app.post("/api/sessions/{sid}/full-agent/new-context")
+    def new_context(sid: str, request: ContextRollover):
         session = require_full(store, sid)
         if not session["head"]:
-            raise ValueError("空白故事还没有可保存交接笔记的剧情节点；请先发送一条消息")
-        settings = store.session_settings(session).for_role("full_agent")
+            raise ValueError("空白故事还没有可换窗的剧情节点；请先发送一条消息")
         if session["context_strategy"] == "openai_compact":
             raise ValueError("云端 compact 模式不使用 handoff；请先切回本地换窗")
-        if (
-            not edit.content.strip()
-            or count_text(edit.content, settings) > settings.full_agent_config.handoff_tokens
-        ):
-            raise ValueError("handoff 不能为空且不能超过配置的 token 上限")
         snapshot = copy.deepcopy(session["snapshot"])
         state = full_state(snapshot)
-        if edit.new_window:
-            rollover(state, session["messages"], edit.content, edit.keep_recent)
-        else:
-            state["handoff"] = {
-                "text": edit.content,
-                "revision": state["handoff"]["revision"] + 1,
-                "stale": False,
-            }
-        state.pop("edited_sources", None)
+        history = session["messages"]
+        require_coverage(state["handoff"], history, rollover_start(state, history, request.keep_recent))
+        rollover(state, history, None, request.keep_recent)
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute(
@@ -292,9 +286,9 @@ def register_full_agent_routes(app, store, context_operations=None):
                 raise Conflict("请先完成或取消当前回合")
             result = db.execute(
                 "UPDATE sessions SET revision=revision+1 WHERE id=? AND revision=?",
-                (sid, edit.expected_revision),
+                (sid, request.expected_revision),
             )
-            if result.rowcount != 1 or edit.expected_revision != session["revision"]:
+            if result.rowcount != 1 or request.expected_revision != session["revision"]:
                 raise Conflict("会话已改变，请刷新后重试")
             db.execute(
                 "UPDATE messages SET snapshot=? WHERE id=? AND session=?",

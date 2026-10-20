@@ -18,6 +18,7 @@ from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 from tavern.core.usage import aggregate_cache_usage
 from tavern.full_agent.recovery import resume_progress
+from tavern.memories.memory_records import new_memory
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
 from tavern.storage.turn_retry import can_retry, retry_head
 
@@ -28,6 +29,40 @@ def uid():
 
 def dump(value):
     return json.dumps(value, ensure_ascii=False)
+
+
+def settle_message_archive(db, sid, parent, snapshot):
+    """Reduce a snapshot's archive delta to its own entries against ``parent``'s chain."""
+    from tavern.memories.memory_archive import ARCHIVE, RETIRING, settle_archive
+
+    remaining = {entry["id"] for key in (ARCHIVE, RETIRING) for entry in snapshot.get(key, [])}
+    if not remaining:
+        return settle_archive(snapshot, {})
+    # Walk nearest ancestors first; the join alone does not guarantee row order,
+    # so sort by depth. Only the candidates in this delta need comparison; stop
+    # once their latest versions are known. Empty deltas (including Full Agent
+    # turns) never read the chain.
+    rows = db.execute(
+        f"""WITH RECURSIVE chain(id, parent, depth) AS (
+            SELECT id, parent, 0 FROM messages WHERE session=? AND id=?
+            UNION ALL
+            SELECT m.id, m.parent, chain.depth + 1 FROM messages m JOIN chain ON m.id = chain.parent
+            WHERE m.session=?
+        )
+        SELECT json_extract(m.snapshot,'$.{ARCHIVE}') AS delta
+        FROM chain JOIN messages m ON m.id = chain.id
+        ORDER BY chain.depth""",
+        (sid, parent, sid),
+    )
+    inherited = {}
+    for row in rows:
+        for entry in json.loads(row["delta"]) if row["delta"] else []:
+            if entry["id"] in remaining:
+                inherited[entry["id"]] = entry
+                remaining.remove(entry["id"])
+        if not remaining:
+            break
+    return settle_archive(snapshot, inherited)
 
 
 def insert_row(db, table, row):
@@ -49,7 +84,7 @@ class Conflict(ValueError):
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
 SCHEMA_VERSION = 8
-SETTINGS_VERSIONS = range(2, 8)
+SETTINGS_VERSIONS = range(2, 9)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -623,7 +658,7 @@ class Store(MessageAdapters):
         sid, mid = uid(), uid()
         snapshot = {
             "state": {},
-            "memory_document": {"version": 1, "records": []},
+            "memory_document": new_memory(),
             "lore": {},
             "scopes": {},
             "content": None,
@@ -696,6 +731,7 @@ class Store(MessageAdapters):
         from tavern.conversation.message_editing import NOTIFICATIONS
         from tavern.full_agent.state import remap_sources
         from tavern.memories.memory import fingerprint, window_valid
+        from tavern.memories.memory_archive import remap_archive
 
         new_sid = uid()
         with self.connection() as db:
@@ -752,6 +788,7 @@ class Store(MessageAdapters):
                         source_ref["message_id"] = ids.get(source_ref["message_id"], source_ref["message_id"])
                     for setting_ref in memory.get("setting_sources", []):
                         setting_ref["anchor"] = ids.get(setting_ref.get("anchor"), setting_ref.get("anchor"))
+                remap_archive(cloned["snapshot"], ids)
                 for record in cloned["snapshot"].get("lore_injections", []):
                     record["anchor_id"] = ids.get(record["anchor_id"], record["anchor_id"])
                     record["source_ids"] = [ids.get(mid, mid) for mid in record.get("source_ids", [])]
@@ -855,7 +892,7 @@ class Store(MessageAdapters):
             if result["messages"]
             else {
                 "state": {},
-                "memory_document": {"version": 1, "records": []},
+                "memory_document": new_memory(),
                 "lore": {},
                 "scopes": {},
                 "content": None,
@@ -884,9 +921,11 @@ class Store(MessageAdapters):
             result, settings.for_role("full_agent" if result["agent_mode"] == "full_agent" else "foreground")
         )
         result["cache_breakpoint_reason"] = breakpoint_reason(result, result["cache_breakpoint_effective_id"])
+        from tavern.memories.memory_archive import read_archive, with_archive_status
         from tavern.memories.memory_records import read_memory, with_source_status
 
         result["memory_view"] = with_source_status(read_memory(result["snapshot"]), result["messages"])
+        result["archived_memory"] = with_archive_status(read_archive(result["messages"]), result["messages"])
         return result
 
     def sessions(self):
@@ -1308,7 +1347,13 @@ class Store(MessageAdapters):
         if not session["head"]:
             raise ValueError("当前分支没有可保存档案的消息")
         snapshot = copy.deepcopy(session["snapshot"])
-        memory = manual_edit(read_memory(snapshot), edit)
+        memory = read_memory(snapshot)
+        if edit.action != "add" and not any(r["id"] == edit.id for r in memory["records"]):
+            from tavern.memories.memory_archive import edit_archive
+
+            edit_archive(snapshot, session["messages"], edit)
+            return self._save_memory_snapshot(sid, session, snapshot, edit.expected_revision)
+        memory = manual_edit(memory, edit)
         if edit.action != "delete":
             from tavern.memories.memory_retention import retain_memory
 
@@ -1334,6 +1379,8 @@ class Store(MessageAdapters):
             )
             if result.rowcount != 1:
                 raise Conflict("会话已改变，请刷新后重试")
+            head = db.execute("SELECT parent FROM messages WHERE id=?", (session["head"],)).fetchone()
+            settle_message_archive(db, sid, head["parent"], snapshot)
             db.execute(
                 "UPDATE messages SET snapshot=? WHERE id=? AND session=?",
                 (dump(snapshot), session["head"], sid),
@@ -1729,6 +1776,19 @@ class Store(MessageAdapters):
                     messages.append({**message, "snapshot": snapshot})
                 pending = {**pending, "messages": messages}
             last = scene["message_id"] if scene else pending["messages"][-1]["id"]
+            # Every persisted snapshot keeps only its own archive delta; drafts
+            # carry copies of their parent's delta (see memory_archive).
+            if scene:
+                target = db.execute("SELECT parent FROM messages WHERE id=?", (last,)).fetchone()
+                scene = {
+                    **scene,
+                    "snapshot": settle_message_archive(
+                        db,
+                        turn["session"],
+                        target["parent"] if target else None,
+                        copy.deepcopy(scene["snapshot"]),
+                    ),
+                }
             after = scene["snapshot"] if scene else pending["messages"][-1]["snapshot"]
             r = db.execute(
                 "UPDATE sessions SET head=?,revision=revision+1 WHERE id=? AND revision=?",
@@ -1744,6 +1804,7 @@ class Store(MessageAdapters):
                 if r.rowcount != 1:
                     raise Conflict("场景档案的目标消息不存在")
             for m in pending.get("messages", []):
+                settle_message_archive(db, turn["session"], m["parent"], m["snapshot"])
                 db.execute(
                     "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
                     (

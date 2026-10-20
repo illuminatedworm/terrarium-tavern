@@ -6,6 +6,7 @@ import json
 import re
 
 from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
+from tavern.core.history_refs import labeled, message_positions
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
@@ -358,6 +359,45 @@ def activate_lore(
     return sorted(selected.values(), key=order), notes, updated
 
 
+def memory_enabled(session, snapshot, generate=None):
+    """Whether this recipe and optional script ordering will include memory."""
+    generate = generate or {}
+    return ("ordered_prompts" not in generate or "memory" in generate["ordered_prompts"]) and any(
+        block["source"] == "memory"
+        and block.get("enabled", True)
+        and (not block.get("condition") or get_path(snapshot.get("state", {}), block["condition"]))
+        for block in session["recipe"]["blocks"]
+    )
+
+
+def archive_recall(history, snapshot, retrieval, settings):
+    """Return Writer text and retrieval evidence without mutating a cached input."""
+    from tavern.memories.memory_archive import (
+        read_archive,
+        render_recall,
+        retrieval_entries,
+        with_archive_status,
+    )
+
+    archive = read_archive(history, snapshot) if settings.memory_recall_count else []
+    if not archive:
+        return "", retrieval
+    if "memory_recall" not in retrieval:
+        from tavern.search.retrieval import archive_lexical, recall_view
+
+        rows = [{k: r[k] for k in ("id", "content", "keys", "comment")} for r in retrieval_entries(archive)]
+        ranked, scores = archive_lexical(rows, retrieval["query"], settings.retrieval)
+        retrieval = {
+            **retrieval,
+            "memory_recall": recall_view(
+                {"bm25": ranked}, ranked[: settings.memory_recall_count], scores, None, {}, []
+            ),
+        }
+    by_id = {e["id"]: e for e in with_archive_status(archive, history)}
+    text = render_recall([by_id[rid] for rid in retrieval["memory_recall"]["ids"] if rid in by_id])
+    return text, retrieval
+
+
 def compile_context(
     document,
     session,
@@ -377,12 +417,14 @@ def compile_context(
     retrieval_protocol=True,
     read_only=False,
     replay_records=None,
-    kemini_layer=True,
+    story_turn=True,
 ):
     """Compile one Writer request.
 
-    ``kemini_layer`` lets the Kemini experiment wrap the request when the conversation
-    enables it; nested script ``generate`` calls are not story turns and pass False.
+    ``story_turn`` is False only for nested script ``generate`` calls: their input
+    never becomes a story message, so it takes no H position label and the Kemini
+    experiment does not wrap the request. A story turn a script started
+    (``TurnRequest.generate``) is still a story turn whose input will be committed.
     """
     from tavern.conversation.half_compaction import (
         enabled as cloud_context,
@@ -478,6 +520,11 @@ def compile_context(
         retrieval["ids"] = fuse(retrieval["rankings"], retrieval["entries"], settings.retrieval)
         if "embedding" in settings.retrieval.channels or settings.local_models.reranker_enabled:
             retrieval["diagnostics"].append({"reason": "只读编译未运行本地模型；本预览不包含完整神经召回"})
+    recall_text, retrieval = (
+        archive_recall(history, snapshot, retrieval, settings)
+        if memory_enabled(session, snapshot, generate)
+        else ("", retrieval)
+    )
     clue_history = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in visible_history]
 
     def expand(text):
@@ -633,9 +680,10 @@ def compile_context(
         if block.source == "history":
             limited = visible_history
             for msg in limited:
+                text = msg.get("model", msg["raw"])
                 add(
                     msg["role"],
-                    msg.get("model", msg["raw"]),
+                    text,
                     "history",
                     block.priority,
                     True,
@@ -669,6 +717,30 @@ def compile_context(
                     context_source=block.source,
                     **({"message_id": input_message_id} if block.source == "input" else {}),
                 )
+            # Recalled archive follows the memory block as its own dynamic source,
+            # so a changed recall never re-sends the whole active projection.
+            if block.source == "memory" and recall_text:
+                if block.depth is not None:
+                    pending_depth.append(
+                        (
+                            block.depth,
+                            block.role,
+                            recall_text,
+                            block.id + ":recall",
+                            block.priority,
+                            False,
+                            [],
+                            "memory_recall",
+                        )
+                    )
+                else:
+                    add(
+                        block.role,
+                        recall_text,
+                        block.id + ":recall",
+                        block.priority,
+                        context_source="memory_recall",
+                    )
     for e in positioned:
         role = e.get("role", "system")
         if isinstance(role, int):
@@ -770,6 +842,7 @@ def compile_context(
                         m
                         for m in messages
                         if m.get("context_source", m["source"]) == source
+                        or (source == "memory" and m.get("context_source") == "memory_recall")
                         or (
                             source == "character"
                             and m.get("context_source")
@@ -970,10 +1043,27 @@ def compile_context(
                 "required": True,
             }
         )
+    # Compare canonical text before rendering position labels, including a reused
+    # regeneration input. Mark only prefixes we add; literal H lines are content.
+    # The pending input is labeled by story_turn, not by script options: the same
+    # message must keep its label once it is history, or the prefix would change.
+    positions = message_positions(history)
+    for message in messages:
+        source = message.get("context_source", message["source"])
+        position = (
+            len(history) + 1
+            if source == "input" and story_turn
+            else positions.get(message.get("message_id"))
+            if source == "history" and message["role"] == "user"
+            else None
+        )
+        if position is not None:
+            message["history_label"] = labeled(position, "")
+            message["content"] = message["history_label"] + message["content"]
     from tavern.core.kemini import inject_half, transport_tools
 
-    experiment_tools = transport_tools([], settings.kemini) if kemini_layer else []
-    if kemini_layer:
+    experiment_tools = transport_tools([], settings.kemini) if story_turn else []
+    if story_turn:
         messages = inject_half(messages, settings.kemini)
     total = request_tokens(messages, settings, experiment_tools)
     if enforce_budget and total > available:

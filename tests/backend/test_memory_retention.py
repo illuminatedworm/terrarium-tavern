@@ -1,15 +1,27 @@
 """Age and budget limits preserve protected continuity while bounding active memory."""
 
+import copy
 import json
+import sqlite3
+from contextlib import closing
 
 import pytest
 
 from tavern.core.models import ContextRecipe, Settings, TurnRequest
 from tavern.memories.memory import Tracker, fingerprint
+from tavern.memories.memory_archive import (
+    ARCHIVE,
+    RETIRING,
+    archive_entry,
+    edit_archive,
+    inherited_entries,
+    read_archive,
+    settle_archive,
+)
 from tavern.memories.memory_engine import consolidate
-from tavern.memories.memory_records import Record, render_document, source_hash
+from tavern.memories.memory_records import Record, RecordEdit, render_document, source_hash
 from tavern.memories.memory_retention import retain_memory
-from tavern.storage.store import Store
+from tavern.storage.store import Store, settle_message_archive
 
 
 def story(rounds):
@@ -42,7 +54,7 @@ def record(history, rid, category, round_number, *, content=None, **fields):
 
 
 def memory(*records):
-    return {"version": 1, "records": list(records)}
+    return {"version": 2, "records": list(records)}
 
 
 def test_current_limit_keeps_newest_automatic_items_and_manual_item():
@@ -68,10 +80,12 @@ def test_episode_cooldown_uses_latest_source_and_completed_round_boundary():
     refreshed["sources"].append(
         {"message_id": later["id"], "excerpt": later["model"], "fingerprint": source_hash(later)}
     )
-    items = memory(old, recent, refreshed)
+    callback = record(history, "callback", "episode", 5, callback=True)
+    items = memory(old, recent, refreshed, callback)
     result = retain_memory(items, history, Settings(memory_episode_cooldown_rounds=5))
     assert [r["id"] for r in result["records"]] == ["recent", "refreshed"]
-    assert len(retain_memory(items, history, Settings(memory_episode_cooldown_rounds=0))["records"]) == 3
+    assert [r["id"] for r in result["retired"]] == ["old"]
+    assert len(retain_memory(items, history, Settings(memory_episode_cooldown_rounds=0))["records"]) == 4
 
 
 def test_budget_exits_oldest_episode_but_keeps_open_uncertain_and_manual():
@@ -167,3 +181,47 @@ async def test_retention_runs_on_send_even_when_no_tracker_batch_is_due(tmp_path
     )
     assert not calls
     assert [r["id"] for r in snap["memory_document"]["records"]] == ["new"]
+    # The retired episode leaves the projection for the archive, unchanged.
+    assert [(e["id"], e["content"], e["archived_round"]) for e in snap[RETIRING]] == [("old", "old", 4)]
+
+
+def test_archive_delta_is_settled_against_the_branch_chain():
+    history = story(3)
+    old = archive_entry(record(history, "old", "episode", 1), 1)
+    newer = archive_entry(record(history, "newer", "episode", 2), 2)
+    history[1]["snapshot"] = {ARCHIVE: [old]}
+    # A draft carries a1's delta; only what this turn retired is persisted.
+    draft = settle_archive({ARCHIVE: [old], RETIRING: [newer]}, inherited_entries(history[:2]))
+    assert draft == {ARCHIVE: [newer]}
+    assert ARCHIVE not in settle_archive({ARCHIVE: [old]}, inherited_entries(history[:2]))
+    # A sibling version of a1 (parent u1) keeps a1's own retirement.
+    assert settle_archive({ARCHIVE: [old]}, inherited_entries(history[:1])) == {ARCHIVE: [old]}
+    history[3]["snapshot"] = draft
+    assert [e["id"] for e in read_archive(history[:4])] == ["old", "newer"]
+    head = copy.deepcopy(draft)
+    edit_archive(head, history[:4], RecordEdit(expected_revision=0, action="delete", id="old"))
+    history[3]["snapshot"] = settle_archive(head, inherited_entries(history[:3]))
+    assert [e["id"] for e in read_archive(history[:4])] == ["newer"]
+    # A fork made before the delete still sees the entry.
+    assert [e["id"] for e in read_archive(history[:2])] == ["old"]
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE messages(id TEXT PRIMARY KEY, session TEXT, parent TEXT, snapshot TEXT)")
+        for index, message in enumerate(history):
+            db.execute(
+                "INSERT INTO messages VALUES (?,?,?,?)",
+                (
+                    message["id"],
+                    "s",
+                    history[index - 1]["id"] if index else None,
+                    json.dumps(message.get("snapshot", {})),
+                ),
+            )
+        queries = []
+        db.set_trace_callback(queries.append)
+        assert settle_message_archive(db, "s", history[-1]["id"], {"state": {}}) == {"state": {}}
+        assert queries == []
+        # The nearest delta wins, including a deletion; a sibling keeps its own delta.
+        carried = history[3]["snapshot"]
+        assert settle_message_archive(db, "s", history[3]["id"], copy.deepcopy(carried)) == {}
+        assert settle_message_archive(db, "s", history[2]["id"], copy.deepcopy(carried)) == carried

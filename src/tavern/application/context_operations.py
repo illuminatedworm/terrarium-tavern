@@ -18,7 +18,7 @@ from tavern.full_agent.compaction import rebuild_local
 from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import tool_definitions
-from tavern.storage.store import Conflict, dump, uid
+from tavern.storage.store import Conflict, dump, settle_message_archive, uid
 
 
 class ContextOperationRequest(BaseModel):
@@ -251,13 +251,14 @@ class ContextOperations:
                 payload["converted"] = bool(replay["batches"])
             elif op["kind"] == "enable_local":
                 replay = await rebuild_local(
-                    compiled, settings, lazy_provider, progress=payload.get("replay"), save=save_progress
+                    compiled,
+                    settings,
+                    lazy_provider,
+                    session["messages"],
+                    progress=payload.get("replay"),
+                    save=save_progress,
                 )
-                state["handoff"] = {
-                    "text": replay["handoff"],
-                    "revision": state["handoff"]["revision"] + 1,
-                    "stale": False,
-                }
+                state["handoff"] = {**replay["handoff"], "revision": state["handoff"]["revision"] + 1}
                 state["window"] = {
                     "id": uid(),
                     "number": state["window"]["number"] + 1,
@@ -329,6 +330,8 @@ class ContextOperations:
                 )
                 if updated.rowcount != 1:
                     raise Conflict("整理期间对话已改变，未覆盖当前状态")
+                head = db.execute("SELECT parent FROM messages WHERE id=?", (payload["head"],)).fetchone()
+                settle_message_archive(db, session["id"], head["parent"], snapshot)
                 db.execute(
                     "UPDATE messages SET snapshot=? WHERE session=? AND id=?",
                     (dump(snapshot), session["id"], payload["head"]),

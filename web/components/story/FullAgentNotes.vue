@@ -7,98 +7,124 @@ import { historyRefLabel } from '../../lib/storyHistory';
 
 const props = defineProps<{ session: any; disabled?: boolean }>();
 const emit = defineEmits<{ saved: [session: any] }>();
-const handoff = ref('');
 const records = ref<any>(null);
-const saving = ref(false);
+const loadedRevision = ref<number | null>(null);
+const switching = ref(false);
+const keepRecent = ref(2);
+const loading = ref(false);
 const error = ref('');
 const showArchived = ref(false);
 let readGeneration = 0;
 let displayedSession = '';
 async function refreshNotes() {
   const sid = props.session.id,
+    revision = props.session.revision,
     ticket = ++readGeneration;
+  if (displayedSession !== sid) {
+    records.value = null;
+    loadedRevision.value = null;
+    displayedSession = sid;
+  }
+  loading.value = true;
+  error.value = '';
   try {
     const result = await api(`/sessions/${sid}/full-agent`);
-    if (props.session.id === sid && ticket === readGeneration) records.value = result;
+    if (props.session.id === sid && props.session.revision === revision && ticket === readGeneration) {
+      records.value = result;
+      loadedRevision.value = revision;
+    }
   } catch (e: any) {
     if (props.session.id === sid && ticket === readGeneration) error.value = e.message;
+  } finally {
+    if (ticket === readGeneration) loading.value = false;
   }
 }
 const notes = computed(() =>
   (records.value?.notes || []).filter((n: any) => showArchived.value || n.status === 'active'),
 );
-watch(
-  () => [props.session.id, props.session.revision],
-  async () => {
-    handoff.value = props.session.snapshot.full_agent?.handoff?.text || '';
-    if (displayedSession !== props.session.id) records.value = null;
-    displayedSession = props.session.id;
-    error.value = '';
-    await refreshNotes();
-  },
-  { immediate: true },
+watch(() => [props.session.id, props.session.revision], refreshNotes, { immediate: true });
+// Keep the previous view while refreshing, but only act on a successfully read revision.
+const canSwitch = computed(
+  () =>
+    !props.disabled &&
+    !switching.value &&
+    !loading.value &&
+    !!records.value &&
+    loadedRevision.value === props.session.revision &&
+    displayedSession === props.session.id,
 );
-async function save(newWindow: boolean) {
+async function newWindow() {
+  if (!canSwitch.value) return;
   const sid = props.session.id;
-  saving.value = true;
+  switching.value = true;
   error.value = '';
   try {
-    const updated = await api(
-      `/sessions/${sid}/full-agent/context`,
-      {
-        expected_revision: props.session.revision,
-        content: handoff.value,
-        new_window: newWindow,
-        keep_recent: 0,
-      },
-      'PUT',
-    );
+    const updated = await api(`/sessions/${sid}/full-agent/new-context`, {
+      expected_revision: props.session.revision,
+      keep_recent: keepRecent.value,
+    });
     if (props.session.id === sid) emit('saved', updated);
   } catch (e: any) {
     if (props.session.id === sid) error.value = e.message;
   } finally {
-    saving.value = false;
+    switching.value = false;
   }
 }
 const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '推测', plan: '计划' };
 </script>
 
 <template>
-  <section class="full-agent-notes" aria-label="Full Agent 记忆与窗口">
-    <ContextStrategyControls :session="session" :disabled="disabled || saving" />
+  <section class="full-agent-notes" aria-label="Full Agent 记忆与窗口" :aria-busy="loading">
+    <ContextStrategyControls :session="session" :disabled="disabled || switching" />
     <template v-if="session.context_strategy !== 'openai_compact'">
       <p class="inspector-note">
         Full Agent · 工作窗口 {{ session.snapshot.full_agent?.window?.number || 1 }}。 Agent
         自行维护交接笔记、查询历史并换窗。
       </p>
-      <label
-        >交接笔记（handoff）
-        <textarea
-          v-model="handoff"
-          rows="7"
-          :disabled="disabled || saving"
-          placeholder="当前场景、重要经历、用户约束与未决线索…"
-        />
-      </label>
-      <p v-if="records?.handoff?.stale" role="status">原始剧情已编辑，这份交接笔记需要核对。</p>
-      <div class="handoff-actions">
-        <button :disabled="disabled || saving || !handoff.trim()" @click="save(false)">保存交接笔记</button>
-        <button :disabled="disabled || saving || !handoff.trim()" @click="save(true)">保存并换新窗口</button>
-      </div>
+      <section aria-label="交接笔记（handoff）">
+        <h3>交接笔记（只读）</h3>
+        <p v-if="loading && !records" role="status">正在读取交接笔记…</p>
+        <p v-else-if="records?.handoff.text" class="note-content">{{ records.handoff.text }}</p>
+        <p v-else-if="records" class="state-empty">尚无交接笔记，Agent 会在需要时整理。</p>
+      </section>
       <p class="inspector-note">
-        手动换窗后携带交接笔记、基础设定和已开启的剧情规划。长期笔记独立保留；剧情原文可搜索，工具过程可在记录中查看。
+        这里显示模型实际使用的交接及来源标注。发现错误或“来源已修改”提示时，请在对话中要求 Agent 核对并更新。
+      </p>
+      <form class="handoff-actions" @submit.prevent="newWindow">
+        <label>
+          保留最近剧情消息（0–12 条）
+          <input
+            v-model.number="keepRecent"
+            type="number"
+            min="0"
+            max="12"
+            step="1"
+            required
+            :disabled="disabled || switching"
+          />
+        </label>
+        <button type="submit" :disabled="!canSwitch">
+          {{ switching ? '正在换窗…' : '换新窗口' }}
+        </button>
+      </form>
+      <p class="inspector-note">
+        手动换窗复用已有交接，默认保留最近 2
+        条剧情消息，并扩展到完整交流。退出范围须已有章节覆盖，交接正文和来源状态保持不变。
+        长期笔记与完整剧情继续保留。
       </p>
     </template>
     <FullAgentPlot
       :session="session"
-      :disabled="disabled || saving"
+      :disabled="disabled || switching"
       :limit="records?.plot_tokens"
       @saved="emit('saved', $event)"
     />
     <p v-if="error" role="alert">{{ error }}</p>
     <div class="notes-heading">
       <h3>长期笔记</h3>
-      <button class="quiet" @click="refreshNotes">刷新</button>
+      <button class="quiet" :disabled="loading || switching" @click="refreshNotes">
+        {{ loading ? '读取中…' : '刷新' }}
+      </button>
     </div>
     <p class="inspector-note">
       {{
@@ -128,20 +154,22 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
       <p class="note-content">{{ note.content }}</p>
       <small v-if="note.sources.length">原文来源：{{ note.sources.join('、') }}</small>
     </details>
-    <p v-if="!records" class="state-empty">正在读取笔记…</p>
-    <p v-else-if="!notes.length" class="state-empty">暂无笔记。需要记住某件事时，可以直接告诉 Agent。</p>
+    <p v-if="loading && !records" class="state-empty">正在读取笔记…</p>
+    <p v-else-if="records && !notes.length" class="state-empty">
+      暂无笔记。需要记住某件事时，可以直接告诉 Agent。
+    </p>
   </section>
 </template>
 
 <style scoped>
 .handoff-actions {
   display: flex;
+  align-items: end;
   flex-wrap: wrap;
   gap: 8px;
 }
-textarea {
-  width: 100%;
-  resize: vertical;
+.handoff-actions input {
+  width: 5em;
 }
 .agent-note {
   --note-color: var(--ctx-memory);
@@ -242,10 +270,11 @@ textarea {
 .notes-heading h3 {
   margin: 0;
 }
-.agent-note > .note-content {
+.note-content {
   color: var(--text-primary);
   font-size: var(--fs-md);
   line-height: 1.8;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

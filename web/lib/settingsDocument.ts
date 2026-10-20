@@ -83,7 +83,7 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 7;
+  version: 8;
   full_agent: SettingsObject & {
     model: ModelProfile;
     official_model: ModelProfile | null;

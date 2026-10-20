@@ -1,10 +1,18 @@
+import copy
+import json
+import sqlite3
+from contextlib import closing
+from types import SimpleNamespace
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
-from tavern.core.models import ContextRecipe, Settings
-from tavern.search.retrieval import SparseIndex, fuse, tokenize
+from tavern.core.models import ContextRecipe, SessionCreate, Settings
+from tavern.memories.memory_archive import ARCHIVE, archive_entry, retrieval_entries
+from tavern.memories.memory_records import Record
+from tavern.search.retrieval import RetrievalEngine, SparseIndex, fuse, tokenize
 from tavern.search.retrieval_config import RetrievalSettings
 from tavern.search.retrieval_text import RetrievalParser, query_text, split_retrieval
 
@@ -293,24 +301,51 @@ def test_bm25_rejects_character_only_and_weak_relative_winners():
 
 async def test_index_preparation_never_runs_query_or_reranker(tmp_path, monkeypatch):
     app = create_app(tmp_path)
+    store = app.state.store
     engine = app.state.service.retrieval
     manager = app.state.service.local_models
-    settings = Settings()
+    settings = store.settings()
     settings.retrieval.channels = ["bm25", "embedding"]
     settings.local_models.reranker_enabled = True
+    store.save_settings(settings)
     scheduled = []
 
     async def forbidden(*args, **kwargs):
         pytest.fail("Index preparation must not run query inference")
 
     monkeypatch.setattr(manager, "infer", forbidden)
+    monkeypatch.setattr(manager, "status", lambda _: {"models": {"embedding": {"ready": True}}})
     monkeypatch.setattr(
         manager, "schedule_index", lambda engine, missing, settings: scheduled.extend(missing)
     )
-    doc = {"character_book": {"entries": [{"id": "a", "keys": ["灯塔"], "content": "灯塔守卫"}]}}
+    doc = {
+        "name": "fixture",
+        "first_mes": "开场",
+        "character_book": {"entries": [{"id": "a", "keys": ["灯塔"], "content": "灯塔守卫"}]},
+    }
     try:
-        await engine.prepare(doc, [], "", {}, settings, {"id": "s"}, "prepare", index_only=True)
-        assert len(scheduled) == 1
+        card = store.import_card(json.dumps(doc, ensure_ascii=False).encode(), "fixture.json")
+        session = store.new_session(SessionCreate(card_id=card["id"]))
+        snapshot = copy.deepcopy(session["snapshot"])
+        snapshot[ARCHIVE] = [
+            archive_entry(Record(id="old", category="episode", content="在灯塔借出戒指").model_dump(), 1)
+        ]
+        store._save_memory_snapshot(session["id"], session, snapshot, session["revision"])
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            response = await client.post(f"/api/sessions/{session['id']}/retrieval/rebuild")
+        assert response.status_code == 200
+        job = response.json()["id"]
+        await manager.tasks[job]
+        assert manager.jobs[job]["status"] == "complete", manager.jobs[job]
+        assert len(scheduled) == 2
+        assert any(entry["id"] == "memory:old" for _, entry in scheduled)
+        with store.connection() as db:
+            keys = json.loads(
+                db.execute(
+                    "SELECT keys FROM retrieval_collections WHERE session=?", (session["id"],)
+                ).fetchone()[0]
+            )
+        assert {key for key, _ in scheduled} <= set(keys)
         assert not engine.cache
     finally:
         await app.state.service.close()
@@ -349,3 +384,203 @@ async def test_index_job_publishes_incremental_counts(tmp_path, monkeypatch):
         assert job["status"] == "complete"
     finally:
         await app.state.service.close()
+
+
+async def test_archive_recall_admits_relevant_episodes_into_their_own_frame():
+    key = Record(
+        id="key",
+        category="episode",
+        content="守塔人把地下室钥匙交给了用户",
+        people=["守塔人"],
+        kind="claim",
+        known_to=["守塔人"],
+        story_time="昨夜",
+        manual=True,
+        status="completed",
+    )
+    umbrella = Record(id="umbrella", category="episode", content="用户在集市买了一把红伞")
+    entries = [archive_entry(r.model_dump(), 3) for r in (key, umbrella)]
+    history = [
+        {"id": "g", "role": "assistant", "raw": "开场", "model": "开场", "snapshot": {}},
+        {"id": "u1", "role": "user", "raw": "走", "model": "走", "snapshot": {ARCHIVE: entries[:1]}},
+        {"id": "a1", "role": "assistant", "raw": "好", "model": "好", "snapshot": {ARCHIVE: entries[1:]}},
+    ]
+    session = {"id": "s", "persona": "用户", "recipe": ContextRecipe().model_dump()}
+    query = "去钟塔找守塔人要地下室钥匙"
+    out = compile_context({"name": "向导"}, session, history, {"state": {}}, query, Settings(), "fixture")
+    recall = [m for m in out["trace"] if m.get("context_source") == "memory_recall"]
+    assert len(recall) == 1 and "守塔人把地下室钥匙交给了用户" in recall[0]["content"]
+    assert "红伞" not in recall[0]["content"] and out["retrieval"]["memory_recall"]["ids"] == ["key"]
+    assert all(
+        label in recall[0]["content"]
+        for label in ("手工修订", "角色说法", "已完成", "明确知情：守塔人", "时间：昨夜")
+    )
+    scripted = compile_context(
+        {"name": "向导"},
+        session,
+        history,
+        {"state": {}},
+        query,
+        Settings(),
+        "fixture",
+        retrieval=out["retrieval"],
+        generate={"ordered_prompts": ["memory", "user_input"]},
+    )
+    assert any(m.get("context_source") == "memory_recall" for m in scripted["trace"])
+    prepared = {k: v for k, v in out["retrieval"].items() if k != "memory_recall"}
+    before = copy.deepcopy(prepared)
+    repeated = compile_context(
+        {"name": "向导"},
+        session,
+        history,
+        {"state": {}},
+        query,
+        Settings(),
+        "fixture",
+        retrieval=prepared,
+    )
+    assert prepared == before and "memory_recall" not in prepared
+    assert repeated["retrieval"]["memory_recall"] == out["retrieval"]["memory_recall"]
+    assert (
+        "memory_recall"
+        not in compile_context(
+            {"name": "向导"},
+            session,
+            history,
+            {"state": {}},
+            query,
+            Settings(memory_recall_count=0),
+            "fixture",
+        )["retrieval"]
+    )
+
+    class Reranker:
+        def __init__(self, scores):
+            self.scores = scores
+
+        async def infer(self, *args, **kwargs):
+            if isinstance(self.scores, Exception):
+                raise self.scores
+            return self.scores
+
+    rows = [{k: r[k] for k in ("id", "content", "keys", "comment")} for r in retrieval_entries(entries)]
+    engine = RetrievalEngine.__new__(RetrievalEngine)
+    settings = Settings(local_models={"reranker_enabled": True})
+    engine.models = Reranker([0.2])
+    rejected = await engine.recall_archive(rows, query, settings)
+    assert rejected["ids"] == [] and rejected["diagnostics"][0]["id"] == "key"
+    # A failed reranker keeps only lexical evidence, never a weaker shortlist.
+    engine.models = Reranker(RuntimeError("down"))
+    assert (await engine.recall_archive(rows, query, settings))["ids"] == ["key"]
+
+
+async def test_lore_and_archive_publish_complete_vector_indexes_independently(tmp_path):
+    from tavern.advisor.tools import AdvisorTools
+    from tavern.core.model_view import ModelView
+    from tavern.storage.maintenance import _plan
+    from tavern.tracker.task import TrackerTask
+
+    class Models:
+        def __init__(self):
+            self.missing = []
+
+        def revision(self, settings):
+            return "fixture"
+
+        def schedule_index(self, engine, missing, settings):
+            self.missing = missing
+
+        async def infer(self, *args, **kwargs):
+            return [[1.0]]
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, revision INTEGER)")
+        db.execute("INSERT INTO sessions VALUES ('s', 0)")
+        db.execute(
+            "CREATE TABLE turns(id TEXT, session TEXT, status TEXT, created REAL, request TEXT, preview TEXT, draft TEXT)"
+        )
+        models = Models()
+        engine = RetrievalEngine(SimpleNamespace(connection=lambda: db), models)
+        settings = Settings(retrieval={"channels": ["embedding"]}, local_models={"reranker_enabled": False})
+        document = {
+            "character_book": {
+                "entries": [{"id": "lore", "keys": ["other"], "content": "Northern tower setting"}]
+            }
+        }
+        session = {"id": "s", "persona": "User", "recipe": ContextRecipe().model_dump()}
+        args = (document, [], "semanticquery", {"state": {}}, settings, session, "fixture")
+
+        def finish_index():
+            for key, entry in models.missing:
+                db.execute(
+                    "INSERT INTO retrieval_vectors VALUES (?,?)",
+                    (key, json.dumps({"fragments": [entry["content"]], "vectors": [[1.0]]})),
+                )
+            engine.cache.clear()
+            models.missing = []
+
+        await engine.prepare(*args, index_only=True)
+        finish_index()
+        assert (await engine.prepare(*args))["rankings"]["embedding"] == ["lore"]
+        archive = [
+            archive_entry(Record(id="old", category="episode", content="Archived event").model_dump(), 1)
+        ]
+        queries = []
+        db.set_trace_callback(queries.append)
+        recalled = await engine.prepare(*args, archive=archive)
+        assert recalled["rankings"]["embedding"] == ["lore"]
+        assert recalled["memory_recall"]["ids"] == []
+        assert [entry["id"] for _, entry in models.missing] == ["memory:old"]
+        archive_key = models.missing[0][0]
+        assert len([q for q in queries if q.startswith("SELECT value FROM retrieval_vectors")]) == 1
+        engine.cache.clear()
+        queries.clear()
+        await engine.prepare(*args, archive=archive)
+        assert len([q for q in queries if q.startswith("SELECT value FROM retrieval_vectors")]) == 1
+        compiled = compile_context(
+            document, session, [], {"state": {}}, "semanticquery", settings, "fixture", retrieval=recalled
+        )
+        assert "Northern tower setting" in json.dumps(compiled["messages"])
+
+        finish_index()
+        edited = copy.deepcopy(document)
+        edited["character_book"]["entries"][0]["content"] = "Changed tower setting"
+        recalled = await engine.prepare(edited, *args[1:], archive=archive)
+        assert "embedding" not in recalled["rankings"]
+        assert recalled["memory_recall"]["evidence"]["old"]["channels"] == ["embedding"]
+
+        def live_keys():
+            return json.loads(
+                db.execute("SELECT keys FROM retrieval_collections WHERE session='s'").fetchone()[0]
+            )
+
+        registered = live_keys()
+        assert archive_key in registered
+        story = {**session, "document": edited, "snapshot": {"state": {}}, "agent_mode": "half_agent"}
+        advisor = AdvisorTools(
+            SimpleNamespace(
+                story=story, cfg=settings, service=SimpleNamespace(retrieval=engine), rid="consult"
+            )
+        )
+        await advisor.dispatch("recall_lore", SimpleNamespace(query="semanticquery"))
+        tracker = SimpleNamespace(
+            retrieval=engine,
+            view=ModelView({}),
+            document=edited,
+            committed_history=[],
+            search_snapshot=lambda: {"state": {}},
+            settings=settings,
+            session=session,
+            tid="tracker",
+        )
+        await TrackerTask.execute_tool(tracker, "search_lore", {"query": "semanticquery"})
+        assert live_keys() == registered
+        cache_remove = _plan(SimpleNamespace(root=tmp_path, settings=lambda: settings), db, 0)[2]
+        assert archive_key not in {row["key"] for row in cache_remove}
+
+        settings.memory_recall_count = 0
+        models.missing = []
+        recalled = await engine.prepare(*args, archive=archive)
+        assert recalled["rankings"]["embedding"] == ["lore"]
+        assert "memory_recall" not in recalled and not models.missing

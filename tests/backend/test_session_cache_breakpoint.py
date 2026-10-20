@@ -14,6 +14,7 @@ from tavern.memories.memory import fingerprint
 from tavern.scripting.agent import make_provider
 from tavern.scripting.responses import ResponsesProvider
 from tavern.storage.store import Store, dump, uid
+from tests.support.history_labels import strip_label
 
 
 @pytest.fixture
@@ -200,7 +201,7 @@ async def test_writer_turn_marks_second_latest_reply_in_responses_request(story)
         ]
         assert len(marked) == 1
         assert marked[0]["role"] == "assistant"
-        assert marked[0]["content"][0]["text"] == next(
+        assert strip_label(marked[0]["content"][0]["text"]) == next(
             message["model"] for message in session["messages"] if message["id"] == replies[1]
         )
     finally:

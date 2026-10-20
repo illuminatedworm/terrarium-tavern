@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 7、数据库 schema 为 8、个人数据包格式为 2；升级前备份，旧设置和版本 1 数据包可以导入。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 8、数据库 schema 为 8、个人数据包格式为 2；升级前备份，旧设置和版本 1 数据包可以导入。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -8,11 +8,11 @@
 
 `thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加自拟包装。默认值来自原预设对应条目，移除 SillyTavern 宏，并将独立边界标签与 Interleaving 包装改为 Markdown 分隔。新增的 roleplay_prompt 位于助手确认前，content_prompt 位于自检后，output_prompt 位于传输指令后；均可显式保存。请求只读取已保存文本；设置升级仅在旧值完全匹配旧默认值时更新明确列出的默认提示，自定义文本不变。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档为版本 7。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`，设置文档为版本 8。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 7；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 8；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -35,7 +35,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 7，由三个独立范围组成：
+数据库中的设置文档版本为 8，由三个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
@@ -156,7 +156,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 ## 数据库与设置迁移
 
-当前数据库为 **schema 8**，设置文档为 **version 7**，剧情快照中的 `memory_document.version` 为 **1**。三者分别标识数据库结构、设置文档和记忆记录格式。
+当前数据库为 **schema 8**，设置文档为 **version 8**，剧情快照中的 `memory_document.version` 为 **2**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **3**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+
+记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
 存储层接受 schema 1–8，先只读核对版本与设置。数据库版本低于 8、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。全部步骤完成后写入 schema 8；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
 
@@ -174,6 +176,8 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 设置 version 5 → 6 为 `shared.kemini` 增加 `clear_prompt`、`info_prompt`、`transport_prompt`、`tool_description` 和 `content_description`。新增字段写入其可见默认值，已有文本与开关原样保留。Kemini 文本统一从共享设置读取并支持本页撤回及导入导出；不再返回另一份只读 `kemini_protocol`。
 
 设置 version 6 → 7 增加 `roleplay_prompt`、`content_prompt`、`output_prompt`，对应角色扮演追加要求、正文约束和末尾输出提示。仅当 CLEAR、资料起始、自检文本完全匹配旧默认值时，替换其中的独立边界标签、Interleaving 包装及相关引用。小说填充、全部自定义文本和开关原样保留；十三项文本均以数据库中的保存值为准。
+
+设置 version 7 → 8 为 `half_agent` 增加 `memory_recall_count`（默认 3）与 `memory_recall_filter`（默认关闭），为 `full_agent.tools` 增加 `chapter_tokens`（默认 512）与 `chapters_total_tokens`（默认 4096）。新增字段写入其可见默认值，已保存的其他设置原样保留，两个范围的修订号各加一。
 
 迁移重复执行不覆盖已迁移的配置。升级操作与恢复步骤见[安装与维护](../guides/maintenance.md#备份升级与回退)。
 

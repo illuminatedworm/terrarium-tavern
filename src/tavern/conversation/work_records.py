@@ -28,6 +28,7 @@ LABELS = {
     "memory_records_discarded": "可选原话记录已丢弃",
     "memory_tombstone_suppressed": "手工删除内容已屏蔽",
     "memory_retention": "记忆条目准出",
+    "memory_recall_filter": "归档召回筛选",
     "variable_rules": "MVU 规则注入",
     "variable_update_started": "变量分析开始",
     "variable_update_completed": "变量更新完成",

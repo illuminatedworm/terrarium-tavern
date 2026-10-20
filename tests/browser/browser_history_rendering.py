@@ -31,7 +31,7 @@ async def main():
         session = store.new_session(SessionCreate(card_id=card["id"]))
         snapshot = session["snapshot"]
         snapshot["memory_document"] = {
-            "version": 1,
+            "version": 2,
             "records": [
                 Record(
                     category="current",

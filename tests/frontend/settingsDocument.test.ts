@@ -3,7 +3,7 @@ import { clone, difference, rebaseSettings, type SettingsDocument } from '../../
 
 const fixture = () =>
   ({
-    version: 7,
+    version: 8,
     full_agent: { model: { model: 'full', reply_tokens: 2048 }, system_prompt: 'full prompt' },
     half_agent: { foreground: { model: 'writer' }, background: { model: 'tracker' } },
     shared: { providers: [{ id: 'p', name: 'Provider', has_api_key: true }] },

@@ -11,6 +11,7 @@ from tavern.core.message_adapter import project_context
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.tokens import counting_info, request_tokens
+from tavern.full_agent.state import read_full_state
 from tavern.memories.memory_records import read_memory, render_document, source_hash, with_source_status
 from tavern.scripting.request_context import response_origin
 
@@ -158,20 +159,13 @@ def background(story, config):
             "content": "<turn_preference>\n" + story.get("turn_preference", "") + "\n</turn_preference>",
         }
     ]
-    full = story["snapshot"].get("full_agent", {})
     if story["agent_mode"] == "full_agent":
-        handoff = full.get("handoff", {})
-        if handoff.get("text") and story.get("context_strategy") != "openai_compact":
-            dynamic.append(
-                {
-                    "role": "system",
-                    "content": "<handoff stale='"
-                    + str(bool(handoff.get("stale")))
-                    + "'>\n"
-                    + handoff["text"]
-                    + "\n</handoff>",
-                }
-            )
+        from tavern.full_agent.handoff import render_text
+
+        full = read_full_state(story["snapshot"])
+        handoff = render_text(full["handoff"], story["messages"]) if full else ""
+        if handoff and story.get("context_strategy") != "openai_compact":
+            dynamic.append({"role": "system", "content": "<handoff>\n" + handoff + "\n</handoff>"})
     else:
         # Full records, never a token-budget abridgement of selected memory.
         rendered = render_document({"records": memory_rows(story)})

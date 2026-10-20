@@ -8,15 +8,23 @@ import jsonpatch
 import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from tavern.core.history_refs import message_at, message_ref
+from tavern.core.history_refs import message_at, message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
 from tavern.full_agent.content import CharacterRead, ContentEditor, ContentRevision, LoreRead, entry_view
+from tavern.full_agent.handoff import (
+    HandoffError,
+    HandoffWrite,
+    apply_write,
+    chapter_index,
+    check_limits,
+    require_coverage,
+)
 from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads, state_scope
-from tavern.full_agent.state import note_view, rollover, source_hash
+from tavern.full_agent.state import note_view, rollover, rollover_start, source_hash
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
 
@@ -46,11 +54,14 @@ class Read(Arguments):
     )
 
 
+HISTORY_SPAN = 8
+
+
 class HistoryRead(Read):
     ref: str = Field(
         min_length=1,
         max_length=80,
-        description="Exact H reference from search_history or retained context, e.g. H1; must exist in the current branch.",
+        description=f"H reference or closed span from search_history, retained context or handoff, e.g. H1 or H52-H58; at most {HISTORY_SPAN} messages per span, all in the current branch.",
     )
 
 
@@ -59,14 +70,6 @@ class NoteRead(Arguments):
         min_length=1,
         max_length=80,
         description="Exact existing note key, e.g. relationships/guide; accepts active or archived notes, not H/L references.",
-    )
-
-
-class Handoff(Arguments):
-    content: str = Field(
-        min_length=1,
-        max_length=64000,
-        description="Complete updated handoff text; must contain non-whitespace text.",
     )
 
 
@@ -79,10 +82,9 @@ class Plot(Arguments):
 
 
 class NewContext(Arguments):
-    handoff: str = Field(
-        min_length=1,
-        max_length=64000,
-        description="Complete updated handoff text for the new window; must contain non-whitespace text.",
+    handoff: HandoffWrite | None = Field(
+        default=None,
+        description="Optional update; omit or pass null to reuse the current handoff unchanged. Only messages actually leaving after keep_recent expands to whole exchanges need chapter coverage. When updating, provide chapter operations and the complete current handoff.",
     )
     keep_recent: int = Field(
         default=2,
@@ -216,16 +218,20 @@ SPECS = {
     ),
     "read_history": (
         HistoryRead,
-        "Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose.",
+        "Read complete original dialogue by a valid H reference or closed span, including the current user input; a span returns its messages complete and in branch order. "
+        "H references are navigation handles, not story prose.",
     ),
     "write_handoff": (
-        Handoff,
-        "Replace the complete handoff in the current window: a concise continuation summary, not all notes or the future plot outline. Build on the latest runtime memory update or successful write, whichever is later. "
-        "Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.",
+        HandoffWrite,
+        "Update the handoff in the current window without switching: optional chapter operations plus the complete current handoff. "
+        "Build on the latest <tavern_memory> or successful write, whichever is later; verify points marked as changed sources. "
+        "Chapters are an append-only ledger of what still matters later (irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places). Normally omit through: Runtime appends a chapter over the unarchived committed history. Choose a known endpoint only for intentional chapter splits. Drop one-off actions, scenery and dialogue texture; chapter ranges remain readable with read_history. Point refs are optional: cite known history only when useful for precise follow-up, never invent a citation for instructions or character material. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline.",
     ),
     "new_context": (
         NewContext,
-        "Replace the complete handoff and switch windows. Preserve the scene, important experiences, constraints, unresolved issues and references needed to continue; do not copy complete notes or the future plot outline. "
+        "Switch windows, optionally updating the handoff. Omit handoff or pass null to reuse the latest saved or successfully written handoff unchanged. "
+        "Choose keep_recent first: chapter coverage is required only for messages actually leaving after expanding the retained tail to complete exchanges. Retained messages and the current input need no new chapter; when all history stays, an empty handoff is allowed. "
+        "If updating, add any missing chapters and give the complete current handoff. Normally omit through on add: Runtime assigns the remaining exiting range. Choose a known endpoint only for intentional chapter splits. Keep only lasting events, relationship changes, promises, secrets and recurring people, items and places; chapter ranges remain readable with read_history. Point refs are optional, including in current; use only known references when precise follow-up helps. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline. "
         "Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. "
         "Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.",
     ),
@@ -307,8 +313,8 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     if not catalog and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
-        "write_handoff": f" content limit: {config.handoff_tokens} tokens.",
-        "new_context": f" handoff limit: {config.handoff_tokens} tokens.",
+        "write_handoff": f" Limits: current {config.handoff_tokens} tokens, each chapter {config.chapter_tokens}, all chapters {config.chapters_total_tokens}.",
+        "new_context": f" Limits: current {config.handoff_tokens} tokens, each chapter {config.chapter_tokens}, all chapters {config.chapters_total_tokens}.",
         "write_note": f" content limit: {config.note_tokens} tokens.",
         "write_plot": f" content limit: {config.plot_tokens} tokens.",
     }
@@ -440,31 +446,49 @@ class AgentTools:
                 include_preview=result_field(owner.session, name, "include_preview"),
             )
         if name == "read_history":
-            row = next((r for r in self.archive() if r["ref"] == args.ref), None)
-            if row is None:
-                raise ToolError("INVALID_REFERENCE", "当前分支没有此历史引用")
-            metadata = (
-                {"ref": args.ref, "role": row["role"]}
-                if result_field(owner.session, name, "include_metadata")
-                else {}
-            )
-            return self.read(row["text"], **metadata)
+            rows = self.archive()
+            span = parse_span_ref(args.ref)
+            if span is None or span[1] > len(rows):
+                raise ToolError("INVALID_REFERENCE", "当前分支没有此历史引用或区间")
+            if span[1] - span[0] >= HISTORY_SPAN:
+                raise ToolError(
+                    "INVALID_ARGUMENTS",
+                    f"一次最多读取 {HISTORY_SPAN} 条原文；请拆成多个不超过 {HISTORY_SPAN} 条的区间",
+                )
+            include = result_field(owner.session, name, "include_metadata")
+            # Every message of a span is complete and in branch order; the
+            # user's metadata switch applies to each, as to a single read.
+            selected = [
+                self.read(row["text"], **({"ref": row["ref"], "role": row["role"]} if include else {}))
+                for row in rows[span[0] - 1 : span[1]]
+            ]
+            return {"messages": selected} if span[0] < span[1] else selected[0]
         if name in ("write_handoff", "new_context"):
-            handoff = args.handoff if name == "new_context" else args.content
-            self.cap_text(handoff, owner.settings.full_agent_config.handoff_tokens, "handoff")
+            # Handoff cites committed originals; the current input is citable after this turn.
+            history = owner.history
+            archive_through = (
+                rollover_start(state, history, args.keep_recent) if name == "new_context" else len(history)
+            )
+            write = args.handoff if name == "new_context" else args
+            handoff = state["handoff"]
+            try:
+                if write is not None:
+                    handoff = apply_write(handoff, write, history, archive_through=archive_through)
+                    check_limits(handoff, history, owner.settings.full_agent_config, owner.settings)
+                if name == "new_context":
+                    require_coverage(handoff, history, archive_through)
+            except HandoffError as error:
+                raise ToolError(error.code, str(error)) from error
             if name == "new_context":
-                rollover(state, owner.history, handoff, args.keep_recent)
+                rollover(state, history, handoff if write is not None else None, args.keep_recent)
                 owner.rolled = True
             else:
-                state["handoff"] = {
-                    "text": handoff,
-                    "revision": state["handoff"]["revision"] + 1,
-                    "stale": False,
-                }
-            state.pop("edited_sources", None)
+                state["handoff"] = {**handoff, "revision": state["handoff"]["revision"] + 1}
             return {
                 "saved_to_draft": True,
                 "window": state["window"]["number"],
+                # Current C numbering, so a later call in this window can revise or merge.
+                "chapters": chapter_index(handoff, history),
                 "notice": "正文完成后与本回合统一提交。",
             }
         if name == "write_plot":

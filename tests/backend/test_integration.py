@@ -11,6 +11,7 @@ from tavern.application.api import create_app
 from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.storage.store import Store
+from tests.support.history_labels import strip_label
 from tests.support.memory_fixtures import memory_output
 from tests.support.tracker_model import MemoryModel, PatchModel, TrackerModel, batch_payload
 
@@ -430,8 +431,8 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
     messages = compiled["messages"]
     index = next(i for i, item in enumerate(compiled["trace"]) if item["source"] == "lore:1")
     assert messages[index] == {"role": "system", "content": "<lorebook>\nmid-scene\n</lorebook>"}
-    assert messages[index - 1]["content"] == "a"
-    assert messages[index + 1]["content"] == "b"
+    assert strip_label(messages[index - 1]["content"]) == "a"
+    assert strip_label(messages[index + 1]["content"]) == "b"
     try:
         assert (await provider.chat_complete(messages)).content == "OK"
         assert captured[0]["messages"] == messages
@@ -444,7 +445,7 @@ async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = TrackerModel(
-        [("search_lore", {"query": "*"}), ("tavern_recall_history", {"turn": 1, "radius": 0})],
+        [("search_lore", {"query": "*"}), ("tavern_recall_history", {"ref": "H1", "radius": 0})],
         ("search_lore", {"query": "灯塔"}),
         "维护完成",
         "后置检查完成",

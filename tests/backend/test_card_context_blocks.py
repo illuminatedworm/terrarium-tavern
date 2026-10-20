@@ -8,6 +8,7 @@ from tavern.full_agent.context import compile_window
 from tavern.full_agent.state import full_state, rollover
 from tavern.memories.memory_evidence import evidence_pool
 from tavern.memories.memory_protocol import References
+from tests.backend.test_full_agent import written
 from tests.backend.test_half_agent_alignment import Story
 
 
@@ -65,14 +66,22 @@ def test_compatibility_overrides_and_ordered_fields_keep_tags():
                 "scenario": "新场景",
                 "dialogue_examples": "新示例",
             },
-            "ordered_prompts": ["char_personality", "scenario", "char_description", "dialogue_examples"],
-        }
+            "ordered_prompts": [
+                "char_personality",
+                "scenario",
+                "char_description",
+                "dialogue_examples",
+                "user_input",
+            ],
+        },
+        story_turn=False,
     )
     assert [m["content"] for m in out["messages"][1:]] == [
         "<card_personality>\n新性格\n</card_personality>",
         "<card_scenario>\n新场景\n</card_scenario>",
         "<card_description>\n新描述\n</card_description>",
         "<card_mes_example>\n新示例\n</card_mes_example>",
+        "继续",  # A nested script prompt is not the next pending H story message.
     ]
 
 
@@ -171,6 +180,7 @@ def test_full_agent_tags_card_fields_and_keeps_greeting_plain_without_mutating_s
     text = "\n".join(m["content"] for m in out["messages"])
     for field, tag in CARD_FIELDS.items():
         assert text.count(f"<{tag}>\n{field}: 用户\n</{tag}>") == 1
+    # Assistant prose, including the greeting, has no runtime prefix.
     assert next(m["content"] for m in out["trace"] if m.get("message_id") == "opening") == "备选开场"
     assert history == original
     assert (
@@ -276,7 +286,7 @@ def test_card_layout_survives_final_api_projection(mode, api):
         "<user_character>",
         "<card_mes_example>",
         "所选开场",
-        "\n继续\n",
+        "[H2]\n继续\n",
         "<card_post_history_instructions>",
     ]
     positions = [text.index(value) for value in ordered]
@@ -355,7 +365,7 @@ def test_full_card_context_persists_across_tools_edits_and_rollover():
         document, session(), history, snapshot, "继续", cfg, [], continuation=first["context_additions"]
     )
     assert changed["context_ledger"]["rebuild_reason"] == "context_sources_changed"
-    rollover(full_state(snapshot), history, "采购已完成，当前十件，不回到开局的六件。", 0)
+    rollover(full_state(snapshot), history, written(history, "采购已完成，当前十件，不回到开局的六件。"), 0)
     after = compile_window(document, session(), history, snapshot, "继续", cfg, [])
     text = "\n".join(m["content"] for m in after["messages"])
     assert "<card_scenario>\n开局只有六件货物。\n</card_scenario>" in text

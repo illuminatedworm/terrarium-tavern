@@ -181,7 +181,9 @@ export const fullFields: SettingField[] = [
     ...number('tools.pressure_ratio', '上下文占用提醒阈值（比例）', 0.25, 0.9, 0.05),
     help: '上下文估算 token 数达到窗口容量的此比例时，提醒模型准备换窗。0.7 表示 70%；提醒本身不强制换窗。',
   },
-  number('tools.handoff_tokens', '交接笔记上限（tokens）', 128, 16384),
+  number('tools.handoff_tokens', '当前交接上限（tokens）', 128, 16384),
+  number('tools.chapter_tokens', '交接单章上限（tokens）', 64, 4096),
+  number('tools.chapters_total_tokens', '交接章节总量上限（tokens）', 256, 65536),
   number('tools.note_tokens', '单条长期笔记上限（tokens）', 128, 16384),
   number('tools.plot_tokens', '剧情规划上限（tokens）', 128, 16384),
 ];
@@ -213,6 +215,13 @@ export const memoryFields: SettingField[] = [
   number('memory_episode_cooldown_rounds', '经历冷却轮数', 0, 10000),
   number('memory_timeout', '每次维护超时（秒）', 5, 180),
   { path: 'memory_review_enabled', label: '允许一次疑难复核', type: 'checkbox' },
+  number('memory_recall_count', '归档经历召回上限（条，0 关闭）', 0, 20),
+  {
+    path: 'memory_recall_filter',
+    label: '召回后由 Tracker 筛选',
+    type: 'checkbox',
+    help: '召回非空时增加一次后台请求；正文与每次脚本嵌套生成分别筛选，失败时沿用阈值准入结果。',
+  },
 ];
 export const requestFields: SettingField[] = [
   {

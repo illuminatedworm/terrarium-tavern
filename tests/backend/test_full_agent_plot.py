@@ -23,7 +23,7 @@ from tavern.storage.store import Store, dump
 from tavern.storage.transfer import import_package
 from tests.backend import test_full_agent
 from tests.backend.test_data_transfer import package
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, handoff, runtime, turn
 
 story = test_full_agent.story
 
@@ -148,7 +148,7 @@ async def test_plot_failure_reopen_resume_and_rollover(story):
             session,
             Model(
                 ("write_plot", {"content": "独立保存的未来大纲"}),
-                ("new_context", {"handoff": "当前在港口。", "keep_recent": 0}),
+                ("new_context", {"handoff": handoff("当前在港口。"), "keep_recent": 0}),
                 RuntimeError("disconnected"),
             ),
         )

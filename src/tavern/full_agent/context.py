@@ -14,12 +14,13 @@ from tavern.conversation.context import (
 from tavern.conversation.regeneration import regeneration_reference
 from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
-from tavern.core.history_refs import message_ref, span_ref
+from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
+from tavern.full_agent.handoff import render_chapters, render_current
 from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
 
@@ -116,7 +117,8 @@ def compile_window(
             "system",
             f"本次上下文窗口上限为 {settings.context_tokens} tokens；"
             f"占用达到 {settings.full_agent_config.pressure_ratio * 100:g}% 时预警，提示占用百分比和当前估算 tokens / 窗口上限；"
-            "达到上限须单独调用 new_context 保存 handoff 并换窗，随后继续本轮。",
+            "达到上限须单独调用 new_context 换窗，随后继续本轮；handoff 可省略以沿用现有交接，"
+            "只检查 keep_recent 保留完整交流后实际退出的历史是否已有章节覆盖。",
             "context_policy",
         )
     if session.get("turn_preference"):
@@ -217,6 +219,7 @@ def compile_window(
             return
         if complete_source and source in (
             "handoff",
+            "handoff_chapters",
             "context_budget",
             "context_policy",
             "context_status",
@@ -258,7 +261,16 @@ def compile_window(
         records = by_owner.get(message["id"], [])
         for record in records:
             replay(record)
-        add(message["role"], history_text[message["id"]], "history", message_id=message["id"])
+        add(
+            message["role"],
+            # User labels help navigation; assistant prose and native replay
+            # must not acquire a format the model could imitate in its reply.
+            labeled(history_index + 1, history_text[message["id"]])
+            if message["role"] == "user"
+            else history_text[message["id"]],
+            "history",
+            message_id=message["id"],
+        )
         final = next((m for m in records if m.get("_full_agent_final")), None)
         if not complete_source and final and items and items[-1].get("message_id") == message["id"]:
             items[-1].update(
@@ -282,7 +294,12 @@ def compile_window(
     if pending_offset is not None and len(items) > fixed_count:
         replay_starts.append({"offset": len(items) - fixed_count, "history_start": len(history)})
     anchored(input_id)
-    add("user", user_input, "input", message_id=input_id)
+    add(
+        "user",
+        user_input and labeled(len(history) + 1, user_input),
+        "input",
+        message_id=input_id,
+    )
     for message in continuation:
         replay(message)
     update(
@@ -318,13 +335,26 @@ def compile_window(
     # edit instructions now come only from the user's explicit notification queue.
     if not complete_source:
         update("context_warning", "")
-        if handoff["text"] or "handoff" in ledger.seen:
+        # Chapters and the current handoff are separate frames: a mid-window
+        # current update does not resend the whole chapter ledger.
+        chapters = render_chapters(handoff, history)
+        if chapters or "handoff_chapters" in ledger.seen:
+            update(
+                "handoff_chapters",
+                "<tavern_memory>\nhandoff 章节（按时间首尾相接；[H…] 为原文位置，可用 read_history 回读；"
+                "C 编号供 write_handoff/new_context 修订或合并）：\n"
+                + (chapters or "当前没有章节；此前版本不再有效。")
+                + "\n</tavern_memory>",
+                value=chapters,
+            )
+        current = render_current(handoff, history)
+        if current or "handoff" in ledger.seen:
             update(
                 "handoff",
                 "<tavern_memory>\n当前有效 handoff（取代此前版本；后续以最新记忆更新或成功写入的工具记录为准）：\n"
-                + (handoff["text"] or "当前 handoff 为空；此前版本不再作为当前记忆。")
+                + (current or "当前 handoff 为空；此前版本不再作为当前记忆。")
                 + "\n</tavern_memory>",
-                value=handoff["text"],
+                value=current,
             )
     available = settings.context_tokens
     allowed_fields = {
@@ -398,7 +428,9 @@ def compile_window(
                 f"本轮回复额度 {settings.reply_tokens} tokens。\n"
                 + (
                     "当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
-                    "必须单独调用 new_context 保存完整交接笔记并换窗；运行时否决其他一切工具调用和正文回复。"
+                    "必须单独调用 new_context 换窗；可省略 handoff 沿用现有交接，"
+                    "仅实际退出的历史须有章节覆盖，保留的最新完整交流不要求归档。"
+                    "运行时否决其他一切工具调用和正文回复。"
                     "换窗成功后继续当前用户请求。"
                     if rollover_required
                     else "窗口预算提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。"

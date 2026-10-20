@@ -9,11 +9,13 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.application.service import RoleplayRuntime
+from tavern.conversation.context import compile_context
 from tavern.conversation.message_editing import NOTIFICATIONS, edit_notification
 from tavern.conversation.update_review import review_snapshot
-from tavern.core.models import SessionCreate, TurnRequest
+from tavern.core.models import ContextRecipe, SessionCreate, Settings, TurnRequest
+from tavern.full_agent.handoff import render_text
 from tavern.storage.store import Conflict, Store, uid
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, runtime, turn, written
 from tests.backend.test_message_versions import generate
 from tests.support.tracker_model import TrackerModel
 
@@ -96,6 +98,50 @@ def test_notice_uses_valid_references_or_complete_text(story):
     assert "H3" in referenced and text not in referenced
     assert edited["head"] not in notice and edited["head"] not in referenced
     assert review_snapshot(edited["snapshot"]) == review_snapshot({**edited["snapshot"], NOTIFICATIONS: []})
+
+
+def test_half_request_does_not_repeat_the_edited_user_text():
+    from tavern.conversation.half_context import descriptor
+    from tavern.core.cache_policy import fingerprint
+
+    text = "[H99]\n用户正文里的字面量编号也须保留"
+    history = [
+        {"id": "opening", "role": "assistant", "raw": "开场"},
+        {"id": "user", "role": "user", "raw": text},
+        {"id": "reply", "role": "assistant", "raw": "回复"},
+    ]
+    compiled = compile_context(
+        {"name": "fixture"},
+        {"id": "story", "persona": "用户", "recipe": ContextRecipe().model_dump(), "messages": history},
+        history,
+        {"state": {}, NOTIFICATIONS: ["user"]},
+        "继续",
+        Settings(retrieval={"channels": ["keyword"]}),
+        "fixture",
+        retrieval_protocol=False,
+    )
+    sent = "\n".join(m["content"] for m in compiled["messages"])
+    assert sent.count(text) == 1
+    assert f"[H2]\n{text}" in sent
+    assert "H2 的原文已由用户修订" in sent
+    # Regeneration reuses this user message as the input, outside history.
+    regenerated = compile_context(
+        {"name": "fixture"},
+        {"id": "story", "persona": "用户", "recipe": ContextRecipe().model_dump(), "messages": history},
+        history[:1],
+        {"state": {}, NOTIFICATIONS: ["user"]},
+        text,
+        Settings(retrieval={"channels": ["keyword"]}),
+        "fixture",
+        input_message_id="user",
+        retrieval_protocol=False,
+    )
+    sent = "\n".join(m["content"] for m in regenerated["messages"])
+    assert sent.count(text) == 1 and "H2 的原文已由用户修订" in sent
+    # A script's literal H prefix is not a Runtime label and affects its fingerprint.
+    assert descriptor({"role": "user", "content": text, "message_id": "override:0"})["sha256"] == fingerprint(
+        ["user", text, "dialogue", None]
+    )
 
 
 async def run_story(store, session, model, *, regenerate=False, tracker=None):
@@ -204,10 +250,11 @@ async def test_full_tool_continuations_keep_one_notice_and_silent_edits_keep_sta
     # A useful handoff must remain marked stale even when no instruction is sent.
     with store.connection() as db:
         snapshot = copy.deepcopy(session["snapshot"])
-        snapshot["full_agent"]["handoff"]["text"] = "原先的剧情交接"
+        history = session["messages"]
+        snapshot["full_agent"]["handoff"] = written(history, "原先的剧情交接", [f"H1-H{len(history)}"])
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"]))
     quiet = edit(store, session, notify=False)
-    assert quiet["snapshot"]["full_agent"]["handoff"]["stale"]
+    assert "来源已修改" in render_text(quiet["snapshot"]["full_agent"]["handoff"], quiet["messages"])
     silent_model = Model("quiet next")
     result, current = await run_story(store, quiet, silent_model)
     assert result["status"] == "committed", result["error"]

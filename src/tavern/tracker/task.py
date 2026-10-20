@@ -23,7 +23,7 @@ from tavern.core.tokens import request_tokens
 from tavern.memories.history_recall import HistoryBudget, HistoryRecall, MemoryText
 from tavern.memories.memory_engine import apply_operations, consolidate
 from tavern.memories.memory_protocol import References
-from tavern.memories.memory_records import read_memory, with_source_status
+from tavern.memories.memory_records import install_memory, read_memory, with_source_status
 from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.tracker.context import initial_messages
 from tavern.tracker.tools import SPECS, definitions
@@ -230,8 +230,8 @@ class TrackerTask:
                     budget=memory_budget,
                     event=self.event,
                 )
-                self.memory = result
-                self.snapshot["memory_document"] = copy.deepcopy(result)
+                install_memory(self.snapshot, result)
+                self.memory = {k: v for k, v in result.items() if k != "retired"}
                 self.batch = None
                 self.output_tokens = self.settings.reply_tokens
                 if self.write_result is not None:
@@ -376,6 +376,7 @@ class TrackerTask:
                     self.settings,
                     self.session,
                     self.tid,
+                    record_collection=False,
                 )
                 ids = set(selected["ids"])
                 return [

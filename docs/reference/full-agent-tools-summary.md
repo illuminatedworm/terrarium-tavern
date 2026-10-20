@@ -16,9 +16,9 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `find_lore_for_edit` | 定位可编辑的普通条目 | `query: string`；`limit: integer=5` | 字面匹配标题、关键词和正文，包含停用条目；`*` 列出条目；返回 L 引用、标题与定位摘要。 |
 | `read_lore_entry` | 完整读取一个普通条目 | `ref: string`（如 `L1`） | 返回标题、正文、主／辅助关键词及启用状态，登记当前读取记录；保护目标不可读写。 |
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
-| `read_history` | 完整读取一条剧情原文 | `ref: string`（如 `H1`） | 可读取当前用户输入，引用须在当前分支有效。 |
-| `write_handoff` | 完整替换交接笔记 | `content: string` | 保留有效场景、关系、约束和未决事项；以最新运行时记忆或成功写入为基础。 |
-| `new_context` | 保存交接笔记并换窗 | `handoff: string`；`keep_recent: integer=2` | 必须单独调用，混合批次全部不执行；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；调用额度不重置。 |
+| `read_history` | 完整读取剧情原文 | `ref: string`（如 `H1` 或 `H52-H58`） | 可读取当前用户输入；区间最多 8 条，按分支顺序逐条返回完整原文，H 与角色随“返回编号和角色”设置附带。 |
+| `write_handoff` | 更新交接笔记，不换窗 | `chapters: array=[]`；`current: array` | 章节默认范围由程序记录，可 revise／merge；current 整体替换；要点的 H 引用可省略。 |
+| `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型、H 来源和 `stale`；过时来源应核对。 |
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；已有键须有当前全文上下文依据，否则先 read_note。新 key 无需读取，覆盖归档键会激活。 |
@@ -136,7 +136,7 @@ Search dialogue in this branch by literal text terms; returns H references and o
 ### `read_history`
 
 ```text
-Read complete original dialogue by a valid H reference, including the current user input. H references are navigation handles, not story prose.
+Read complete original dialogue by a valid H reference or closed span, including the current user input; a span returns its messages complete and in branch order. H references are navigation handles, not story prose.
 ```
 
 请求：
@@ -154,37 +154,37 @@ Read complete original dialogue by a valid H reference, including the current us
 ### `write_handoff`
 
 ```text
-Replace the complete handoff in the current window: a concise continuation summary, not all notes or the future plot outline. Build on the latest runtime memory update or successful write, whichever is later. Preserve valid scene context, relationships, user constraints, important experiences, unresolved issues, tone and useful references. Mark plans as pending; verify stale sources.
+Update the handoff in the current window without switching: optional chapter operations plus the complete current handoff. Build on the latest <tavern_memory> or successful write, whichever is later; verify points marked as changed sources. Chapters are an append-only ledger of what still matters later (irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places). Normally omit through: Runtime appends a chapter over the unarchived committed history. Choose a known endpoint only for intentional chapter splits. Drop one-off actions, scenery and dialogue texture; chapter ranges remain readable with read_history. Point refs are optional: cite known history only when useful for precise follow-up, never invent a citation for instructions or character material. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline.
 ```
 
 请求：
 
 ```json
-{"content":"明天去港口，相关笔记：计划/港口。"}
+{"current":[{"text":"明天去港口，相关笔记：计划/港口。"}]}
 ```
 
 成功返回：
 
 ```json
-{"ok":true,"data":{"saved_to_draft":true,"window":1,"notice":"正文完成后与本回合统一提交。"}}
+{"ok":true,"data":{"saved_to_draft":true,"window":1,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
 ```
 
 ### `new_context`
 
 ```text
-Replace the complete handoff and switch windows. Preserve the scene, important experiences, constraints, unresolved issues and references needed to continue; do not copy complete notes or the future plot outline. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
+Switch windows, optionally updating the handoff. Omit handoff or pass null to reuse the latest saved or successfully written handoff unchanged. Choose keep_recent first: chapter coverage is required only for messages actually leaving after expanding the retained tail to complete exchanges. Retained messages and the current input need no new chapter; when all history stays, an empty handoff is allowed. If updating, add any missing chapters and give the complete current handoff. Normally omit through on add: Runtime assigns the remaining exiting range. Choose a known endpoint only for intentional chapter splits. Keep only lasting events, relationship changes, promises, secrets and recurring people, items and places; chapter ranges remain readable with read_history. Point refs are optional, including in current; use only known references when precise follow-up helps. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
 ```
 
 请求：
 
 ```json
-{"handoff":"明天去港口，相关笔记：计划/港口。","keep_recent":0}
+{}
 ```
 
 成功返回：
 
 ```json
-{"ok":true,"data":{"saved_to_draft":true,"window":2,"notice":"正文完成后与本回合统一提交。"}}
+{"ok":true,"data":{"saved_to_draft":true,"window":2,"chapters":[],"notice":"正文完成后与本回合统一提交。"}}
 ```
 
 ### `search_notes`
@@ -373,8 +373,8 @@ Replace this turn's clues for next-turn automatic worldbook retrieval; the last 
 
 | 工具 | 追加文本全文 | 条件 |
 |---|---|---|
-| `write_handoff` | `content limit: {handoff_tokens} tokens.` | 当前交接笔记上限。 |
-| `new_context` | `handoff limit: {handoff_tokens} tokens.` | 新窗口交接笔记上限。 |
+| `write_handoff` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 当前交接、单章与章节总量上限。 |
+| `new_context` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 同上，适用于换窗时提交的交接。 |
 | `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |
 | `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |
 | `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |

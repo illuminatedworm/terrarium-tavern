@@ -13,7 +13,7 @@ from tavern.core.settings import migrate_settings
 from tavern.storage.store import Conflict
 from tests.backend.chatgpt_fixtures import completed, sse
 from tests.backend.test_chatgpt_integration import connected_store, story
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, current_text, handoff, prepared, runtime, turn
 
 
 def compact_response(text="OK", number=1):
@@ -154,7 +154,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
     service = runtime(store)
     initial = Model(
         ("write_note", {"key": "plan", "content": "Keep this note", "kind": "plan"}),
-        ("new_context", {"handoff": "OLD HANDOFF", "keep_recent": 0}),
+        ("new_context", {"handoff": handoff("OLD HANDOFF"), "keep_recent": 0}),
         "A committed story. " * 10000,
     )
     try:
@@ -172,7 +172,16 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
             ):
                 return sse(
                     completed(
-                        "", [("prepare_handoff", {"handoff": "NEW HANDOFF: the committed scene continues."})]
+                        "",
+                        [
+                            (
+                                "prepare_handoff",
+                                prepared(
+                                    json.dumps(body, ensure_ascii=False),
+                                    "NEW HANDOFF: the committed scene continues.",
+                                ),
+                            )
+                        ],
                     )
                 )
             if body.get("instructions"):
@@ -205,7 +214,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
         _, session = await operate(service, session, "enable_local")
         assert session["context_strategy"] == "new_context"
-        assert session["snapshot"]["full_agent"]["handoff"]["text"].startswith("NEW HANDOFF")
+        assert current_text(session["snapshot"]["full_agent"]).startswith("NEW HANDOFF")
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
         export = wire[-1]
         assert not any(item.get("type") == "compaction" for item in export["input"])
@@ -284,6 +293,53 @@ async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path):
         assert current["context_strategy"] == "openai_compact" and current["snapshot"] == before
     finally:
         await service.close()
+
+
+async def test_local_handoff_repairs_total_limit_once_without_applying_failed_edits():
+    from tavern.core.models import Settings
+    from tavern.full_agent.compaction import make_handoff
+    from tavern.full_agent.handoff import HandoffError, HandoffWrite, apply_write, check_limits, render_text
+
+    settings = Settings()
+    history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(20)]
+    ledger = {"chapters": [], "current": [], "revision": 0}
+    point = {"text": "a " * 410}
+    for index in range(9):
+        ledger = apply_write(
+            ledger,
+            HandoffWrite(
+                chapters=[
+                    {"op": "add", "through": f"H{(index + 1) * 2}", "title": "经过", "points": [point]}
+                ],
+                current=[{"text": "当前场景"}],
+            ),
+            history,
+        )
+    check_limits(ledger, history, settings.full_agent_config, settings)
+    before = copy.deepcopy(ledger)
+    add = {"op": "add", "title": "下一章", "points": [point]}
+    bad = {"chapters": [add], "current": [{"text": "当前场景"}]}
+    corrected = {
+        "chapters": [
+            {"op": "merge", "chapters": ["C1", "C2"], "title": "旧事", "points": [{"text": "约定仍然有效"}]},
+            add,
+        ],
+        "current": [{"text": "当前场景"}],
+    }
+    compiled = {"messages": [{"role": "system", "content": render_text(ledger, history)}]}
+    model = Model(("prepare_handoff", bad), ("prepare_handoff", corrected))
+    result, usage = await make_handoff(compiled, settings, model, ledger, history, 20)
+    assert len(model.requests) == len(usage) == 2
+    assert "现有章节总量" in model.requests[0]["messages"][-1]["content"]
+    assert "merge" in model.requests[0]["messages"][-1]["content"]
+    assert "章节总量" in model.requests[1]["messages"][-1]["content"]
+    assert "提案未应用" in model.requests[1]["messages"][-1]["content"]
+    assert result["chapters"][-1]["end"] == history[-1]["id"] and ledger == before
+    check_limits(result, history, settings.full_agent_config, settings)
+    stubborn = Model(*[("prepare_handoff", bad)] * 3)
+    with pytest.raises(HandoffError, match="章节总量"):
+        await make_handoff(compiled, settings, stubborn, ledger, history, 20)
+    assert len(stubborn.requests) == 2 and ledger == before
 
 
 def test_compaction_boundary_does_not_hide_pending_calls_and_groups_remain_whole():
@@ -437,7 +493,7 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
                 session,
                 Model(
                     ("write_note", {"key": "promise", "content": "Original promise", "kind": "plan"}),
-                    ("new_context", {"handoff": "OLD SUMMARY MUST NOT BE REUSED", "keep_recent": 0}),
+                    ("new_context", {"handoff": handoff("OLD SUMMARY MUST NOT BE REUSED"), "keep_recent": 0}),
                     "A short committed reply.",
                 ),
             )
@@ -452,7 +508,7 @@ async def test_short_mode_switches_use_complete_sources_without_maintenance_requ
         result, session = await operate(service, session, "enable_local")
         assert result["usage"] == [] and not result["converted"]
         assert session["snapshot"]["full_agent"]["window"]["start"] == 0
-        assert session["snapshot"]["full_agent"]["handoff"]["text"] == ""
+        assert current_text(session["snapshot"]["full_agent"]) == ""
         compiled = compile_window(
             store.session_card(session["id"])["document"],
             session,
@@ -531,13 +587,23 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
                 else [
                     SimpleNamespace(
                         name="prepare_handoff",
-                        arguments=json.dumps({"handoff": "Fresh summary from this replay."}),
+                        arguments=json.dumps(
+                            prepared(
+                                json.dumps(messages, ensure_ascii=False), "Fresh summary from this replay."
+                            )
+                        ),
                     )
                 ]
             )
             return SimpleNamespace(content="OK", usage={"input_tokens": 5000})
 
-    run = rebuild if strategy == "openai_compact" else rebuild_local
+    history = [{"id": f"m{i}", "role": ("user", "assistant")[i % 2], "raw": f"m{i}"} for i in range(6)]
+
+    def run(*args, **kwargs):
+        if strategy == "openai_compact":
+            return rebuild(*args, **kwargs)
+        return rebuild_local(*args[:3], history, **kwargs)
+
     progress = []
 
     async def stop(value):

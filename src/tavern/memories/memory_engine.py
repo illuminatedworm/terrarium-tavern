@@ -464,7 +464,7 @@ async def consolidate(
                     # Recalled sources merge in after the batch; list by H position.
                     ordered = sorted(supplied.values(), key=lambda m: refs.positions[m["id"]])
                     payload = {
-                        "previous_result": refs.previous({"version": 1, "records": targets}),
+                        "previous_result": refs.previous({"records": targets}),
                         "questions": refs.questions(questions),
                         "batch_range": span_ref(start + 1, end),
                         "messages": [refs.message(m) for m in ordered if m["id"] in fresh],

@@ -239,7 +239,7 @@ async def test_deleted_memory_cannot_be_readded_by_tool(story):
         ],
     ).model_dump()
     work.memory = manual_edit(
-        {"version": 1, "records": [record]}, RecordEdit(expected_revision=0, action="delete", id=record["id"])
+        {"version": 2, "records": [record]}, RecordEdit(expected_revision=0, action="delete", id=record["id"])
     )
     await work.run(memory_start=0, memory_budget=CallBudget())
     assert [r["status"] for r in work.snapshot["memory_document"]["records"]] == ["deleted"]

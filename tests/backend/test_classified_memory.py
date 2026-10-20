@@ -64,7 +64,7 @@ def apply(memory, output, messages=None, **kw):
 
 
 def empty():
-    return {"version": 1, "records": []}
+    return {"version": 2, "records": []}
 
 
 def test_incremental_change_retains_experience_and_omitted_open_loop():
@@ -355,7 +355,7 @@ def test_long_evidence_and_single_oversized_exchange_remain_complete():
         messages,
         messages,
         0,
-        {"version": 1, "records": []},
+        {"version": 2, "records": []},
         {},
         Settings(memory_input_tokens=2048, memory_evidence_tokens=0),
     )
@@ -441,7 +441,7 @@ def test_manual_deletion_references_survive_a_fork(tmp_path):
         sources=[{"message_id": session["head"], "excerpt": "hello"}],
     ).model_dump()
     snapshot = session["snapshot"]
-    install_memory(snapshot, {"version": 1, "records": [record]})
+    install_memory(snapshot, {"version": 2, "records": [record]})
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), session["head"]))
     edited = store.edit_memory_record(session["id"], RecordEdit(expected_revision=0, action="delete", id="x"))
@@ -465,7 +465,7 @@ async def test_record_api_revision_fork_and_edit_preservation(tmp_path):
         sources=[{"message_id": mid, "fingerprint": source_hash(session["messages"][0]), "excerpt": "戒指"}],
     ).model_dump()
     snapshot = session["snapshot"]
-    install_memory(snapshot, {"version": 1, "records": [record]})
+    install_memory(snapshot, {"version": 2, "records": [record]})
     with store.connection() as db:
         db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), mid))
     fork = store.fork_session(session["id"], mid, 0)

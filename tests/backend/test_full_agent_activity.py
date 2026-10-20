@@ -7,7 +7,7 @@ from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.full_agent.activity import from_trace
 from tavern.full_agent.context import load_trace
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, handoff, runtime, turn
 
 
 def setup(tmp_path):
@@ -76,7 +76,10 @@ async def test_dialogue_activity_follows_selected_versions_and_fork_identity(tmp
         _, first = await turn(service, session, Model(("read_history", {"ref": "H2"}), "第一版"))
         fork = store.fork_session(first["id"], first["head"], first["revision"])
         _, second = await turn(
-            service, first, Model(("write_handoff", {"content": "新的交接"}), "第二版"), mode="regenerate"
+            service,
+            first,
+            Model(("write_handoff", handoff("新的交接", through=None)), "第二版"),
+            mode="regenerate",
         )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
 
@@ -136,6 +139,14 @@ def test_batch_calls_pair_results_by_id_and_preserve_request_order():
                     "tool_calls": [
                         {"id": "a", "function": {"name": "read_state", "arguments": "{}"}},
                         {"id": "b", "function": {"name": "read_note", "arguments": '{"key":"钟楼"}'}},
+                        {"id": "c", "function": {"name": "write_handoff", "arguments": '{"chapters":null}'}},
+                        {
+                            "id": "d",
+                            "function": {
+                                "name": "new_context",
+                                "arguments": '{"handoff":{"chapters":[{"title":123}]}}',
+                            },
+                        },
                     ],
                 },
             ),
@@ -148,8 +159,26 @@ def test_batch_calls_pair_results_by_id_and_preserve_request_order():
                 },
             ),
             row(3, {"role": "tool", "tool_call_id": "a", "content": '{"ok":true,"data":{"energy":4}}'}),
+            row(
+                4,
+                {
+                    "role": "tool",
+                    "tool_call_id": "c",
+                    "content": '{"ok":false,"error":{"code":"INVALID_ARGUMENTS"}}',
+                },
+            ),
+            row(
+                5,
+                {
+                    "role": "tool",
+                    "tool_call_id": "d",
+                    "content": '{"ok":false,"error":{"code":"INVALID_ARGUMENTS"}}',
+                },
+            ),
         ]
     )
-    assert [item["name"] for item in items] == ["read_state", "read_note"]
-    assert [item["status"] for item in items] == ["returned", "error"]
+    assert [item["name"] for item in items] == ["read_state", "read_note", "write_handoff", "new_context"]
+    assert [item["status"] for item in items] == ["returned", "error", "error", "error"]
     assert json.loads(items[0]["details"]["result"]) == {"ok": True, "data": {"energy": 4}}
+    assert json.loads(items[2]["details"]["arguments"]) == {"chapters": None}
+    assert json.loads(items[3]["details"]["arguments"])["handoff"]["chapters"][0]["title"] == 123

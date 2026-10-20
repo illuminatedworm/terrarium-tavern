@@ -15,7 +15,7 @@ from tavern.full_agent.tools import StateRead
 from tavern.full_agent.visibility import context_messages
 from tavern.scripting.request_context import response_origin
 from tests.backend import test_full_agent_read_guards as guards
-from tests.backend.test_full_agent import Model, runtime, turn
+from tests.backend.test_full_agent import Model, handoff, runtime, turn
 
 owner = guards.owner
 story = guards.story
@@ -276,7 +276,7 @@ async def test_fixed_fields_and_macro_expanded_post_count_after_adapter_and_roll
         operations=[{"op": "set_character", "field": "description", "value": "New description"}],
         comment="Edit",
     )
-    rollover(owner.state, [], "Continue", 0)
+    rollover(owner.state, [], {"chapters": [], "current": [], "revision": 0}, 0)
     context(owner)
     await call(
         owner,
@@ -441,7 +441,7 @@ async def test_cross_turn_own_note_write_survives_fork_and_requires_read_after_r
         assert fork["snapshot"]["full_agent"]["notes"]["clue"]["content"] == "Fork version"
         assert "First version" in json.dumps(model.requests[0]["messages"])
         model = Model(
-            ("new_context", {"handoff": "Continue", "keep_recent": 0}),
+            ("new_context", {"handoff": handoff("Continue"), "keep_recent": 0}),
             write("Denied version"),
             ("read_note", {"key": "clue"}),
             write("After reread"),
