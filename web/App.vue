@@ -870,7 +870,7 @@ function contextItemTitle(item: JsonObject) {
   if (item.title) return item.title;
   const source = String(item.source || '');
   if (source.startsWith('lore:')) {
-    const entry = preview.value?.lore.find((e) => String(e.id) === source.slice(5));
+    const entry = preview.value?.lore?.find((e) => String(e.id) === source.slice(5));
     return loreTitle(entry);
   }
   if (source === 'persona') return `用户 · ${session.value?.persona || ''}`;

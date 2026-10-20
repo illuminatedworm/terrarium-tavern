@@ -157,7 +157,8 @@ export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
 /** `POST /sessions/{id}/preview`: the compiled next request, its token estimate and usage. */
 export type StoryContextPreview = JsonObject & {
   trace: JsonObject[];
-  lore: JsonObject[];
+  /** Half Agent only; Full Agent previews have no activated-lore list. */
+  lore?: JsonObject[];
   estimated_tokens: number | null;
   budget_sources?: Record<string, number> | null;
   token_counting?: { tokenizer: string; source: string };
