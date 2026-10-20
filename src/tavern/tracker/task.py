@@ -75,7 +75,7 @@ class TrackerTask:
         self.user_input, self.narrative = user_input, narrative
         self.memory_enabled, self.variables_enabled, self.content_enabled = memory, variables, content
         self.memory = with_source_status(read_memory(snapshot), history)
-        self.references = References()
+        self.references = References(self.history)
         self.view = ModelView({"document": document, "history": history, "input": user_input})
         self.budget = budget or TaskBudget(settings.tracker_max_steps)
         self.history_budget = history_budget or HistoryBudget()
@@ -192,9 +192,11 @@ class TrackerTask:
             payload["current_turn"] = {"user": self.user_input, "assistant": self.narrative}
             payload["current_variables"] = self.view.expose(self.variables)
         payload["notice"] = (
-            "本批编号取代此前批次的编号。复核仅允许修订指定待确认条目，不能再次提出问题。"
+            "H 编号是分支位置、跨批次不变，但只能引用本次复核展示的片段；R、N、E 编号取代此前批次。"
+            "复核仅允许修订指定待确认条目，不能再次提出问题。"
             if phase == "memory_review"
-            else "本批编号取代此前批次的编号；完成后调用 write_memory。"
+            else "H 编号是分支位置、跨批次不变，但只能引用本批展示的片段（含本批补查结果）；"
+            "R、N、E 编号取代此前批次。完成后调用 write_memory。"
         )
         if not self.thread:
             self.thread = initial_messages(self)

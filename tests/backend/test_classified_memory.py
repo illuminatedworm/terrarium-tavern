@@ -189,12 +189,12 @@ async def test_deleted_memory_does_not_block_other_changes_or_coverage():
                 {
                     "op": "add",
                     "id": "N1",
-                    "record": {"category": "current", "content": "戒指暂由玩家保管", "sources": ["S2"]},
+                    "record": {"category": "current", "content": "戒指暂由玩家保管", "sources": ["H2#1"]},
                 },
                 {
                     "op": "add",
                     "id": "N2",
-                    "record": {"category": "episode", "content": "她随后收回了戒指", "sources": ["S4"]},
+                    "record": {"category": "episode", "content": "她随后收回了戒指", "sources": ["H4#1"]},
                 },
             ],
             "questions": [
@@ -249,8 +249,10 @@ async def test_incremental_input_and_shared_budget_are_bounded():
     await consolidate(
         history(), Settings(), generate, memory=empty(), start=2, budget=budget, document={}, persona="用户"
     )
-    assert [calls[0][2].messages[m["id"]] for m in calls[0][0]["messages"]] == ["m2", "m3"]
-    assert [calls[0][2].messages[m["id"]] for m in calls[0][0]["background_messages"]] == ["m0", "m1"]
+    payload = calls[0][0]
+    assert (payload["batch_range"], payload["background_range"]) == ("H3-H4", "H1-H2")
+    assert [m["ref"] for m in payload["messages"]] == ["H3", "H4"]
+    assert [m["ref"] for m in payload["background_messages"]] == ["H1", "H2"]
     await consolidate(history(), Settings(), generate, memory=empty(), budget=budget)
     with pytest.raises(ValueError, match="两次"):
         await consolidate(history(), Settings(), generate, memory=empty(), budget=budget)
@@ -274,7 +276,7 @@ async def test_custom_prompt_macro_and_user_text_use_batch_identity():
     )
     assert seen[0]["content"].startswith("为小舟记录艾琳的变化\n\n【程序输出契约】")
     assert json.loads(seen[-1]["content"])["messages"][0]["passages"] == [
-        {"ref": "S1", "text": "小舟遇见艾琳"}
+        {"ref": "H1#1", "text": "小舟遇见艾琳"}
     ]
 
 
@@ -396,9 +398,7 @@ async def test_manual_batches_cover_every_message_automatic_batches_are_atomic()
     seen = []
 
     async def generate(prompt, **kw):
-        seen.extend(
-            prompt.references.messages[m["id"]] for m in json.loads(prompt[-1]["content"])["messages"]
-        )
+        seen.extend(m["ref"] for m in json.loads(prompt[-1]["content"])["messages"])
         return '{"operations":[],"questions":[]}'
 
     before = empty()
@@ -408,7 +408,7 @@ async def test_manual_batches_cover_every_message_automatic_batches_are_atomic()
     seen.clear()
     result = await consolidate(messages, cfg, generate, memory=before, budget=CallBudget(manual=True))
     assert result == empty()
-    assert seen == [m["id"] for m in messages]
+    assert seen == [f"H{i}" for i in range(1, len(messages) + 1)]
 
 
 def test_capacity_overflow_does_not_drop_open_items_or_mutate_old_state():
@@ -501,7 +501,7 @@ async def test_rebuild_memory_saves_without_content_review(tmp_path):
     s = store.new_session(SessionCreate(card_id=card["id"]))
     s = store.update_session(s["id"], 0, policy="preview")
     app.state.service.memory_provider_factory = lambda: MemoryModel(
-        [json.dumps(proposal(rid="N1", content="她打了招呼", sources=["S1"]))]
+        [json.dumps(proposal(rid="N1", content="她打了招呼", sources=["H1#1"]))]
     )
     turn = app.state.service.submit(
         s["id"], TurnRequest(operation_id=uid(), expected_revision=s["revision"], scene_refresh="memory")

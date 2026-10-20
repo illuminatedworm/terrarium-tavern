@@ -12,7 +12,7 @@
 
 参数由 [tools.py](../../src/tavern/full_agent/tools.py) 和 [content.py](../../src/tavern/full_agent/content.py) 的类型生成，预览和实际请求共用生成器。顶层和嵌套动作拒绝未定义字段，JSON 类型严格校验。
 
-历史引用为当前分支有效 H 编号，世界书引用为 L 加正整数；它们是导航句柄，不写入剧情。read_note、write_note、archive_note 统一使用完整笔记 key。版本、指纹、真实 ID 和模型短编号映射由 Runtime 保存；模型不生成或回传这些机械字段。
+历史引用为当前分支有效 H 编号：H52 是当前分支第 52 条消息，开场白为 H1，当前用户输入按将要占据的位置编号；与 Half Agent Tracker、参谋 agent 和剧情界面显示的编号同一定义。世界书引用为 L 加正整数；它们是导航句柄，不写入剧情。read_note、write_note、archive_note 统一使用完整笔记 key。版本、指纹、真实 ID 和模型短编号映射由 Runtime 保存；模型不生成或回传这些机械字段。
 
 query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_state.path 最长 200 字符。handoff 和笔记正文为 1–64000 字符，不能为空白，另受配置中的 handoff_tokens／note_tokens 约束；comment 为必填的简短操作备注，1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
 

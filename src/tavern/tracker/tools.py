@@ -55,7 +55,7 @@ class MemoryRecord(Arguments):
     sources: list[str] = Field(
         min_length=1,
         max_length=8,
-        description="S/H passage refs actually provided in this batch; at least one must be from messages, not background_messages.",
+        description="Passage refs such as H52#3 actually shown for this batch, in its input or recall results; at least one must fall within batch_range. Message refs such as H52 are not sources.",
     )
     setting_refs: list[str] = Field(
         default_factory=list, max_length=8, description="Optional E refs for provided setting evidence."
@@ -101,13 +101,15 @@ MEMORY_CONTRACT = (
     "Categories: current=present situation, episode=experiences, open=pending commitments, uncertain=unresolved conclusions. "
     "kind defaults to fact for add; explicitly use claim for character claims or inference for deductions. "
     "Unknown people/known_to default to [], story_time to 未知; never invent who knows a fact. "
-    "Select S/H sources, not message M refs; Runtime fills identities, quotes and fingerprints. "
-    "Every change needs current-batch evidence; background and historical passages alone are insufficient. "
+    "H52 is the branch's 52nd message (greeting H1) and H52#3 its third passage. "
+    "Select passage sources, not message refs; Runtime fills identities, quotes and fingerprints. "
+    "Every change needs a source within batch_range; background and recalled passages alone are insufficient. "
     "E evidence is setting/state context, not proof of events; historical=false means a current-version fallback. "
     "Do not change manual, deleted or source_stale records, including merge sources, or restore user-deleted content. "
     "Questions must reference active uncertain non-manual records; uncertainty must remain explicit. "
     "Optional callback=true is only for episode texture (at most three, total 300 tokens); do not request review for texture. "
-    "Tool results supply the next batch or review if necessary; each uses its own fresh short references. "
+    "Tool results supply the next batch or review if necessary. H refs stay stable across batches, but only "
+    "passages shown for the current batch or review are citable; R/N/E refs are fresh each time. "
     "Review accepts only revise for the supplied uncertain records; resolving uncertainty requires supplied E evidence, "
     "and cannot ask more questions. All writes remain a draft until the whole turn commits."
 )

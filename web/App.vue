@@ -3154,7 +3154,6 @@ useTimedError(error);
             v-model:tab="stateTab"
             :session="session"
             :full-agent="isFullAgent"
-            :rounds="messageRounds"
             :progress="memoryProgress"
             :character="archiveCharacter"
             :disabled="busy || activeTurn?.status === 'awaiting_review'"

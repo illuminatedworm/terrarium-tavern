@@ -1,10 +1,12 @@
-"""Request-local handles keep mechanical citation work out of the model.
+"""Short handles keep mechanical citation work out of the model.
 
 The wire view is deliberately different from persistent memory. Only Runtime
-knows the map from S/H passages, R records and E settings to stored identities.
-Every batch/review owns a fresh map; it is never serialized into a snapshot or
-accepted from the model. Resolution precedes the existing branch/hash/excerpt
-validator, so a short reference is not a relaxation of source validation.
+knows the map from H passages, R records and E settings to stored identities.
+H refs are branch positions (tavern.core.history_refs), stable across requests,
+but every batch/review owns a fresh map of the passages it actually showed: an
+earlier batch's passage is not citable again. The map is never serialized into
+a snapshot or accepted from the model. Resolution precedes the existing
+branch/hash/excerpt validator, so a short reference does not relax validation.
 """
 
 import copy
@@ -12,6 +14,7 @@ import re
 import uuid
 
 from tavern.conversation.context import CARD_FIELDS, wrap_card_field, wrap_lorebook
+from tavern.core.history_refs import message_positions, message_ref, passage_ref
 from tavern.memories.memory_records import is_retained_record
 
 
@@ -40,36 +43,46 @@ class MemoryRequest(list):
         self.context = context or {}
 
 
+def exposed_excerpts(message):
+    """Texts of the passages a history tool returned; None when fully supplied."""
+    parts = message.get("exposed_passages")
+    if parts is None:
+        return None
+    text = message.get("model", message.get("raw", ""))
+    return [passage for part, passage in enumerate(split_passages(text), 1) if part in parts]
+
+
 class References:
-    def __init__(self):
+    def __init__(self, history=()):
+        # One branch-wide position map: batch input, tool results and review
+        # render the same message with the same H ref. Callers pass the branch
+        # prefix that every supplied or recallable message belongs to.
+        self.positions = message_positions(history)
         self.sources = {}
         self.records = {}
         self.settings = {}
-        self.messages = {}
         self.versions = {}
-        self.counts = {"S": 0, "H": 0}
 
-    def passages(self, mid, text, *, prefix="S", commit=True):
-        parts = [
-            {"ref": f"{prefix}{self.counts[prefix] + i}", "text": part}
-            for i, part in enumerate(split_passages(text), 1)
-        ]
-        if commit:
-            self.counts[prefix] += len(parts)
-            self.sources.update({p["ref"]: {"message_id": mid, "excerpt": p["text"]} for p in parts})
-        return parts
+    def passages(self, message, parts=None):
+        """Number every passage of the model-visible text; show and register only ``parts``."""
+        position = self.positions[message["id"]]
+        shown = []
+        for part, text in enumerate(split_passages(message.get("model", message.get("raw", ""))), 1):
+            if parts is not None and part not in parts:
+                continue
+            ref = passage_ref(position, part)
+            self.sources[ref] = {"message_id": message["id"], "excerpt": text}
+            shown.append({"ref": ref, "text": text})
+        return shown
 
     def message(self, message):
-        mid = message["id"]
-        alias = next((k for k, v in self.messages.items() if v == mid), None)
-        if alias is None:
-            alias = f"M{len(self.messages) + 1}"
-            self.messages[alias] = mid
-        # Tool excerpts are disjoint. Never create a quote spanning the unseen
-        # gap between search hits, or make the unreturned tail citable in review.
-        texts = message.get("exposed_excerpts", [message.get("model", message.get("raw", ""))])
-        passages = [p for text in texts for p in self.passages(mid, text)]
-        return {"id": alias, "role": message["role"], "passages": passages}
+        # Tool results expose disjoint passages. Never make the unreturned
+        # passages of a searched message citable in review.
+        return {
+            "ref": message_ref(self.positions[message["id"]]),
+            "role": message["role"],
+            "passages": self.passages(message, message.get("exposed_passages")),
+        }
 
     def previous(self, memory):
         records = []
@@ -179,11 +192,14 @@ class References:
                             on_invalid(
                                 {
                                     "count": 1,
-                                    "message": f"已丢弃一条无效的可选原话记录：未知片段编号 {unknown}",
+                                    "message": f"已丢弃一条无效的可选原话记录：未知原文片段编号 {unknown}，本次未提供",
                                 }
                             )
                         continue
-                    raise ValueError(f"未知原文片段编号 {unknown}；旧记忆及覆盖水位保留")
+                    raise ValueError(
+                        f"未知原文片段编号 {unknown}：本次未提供该片段，sources 只能选择本次展示过的片段编号"
+                        "（如 H52#3）；旧记忆及覆盖水位保留"
+                    )
                 for source in record["sources"]:
                     if not isinstance(source, str):
                         raise ValueError("原文来源必须使用本次请求的短编号")

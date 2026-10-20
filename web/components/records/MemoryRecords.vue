@@ -3,15 +3,16 @@ import { computed, ref, watch } from 'vue';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import Icon from '../common/Icon.vue';
 import StoryProse from '../story/StoryProse.vue';
+import { historyRefLabel } from '../../lib/storyHistory';
 
 const props = defineProps<{
   memory: any;
   disabled?: boolean;
   saving?: boolean;
-  /** `cards` is the dialog layout: one card per record with its source rounds. */
+  /** `cards` is the dialog layout: one card per record with its source messages. */
   layout?: 'list' | 'cards';
-  /** Message id → 1-based round (0 for the opening), used for source labels. */
-  rounds?: Map<string, number>;
+  /** Message id → backend H ref of the current branch, used for source labels. */
+  refs?: Map<string, string>;
 }>();
 const emit = defineEmits<{ change: [value: any]; locate: [id: string, excerpt: string] }>();
 const categories: Record<string, string> = {
@@ -77,18 +78,8 @@ function toggleSources(id: string) {
   next.has(id) ? next.delete(id) : next.add(id);
   openSources.value = next;
 }
-function roundName(round: number) {
-  return round ? `第 ${round} 轮` : '开场';
-}
 function sourceLabel(record: any) {
-  const rounds = record.sources
-    .map((source: any) => props.rounds?.get(source.message_id))
-    .filter((round: number | undefined) => round != null) as number[];
-  if (!rounds.length) return `${record.sources.length} 处`;
-  const first = Math.min(...rounds),
-    last = Math.max(...rounds);
-  if (first === last) return roundName(first);
-  return first ? `第 ${first}–${last} 轮` : `开场–${roundName(last)}`;
+  return historyRefLabel(record.sources.map((source: any) => props.refs?.get(source.message_id)));
 }
 function toggleGroup(id: string) {
   const next = new Set(openGroups.value);
@@ -185,6 +176,9 @@ function toggleGroup(id: string) {
           </p>
           <div v-if="openSources.has(record.id)" class="memory-card-sources">
             <div v-for="(source, i) in record.sources" :key="i" class="memory-source">
+              <small v-if="refs?.get(source.message_id)" class="memory-source-ref">{{
+                refs.get(source.message_id)
+              }}</small>
               <blockquote>{{ source.excerpt }}</blockquote>
               <p v-if="source.state !== 'valid'" class="muted">
                 {{
@@ -236,6 +230,9 @@ function toggleGroup(id: string) {
             <details v-if="record.sources?.length">
               <summary>原文依据 · {{ record.sources.length }} 处</summary>
               <div v-for="(source, i) in record.sources" :key="i" class="memory-source">
+                <small v-if="refs?.get(source.message_id)" class="memory-source-ref">{{
+                  refs.get(source.message_id)
+                }}</small>
                 <blockquote>{{ source.excerpt }}</blockquote>
                 <p v-if="source.state !== 'valid'" class="muted">
                   {{
@@ -359,6 +356,11 @@ function toggleGroup(id: string) {
 .memory-source blockquote {
   margin: 0.5rem 0;
   white-space: pre-wrap;
+}
+.memory-source-ref {
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
 }
 /* ---------- Dialog layout: one card per record ---------- */
 .memory-toolbar {

@@ -49,7 +49,7 @@ def story(tmp_path):
 
 
 def output(kind, session, source=None):
-    source = source or "S2"
+    source = source or "H2#1"
     return json.dumps(
         {
             "operations": [

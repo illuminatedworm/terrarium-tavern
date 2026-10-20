@@ -5,6 +5,8 @@ export const DIRECT_TEXT_LIMIT = 200_000;
 
 export type HistoryMessage = {
   id: string;
+  /** Backend H ref of the branch position; absent before commit. */
+  ref?: string;
   parent?: string | null;
   role: string;
   display?: string;
@@ -64,6 +66,15 @@ export function historyRounds(messages: HistoryMessage[]): HistoryRound[] {
     }
   }
   return rounds;
+}
+
+/** Compact label for backend H refs: `H52`, `H41、H52` or `H3 等 4 条`; unknown refs count only. */
+export function historyRefLabel(refs: (string | undefined)[]) {
+  const known = [...new Set(refs.filter((ref): ref is string => !!ref))].sort(
+    (a, b) => Number(a.slice(1)) - Number(b.slice(1)),
+  );
+  if (!known.length) return `${refs.length} 处`;
+  return known.length <= 2 ? known.join('、') : `${known[0]} 等 ${known.length} 条`;
 }
 
 export function historySummary(message?: HistoryMessage) {

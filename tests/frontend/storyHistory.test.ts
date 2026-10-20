@@ -4,6 +4,7 @@ import {
   DIRECT_TEXT_LIMIT,
   HistoryHeights,
   historyMessageIntervals,
+  historyRefLabel,
   historyRounds,
   historySummary,
   needsVirtualHistory,
@@ -72,6 +73,13 @@ it('groups completed exchanges and leaves greeting and pending input navigable',
   expect(
     historySummary({ id: 'html', role: 'assistant', raw: '<script>secret()</script><b>正文</b>\n内容' }),
   ).toBe('正文 内容');
+});
+
+it('labels sources with backend H refs in branch order and counts unknown sources', () => {
+  expect(historyRefLabel(['H52', 'H52'])).toBe('H52');
+  expect(historyRefLabel(['H52', undefined, 'H9'])).toBe('H9、H52');
+  expect(historyRefLabel(['H12', 'H3', 'H100'])).toBe('H3 等 3 条');
+  expect(historyRefLabel([undefined, undefined])).toBe('2 处');
 });
 
 it('locates 10000 variable height messages after repeated measurements', () => {

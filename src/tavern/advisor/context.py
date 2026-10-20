@@ -6,6 +6,7 @@ from tavern.character.cards import is_initvar, lore_entries, normalize
 from tavern.conversation.context import macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.channels import require_channel
+from tavern.core.history_refs import message_positions, message_ref
 from tavern.core.message_adapter import project_context
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
@@ -86,7 +87,7 @@ def recent_history(history, count):
 
 def memory_rows(story):
     memory = with_source_status(read_memory(story["snapshot"]), story["messages"])
-    refs = {m["id"]: f"H{i + 1}" for i, m in enumerate(story["messages"])}
+    refs = {mid: message_ref(position) for mid, position in message_positions(story["messages"]).items()}
     return [
         {
             "ref": f"R{i + 1}",
@@ -177,7 +178,7 @@ def background(story, config):
         if rendered:
             dynamic.append({"role": "system", "content": "<story_memory>\n" + rendered + "\n</story_memory>"})
     recent = recent_history(story["messages"], config.recent_exchanges)
-    refs = {m["id"]: f"H{i + 1}" for i, m in enumerate(story["messages"])}
+    refs = {mid: message_ref(position) for mid, position in message_positions(story["messages"]).items()}
     for message in recent:
         for entry in story["snapshot"].get("lore_injections", []):
             if entry.get("anchor_id") == message["id"] and not entry.get("manually_removed"):

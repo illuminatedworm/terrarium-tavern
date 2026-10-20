@@ -9,7 +9,6 @@ import type { Session } from '../../lib/types';
 defineProps<{
   session: Session;
   fullAgent: boolean;
-  rounds: Map<string, number>;
   progress: string;
   character: string;
   disabled: boolean;
@@ -60,7 +59,6 @@ const tab = defineModel<StateTab>('tab', { required: true });
       v-else
       kind="memory"
       layout="cards"
-      :rounds="rounds"
       :snapshot="session.snapshot"
       :memory-view="session.memory_view"
       :progress="progress"

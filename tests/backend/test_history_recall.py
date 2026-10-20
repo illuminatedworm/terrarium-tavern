@@ -16,6 +16,7 @@ from tavern.memories.history_recall import (
     complete_with_recall,
 )
 from tavern.memories.memory_engine import CallBudget, apply_operations, consolidate
+from tavern.memories.memory_protocol import exposed_excerpts, split_passages
 from tavern.scripting.agent import make_provider
 
 
@@ -42,6 +43,7 @@ def history():
 
 
 def request(messages=None):
+    chosen = {m["id"] for m in (messages or history()[3:5])}
     return [
         {"role": "system", "content": "最终只返回operations/questions"},
         {
@@ -49,8 +51,9 @@ def request(messages=None):
             "content": json.dumps(
                 {
                     "messages": [
-                        {"id": m["id"], "role": m["role"], "text": m["model"]}
-                        for m in (messages or history()[3:5])
+                        {"ref": f"H{position}", "role": m["role"], "text": m["model"]}
+                        for position, m in enumerate(history(), 1)
+                        if m["id"] in chosen
                     ]
                 }
             ),
@@ -83,12 +86,13 @@ def test_search_then_read_preserves_quotes_roles_and_three_shared_attempts():
     recall = HistoryRecall(history(), Settings(), budget)
     original = copy.deepcopy(history())
     found = recall.execute({"query": "银戒 艾琳"})
-    assert found["matches"][0]["turn"] == 2
-    read = recall.execute({"turn": 2, "radius": 0})
+    assert [item["ref"] for item in found["matches"]] == ["H2", "H3"]
+    assert found["matches"][1]["passages"] == [{"ref": "H3#1", "text": "艾琳借出银戒，并约定归还。"}]
+    read = recall.execute({"ref": "H3", "radius": 0})
     assert [m["role"] for m in read["rounds"]] == ["user", "assistant"]
     assert "约定归还" in "".join(p["text"] for p in read["rounds"][1]["passages"])
     assert not recall.execute({"query": "不存在的事情"})["found"]
-    denied = recall.execute({"turn": 1})
+    denied = recall.execute({"ref": "H1"})
     assert not denied["rounds"] and "3次上限" in denied["notice"]
     assert budget.calls == 3 and history() == original
     assert not any("尚未提交" in m.get("text", "") for m in read["rounds"])
@@ -108,29 +112,34 @@ def test_returned_history_includes_full_long_text():
     messages = history()[:3]
     messages[-1]["model"] = "原文很长" * 5000 + "隐藏尾句"
     recall = HistoryRecall(messages, Settings(), HistoryBudget())
-    result = recall.execute({"turn": 2, "radius": 0})
-    assert "truncated" not in result["rounds"][-1]
+    parts = list(split_passages(messages[-1]["model"]))
+    [hit] = recall.execute({"query": "隐藏尾句"})["matches"]
+    # A search hit is the complete passage holding the match, numbered within H3.
+    assert hit["partial"] and hit["passages"] == [{"ref": f"H3#{len(parts)}", "text": parts[-1]}]
+    result = recall.execute({"ref": "H3", "radius": 0})
+    assert "partial" not in result["rounds"][-1]
     assert "隐藏尾句" in "".join(p["text"] for p in result["rounds"][-1]["passages"])
-    assert recall.sources["m2"]["exposed_excerpts"][0].endswith("隐藏尾句")
+    assert exposed_excerpts(recall.sources["m2"]) == parts
 
 
 def test_search_limit_counts_history_segments_and_radius_zero_reads_only_center():
     recall = HistoryRecall(history(), Settings(), HistoryBudget())
     result = recall.execute({"query": "银戒", "limit": 1})
-    assert {item["turn"] for item in result["matches"]} == {2}
+    assert [item["ref"] for item in result["matches"]] == ["H2", "H3"]
     assert [item["role"] for item in result["matches"]] == ["user", "assistant"]
-    centered = recall.execute({"turn": 2, "radius": 0})
-    assert {item["turn"] for item in centered["rounds"]} == {2}
-    assert len(centered["rounds"]) == 2
-    edge = HistoryRecall(history(), Settings(), HistoryBudget()).execute({"turn": 1, "radius": 2})
-    assert {item["turn"] for item in edge["rounds"]} == {1, 2, 3}
+    centered = recall.execute({"ref": "H2", "radius": 0})
+    assert [item["ref"] for item in centered["rounds"]] == ["H2", "H3"]
+    edge = HistoryRecall(history(), Settings(), HistoryBudget()).execute({"ref": "H1", "radius": 2})
+    assert [item["ref"] for item in edge["rounds"]] == ["H1", "H2", "H3", "H4", "H5"]
+    pending = HistoryRecall(history(), Settings(), HistoryBudget()).execute({"ref": "H6"})
+    assert not pending["rounds"] and "H1-H5" in pending["error"]
 
 
 async def test_three_tools_then_final_response_and_no_future_batch_visibility():
     provider = Provider(
         [
             ("", [call(1, {"query": "银戒"})]),
-            ("", [call(2, {"turn": 2, "radius": 0})]),
+            ("", [call(2, {"ref": "H2", "radius": 0})]),
             ("", [call(3, {"query": "不存在"})]),
             ('{"operations":[],"questions":[]}', []),
         ]
@@ -166,7 +175,7 @@ async def test_parallel_attempts_cannot_execute_fourth_and_quota_spans_batches()
     tool_results = [m for m in provider.calls[-1][0] if m["role"] == "tool"]
     assert len(tool_results) == 4 and "3次上限" in tool_results[-1]["content"]
     assert budget.calls == 3
-    later = Provider([("", [call(5, {"turn": 1})])])
+    later = Provider([("", [call(5, {"ref": "H1"})])])
     with pytest.raises(ValueError, match="已停用"):
         await complete_with_recall(
             later, request(), history=history(), settings=Settings(), budget=budget, phase="memory_review"
@@ -231,14 +240,12 @@ async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
     }
     cfg, budget = Settings(), CallBudget()
     wire = copy.deepcopy(operation)
-    wire["record"]["sources"] = ["H1", "S2"]
+    wire["record"]["sources"] = ["H3#1", "H11#1"]
     provider = Provider([("", [call(1, {"query": "银戒"})]), (json.dumps({"operations": [wire]}), [])])
 
     async def generate(prompt, **kw):
         payload = json.loads(prompt[-1]["content"])
-        assert "m2" not in {
-            prompt.references.messages[m["id"]] for m in payload["background_messages"] + payload["messages"]
-        }
+        assert "H3" not in {m["ref"] for m in payload["background_messages"] + payload["messages"]}
         return await complete_with_recall(
             provider, prompt, history=messages, settings=cfg, budget=budget.history, phase=kw["phase"]
         )
@@ -249,7 +256,7 @@ async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
     assert len(result["records"][0]["sources"]) == 2
     operation["record"]["sources"] = operation["record"]["sources"][:1]
     by_id = {m["id"]: m for m in messages}
-    with pytest.raises(ValueError, match="本批新增"):
+    with pytest.raises(ValueError, match="batch_range"):
         apply_operations(
             {"version": 1, "records": []},
             {"operations": [operation]},
@@ -277,7 +284,7 @@ async def test_long_history_tool_result_reaches_tracker_complete():
     old[2]["model"] = "旧事" * 5000 + "结尾证据"
     provider = Provider(
         [
-            ("", [call(1, {"turn": 2, "radius": 0})]),
+            ("", [call(1, {"ref": "H3", "radius": 0})]),
             ('{"operations":[],"questions":[]}', []),
         ]
     )
@@ -293,7 +300,7 @@ async def test_anthropic_legacy_recall_distinguishes_errors_from_empty_results()
 
     cfg = Settings(api_mode="anthropic", model="fixture", api_key="fixture", use_proxy=False)
     captured = []
-    actions = [{"query": "", "turn": 1}, {"query": "NO_MATCH_924"}]
+    actions = [{"query": "", "ref": "H1"}, {"query": "NO_MATCH_924"}]
 
     def route(req):
         captured.append(json.loads(req.content))
@@ -419,9 +426,9 @@ async def test_maintenance_alias_shares_the_actual_recall_budget(tmp_path):
         session["snapshot"],
         phase="pre",
     )
-    for args in ({"query": "hello"}, {"turn": 1}, {"query": "not-found"}):
+    for args in ({"query": "hello"}, {"ref": "H1"}, {"query": "not-found"}):
         assert isinstance(agent.execute("tavern_recall_history", args), dict)
-    denied = agent.execute("tavern_recall_history", {"turn": 1})
+    denied = agent.execute("tavern_recall_history", {"ref": "H1"})
     assert "3次上限" in denied["notice"]
     assert agent.history_budget.calls == 3
 
@@ -437,7 +444,7 @@ async def test_manual_runtime_logs_each_model_request_once_and_commits_only_fina
     provider = Provider(
         [
             ("", [call(1, {"query": "银戒"})]),
-            ("", [call(2, {"turn": 1, "radius": 0})]),
+            ("", [call(2, {"ref": "H1", "radius": 0})]),
             ("", [call(3, {"query": "承诺"})]),
             ("", [NativeToolCall("write", "write_memory", '{"operations":[],"questions":[]}')]),
             ("done", []),

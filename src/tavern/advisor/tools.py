@@ -8,6 +8,7 @@ from pydantic import Field, StringConstraints
 
 from tavern.advisor.context import expanded, memory_rows
 from tavern.character.cards import normalize
+from tavern.core.history_refs import message_ref
 from tavern.core.model_view import state_for_model
 from tavern.full_agent.content import editable_entry, entry_rows, entry_view
 from tavern.full_agent.state import note_view
@@ -159,8 +160,12 @@ class AdvisorTools:
         full = story["snapshot"].get("full_agent", {})
         if name in {"search_history", "read_history"}:
             rows = [
-                {"ref": f"H{i + 1}", "role": m["role"], "text": expanded(story, m.get("model", m["raw"]), m)}
-                for i, m in enumerate(story["messages"])
+                {
+                    "ref": message_ref(position),
+                    "role": m["role"],
+                    "text": expanded(story, m.get("model", m["raw"]), m),
+                }
+                for position, m in enumerate(story["messages"], 1)
             ]
             if name == "search_history":
                 return {

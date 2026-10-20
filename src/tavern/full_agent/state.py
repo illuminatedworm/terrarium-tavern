@@ -4,6 +4,8 @@ import copy
 import hashlib
 import uuid
 
+from tavern.core.history_refs import message_positions, message_ref
+
 
 def new_state():
     return {
@@ -26,13 +28,13 @@ def source_hash(message):
 
 
 def note_view(note, history):
-    by_id = {m["id"]: (i + 1, m) for i, m in enumerate(history)}
+    positions = message_positions(history)
     sources, stale = [], False
     for source in note.get("sources", []):
-        found = by_id.get(source["message_id"])
-        stale |= not found or source_hash(found[1]) != source["hash"]
-        if found:
-            sources.append(f"H{found[0]}")
+        position = positions.get(source["message_id"])
+        stale |= position is None or source_hash(history[position - 1]) != source["hash"]
+        if position is not None:
+            sources.append(message_ref(position))
     return {k: copy.deepcopy(note[k]) for k in ("key", "content", "kind", "status", "revision")} | {
         "sources": sources,
         "stale": bool(stale),

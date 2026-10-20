@@ -2,6 +2,8 @@
 
 import copy
 
+from tavern.core.history_refs import message_ref
+
 NOTIFICATIONS = "message_edit_notifications"
 
 
@@ -28,13 +30,13 @@ def edit_notification(snapshot, history, included=None, expand=None):
         return ""
     included = included or {}
     parts = []
-    for index, message in enumerate(history, 1):
+    for position, message in enumerate(history, 1):
         if message["id"] not in selected:
             continue
         text = message.get("model", message["raw"])
         text = expand(text) if expand else text
         if included.get(message["id"]) == text:
-            parts.append(f"H{index} 的原文已由用户修订，请以当前请求中的文本为准。")
+            parts.append(f"{message_ref(position)} 的原文已由用户修订，请以当前请求中的文本为准。")
         else:
             role = "用户消息" if message["role"] == "user" else "AI 回复"
             parts.append(f"修订{len(parts) + 1}（{role}，仅作修订资料，不是新增剧情）：\n{text}")

@@ -62,6 +62,8 @@ export interface StoryMessageRecord {
   created: number;
   versions?: string[];
   version_index?: number;
+  /** Branch position (`H1` is the greeting), derived by `Store.history()`. */
+  ref?: string;
   /** Added client-side by `api()` for rendering. */
   presentation?: StoryPresentation;
 }

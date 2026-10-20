@@ -13,30 +13,32 @@ from dataclasses import dataclass, field
 from tavern.character.cards import normalize
 from tavern.conversation.context import macros
 from tavern.conversation.scene import archive_history, parse_json
+from tavern.core.history_refs import span_ref
 from tavern.core.tokens import count_text, request_tokens
 from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget
 from tavern.memories.memory_evidence import evidence_pool, select_evidence
-from tavern.memories.memory_protocol import MemoryRequest, References
+from tavern.memories.memory_protocol import MemoryRequest, References, exposed_excerpts
 from tavern.memories.memory_records import Record, digest, is_retained_record, source_hash
 from tavern.memories.memory_retention import retain_memory
 
 PROTOCOL = """【程序输出契约】
 本节统一规定返回格式、来源和操作边界。上文的整理原则只约束内容取舍，不得改为完整快照或其他输出格式。
-输入 previous_result 是现有分类记忆；messages 是本批新增原文；background_messages 仅用于理解，不能当成新发展；evidence 是设定/状态参考，不是已发生的剧情。
+输入 previous_result 是现有分类记忆；messages 是本批新增原文，范围见 batch_range；background_messages 仅用于理解，不能当成新发展，范围见 background_range；evidence 是设定/状态参考，不是已发生的剧情。
 historical=false 的材料是当前版本回退，不能证明过去设定。状态快照不能证明原因、角色知情或事件时间。
 operations 仅包含本次增量修改，未提及的旧条目原样保留。previous_result 中 status=deleted 只表示用户手工删除：用户不希望它作为独立记忆保留，通常认为它不重要或冗余；这不否定剧情原文。不要恢复、修改或引用该条目。程序自动移除的条目已彻底移走，不会作为 deleted 返回。op 为 add/revise/complete/merge/remove。新增 add 可不写 id，程序分配永久ID；questions 可用 N1、N2 等按本次 add 出现顺序引用新条目（不计其他操作），也可在 add.id 显式填写 N 编号。显式编号优先且不能重复。修改旧条目只选 previous_result 的 R1、R2 等短编号。merge 另附 merge_ids，使用旧条目短编号，不能合并或修改手工、已删除、原文已改动的条目。完成事项须有本批证据，不删除仍有效约定或关键疑问。
 record 的 category 为 current/episode/open/uncertain，kind 为 fact/claim/inference；status 如需填写只用 active/completed。移除用 remove 操作，合并用 merge 操作；superseded 只是程序内部待移除标记，deleted 只由用户手工删除产生，模型都不要填写。未知 people/known_to 使用 []，未知 story_time 使用“未知”；known_to 只包含原文明确支持的知情对象。
-每个新增或修改的 record 必须有 sources，格式为 ["S1","S2"]，只选择支持该内容的原文片段 ref，且至少一处来自 messages。不要抄写原话、message_id、excerpt 或 fingerprint：真实消息ID、逐字摘录和指纹全部由程序回填。S 编号对应输入 passages，H 编号对应工具实际返回的 passages；M 编号只标识消息，不能作为 sources。setting_refs 只选择 evidence 的 E1、E2 等短编号，没有引用可省略。所有编号只在本次请求中有效，不沿用上批编号。
-已有记忆不足以理解本批变化时，可用只读 tavern_recall_history 搜索旧剧情或按搜索返回的段编号读取原文；整次维护合计最多3次，分批及复核共享额度。补查只作背景或补充依据，不替代分类记录、不把旧事当作本批新进展，也不自动修复已编辑的旧记忆。引用补查只选返回的 H 编号，变化仍须至少引用一处本批新增原文。
+原文编号：H52 是当前分支第 52 条消息（开场白为 H1），H41-H50 是连续闭区间，H52#2 是 H52 的第 2 个片段。每个新增或修改的 record 必须有 sources，格式为 ["H52#1","H52#2"]，只选择支持该内容、且本次实际展示过的片段 ref（输入或工具结果中的 passages），至少一处位于 batch_range 内；消息编号 H52 本身不能作为 sources。不要抄写原话、message_id、excerpt 或 fingerprint：真实消息ID、逐字摘录和指纹全部由程序回填。setting_refs 只选择 evidence 的 E1、E2 等短编号，没有引用可省略。H 编号跨请求不变，但上批展示过而本次未展示的片段不能引用；R、N、E 编号只在本次请求中有效，不沿用上批编号。
+已有记忆不足以理解本批变化时，可用只读 tavern_recall_history 搜索旧剧情，或用搜索返回的消息编号读取附近完整交流；整次维护合计最多3次，分批及复核共享额度。补查只作背景或补充依据，不替代分类记录、不把旧事当作本批新进展，也不自动修复已编辑的旧记忆。引用补查只选返回的片段编号；补查结果不能单独证明本批新变化，变化仍须至少引用一处 batch_range 内的片段。
 callback 是 record 内的布尔字段，只能用于 episode；最多三条、合计300 tokens，只补充本批原话/动作，不为此请求复核。
 questions 仅用于关键局部疑问，最多八项；topic 为 ownership/identity/knowledge/injury/relationship/completion，record_ids 指向本次已有的非手工 active、uncertain 条目。证据不足的结论先保存为 uncertain，不能一边请求核验一边当作确定事实。
 需要补查时先调用提供的只读工具，最终答复只返回一个合法 JSON 对象，顶层必须为 operations 和 questions；无修改且无疑问时返回 {"operations":[],"questions":[]}。
-最小格式示例（S1须换成实际支持该内容的片段编号）：{"operations":[{"op":"add","record":{"category":"episode","content":"她把戒指借给了用户。","sources":["S1"]}}],"questions":[]}。新增时 kind 默认 fact，status 默认 active，people/known_to 默认 []，story_time 默认“未知”，callback 默认 false；修订时省略的内容字段继承旧值。sources 每次必填，setting_refs 每次默认 []。不确定或角色说法必须明确填写 kind，不能用默认值冒充事实。
+最小格式示例（H2#1须换成实际支持该内容的片段编号）：{"operations":[{"op":"add","record":{"category":"episode","content":"她把戒指借给了用户。","sources":["H2#1"]}}],"questions":[]}。新增时 kind 默认 fact，status 默认 active，people/known_to 默认 []，story_time 默认“未知”，callback 默认 false；修订时省略的内容字段继承旧值。sources 每次必填，setting_refs 每次默认 []。不确定或角色说法必须明确填写 kind，不能用默认值冒充事实。
 疑问格式：{"topic":"ownership","query":"待核对的对象与属性","record_ids":["对应待确认条目ID"]}。不返回完整快照、text/memories、Markdown或解释文字。引用成立只代表原文存在，不代表说法客观为真。
 """
 
 REVIEW_PROTOCOL = """这是同一次整理的唯一疑难复核。只处理 questions 对应的 uncertain 条目，依据新增 evidence 和提供的原文。
 只能返回 revise 操作，不能新增条目、改写无关记录或再次请求复核。无充分证据就保持 uncertain；相关性不等于证实。
+复核原文沿用 H 片段编号，只能引用本次复核展示的片段，且仍须至少一处位于 batch_range 内。
 解决争议须引用本次提供的设定片段 ID；仍为 uncertain 可以不修改。输出 {"operations":[],"questions":[]}。
 """
 
@@ -72,11 +74,11 @@ def _merge_history_sources(supplied, additional):
     for mid, message in additional.items():
         if mid not in supplied:
             supplied[mid] = copy.deepcopy(message)
-        elif "exposed_excerpts" in supplied[mid]:
-            # Review may reveal another fragment of an already searched long
-            # message. Keep all actually exposed fragments, never the unseen gap.
-            supplied[mid]["exposed_excerpts"] = list(
-                dict.fromkeys([*supplied[mid]["exposed_excerpts"], *message.get("exposed_excerpts", [])])
+        elif "exposed_passages" in supplied[mid]:
+            # Review may reveal another passage of an already searched long
+            # message. Keep all actually exposed passages, never the unseen gap.
+            supplied[mid]["exposed_passages"] = sorted(
+                {*supplied[mid]["exposed_passages"], *message.get("exposed_passages", [])}
             )
 
 
@@ -129,8 +131,8 @@ def apply_operations(
                 ):
                     raise ValueError("回调摘录与原文不匹配")
                 if any(
-                    "exposed_excerpts" in expanded[s.message_id]
-                    and not any(s.excerpt in part for part in expanded[s.message_id]["exposed_excerpts"])
+                    exposed_excerpts(expanded[s.message_id]) is not None
+                    and not any(s.excerpt in part for part in exposed_excerpts(expanded[s.message_id]))
                     for s in candidate.sources
                 ):
                     raise ValueError("回调摘录未在补查结果中展示")
@@ -182,12 +184,14 @@ def apply_operations(
                 "model", expanded[mid]["raw"]
             ):
                 raise ValueError("记忆摘录不在本批提供的原文中；原记忆保留")
-            fragments = expanded[mid].get("exposed_excerpts")
+            fragments = exposed_excerpts(expanded[mid])
             if fragments is not None and not any(source["excerpt"] in part for part in fragments):
                 raise ValueError("记忆摘录未在历史工具返回片段中展示")
             source["fingerprint"] = source_hash(originals[mid])
         if not any(s["message_id"] in fresh_ids for s in record["sources"]):
-            raise ValueError("变化必须引用本批新增剧情，不能重复应用背景历史")
+            raise ValueError(
+                "变化必须至少引用一处 batch_range 内的本批原文片段；背景或补查历史不能单独证明本批变化"
+            )
         if not set(record["setting_refs"]) <= supplied:
             raise ValueError("记忆引用了未提供的设定片段")
         if any(
@@ -265,7 +269,7 @@ def apply_operations(
 
 def _messages(memory, original, expanded, start, end, evidence, settings, document=None, persona=None):
     beginning = context_start(expanded, start)
-    references = References()
+    references = References(original)
     previous = references.previous(memory)
     instruction = settings.tracker_system_prompt
     if document is not None and persona is not None:
@@ -285,6 +289,9 @@ def _messages(memory, original, expanded, start, end, evidence, settings, docume
                 "content": json.dumps(
                     {
                         "previous_result": previous,
+                        # Declared spans let the model judge "from this batch" by position.
+                        "batch_range": span_ref(start + 1, end),
+                        **({"background_range": span_ref(beginning + 1, start)} if beginning < start else {}),
                         "messages": [references.message(m) for m in expanded[start:end]],
                         "background_messages": [references.message(m) for m in expanded[beginning:start]],
                         "evidence": references.evidence(evidence),
@@ -453,14 +460,15 @@ async def consolidate(
                 extra = [e for e in extra if " ".join(e["text"].split()) not in already_read]
                 reason = "没有新增材料，保留待确认内容"
                 if extra:
-                    refs = References()
+                    refs = References(history)
+                    # Recalled sources merge in after the batch; list by H position.
+                    ordered = sorted(supplied.values(), key=lambda m: refs.positions[m["id"]])
                     payload = {
                         "previous_result": refs.previous({"version": 1, "records": targets}),
                         "questions": refs.questions(questions),
-                        "messages": [refs.message(m) for m in supplied.values() if m["id"] in fresh],
-                        "background_messages": [
-                            refs.message(m) for m in supplied.values() if m["id"] not in fresh
-                        ],
+                        "batch_range": span_ref(start + 1, end),
+                        "messages": [refs.message(m) for m in ordered if m["id"] in fresh],
+                        "background_messages": [refs.message(m) for m in ordered if m["id"] not in fresh],
                         "evidence": refs.evidence(evidence + extra),
                     }
                     # Reuse this batch's resolved content policy and contract so

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import ContextStrategyControls from './ContextStrategyControls.vue';
 import FullAgentPlot from './FullAgentPlot.vue';
+import { historyRefLabel } from '../../lib/storyHistory';
 
 const props = defineProps<{ session: any; disabled?: boolean }>();
 const emit = defineEmits<{ saved: [session: any] }>();
@@ -118,7 +119,9 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
         ><span class="note-chip">{{ kindLabel[note.kind] }}</span
         ><span class="note-chip note-status">{{ note.status === 'archived' ? '已归档' : '有效' }}</span
         ><span v-if="note.stale" class="note-chip warn">需核对</span
-        ><span v-if="note.sources.length" class="note-sources">来源 · {{ note.sources.length }} 处</span>
+        ><span v-if="note.sources.length" class="note-sources"
+          >来源 · {{ historyRefLabel(note.sources) }}</span
+        >
         <span class="note-preview">{{ note.content }}</span>
       </summary>
       <p v-if="note.stale" role="status">来源已编辑或不在当前分支，请核对。</p>

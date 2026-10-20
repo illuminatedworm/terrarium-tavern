@@ -66,4 +66,4 @@
 
 勾选“本轮允许修改设定”会要求正文前处理输入中的明确修改；正文后可以沉淀长期变化。全局与对话级“修改保存方式”只决定实际变量和设定修改是否审核，不授予修改权限；记忆自动保存。规则与 Full Agent 相同，见[工具与变量授权](full-agent.md#工具与变量授权)。只勾选变量更新且未到记忆周期时，Tracker 不顺带写文本记忆。
 
-Tracker 使用独立系统提示词。工具的 S/H、R、E 短编号和增量操作格式见[记忆设计](../design/memory-consistency.md)，完整任务顺序见[Half Agent 工作流](../design/agent-workflow.md)。
+Tracker 使用独立系统提示词。原文以当前分支消息编号 H52 及片段编号 H52#3 给出（开场白为 H1，与剧情消息上显示的编号相同），本批与背景的范围以 H41-H50 形式声明；R、E 短编号和增量操作格式见[记忆设计](../design/memory-consistency.md#短编号输出协议)，完整任务顺序见[Half Agent 工作流](../design/agent-workflow.md)。默认 `tracker_system_prompt` 不含编号规则，编号协议由程序随任务提供，自定义提示词无需迁移。

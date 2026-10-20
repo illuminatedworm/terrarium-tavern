@@ -13,6 +13,7 @@ from pathlib import Path
 from tavern.character.cards import normalize, parse_card
 from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.errors import NotFound
+from tavern.core.history_refs import message_ref
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 from tavern.core.usage import aggregate_cache_usage
@@ -951,7 +952,11 @@ class Store(MessageAdapters):
             result.append(row)
             seen.add(head)
             head = row["parent"]
-        return list(reversed(result))
+        result.reverse()
+        # Derived like versions: the UI shows the same H the models cite.
+        for position, row in enumerate(result, 1):
+            row["ref"] = message_ref(position)
+        return result
 
     def switch_message_version(self, sid, mid, target, expected_revision):
         session = self.session(sid)

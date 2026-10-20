@@ -75,7 +75,7 @@ async def test_existing_record_alias_updates_stable_id_and_preserves_omitted_ite
     async def generate(prompt, **kwargs):
         wire = json.dumps(prompt)
         assert "very-long-stored" not in wire
-        return answer({"content": "戒指归还", "sources": ["S1"]}, action="revise", rid="R1")
+        return answer({"content": "戒指归还", "sources": ["H1#1"]}, action="revise", rid="R1")
 
     result = await consolidate(messages, Settings(), generate, memory=old)
     assert result["records"][0]["id"] == old["records"][0]["id"]
@@ -142,7 +142,12 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
         assert "random-setting" not in json.dumps(prompt) and "random-version" not in json.dumps(prompt)
         if phase == "memory":
             return answer(
-                {"category": "uncertain", "content": "归属待确认", "sources": ["S1"], "setting_refs": ["E1"]},
+                {
+                    "category": "uncertain",
+                    "content": "归属待确认",
+                    "sources": ["H1#1"],
+                    "setting_refs": ["E1"],
+                },
                 rid="N1",
                 questions=[{"topic": "ownership", "query": "戒指归属", "record_ids": ["N1"]}],
             )
@@ -150,7 +155,7 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
         assert payload["questions"][0]["record_ids"] == ["R1"]
         assert payload["evidence"][1]["version"] == "V2"
         return answer(
-            {"category": "current", "content": "艾琳仍拥有戒指", "sources": ["S1"], "setting_refs": ["E2"]},
+            {"category": "current", "content": "艾琳仍拥有戒指", "sources": ["H1#1"], "setting_refs": ["E2"]},
             action="revise",
             rid="R1",
         )
@@ -170,7 +175,7 @@ async def test_questions_can_reference_unnamed_adds_by_position():
         return json.dumps(
             {
                 "operations": [
-                    {"op": "add", "record": {"category": category, "content": content, "sources": ["S1"]}}
+                    {"op": "add", "record": {"category": category, "content": content, "sources": ["H1#1"]}}
                     for category, content in [
                         ("episode", "一"),
                         ("uncertain", "二待确认"),
@@ -211,7 +216,7 @@ def test_explicit_new_alias_takes_precedence_over_positional_alias():
 async def test_question_outside_add_positions_still_rejects_batch():
     async def generate(prompt, **kwargs):
         return answer(
-            {"category": "uncertain", "content": "待确认", "sources": ["S1"]},
+            {"category": "uncertain", "content": "待确认", "sources": ["H1#1"]},
             questions=[{"topic": "knowledge", "query": "谁知情", "record_ids": ["N2"]}],
         )
 
@@ -224,7 +229,9 @@ async def test_question_outside_add_positions_still_rejects_batch():
         )
 
 
-@pytest.mark.parametrize("sources,match", [(["S999"], "未知"), (["M1"], "未知"), (["S2"], "本批新增")])
+@pytest.mark.parametrize(
+    "sources,match", [(["H9#1"], "本次未提供"), (["H2"], "未知"), (["H1#1"], "batch_range")]
+)
 async def test_unknown_or_background_only_citation_preserves_old_memory(sources, match):
     old = {"version": 1, "records": []}
 
@@ -242,7 +249,7 @@ async def test_short_record_ids_do_not_bypass_edit_protection(protected):
     record[protected] = True
 
     async def generate(prompt, **kwargs):
-        return answer({"content": "试图覆盖", "sources": ["S1"]}, action="revise", rid="R1")
+        return answer({"content": "试图覆盖", "sources": ["H1#1"]}, action="revise", rid="R1")
 
     with pytest.raises(ValueError, match="不可自动修改"):
         await consolidate(
@@ -257,7 +264,7 @@ async def test_short_deleted_record_id_is_suppressed():
     events = []
 
     async def generate(prompt, **kwargs):
-        return answer({"content": "试图覆盖", "sources": ["S1"]}, action="revise", rid="R1")
+        return answer({"content": "试图覆盖", "sources": ["H1#1"]}, action="revise", rid="R1")
 
     result = await consolidate(
         history(["新事件。"]),
@@ -274,28 +281,25 @@ def test_passages_are_lossless_and_never_join_disjoint_tool_results():
     text = "  她说：『不能送你。』\n" + "超长无标点" * 500 + "\n终句。"
     parts = list(split_passages(text))
     assert "".join(parts) == text and all(0 < len(p) <= 600 for p in parts)
-    refs = References()
-    refs.message(
-        {
-            "id": "hidden-id",
-            "role": "assistant",
-            "raw": "不可见原文",
-            "exposed_excerpts": ["第一处", "另一处"],
-        }
-    )
-    assert [s["excerpt"] for s in refs.sources.values()] == ["第一处", "另一处"]
+    opening = {"id": "opening", "role": "assistant", "raw": "开场"}
+    searched = {"id": "hidden-id", "role": "assistant", "raw": text, "exposed_passages": [1, 3]}
+    refs = References([opening, searched])
+    shown = refs.message(searched)
+    # Global numbering keeps the unseen H2#2 gap out of both the view and the citable set.
+    assert shown["ref"] == "H2" and [p["ref"] for p in shown["passages"]] == ["H2#1", "H2#3"]
+    assert {k: v["excerpt"] for k, v in refs.sources.items()} == {"H2#1": parts[0], "H2#3": parts[2]}
 
 
 def test_tool_registers_every_returned_passage_of_long_history():
     messages = history(["戒指" * 6000 + "禁止访问的尾部"])
-    refs, settings = References(), Settings()
+    refs, settings = References(messages), Settings()
     recall = HistoryRecall(messages, settings, HistoryBudget(), references=refs)
-    result = recall.execute({"turn": 1, "radius": 0})
+    result = recall.execute({"ref": "H1", "radius": 0})
     wire = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
     assert messages[0]["id"] not in wire and "禁止访问的尾部" in wire
     exposed = {p["ref"]: p["text"] for item in result["rounds"] for p in item["passages"]}
     assert {k: v["excerpt"] for k, v in refs.sources.items()} == exposed
-    assert all(k.startswith("H") for k in exposed)
+    assert list(exposed) == [f"H1#{i}" for i in range(1, len(exposed) + 1)]
 
 
 async def test_native_tool_short_refs_use_batch_cutoff_and_resolve_history_evidence():
@@ -321,7 +325,7 @@ async def test_native_tool_short_refs_use_batch_cutoff_and_resolve_history_evide
             )
             return SimpleNamespace(
                 content=answer(
-                    {"category": "episode", "content": "借出后已归还", "sources": ["S1", old_ref]}
+                    {"category": "episode", "content": "借出后已归还", "sources": ["H7#1", old_ref]}
                 ),
                 usage={},
             )
@@ -347,7 +351,7 @@ async def test_optional_bad_ref_is_discarded_without_losing_valid_change():
     events = []
 
     async def generate(prompt, **kwargs):
-        valid = json.loads(answer({"category": "current", "content": "戒指已归还", "sources": ["S1"]}))
+        valid = json.loads(answer({"category": "current", "content": "戒指已归还", "sources": ["H1#1"]}))
         valid["operations"].append(
             {
                 "op": "add",
@@ -355,7 +359,7 @@ async def test_optional_bad_ref_is_discarded_without_losing_valid_change():
                     "category": "episode",
                     "content": "可选动作",
                     "callback": True,
-                    "sources": ["S999"],
+                    "sources": ["H9#1"],
                 },
             }
         )
@@ -372,33 +376,35 @@ async def test_optional_bad_ref_is_discarded_without_losing_valid_change():
     assert any(k == "memory_records_discarded" for k, _ in events)
 
 
-async def test_local_refs_reset_between_manual_batches_and_final_failure_is_atomic():
+async def test_stable_refs_cite_only_this_batch_view_and_final_failure_is_atomic():
     messages = history([str(i) + "界" * 600 for i in range(24)])
     for i, message in enumerate(messages):
         message["role"] = "user" if i % 2 == 0 else "assistant"
     settings = Settings(memory_input_tokens=8000, memory_evidence_tokens=0)
     original = {"version": 1, "records": []}
-    calls = []
+    calls, firsts = [], []
     fail = False
 
     async def generate(prompt, **kwargs):
         payload = json.loads(prompt[-1]["content"])
         first = payload["messages"][0]["passages"][0]
-        assert first["ref"] == "S1"
-        calls.append(prompt.references.sources["S1"]["message_id"])
-        return answer(
-            {
-                "category": "episode",
-                "content": "经历" + str(len(calls)),
-                "sources": ["S999" if fail and len(calls) == 2 else "S1"],
-            }
-        )
+        assert first["ref"] == payload["batch_range"].split("-")[0] + "#1"
+        calls.append(prompt.references.sources[first["ref"]]["message_id"])
+        firsts.append(first["ref"])
+        source = first["ref"]
+        if fail and len(calls) == 2:
+            # Same H meaning as in batch one, but not shown in this batch.
+            source = firsts[0]
+            assert source not in prompt.references.sources
+        return answer({"category": "episode", "content": "经历" + str(len(calls)), "sources": [source]})
 
     result = await consolidate(messages, settings, generate, memory=original, budget=CallBudget(manual=True))
     assert len(calls) > 1 and [r["sources"][0]["message_id"] for r in result["records"]] == calls
+    assert firsts[0] == "H1#1" and len(set(firsts)) == len(firsts)
     assert len({r["id"] for r in result["records"]}) == len(calls)
     calls.clear()
+    firsts.clear()
     fail = True
-    with pytest.raises(ValueError, match="未知"):
+    with pytest.raises(ValueError, match="本次未提供"):
         await consolidate(messages, settings, generate, memory=original, budget=CallBudget(manual=True))
     assert original == {"version": 1, "records": []}

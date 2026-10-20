@@ -64,8 +64,9 @@ def test_unsupported_database_is_rejected_before_any_write(tmp_path, version):
 
 
 def test_source_protocol_accepts_only_exposed_short_references():
-    refs = References()
-    refs.message({"id": "private-message-id", "role": "assistant", "raw": "hello"})
+    message = {"id": "private-message-id", "role": "assistant", "raw": "hello"}
+    refs = References([message])
+    refs.message(message)
     with pytest.raises(ValueError, match="短编号"):
         refs.resolve(
             {

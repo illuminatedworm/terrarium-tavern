@@ -86,6 +86,7 @@ function forwardAction(
       <span v-if="message.role === 'user'" class="avatar">你</span>
       <CharacterPortrait v-else class="avatar" :src="portraitSrc" :name="name" size="message" />
       <strong>{{ message.role === 'user' ? session.persona : name }}</strong>
+      <small v-if="message.ref" class="message-ref" title="当前分支消息编号">{{ message.ref }}</small>
       <small v-if="writerResponseCache && cacheBreakpointId === message.id" class="cache-breakpoint-status">{{
         session.cache_breakpoint_auto ? '缓存自动跟进' : '缓存位置已固定'
       }}</small>

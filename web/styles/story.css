@@ -272,6 +272,9 @@
   color: var(--text-faint);
   font-size: var(--fs-2xs);
 }
+.message-meta .message-ref {
+  font-variant-numeric: tabular-nums;
+}
 .message-meta .cache-breakpoint-status {
   color: var(--cache-gold-text);
 }

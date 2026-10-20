@@ -14,6 +14,7 @@ from tavern.conversation.context import (
 from tavern.conversation.regeneration import regeneration_reference
 from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
+from tavern.core.history_refs import message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
 from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.full_agent.config import tool_protocol
@@ -365,13 +366,13 @@ def compile_window(
     active_notes = sum(note.get("status", "active") == "active" for note in state["notes"].values())
     archived_notes = len(state["notes"]) - active_notes
     memory_status = f"长期笔记：有效 {active_notes} 条，已归档 {archived_notes} 条。"
-    history_status = f"原始历史 H1–H{len(history)}" if history else "尚无原始历史"
+    history_status = f"原始历史 {span_ref(1, len(history))}" if history else "尚无原始历史"
     visible_status = (
-        f"当前保留 H{window['start'] + 1} 起的正文" if visible else "当前窗口没有已完成的历史正文"
+        f"当前保留 {message_ref(window['start'] + 1)} 起的正文" if visible else "当前窗口没有已完成的历史正文"
     )
     status = (
         f"上下文窗口：当前第 {window['number']} 个。\n"
-        f"{history_status}；当前用户输入引用 H{len(history) + 1}；{visible_status}。\n"
+        f"{history_status}；当前用户输入引用 {message_ref(len(history) + 1)}；{visible_status}。\n"
         f"{memory_status}"
     )
     if not complete_source:

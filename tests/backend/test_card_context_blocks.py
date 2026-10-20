@@ -187,10 +187,11 @@ def test_full_agent_tags_card_fields_and_keeps_greeting_plain_without_mutating_s
 
 
 def test_tracker_card_references_are_tagged_without_changing_citation_excerpts():
-    refs = References()
-    history = refs.message({"id": "opening", "parent": None, "role": "assistant", "raw": "开场"})
+    opening = {"id": "opening", "parent": None, "role": "assistant", "raw": "开场"}
+    refs = References([opening])
+    history = refs.message(opening)
     assert history["passages"][0]["text"] == "开场"
-    assert refs.sources["S1"]["excerpt"] == "开场"
+    assert refs.sources["H1#1"]["excerpt"] == "开场"
     evidence = [
         {"id": "desc", "kind": "character", "identity": "description", "text": "设定"},
         {"id": "lore", "kind": "frozen_lore", "text": "世界书"},

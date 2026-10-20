@@ -115,7 +115,10 @@ async def test_question_target_is_marked_uncertain_before_current_cap_runs():
         return json.dumps(
             {
                 "operations": [
-                    {"op": "add", "record": {"category": "current", "content": f"进展{i}", "sources": ["S1"]}}
+                    {
+                        "op": "add",
+                        "record": {"category": "current", "content": f"进展{i}", "sources": ["H1#1"]},
+                    }
                     for i in range(6)
                 ],
                 "questions": [{"topic": "knowledge", "query": "第一条是否确定", "record_ids": ["N1"]}],

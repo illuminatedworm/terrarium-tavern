@@ -40,7 +40,8 @@ async def test_manual_refresh_uses_session_identity(kind, tmp_path):
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed"
         payload = batch_payload(provider.call_log[0])
-        assert payload["messages"][0]["passages"] == [{"ref": "S1", "text": "小舟遇见洛伊。"}]
+        assert payload["batch_range"] == "H1" and payload["messages"][0]["ref"] == "H1"
+        assert payload["messages"][0]["passages"] == [{"ref": "H1#1", "text": "小舟遇见洛伊。"}]
         assert store.session(session["id"])["messages"][0]["raw"] == "{{user}}遇见{{char}}。"
     finally:
         await service.close()

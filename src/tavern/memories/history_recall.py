@@ -14,7 +14,9 @@ import time
 import unicodedata
 from dataclasses import dataclass
 
+from tavern.core.history_refs import message_positions, message_ref, parse_message_ref, span_ref
 from tavern.core.tokens import count_text, request_tokens
+from tavern.memories.memory_protocol import References, split_passages
 from tavern.memories.memory_records import digest, usage_fields
 
 HISTORY_CALL_LIMIT = 3
@@ -23,8 +25,8 @@ HISTORY_TOOL = {
     "function": {
         "name": "tavern_recall_history",
         "description": (
-            "Tracker只读历史补查：已有记忆和本批原文不足时，先query搜索关键词，再turn读取附近原文。"
-            "query与turn只能提供一个。整次维护最多3次，搜索、读取、无结果和参数错误都计次，分批/复核不重置。"
+            "Tracker只读历史补查：已有记忆和本批原文不足时，先query搜索关键词，再用ref读取附近完整交流。"
+            "query与ref只能提供一个。整次维护最多3次，搜索、读取、无结果和参数错误都计次，分批/复核不重置。"
             "只查当前分支已提交且不晚于本批的历史；返回内容是过去的资料，不是新进展。"
             "不得据此恢复已删除记忆或自动修复原文已改动的旧记录。信息够用时直接完成整理。"
         ),
@@ -37,24 +39,24 @@ HISTORY_TOOL = {
                     "description": "人物、物品、承诺等关键词，用空格分隔",
                     "maxLength": 300,
                 },
-                "turn": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "搜索返回的历史段编号，1-based，有效范围为1到当前可查历史段总数（含两端）。按段读取时必填；开场白独立一段，不是记忆周期轮数。",
+                "ref": {
+                    "type": "string",
+                    "pattern": r"^H[1-9]\d*$",
+                    "description": "要读取的消息编号，如搜索结果中的H52（当前分支第52条消息，开场白为H1）。按消息读取时必填；只能读取不晚于本批且已有回复的历史消息。",
                 },
                 "radius": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 2,
                     "default": 1,
-                    "description": "按段读取时中心段前、后各额外读取多少历史段，0–2（含两端），默认1；0只读中心段，到历史边界时不超出可用段。",
+                    "description": "按消息读取时，以ref所在的完整交流为中心，前、后各额外读取多少个完整交流，0–2（含两端），默认1；0只读中心交流，开场白单独算一个交流，到历史边界时不超出可用交流。",
                 },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 8,
                     "default": 5,
-                    "description": "关键词搜索最多命中的历史段数，1–8（含两端），默认5；不是消息条数。一段中多条消息均命中时，会分别返回定位摘要。",
+                    "description": "关键词搜索最多命中的完整交流数，1–8（含两端），默认5；不是消息条数。命中交流中每条含关键词的消息都会返回其包含命中处的完整片段。",
                 },
             },
         },
@@ -98,19 +100,19 @@ class HistoryRecall:
         self.settings, self.budget = settings, budget
         self.event = event or (lambda kind, payload: None)
         self.sources = {}
-        from tavern.memories.memory_protocol import References
-
-        self.references = references if references is not None else References()
+        self.references = references if references is not None else References(history)
         # De-duplicate only while the same model transcript contains the earlier
         # results. Batches share the quota, not an assumption that earlier tool
         # responses were copied into a new request.
         self.searches, self.reads = set(), set()
-        self.rounds, pending = [], []
+        self.rounds, self.round_of, pending = [], {}, []
+        positions = message_positions(history)
         for message in archive_history(history, document, persona):
             if message["role"] not in ("user", "assistant"):
                 continue
             pending.append(message)
             if message["role"] == "assistant":
+                self.round_of.update({positions[m["id"]]: len(self.rounds) for m in pending})
                 self.rounds.append(pending)
                 pending = []
         # A trailing input without its committed reply is never history evidence.
@@ -133,17 +135,17 @@ class HistoryRecall:
         result["remaining"] = self.budget.remaining
         try:
             args = json.loads(arguments) if isinstance(arguments, str) else arguments
-            if not isinstance(args, dict) or set(args) - {"query", "turn", "radius", "limit"}:
-                raise ValueError("仅允许 query/turn/radius/limit，不能指定其他会话或分支")
+            if not isinstance(args, dict) or set(args) - {"query", "ref", "radius", "limit"}:
+                raise ValueError("仅允许 query/ref/radius/limit，不能指定其他会话或分支")
             query = args.get("query")
             has_query = "query" in args
-            if has_query == ("turn" in args):
-                raise ValueError("query与turn必须且只能提供一个")
+            if has_query == ("ref" in args):
+                raise ValueError("query与ref必须且只能提供一个")
             if has_query:
                 if not isinstance(query, str) or not query.strip() or len(query) > 300:
                     raise ValueError("query须为1–300字符的关键词")
                 if "radius" in args:
-                    raise ValueError("radius只用于按段读取")
+                    raise ValueError("radius只用于按消息读取")
                 limit = self._integer(args.get("limit", 5), 1, 8)
                 terms = sorted(set(filter(None, (_normalized(t) for t in query.split()))))
                 if not terms:
@@ -157,9 +159,15 @@ class HistoryRecall:
             else:
                 if "limit" in args:
                     raise ValueError("limit只用于关键词搜索")
-                turn = self._integer(args["turn"], 1, len(self.rounds))
+                center = self.round_of.get(parse_message_ref(args["ref"]))
+                if center is None:
+                    raise ValueError(
+                        f"ref须为可查历史 {span_ref(1, max(self.round_of))} 中的消息编号"
+                        if self.round_of
+                        else "当前没有可查历史"
+                    )
                 radius = self._integer(args.get("radius", 1), 0, 2)
-                self._read(turn, radius, result)
+                self._read(center, radius, result)
         except (ValueError, TypeError) as error:
             result["notice"] += " 参数错误：" + str(error)
             result["error"] = str(error)
@@ -175,52 +183,57 @@ class HistoryRecall:
             raise ValueError(f"整数参数须为{minimum}–{maximum}")
         return value
 
-    def _admit(self, result, group, item, source, text_key):
-        """Return the complete selected text and register exactly what was shown."""
-        text = item.pop(text_key)
-        item.pop("message_id", None)
-        item["passages"] = self.references.passages(source["id"], text, prefix="H")
+    def _admit(self, result, group, message, parts, **flags):
+        """Return complete selected passages and register exactly what was shown."""
+        item = {
+            "ref": message_ref(self.references.positions[message["id"]]),
+            "role": message["role"],
+            **flags,
+            "passages": self.references.passages(message, parts),
+        }
         result[group].append(item)
         result["found"] = True
-        exposed = self.sources.setdefault(source["id"], {**copy.deepcopy(source), "exposed_excerpts": []})
-        exposed["exposed_excerpts"].append(text)
+        exposed = self.sources.setdefault(message["id"], {**copy.deepcopy(message), "exposed_passages": []})
+        exposed["exposed_passages"] = sorted({*exposed["exposed_passages"], *parts})
 
     def _search(self, query, terms, limit, result):
         matches = []
-        for number, messages in enumerate(self.rounds, 1):
+        for number, messages in enumerate(self.rounds):
             normalized = _normalized("\n".join(m.get("model", m["raw"]) for m in messages))
             covered = sum(term in normalized for term in terms)
             if covered:
-                matches.append(((_normalized(query) in normalized, covered, number), number, messages))
-        for _, number, messages in sorted(matches, reverse=True)[:limit]:
+                matches.append(((_normalized(query) in normalized, covered, number), messages))
+        for _, messages in sorted(matches, key=lambda match: match[0], reverse=True)[:limit]:
             for m in messages:
-                text = m.get("model", m["raw"])
-                if not any(t in _normalized(text) for t in terms):
-                    continue
-                offsets = [text.casefold().find(t) for t in query.casefold().split()]
-                offset = max(0, min((i for i in offsets if i >= 0), default=0) - 60)
-                item = {
-                    "turn": number,
-                    "message_id": m["id"],
-                    "role": m["role"],
-                    "excerpt": text[offset : offset + 240],
-                    "truncated": len(text) > 240,
-                }
-                self._admit(result, "matches", item, m, "excerpt")
+                parts = list(split_passages(m.get("model", m["raw"])))
+                hits = [i for i, text in enumerate(parts, 1) if any(t in _normalized(text) for t in terms)]
+                # Normalization drops the punctuation passages split at, so a
+                # term can straddle a boundary; then show both neighbours.
+                hits = hits or sorted(
+                    {
+                        part
+                        for i in range(1, len(parts))
+                        if any(t in _normalized(parts[i - 1] + parts[i]) for t in terms)
+                        for part in (i, i + 1)
+                    }
+                )
+                if hits:
+                    self._admit(
+                        result, "matches", m, hits, **({"partial": True} if len(hits) < len(parts) else {})
+                    )
+        if any(item.get("partial") for item in result["matches"]):
+            result["notice"] += (
+                " partial=true 表示只返回该消息中含命中处的完整片段；需要上下文时用 ref 读取完整交流。"
+            )
 
-    def _read(self, turn, radius, result):
-        for number in range(max(1, turn - radius), min(len(self.rounds), turn + radius) + 1):
-            for m in self.rounds[number - 1]:
+    def _read(self, center, radius, result):
+        for number in range(max(0, center - radius), min(len(self.rounds), center + radius + 1)):
+            for m in self.rounds[number]:
                 key = (self.signature, m["id"])
                 if key in self.reads:
                     continue
-                item = {
-                    "turn": number,
-                    "message_id": m["id"],
-                    "role": m["role"],
-                    "text": m.get("model", m["raw"]),
-                }
-                self._admit(result, "rounds", item, m, "text")
+                parts = range(1, len(list(split_passages(m.get("model", m["raw"])))) + 1)
+                self._admit(result, "rounds", m, parts)
                 self.reads.add(key)
 
 
@@ -239,9 +252,7 @@ async def complete_with_recall(
     # Infer the batch boundary from Runtime's payload, never from model arguments.
     supplied = json.loads(messages[-1]["content"])["messages"]
     references = getattr(messages, "references", None)
-    positions = {m["id"]: i for i, m in enumerate(history)}
-    source_ids = [references.messages.get(m["id"], m["id"]) if references else m["id"] for m in supplied]
-    cutoff = max((positions[mid] for mid in source_ids if mid in positions), default=-1) + 1
+    cutoff = max((parse_message_ref(m["ref"]) for m in supplied), default=0)
     recall = None  # Do not expand or scan the archive when Tracker does not ask.
     thread = copy.deepcopy(messages)
     if hasattr(provider, "echo_reasoning"):

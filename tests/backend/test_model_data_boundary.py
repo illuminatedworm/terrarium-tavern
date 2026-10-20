@@ -265,7 +265,7 @@ async def test_authorized_tools_only_return_short_refs_and_program_fills_sources
     assert set(lore[0]) == {"name", "content"}
     assert len(lore) == 1 and lore[0]["content"] == content
     assert agent.snapshot == session["snapshot"]
-    recalled = json.loads(await invoke("tavern_recall_history", {"turn": 1, "radius": 0}))
+    recalled = json.loads(await invoke("tavern_recall_history", {"ref": "H1", "radius": 0}))
     ref = recalled["rounds"][0]["passages"][0]["ref"]
     await invoke(
         "write_memory",

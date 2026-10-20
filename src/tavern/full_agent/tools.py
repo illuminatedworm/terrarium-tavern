@@ -8,6 +8,7 @@ import jsonpatch
 import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from tavern.core.history_refs import message_at, message_ref
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
@@ -357,8 +358,8 @@ class AgentTools:
 
     def archive(self):
         return [
-            {"ref": f"H{i + 1}", "role": m["role"], "text": m["raw"]}
-            for i, m in enumerate(self.owner.source_history)
+            {"ref": message_ref(position), "role": m["role"], "text": m["raw"]}
+            for position, m in enumerate(self.owner.source_history, 1)
         ]
 
     def search(self, rows, query, limit, *, include_preview=True):
@@ -505,9 +506,8 @@ class AgentTools:
                     "fact 必须提供当前分支有效的 H 原文依据；尚未确立的内容请用 hypothesis/plan",
                 )
             sources = []
-            history = {f"H{i + 1}": message for i, message in enumerate(owner.source_history)}
             for ref in dict.fromkeys(args.sources):
-                source = history.get(ref)
+                source = message_at(owner.source_history, ref)
                 if source is None:
                     raise ToolError(
                         "INVALID_REFERENCE", "sources 包含当前分支无效的历史引用；请使用有效的 H 引用"
