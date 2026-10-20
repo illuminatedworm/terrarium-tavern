@@ -127,3 +127,110 @@ async def test_invalid_lorebook_upload_preserves_saved_card(tmp_path, imported):
 def test_importing_empty_book_preserves_existing_settings_and_entries():
     current = {"name": "保留", "entries": {"old": {"content": "保留原文"}}}
     assert append_lorebook(current, {"name": "不覆盖", "entries": []}) == current
+
+
+def test_shelf_sync_keeps_story_changes_unless_selected_and_full_selection_overwrites():
+    from tavern.character.card_sync import apply_sync, sync_items
+
+    base = {
+        "spec": "chara_card_v3",
+        "data": {
+            "name": "雾港",
+            "description": "旧描述",
+            "first_mes": "开场",
+            "character_book": {"entries": {"a": {"content": "旧 A"}, "b": {"content": "旧 B"}}},
+            "extensions": {
+                "regex_scripts": [{"id": "r1", "findRegex": "1"}, {"id": "r2", "findRegex": "2"}],
+                "tavern_helper": [["scripts", []], ["variables", {"好感": 0}]],
+            },
+        },
+    }
+    story = copy.deepcopy(base)
+    story["data"]["character_book"]["entries"]["b"]["content"] = "Tracker 改写 B"
+    story["data"]["character_book"]["entries"]["t"] = {"content": "Tracker 新增"}
+    shelf = copy.deepcopy(base)
+    data = shelf["data"]
+    data.update(description="新描述", first_mes="新开场", creator_notes="不同步")
+    data["character_book"]["entries"]["a"]["content"] = "新 A"
+    data["character_book"]["entries"]["n"] = {"content": "书架新增"}
+    data["extensions"]["regex_scripts"] = [{"id": "r2", "findRegex": "2"}, {"id": "r1", "findRegex": "1!"}]
+    data["extensions"]["tavern_helper"][0] = ["scripts", [{"name": "面板"}]]
+    originals = copy.deepcopy((base, story, shelf))
+
+    items = {item["key"]: item for item in sync_items(base, story, shelf)}
+    assert {key: (item["change"], item["origin"]) for key, item in items.items()} == {
+        "field:description": ("update", "card"),
+        "lore:a": ("update", "card"),
+        "lore:b": ("update", "story"),
+        "lore:t": ("remove", "story"),
+        "lore:n": ("add", "card"),
+        "regex:r1": ("update", "card"),
+        "regex-order": ("update", "card"),
+        "scripts": ("update", "card"),
+    }
+    defaults = [key for key, item in items.items() if item["origin"] == "card"]
+    merged = apply_sync(base, story, shelf, defaults)["data"]
+    assert merged["description"] == "新描述" and merged["first_mes"] == "开场"
+    assert {key: entry["content"] for key, entry in merged["character_book"]["entries"].items()} == {
+        "a": "新 A",
+        "b": "Tracker 改写 B",
+        "t": "Tracker 新增",
+        "n": "书架新增",
+    }
+    assert merged["extensions"]["regex_scripts"] == data["extensions"]["regex_scripts"]
+    assert merged["extensions"]["tavern_helper"] == [
+        ["scripts", [{"name": "面板"}]],
+        ["variables", {"好感": 0}],
+    ]
+
+    overwritten = apply_sync(base, story, shelf, list(items))
+    assert sync_items(base, overwritten, shelf) == []
+    assert overwritten["data"]["character_book"] == data["character_book"]
+    assert overwritten["data"]["first_mes"] == "开场" and "creator_notes" not in overwritten["data"]
+    with pytest.raises(ValueError, match="同步项已变化"):
+        apply_sync(base, overwritten, shelf, ["lore:a"])
+    assert (base, story, shelf) == originals
+
+
+async def test_session_card_sync_commits_selected_items_and_rejects_stale_shelf(tmp_path):
+    from tavern.core.models import SessionCreate
+
+    app = create_app(tmp_path)
+    store = app.state.store
+    document = {
+        "name": "测试卡",
+        "description": "旧描述",
+        "character_book": {"entries": [{"id": "x", "content": "旧"}]},
+    }
+    card = store.import_card(json.dumps(document).encode(), "card.json")
+    session = store.new_session(SessionCreate(card_id=card["id"]))
+    shelf = {
+        **document,
+        "description": "新描述",
+        "character_book": {"entries": [{"id": "x", "content": "新"}]},
+    }
+    card = store.edit_card(card["id"], shelf, card["revision"])
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            diff = (await client.get(f"/api/sessions/{session['id']}/card-sync")).json()
+            assert [item["key"] for item in diff["items"]] == ["field:description", "lore:x"]
+            request = {
+                "keys": ["lore:x"],
+                "card_revision": diff["card"]["revision"] - 1,
+                "expected_revision": session["revision"],
+                "operation_id": "sync",
+            }
+            response = await client.post(f"/api/sessions/{session['id']}/card-sync", json=request)
+            assert response.status_code == 409, response.text
+            request["card_revision"] = diff["card"]["revision"]
+            response = await client.post(f"/api/sessions/{session['id']}/card-sync", json=request)
+            assert response.status_code == 200, response.text
+            synced = response.json()["snapshot"]["content"]["document"]
+            assert synced["character_book"] == shelf["character_book"]
+            assert synced["description"] == "旧描述"
+            store.delete_card(card["id"])
+            response = await client.get(f"/api/sessions/{session['id']}/card-sync")
+            assert response.status_code == 404 and "已删除" in response.json()["detail"]
+    finally:
+        await app.state.editor.close()
+        await app.state.service.close()

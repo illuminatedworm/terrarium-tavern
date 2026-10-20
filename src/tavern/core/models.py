@@ -354,6 +354,13 @@ class ContentEdit(BaseModel):
     operation_id: str | None = Field(default=None, max_length=100)
 
 
+class CardSync(BaseModel):
+    keys: list[str] = Field(min_length=1, max_length=100_000)
+    card_revision: int = Field(ge=0)
+    expected_revision: int = Field(ge=0)
+    operation_id: str | None = Field(default=None, max_length=100)
+
+
 class CardAuthorCreate(BaseModel):
     document: dict[str, Any] | None = None
     expected_revision: int = Field(ge=0)

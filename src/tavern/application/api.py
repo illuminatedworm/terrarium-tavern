@@ -15,6 +15,7 @@ from tavern.character.cards import append_lorebook, export_card, normalize
 from tavern.conversation.context import compile_context
 from tavern.core.errors import NotFound
 from tavern.core.models import (
+    CardSync,
     ContentEdit,
     ContextRecipe,
     LoreInjectionRemoval,
@@ -527,45 +528,99 @@ def create_app(data_dir=None):
     async def remove_lore_injection(sid: str, anchor_id: str, entry_id: str, change: LoreInjectionRemoval):
         return store.remove_lore_injection(sid, anchor_id, entry_id, change.expected_revision)
 
-    @app.put("/api/sessions/{sid}/lorebook")
-    async def edit_session_lore(sid: str, change: ContentEdit):
-        from tavern.character.card_workflow import validate_document
-        from tavern.storage.store import uid
+    def session_document(session):
+        return (session["snapshot"].get("content") or {}).get(
+            "document", store.session_card(session["id"])["document"]
+        )
 
-        if change.expected_revision is None:
-            raise ValueError("缺少对话版本")
-        session = store.session(sid)
+    def commit_session_document(session, document, expected_revision, operation_id, text, reason):
+        """Commit a manual conversation-card edit as one reviewable turn."""
         import copy
 
-        document = copy.deepcopy(
-            (session["snapshot"].get("content") or {}).get("document", store.session_card(sid)["document"])
-        )
-        document.get("data", document)["character_book"] = normalize(change.document).get(
-            "character_book", {}
-        )
+        from tavern.character.card_workflow import validate_document
+        from tavern.conversation.update_review import finish_turn
+        from tavern.storage.store import uid
+
         validate_document(document)
         req = TurnRequest(
-            text="编辑对话世界书",
-            expected_revision=change.expected_revision,
-            operation_id=change.operation_id or uid(),
+            text=text,
+            expected_revision=expected_revision,
+            operation_id=operation_id or uid(),
             allow_content_edit=True,
         )
-        tid, created = store.create_turn(sid, req)
+        tid, created = store.create_turn(session["id"], req)
         if not created:
-            return store.session(sid)
+            return store.session(session["id"])
         try:
             store.set_turn(tid, status="running")
             snapshot = copy.deepcopy(session["snapshot"])
-            snapshot["content"] = {"document": document, "reason": "手工编辑对话世界书", "turn": tid}
+            snapshot["content"] = {"document": document, "reason": reason, "turn": tid}
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
-            pending = {"messages": [message], "before": session["snapshot"], "reason": "手工编辑对话世界书"}
-            from tavern.conversation.update_review import finish_turn
-
+            pending = {"messages": [message], "before": session["snapshot"], "reason": reason}
             finish_turn(store, tid, session, pending, snapshot)
         except Exception as error:
             store.set_turn(tid, status="error", error=str(error))
             raise
-        return store.session(sid)
+        return store.session(session["id"])
+
+    @app.put("/api/sessions/{sid}/lorebook")
+    async def edit_session_lore(sid: str, change: ContentEdit):
+        import copy
+
+        if change.expected_revision is None:
+            raise ValueError("缺少对话版本")
+        session = store.session(sid)
+        document = copy.deepcopy(session_document(session))
+        document.get("data", document)["character_book"] = normalize(change.document).get(
+            "character_book", {}
+        )
+        return commit_session_document(
+            session,
+            document,
+            change.expected_revision,
+            change.operation_id,
+            "编辑对话世界书",
+            "手工编辑对话世界书",
+        )
+
+    def shelf_card(session):
+        # Stories keep their own card copy after the shelf card is deleted.
+        try:
+            return store.card(session["card"])
+        except KeyError:
+            raise NotFound("书架角色卡已删除，无法同步") from None
+
+    @app.get("/api/sessions/{sid}/card-sync")
+    async def card_sync_items(sid: str):
+        from tavern.character.card_sync import sync_items
+
+        session = store.session(sid)
+        card = shelf_card(session)
+        items = sync_items(store.session_card(sid)["document"], session_document(session), card["document"])
+        return {
+            "card": {"id": card["id"], "name": card["name"], "revision": card["revision"]},
+            "items": items,
+        }
+
+    @app.post("/api/sessions/{sid}/card-sync")
+    async def sync_session_card(sid: str, change: CardSync):
+        from tavern.character.card_sync import apply_sync
+
+        session = store.session(sid)
+        card = shelf_card(session)
+        if card["revision"] != change.card_revision:
+            raise Conflict("书架角色卡已更新，请重新打开同步")
+        document = apply_sync(
+            store.session_card(sid)["document"], session_document(session), card["document"], change.keys
+        )
+        return commit_session_document(
+            session,
+            document,
+            change.expected_revision,
+            change.operation_id,
+            "同步书架角色卡",
+            f"从书架角色卡同步 {len(set(change.keys))} 项",
+        )
 
     @app.put("/api/sessions/{sid}/head")
     async def switch_branch(sid: str, change: RevisionRequest):

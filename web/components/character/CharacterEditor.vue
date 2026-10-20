@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '../common/Icon.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
+import CardSyncDialog from './CardSyncDialog.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
 import LoreFilter from './LoreFilter.vue';
 import { audiences, entryAudience, emptyLoreFilter, filterLore } from '../../lib/loreFilter';
@@ -9,6 +10,7 @@ import { useTimedError } from '../../composables/useTimedError';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
 import { appendLoreBook, loreFlagHelp, loreFlagValue, setLoreFlag } from '../../lib/loreBook';
+import { appendRegexScripts } from '../../lib/regexScripts';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { positionPopover } from '../../lib/anchoredPopover';
 const clone = (value: any) => JSON.parse(JSON.stringify(value));
@@ -49,8 +51,10 @@ const restoreConfirmation = ref<HTMLButtonElement>();
 const confirmingRestore = ref(false);
 const restorePopoverId = useId();
 const loreFile = ref<HTMLInputElement>();
+const regexFile = ref<HTMLInputElement>();
 const loreDialog = ref<{ mode: 'add' | 'edit'; index: number; entry: any } | null>(null);
 const confirmingLoreDelete = ref(false);
+const syncing = ref(false);
 const deletedGreetings = ref<{ index: number; text: string; cleared: boolean }[]>([]);
 const entries = computed<any[]>(() => {
   const e = data.value.character_book?.entries || [];
@@ -373,6 +377,30 @@ async function importLore(e: Event) {
   });
   input.value = '';
 }
+async function importRegex(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  await act(async () => {
+    // Parse every file first so one invalid file adds nothing.
+    const imported: unknown[] = [];
+    for (const file of files) {
+      try {
+        imported.push(...[JSON.parse(await file.text())].flat());
+      } catch {
+        throw Error(`${file.name} 不是有效的 JSON 文件`);
+      }
+    }
+    const scripts = appendRegexScripts(data.value.extensions?.regex_scripts, imported);
+    (data.value.extensions ||= {}).regex_scripts = scripts;
+    notice.value = `已添加 ${imported.length} 个正则脚本到草稿，保存后生效。`;
+  });
+  input.value = '';
+}
+function cardSynced(updated: any) {
+  syncing.value = false;
+  emit('sessionSaved', updated);
+}
 function addLore() {
   loreDialog.value = {
     mode: 'add',
@@ -494,6 +522,9 @@ useTimedError(error);
           :href="`/api/cards/${card.id}/export`"
           ><Icon name="import" :size="16" />导出角色卡</a
         >
+        <button v-if="props.session" :disabled="busy" @click="syncing = true">
+          <Icon name="refresh" :size="15" />从书架卡同步
+        </button>
         <button
           ref="restoreButton"
           :disabled="busy || agentRunning || !hasUnsavedChanges"
@@ -509,6 +540,13 @@ useTimedError(error);
         </button>
       </div>
     </div>
+    <CardSyncDialog
+      v-if="syncing && props.session"
+      :session="props.session"
+      :blocked="hasUnsavedChanges ? '编辑页有未保存修改，请先保存或恢复原稿状态后再同步。' : ''"
+      @close="syncing = false"
+      @synced="cardSynced"
+    />
     <AppNotification :message="error" />
     <AppNotification :message="notice" />
     <div
@@ -888,8 +926,15 @@ useTimedError(error);
               正则脚本 <small>{{ regexScripts.length }}</small>
             </h3>
             <p class="muted">
-              按匹配表达式处理显示文本或模型输入；状态面板的 HTML、CSS 和 JS 也可能在替换内容中。
+              按匹配表达式处理显示文本或模型输入；状态面板的 HTML、CSS 和 JS 也可能在替换内容中。 导入的
+              SillyTavern 正则 JSON 追加在现有脚本之后。
             </p>
+            <div class="toolbar">
+              <button :disabled="busy" @click="regexFile?.click()">
+                <Icon name="import" :size="16" />导入正则 JSON
+              </button>
+              <input ref="regexFile" type="file" accept=".json" multiple hidden @change="importRegex" />
+            </div>
             <p v-if="!regexScripts.length" class="muted">这张卡没有正则脚本。</p>
             <details v-for="(script, i) in regexScripts" :key="`regex-${i}`" class="card-script-entry">
               <summary>

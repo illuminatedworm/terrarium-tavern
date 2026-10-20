@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appendLoreBook } from '../../web/lib/loreBook';
+import { appendRegexScripts } from '../../web/lib/regexScripts';
 
 describe('additive worldbook imports', () => {
   it.each([
@@ -114,5 +115,24 @@ describe('additive worldbook imports', () => {
   it('keeps an existing book unchanged when importing an empty book', () => {
     const current = { name: '保留', entries: { old: { content: '保留原文' } } };
     expect(appendLoreBook(current, { name: '不覆盖', entries: [] })).toEqual(current);
+  });
+});
+
+describe('additive regex script imports', () => {
+  it('appends ST exports after existing scripts and renews only missing or colliding IDs', () => {
+    const current = [{ id: 'keep', scriptName: '原有', findRegex: 'a', custom: { kept: true } }];
+    const original = JSON.stringify(current);
+    const merged = appendRegexScripts(current, [
+      { id: 'keep', scriptName: '同 ID', findRegex: 'b' },
+      { id: 'fresh', scriptName: '新脚本', findRegex: 'c', placement: [2] },
+      { scriptName: '无 ID', findRegex: 'd' },
+    ]);
+    expect(JSON.stringify(current)).toBe(original);
+    expect(merged.map((script) => script.scriptName)).toEqual(['原有', '同 ID', '新脚本', '无 ID']);
+    expect(merged[0]).toEqual(current[0]);
+    expect(merged[2]).toEqual({ id: 'fresh', scriptName: '新脚本', findRegex: 'c', placement: [2] });
+    expect(new Set(merged.map((script) => script.id)).size).toBe(4);
+    expect(appendRegexScripts(undefined, { scriptName: '单个', findRegex: 'e' })).toHaveLength(1);
+    expect(() => appendRegexScripts(current, [{ scriptName: '缺少表达式' }])).toThrow('findRegex');
   });
 });
