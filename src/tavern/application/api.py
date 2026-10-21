@@ -535,6 +535,7 @@ def create_app(data_dir=None):
 
         from tavern.character.card_workflow import validate_document
         from tavern.conversation.update_review import finish_turn
+        from tavern.storage.message_copy import latest_version
         from tavern.storage.store import uid
 
         validate_document(document)
@@ -552,13 +553,12 @@ def create_app(data_dir=None):
             snapshot = copy.deepcopy(session["snapshot"])
             snapshot["content"] = {"document": document, "reason": reason, "turn": tid}
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
-            # This card-only version preserves the exact story text. Its
-            # handoff/notes must cite the copied node on this version's branch.
-            if session["agent_mode"] == "full_agent":
-                from tavern.full_agent.state import remap_sources
-
-                remap_sources(snapshot, {session["head"]: message["id"]})
-            pending = {"messages": [message], "before": session["snapshot"], "reason": reason}
+            pending = {
+                "messages": [message],
+                "before": session["snapshot"],
+                "reason": reason,
+                **latest_version(session, message),
+            }
             finish_turn(store, tid, session, pending, snapshot)
         except Exception as error:
             store.set_turn(tid, status="error", error=str(error))

@@ -124,7 +124,7 @@ def finalize_record(record, native, clean, output):
     return result
 
 
-def remap_record(record, ids):
+def remap_record(record, ids, *, new_story=True):
     result = copy.deepcopy(record)
     for item in result.get("base", []):
         for key in ("message_id", "anchor_id"):
@@ -137,7 +137,9 @@ def remap_record(record, ids):
         row["anchor_id"] = ids.get(row["anchor_id"], row["anchor_id"])
         row["source_ids"] = [ids.get(mid, mid) for mid in row.get("source_ids", [])]
     # The new story starts a new baseline; opaque protocol IDs remain untouched.
-    result["window"] = "forked"
+    # A sibling version of the latest reply continues the same window.
+    if new_story:
+        result["window"] = "forked"
     return result
 
 

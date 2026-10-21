@@ -366,7 +366,14 @@ class RoleplayRuntime:
                 ),
                 "snapshot": snapshot,
             }
-            pending = {"messages": [m], "before": before, "reason": "卡片界面交互"}
+            from tavern.storage.message_copy import latest_version
+
+            pending = {
+                "messages": [m],
+                "before": before,
+                "reason": "卡片界面交互",
+                **latest_version(session, m),
+            }
             finish_turn(self.store, tid, session, pending, snapshot, draft=raw)
             return self.store.session(sid)
         except BaseException as e:

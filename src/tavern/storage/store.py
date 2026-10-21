@@ -730,11 +730,7 @@ class Store(MessageAdapters):
         """Copy a committed assistant prefix into a session with independent message IDs."""
         from tavern.advisor.storage import fork as fork_advisor
         from tavern.conversation.cache_breakpoint import reset_follow
-        from tavern.conversation.half_compaction import remap_state
-        from tavern.conversation.half_context import remap_record
-        from tavern.full_agent.state import remap_sources
-        from tavern.memories.memory import fingerprint, window_valid
-        from tavern.memories.memory_archive import remap_archive
+        from tavern.storage.message_copy import copy_traces, remap_snapshot
 
         new_sid = uid()
         with self.connection() as db:
@@ -780,25 +776,9 @@ class Store(MessageAdapters):
             for position, message in enumerate(prefix):
                 cloned = copy.deepcopy(message)
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
-                remap_sources(cloned["snapshot"], ids)
-                remap_state(cloned["snapshot"], ids)
-                for memory in cloned["snapshot"].get("memory_document", {}).get("records", []):
-                    for source_ref in memory.get("sources", []) + memory.get("deleted_sources", []):
-                        source_ref["message_id"] = ids.get(source_ref["message_id"], source_ref["message_id"])
-                    for setting_ref in memory.get("setting_sources", []):
-                        setting_ref["anchor"] = ids.get(setting_ref.get("anchor"), setting_ref.get("anchor"))
-                remap_archive(cloned["snapshot"], ids)
-                for record in cloned["snapshot"].get("lore_injections", []):
-                    record["anchor_id"] = ids.get(record["anchor_id"], record["anchor_id"])
-                    record["source_ids"] = [ids.get(mid, mid) for mid in record.get("source_ids", [])]
-                for archive_key in ("context_window", "memory_archive"):
-                    window = cloned["snapshot"].get(archive_key)
-                    if not window:
-                        continue
-                    if window_valid(window, prefix[: position + 1]):
-                        window["fingerprint"] = fingerprint((copies + [cloned])[: window["covered_count"]])
-                    else:
-                        cloned["snapshot"].pop(archive_key)
+                remap_snapshot(
+                    cloned["snapshot"], ids, prefix[: position + 1], copies + [cloned], new_story=True
+                )
                 copies.append(cloned)
             # Every story setting carries over; only identity, progress and references are rewritten.
             insert_row(
@@ -838,31 +818,7 @@ class Store(MessageAdapters):
                 "FROM sent_cache_breakpoints WHERE owner=?",
                 (new_sid, sid),
             )
-            for original, cloned_id in ids.items():
-                for row in db.execute(
-                    "SELECT seq,window_id,payload FROM full_agent_trace WHERE message_id=?", (original,)
-                ).fetchall():
-                    payload = json.loads(row["payload"])
-                    value = payload.get("_runtime_context", {}).get("value")
-                    if isinstance(value, dict) and "input_id" in value:
-                        value["input_id"] = ids.get(value["input_id"], value["input_id"])
-                    for owner, key in (
-                        (payload, "_history_observations"),
-                        (payload.get("_context_baseline", {}), "history"),
-                    ):
-                        if key in owner:
-                            owner[key] = {ids.get(mid, mid): value for mid, value in owner[key].items()}
-                    db.execute(
-                        "INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
-                        (new_sid, cloned_id, row["seq"], row["window_id"], dump(payload)),
-                    )
-                row = db.execute("SELECT * FROM half_agent_trace WHERE message_id=?", (original,)).fetchone()
-                if row:
-                    payload = remap_record(json.loads(row["payload"]), ids)
-                    db.execute(
-                        "INSERT INTO half_agent_trace VALUES (?,?,?,?,?)",
-                        (new_sid, cloned_id, row["seq"], payload["window"], dump(payload)),
-                    )
+            copy_traces(db, new_sid, ids, new_story=True)
         return self.session(new_sid)
 
     def session(self, sid):
@@ -1688,6 +1644,11 @@ class Store(MessageAdapters):
                     "INSERT INTO half_agent_trace VALUES (?,?,?,?,?)",
                     (turn["session"], last, 1, record["window"], dump(record)),
                 )
+            if original := pending.get("version_of"):
+                from tavern.storage.message_copy import copy_traces
+
+                # A content-only version replays the request that produced its original.
+                copy_traces(db, turn["session"], {original: last}, new_story=False)
             db.execute(
                 "INSERT INTO changes VALUES (?,?,?,?,?,?)",
                 (
