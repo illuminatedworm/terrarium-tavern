@@ -7,6 +7,25 @@ from tavern.scripting.responses_stream import ResponsesOutput
 from tavern.scripting.sse import stream_error
 
 
+def _has_chat_content(delta: dict) -> bool:
+    return any(
+        delta.get(field)
+        for field in (
+            "content",
+            "refusal",
+            "reasoning_content",
+            "reasoning",
+            "reasoning_text",
+            "reasoning_details",
+        )
+    ) or any(
+        call.get("id")
+        or (call.get("function") or {}).get("name")
+        or (call.get("function") or {}).get("arguments")
+        for call in delta.get("tool_calls") or []
+    )
+
+
 class StreamState:
     def __init__(self, api):
         self.api, self.done = api, False
@@ -20,21 +39,23 @@ class StreamState:
             raise ValueError("模型流事件格式无效，本回合未提交")
         if "error" in event or event.get("type") == "error":
             raise ValueError(stream_error("模型流返回错误", event))
+        if api == "chat_completions":
+            choices = event.get("choices") or []
+            if any(
+                choice.get("finish_reason")
+                and choice["finish_reason"] not in ("stop", "tool_calls", "length", "content_filter")
+                for choice in choices
+            ):
+                raise ValueError("模型流结束原因无效，本回合未提交")
         if self.done:
             # Chat Completions/Gemini can report usage after the terminal chunk.
-            # Content or tool fragments after completion must never become story.
-            # Some compatible endpoints append an empty stop after tool_calls.
-            # Accept only empty terminal choices; keep the first finish reason
-            # so a redundant stop cannot turn a tool response into a plain reply.
+            # Compatible Chat endpoints also send empty fields and tool placeholders.
+            # Reject substantive late data, but retain the first finish reason so
+            # empty tails cannot turn a tool response into a plain reply.
             if (
                 (
                     api == "chat_completions"
-                    and any(
-                        choice.get("delta") != {}
-                        or choice.get("index", 0) != 0
-                        or choice.get("finish_reason") not in ("stop", self.result["finish_reason"])
-                        for choice in event.get("choices") or []
-                    )
+                    and any(_has_chat_content(choice.get("delta") or {}) for choice in choices)
                 )
                 or (api == "gemini" and event.get("candidates"))
                 or (api in ("responses", "anthropic") and event.get("type") != "ping")
@@ -56,7 +77,6 @@ class StreamState:
             if event.get("usage"):
                 self.result["usage"] = event["usage"]
             self.result["model"] = event.get("model", self.result.get("model"))
-            choices = event.get("choices") or []
             if self.done or not choices:
                 return ""
             choice = choices[0]
@@ -74,8 +94,6 @@ class StreamState:
                 for field in ("name", "arguments"):
                     item["function"][field] += call.get("function", {}).get(field) or ""
             if choice.get("finish_reason"):
-                if choice["finish_reason"] not in ("stop", "tool_calls", "length", "content_filter"):
-                    raise ValueError("模型流结束原因无效，本回合未提交")
                 self.done = True
                 self.result["finish_reason"] = choice["finish_reason"]
             return delta.get("content") or ""

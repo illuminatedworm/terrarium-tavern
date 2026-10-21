@@ -348,6 +348,35 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
                 }
             ]
         },
+        {"choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": None}]},
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "content": None,
+                        "refusal": "",
+                        "reasoning_content": "",
+                        "reasoning": None,
+                        "reasoning_text": "",
+                        "reasoning_details": [],
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": None,
+                                "type": "function",
+                                "function": {"name": "", "arguments": None},
+                            }
+                        ],
+                    },
+                    "index": 1,
+                    "finish_reason": "stop",
+                }
+            ]
+        },
+        {"choices": [{"delta": None, "finish_reason": "length"}]},
+        {"choices": [{}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
         {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
         {"usage": reply("chat_completions")["usage"]},
     ]
@@ -371,6 +400,16 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
         state.feed({"choices": [{"delta": {"content": "非法追加"}, "finish_reason": "stop"}]})
     with pytest.raises(ValueError, match="完成事件之后"):
         state.feed(tool_events[1])
+    for delta in (
+        {"refusal": "后续拒绝"},
+        {"reasoning": "后续思考"},
+        {"reasoning_details": [{"type": "reasoning.text", "text": "后续思考"}]},
+        {"tool_calls": [{"index": 0, "id": "call-2", "function": {}}]},
+    ):
+        with pytest.raises(ValueError, match="完成事件之后"):
+            state.feed({"choices": [{"delta": delta}]})
+    with pytest.raises(ValueError, match="结束原因无效"):
+        state.feed({"choices": [{"delta": {}, "finish_reason": "network_error"}]})
 
 
 @pytest.mark.parametrize("entry", ["complete", "chat", "preview"])
