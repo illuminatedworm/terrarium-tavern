@@ -12,7 +12,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
-| `recall_lore` | 为叙事召回完整世界书正文 | `query: string` | 共用自动检索的索引与准入规则；允许零命中，已注入正文省略。可选 L 引用可用于单条读取，完整当前召回正文可作为修改依据。 |
+| `recall_lore` | 为叙事召回完整世界书正文 | `query: string` | 共用自动检索的索引、准入、在场排除与冷却规则；允许零命中，已在上下文中的注入或召回正文省略。可选 L 引用可用于单条读取，完整当前召回正文可作为修改依据。 |
 | `find_lore_for_edit` | 定位可编辑的普通条目 | `query: string`；`limit: integer=5` | 字面匹配标题、关键词和正文，包含停用条目；`*` 列出条目；返回 L 引用、标题与定位摘要。 |
 | `read_lore_entry` | 完整读取一个普通条目 | `ref: string`（如 `L1`） | 返回标题、正文、主／辅助关键词及启用状态，登记当前读取记录；保护目标不可读写。 |
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
@@ -100,7 +100,7 @@ Inspect or refresh one complete ordinary narrative worldbook entry by L handle: 
 ### `recall_lore`
 
 ```text
-Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. Returns complete selected entries in <lorebook>; already injected text is omitted. When enabled, results include titles and L handles. Reuse recalled content for later edits when you know it is still current; target protection still applies.
+Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. Returns complete selected entries in <lorebook>; text already injected or recalled in this context is omitted. Recalled entries share automatic injection's presence and cooldown rules. When enabled, results include titles and L handles. Reuse recalled content for later edits when you know it is still current; target protection still applies.
 ```
 
 请求：

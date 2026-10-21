@@ -858,7 +858,7 @@ def test_note_list_at_header_end_contains_all_active_keys_only(story, window_num
     assert result["budget_sources"]["note_list"] > 0
 
 
-async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp_path):
+async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplicate_injection(tmp_path):
     store = Store(tmp_path)
     document = {
         "name": "向导",
@@ -917,17 +917,85 @@ async def test_real_index_tool_lore_returns_tagged_content_without_injection(tmp
         )
         assert set(tool_results[0]["data"]) == {"matches"}
         assert set(tool_results[0]["data"]["matches"][0]) == {"text"}
-        assert tool_results[2] == tool_results[0]  # Searching does not mark entries as injected.
+        assert tool_results[2]["data"]["matches"] == []
         assert (
             sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
         )
         records = current["snapshot"]["lore_injections"]
         assert len(records) == 1 and records[0]["title"] == "钟楼"
         assert records[0]["anchor_id"] == session["head"]
+        assert current["snapshot"]["lore"]["port"]["present"] is True
+        trace = load_trace(store, session["id"], current["messages"])
+        recalled = [r["message"] for r in trace if r["message"].get("lore_ids")]
+        assert len(recalled) == 1 and recalled[0]["lore_ids"] == ["port"]
+        assert all("lore_ids" not in m for messages in requests for m in messages)
         retrievals = [e["payload"] for e in store.events(result["id"]) if e["kind"] == "retrieval"]
         assert [r["source"] for r in retrievals] == ["auto", "agent", "agent", "agent"]
         assert all(not r["injected"] for r in retrievals[1:])
         assert retrievals[1]["query"] == "旧港"
+
+        async def follow(text, model):
+            service.full.provider_factory = lambda: model
+            result = service.submit(
+                session["id"],
+                TurnRequest(
+                    text=text,
+                    operation_id=f"follow-{current['revision']}",
+                    expected_revision=current["revision"],
+                ),
+            )
+            await service.tasks[result["id"]]
+            result = store.turn(result["id"])
+            assert result["status"] == "committed", result["error"]
+            return store.session(session["id"])
+
+        # The next automatic query must reuse the tool body still in history.
+        model = Model(("recall_lore", {"query": "旧港"}), "船只仍在旧港。")
+        current = await follow("我走进旧港。", model)
+        messages = model.requests[-1]["messages"]
+        assert not any(
+            "旧港的船只明晨出发。" in m.get("content", "") for m in messages if m["role"] == "system"
+        )
+        outputs = [json.loads(m["content"]) for m in messages if m["role"] == "tool"]
+        assert sum(bool(r["data"].get("matches")) for r in outputs) == 1
+        assert outputs[-1]["data"]["matches"] == []
+        assert current["snapshot"]["lore"]["port"]["present"] is True
+
+        # Exiting the native exchange starts cooldown, including the same-request
+        # exclusion even with cooldown=0 and a direct mention.
+        model = Model(
+            (
+                "new_context",
+                {
+                    "keep_recent": 0,
+                    "handoff": {
+                        "chapters": [
+                            {"op": "add", "title": "抵达旧港", "points": [{"text": "向导带玩家前往旧港。"}]}
+                        ],
+                        "current": [{"text": "玩家在旧港等候。"}],
+                    },
+                },
+            ),
+            ("recall_lore", {"query": "旧港"}),
+            "向导继续等候。",
+        )
+        current = await follow("我在旧港等候。", model)
+        assert current["snapshot"]["lore"]["port"] == {"present": False, "removed_at": 3}
+        assert current["snapshot"]["lore_injections"] == []
+        outputs = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
+        assert outputs[-1]["data"]["matches"] == []
+
+        model = Model("新一轮的旧港钟声响起。")
+        current = await follow("我查看旧港的船只。", model)
+        assert current["snapshot"]["lore"]["port"]["present"] is True
+        assert [r["id"] for r in current["snapshot"]["lore_injections"]] == ["port"]
+        assert (
+            sum(
+                m.get("content") == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+                for m in model.requests[0]["messages"]
+            )
+            == 1
+        )
     finally:
         await service.close()
 

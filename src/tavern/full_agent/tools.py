@@ -208,7 +208,8 @@ SPECS = {
         Query,
         "Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. "
         "Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. "
-        "Returns complete selected entries in <lorebook>; already injected text is omitted. "
+        "Returns complete selected entries in <lorebook>; text already injected or recalled in this context is omitted. "
+        "Recalled entries share automatic injection's presence and cooldown rules. "
         "When enabled, results include titles and L handles. Reuse recalled content for later edits when you know it is still current; target protection still applies.",
     ),
     "search_history": (

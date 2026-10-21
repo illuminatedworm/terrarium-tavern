@@ -7,7 +7,7 @@ import time
 import jsonpatch
 import jsonpointer
 
-from tavern.character.cards import normalize
+from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.conversation.regeneration import reply_for_regeneration
@@ -69,6 +69,7 @@ class FullAgent:
         self.rolled, self.retrieval_query = False, ""
         self.must_rollover = False
         self.exiting = set()
+        self.recall_ids = []
         self.patch_state_done = False
         # Keep macro values and rule edits stable across tools, rollovers and
         # failed-request resumes. The next turn takes a fresh rule snapshot.
@@ -149,17 +150,29 @@ class FullAgent:
         return lore_references(self.document, self.state)
 
     def retain(self):
-        visible = (
-            self.history
-            if self.settings.context_strategy == "openai_compact"
-            else self.history[self.state["window"]["start"] :]
-        )
+        window = self.state["window"]
+        compact = self.settings.context_strategy == "openai_compact"
+        visible = self.history if compact else self.history[window["start"] :]
+        owners = {m["id"] for m in visible}
+        records = [
+            item["message"]
+            for item in self.trace
+            if item["message_id"] in owners
+            and (compact or window.get("replay_history") or item["window_id"] == window["id"])
+        ]
+        recalled = {
+            eid
+            for message in [*records, *self.continuation]
+            if message["role"] == "tool"
+            for eid in message.get("lore_ids", [])
+        }
         self.exiting |= retain_lore(
             self.document,
             self.snapshot,
             visible,
             self.user_message["id"],
             sum(m["role"] == "user" for m in self.history) + 1,
+            recalled=recalled,
         )
         return visible
 
@@ -205,11 +218,22 @@ class FullAgent:
         ]
         result = {"matches": matches}
         if include_ref:
+            entries = {e["id"]: e for e in lore_entries(self.document, "writer")}
+            omitted = {r["id"] for r in added} | {
+                r["id"] for r in self.snapshot.get("lore_injections", []) if r.get("manually_removed")
+            }
             result["already_in_context"] = [
-                {"ref": refs[r["id"]], **({"title": r["title"]} if include_title else {})}
-                for r in self.snapshot.get("lore_injections", [])
-                if r not in added and not r.get("manually_removed")
+                {
+                    "ref": refs[eid],
+                    **({"title": lore_title(entries[eid]) or "世界书"} if include_title else {}),
+                }
+                for eid, old in self.snapshot.get("lore", {}).items()
+                if old.get("present") and eid not in omitted
             ][:20]
+        if source == "agent":
+            self.recall_ids = [r["id"] for r in added]
+            for eid in self.recall_ids:
+                self.snapshot.setdefault("lore", {}).setdefault(eid, {}).update(present=True)
         return result
 
     def compile(self):
@@ -508,6 +532,7 @@ class FullAgent:
             if call["id"] in returned:
                 continue
             name, arguments = call["function"]["name"], call["function"]["arguments"]
+            self.recall_ids = []
             activity = {
                 "activity_id": f"call-{assistant_seq}-{index}",
                 "order": assistant_seq * 10 + index + 1,
@@ -554,6 +579,10 @@ class FullAgent:
             tool_error = failed(result)
             result = self.model_view.expose(result)
             message = {"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}
+            if self.recall_ids and not tool_error:
+                # Existing trace metadata keeps runtime identities out of the
+                # model result while surviving commits, retries and story forks.
+                message["lore_ids"] = self.recall_ids
             if tool_error:
                 message["_tool_error"] = True
             self.append(message, window_id)

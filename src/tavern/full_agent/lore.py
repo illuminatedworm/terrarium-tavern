@@ -42,13 +42,18 @@ class RetrievalLane:
                 self.condition.notify_all()
 
 
-def retain_lore(document, snapshot, visible, input_id, turn_number):
+def retain_lore(document, snapshot, visible, input_id, turn_number, *, recalled=()):
     allowed = {e["id"] for e in lore_entries(document, "writer") if e["enabled"] and not e.get("constant")}
     anchors = {m["id"] for m in visible} | {input_id}
     records = [
         r for r in snapshot.get("lore_injections", []) if r["anchor_id"] in anchors and r["id"] in allowed
     ]
-    retained = {r["id"] for r in records}
+    # Tool bodies already live in their native exchange, so only their identities
+    # join presence tracking; they must not acquire a second system injection.
+    # A setting edit clears usage state, invalidating older tool bodies as well.
+    retained = {r["id"] for r in records} | {
+        eid for eid in recalled if eid in allowed and snapshot.get("lore", {}).get(eid, {}).get("present")
+    }
     exiting = set()
     for eid, old in snapshot.get("lore", {}).items():
         if old.get("present") and eid not in retained:
@@ -63,7 +68,9 @@ def inject_lore(
 ):
     card = normalize(document)
     records = snapshot.get("lore_injections", [])
-    retained = {r["id"] for r in records}
+    retained = {r["id"] for r in records} | {
+        eid for eid, old in snapshot.get("lore", {}).items() if old.get("present")
+    }
     retrieval = {**retrieval, "ids": [eid for eid in retrieval["ids"] if eid not in exiting]}
     entries, diagnostics, _ = activate_lore(
         document,
