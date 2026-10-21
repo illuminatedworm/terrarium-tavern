@@ -661,8 +661,6 @@ onMounted(async () => {
           <template v-else-if="page.key === 'misc'">
             <h4>输入</h4>
             <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
-            <h4>调试</h4>
-            <SettingsFields :value="draft.shared" :fields="debugFields" layout="rows" />
             <KeminiSettings
               :value="draft.shared"
               :saved="saved!.shared"
@@ -673,6 +671,8 @@ onMounted(async () => {
               :text-errors="textErrors"
               :guard="guard"
             />
+            <h4>调试</h4>
+            <SettingsFields :value="draft.shared" :fields="debugFields" layout="rows" />
             <FailedRequestLogs />
           </template>
           <PreferencePresetSettings
