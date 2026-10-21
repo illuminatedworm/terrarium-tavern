@@ -83,18 +83,13 @@ def load_trace(store, sid, history):
 
 def descriptor(message):
     mid = message.get("message_id")
-    # The compiler records the exact prefix it added. Other leading H lines,
-    # including script overrides and assistant prose, participate in full.
-    content = message.get("content", "")
-    if "history_label" in message:
-        content = content[len(message["history_label"]) :]
     return {
         "message_id": mid,
         "anchor_id": message.get("anchor_id"),
         "sha256": fingerprint(
             [
                 message["role"],
-                content,
+                message.get("content", ""),
                 "dialogue" if mid else message.get("source"),
                 message.get("insertion_depth"),
             ]

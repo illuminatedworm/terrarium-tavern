@@ -81,7 +81,7 @@ def test_compatibility_overrides_and_ordered_fields_keep_tags():
         "<card_scenario>\n新场景\n</card_scenario>",
         "<card_description>\n新描述\n</card_description>",
         "<card_mes_example>\n新示例\n</card_mes_example>",
-        "继续",  # A nested script prompt is not the next pending H story message.
+        "继续",
     ]
 
 
@@ -286,7 +286,7 @@ def test_card_layout_survives_final_api_projection(mode, api):
         "<user_character>",
         "<card_mes_example>",
         "所选开场",
-        "[H2]\n继续\n",
+        "[H2]\n继续\n" if mode == "full_agent" else "继续\n",
         "<card_post_history_instructions>",
     ]
     positions = [text.index(value) for value in ordered]

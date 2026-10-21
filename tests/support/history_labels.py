@@ -1,8 +1,7 @@
-"""Strip the runtime ``[H52]`` position line from captured request text.
+"""Strip an optional runtime ``[H52]`` prefix from captured test fixtures.
 
-Production compares the exact prefix it recorded (``history_label``), so a
-user's literal leading ``[H5]`` line stays content. Tests only need to read
-labeled user messages back as their original text.
+Full Agent still adds these prefixes; Writer no longer does. This fixture-only
+helper must not be used to process user or assistant prose in production.
 """
 
 import re

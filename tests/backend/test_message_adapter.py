@@ -356,7 +356,7 @@ async def test_half_agent_partition_preserves_final_sdk_prefix_across_turns():
         story.cfg, "local-fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
     )
     try:
-        # These inputs are committed story turns; script generate inputs have no H position.
+        # The same input text must survive its transition to committed history.
         first = story.compile(generate=None)
         assert [row["source"] for row in first["trace"][:2]] == ["rules", "character"]
         await provider.chat_complete(model_messages(first))
@@ -786,7 +786,7 @@ def test_assistant_history_and_native_replay_preserve_original_text():
         compiled = compile_mode(mode, {"name": "测试"}, history)
         story = {m["message_id"]: m for m in compiled["trace"] if m.get("message_id")}
         assert story["opening"]["content"] == "开场"
-        assert story["user"]["content"] == "[H2]\n检查终端"
+        assert story["user"]["content"] == ("[H2]\n" if mode == "full_agent" else "") + "检查终端"
         assert story["reply"]["content"] == text
         message = {"role": "assistant", "content": story["reply"]["content"]}
         assert openai_messages([message])[0]["content"] == text

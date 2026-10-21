@@ -6,7 +6,6 @@ import json
 import re
 
 from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
-from tavern.core.history_refs import labeled, message_positions
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
@@ -422,8 +421,8 @@ def compile_context(
     """Compile one Writer request.
 
     ``story_turn`` is False only for nested script ``generate`` calls: their input
-    never becomes a story message, so it takes no H position label and the Kemini
-    experiment does not wrap the request. A story turn a script started
+    never becomes a story message, so the Kemini experiment does not wrap the
+    request. A story turn a script started
     (``TurnRequest.generate``) is still a story turn whose input will be committed.
     """
     from tavern.conversation.half_compaction import (
@@ -1025,23 +1024,6 @@ def compile_context(
     ):
         at += 1
     messages[at:at] = constant_messages
-    # Compare canonical text before rendering position labels, including a reused
-    # regeneration input. Mark only prefixes we add; literal H lines are content.
-    # The pending input is labeled by story_turn, not by script options: the same
-    # message must keep its label once it is history, or the prefix would change.
-    positions = message_positions(history)
-    for message in messages:
-        source = message.get("context_source", message["source"])
-        position = (
-            len(history) + 1
-            if source == "input" and story_turn
-            else positions.get(message.get("message_id"))
-            if source == "history" and message["role"] == "user"
-            else None
-        )
-        if position is not None:
-            message["history_label"] = labeled(position, "")
-            message["content"] = message["history_label"] + message["content"]
     from tavern.core.kemini import inject_half, transport_tools
 
     experiment_tools = transport_tools([], settings.kemini) if story_turn else []

@@ -14,6 +14,7 @@ from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.models import CardAuthorRequest, ContextRecipe, SessionCreate, Settings
 from tavern.core.tokens import count_text
 from tavern.memories.memory_evidence import evidence_pool
+from tavern.memories.memory_protocol import References
 from tavern.memories.memory_records import Record
 from tavern.memories.recall_filter import filter_messages, filter_recall
 from tavern.scripting.variables import analyze_variables
@@ -174,27 +175,48 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
         },
     }
     session = {"id": ID, "persona": "用户", "recipe": ContextRecipe().model_dump()}
-    compiled = compile_context(
-        doc, session, [{"id": ID, "role": "assistant", "raw": "相遇。"}], snapshot, "继续", Settings(), ID
-    )
+    history = [
+        {"id": ID, "role": "assistant", "raw": "相遇。"},
+        {"id": KEY, "role": "user", "raw": "[H52]\n检查终端。"},
+        {"id": HASH, "role": "assistant", "raw": "门开了。"},
+    ]
+    original_history = copy.deepcopy(history)
+    user_input = "[H99]\n继续"
+    compiled = compile_context(doc, session, history, snapshot, user_input, Settings(), ID, replay_records={})
     wire = json.dumps(compiled["messages"], ensure_ascii=False)
-    assert ID not in wire and HASH not in wire and "初始化正文" not in wire
+    assert ID not in wire and KEY not in wire and HASH not in wire and "初始化正文" not in wire
     assert "普通设定" in wire
+    assert any(m["role"] == "user" and m["content"] == history[1]["raw"] for m in compiled["messages"])
     assert any('"hp": 8' in m["content"] for m in compiled["messages"])
     assert state == runtime_state()
     assert state_for_model(state) == {"stat_data": {"hp": 8}}
     assert ID not in macros("{{getvar::initialized_lorebooks}}", doc, "用户", state)
     # Script-triggered generation uses this exact compiler and messages view.
     nested = compile_context(
-        doc, session, [], snapshot, "继续", Settings(), ID, generate={"user_input": "继续"}, story_turn=False
+        doc,
+        session,
+        [],
+        snapshot,
+        user_input,
+        Settings(),
+        ID,
+        generate={"user_input": user_input},
+        story_turn=False,
     )
     assert ID not in json.dumps(nested["messages"]) and HASH not in json.dumps(nested["messages"])
-    # A story input keeps its future position; a nested input never becomes history.
+    # Writer inputs have no runtime H prefix; literal H lines remain complete.
     inputs = [
         next(m["content"] for m in context["messages"] if m["role"] == "user" and "继续" in m["content"])
         for context in (compiled, nested)
     ]
-    assert inputs == ["[H2]\n继续", "继续"]
+    assert inputs == [user_input, user_input]
+    # Tracker still locates the same source messages independently of Writer text.
+    refs = References(history)
+    tracker_history = [refs.message(message) for message in history]
+    assert [message["ref"] for message in tracker_history] == ["H1", "H2", "H3"]
+    assert tracker_history[1]["passages"] == [{"ref": "H2#1", "text": history[1]["raw"]}]
+    assert refs.sources["H2#1"] == {"message_id": KEY, "excerpt": history[1]["raw"]}
+    assert history == original_history
 
 
 async def test_mvu_final_request_and_memory_auxiliary_state_exclude_bookkeeping():
