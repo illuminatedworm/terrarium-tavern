@@ -129,8 +129,11 @@ def inspect_existing(root, path):
         version = int(row[0])
         if version < 9 and db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone():
             raise ValueError(
-                "旧对话不支持整轮重试格式；数据库未修改。请用旧版导出角色卡、设置等非对话资料，"
-                "并在新的数据目录中创建对话。"
+                "旧对话不支持整轮重试格式；数据库未修改。请先停止酒馆服务，"
+                f'在项目根目录运行 .\\clear-conversations.cmd --data "{root.resolve()}"'
+                "（Linux 使用 .venv/bin/python clear-conversations.py，并传入相同的 --data 参数）。"
+                "脚本会完整备份后删除全部剧情对话，保留角色卡、用户角色、设置和制卡资料；完成后重新启动。"
+                "如需继续旧剧情，请使用兼容旧版打开原数据。"
             )
         raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
         # Schema 1 predates the settings document version field.
