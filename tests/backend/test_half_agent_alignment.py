@@ -45,7 +45,7 @@ class Story:
             "description": "固定设定",
             "post_history_instructions": "角色后置要求",
         }
-        self.snapshot = {"state": {"stat_data": {"hp": 3}}, "memory_document": {"version": 2, "records": []}}
+        self.snapshot = {"state": {"stat_data": {"hp": 3}}, "memory_document": {"version": 3, "records": []}}
         self.history = [{"id": "opening", "role": "assistant", "raw": "开场", "model": "开场"}]
         self.records = {}
         self.note = "作者注 A"
@@ -735,8 +735,6 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
         assert "实验辅助内容" not in str(preview["messages"])
         cloned = store.fork_session(session["id"], session["head"], session["revision"])
         assert cloned["messages"][-1]["auxiliary"] == final["auxiliary"]
-        edited = store.edit_message(session["id"], final["id"], "用户编辑正文", session["revision"])
-        assert edited["messages"][-1]["auxiliary"] == final["auxiliary"]
     finally:
         await service.close()
 

@@ -80,7 +80,7 @@ def test_final_compiled_messages_expand_macros_without_ledger_or_hash_leaks(mode
         "state": value,
         "scopes": {"global": {"score": 3}},
         "lore": {},
-        "memory_document": {"version": 2, "records": []},
+        "memory_document": {"version": 3, "records": []},
     }
     history = [
         {

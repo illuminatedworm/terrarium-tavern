@@ -131,9 +131,6 @@ def test_manual_greeting_rejection_fork_and_auto_reset(story):
     session = commit_reply(store, session, regenerate=True)
     assert session["cache_breakpoint_effective_id"] is None
     assert "当前分支" in session["cache_breakpoint_reason"]
-    original = session["cache_breakpoint_message"]
-    session = store.edit_message(session["id"], session["head"], "修改正文", session["revision"])
-    assert session["cache_breakpoint_message"] == original
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None)
     assert session["cache_breakpoint_follow"] == {
         "interval": 3,

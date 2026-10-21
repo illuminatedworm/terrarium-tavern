@@ -1,14 +1,12 @@
 """Branch-local model-authored memory; no extraction or summarization jobs."""
 
 import copy
-import hashlib
 import uuid
 
 from tavern.core.history_refs import message_positions, message_ref
 
-# v3: chapter/current handoff is model-maintained. Earlier formats are rejected,
-# including unreleased v2 development data, rather than migrated.
-VERSION = 3
+# v4 uses immutable source identities and pre-turn snapshots. Earlier stories are rejected.
+VERSION = 4
 
 
 def new_state():
@@ -37,21 +35,10 @@ def read_full_state(snapshot):
     return full_state({"full_agent": copy.deepcopy(state)}) if state is not None else {}
 
 
-def source_hash(message):
-    return hashlib.sha256(message["raw"].encode()).hexdigest()
-
-
 def note_view(note, history):
     positions = message_positions(history)
-    sources, stale = [], False
-    for source in note.get("sources", []):
-        position = positions.get(source["message_id"])
-        stale |= position is None or source_hash(history[position - 1]) != source["hash"]
-        if position is not None:
-            sources.append(message_ref(position))
     return {k: copy.deepcopy(note[k]) for k in ("key", "content", "kind", "status", "revision")} | {
-        "sources": sources,
-        "stale": bool(stale),
+        "sources": [message_ref(positions[source["message_id"]]) for source in note.get("sources", [])],
     }
 
 
@@ -69,15 +56,6 @@ def rollover(state, history, handoff, keep_recent):
     if handoff is not None:
         state["handoff"] = {**handoff, "revision": state["handoff"]["revision"] + 1}
     state["window"] = {"id": uuid.uuid4().hex, "number": state["window"]["number"] + 1, "start": start}
-
-
-def mark_edited(snapshot, message_id, history, *, notify_ai=False):
-    state = snapshot.get("full_agent")
-    # Handoff and note staleness are derived from source fingerprints. Retiring
-    # tool context is an explicit edit choice: quiet edits must retain complete
-    # note/version evidence.
-    if state and notify_ai and any(m["id"] == message_id for m in history):
-        state["window"]["id"] = uuid.uuid4().hex
 
 
 def remap_sources(snapshot, ids):

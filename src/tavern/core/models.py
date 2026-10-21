@@ -310,8 +310,18 @@ class TurnRequest(BaseModel):
     reasoning_effort: ReasoningEffort | None = None
     regenerate_note: str = ""
     regenerate_include_reply: bool = False
+    replacement_text: str | None = None
     scene_refresh: Literal["memory"] | None = None
     resume_turn_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_replacement(self):
+        if self.replacement_text is not None:
+            if self.mode != "regenerate" or self.scene_refresh:
+                raise ValueError("替换用户输入只能用于本轮重生成")
+            if not self.replacement_text.strip():
+                raise ValueError("消息不能为空")
+        return self
 
 
 class SceneRefreshRequest(BaseModel):
@@ -344,12 +354,6 @@ class SessionCacheBreakpoint(BaseModel):
     message_id: str | None = None
     follow_interval: int | None = Field(default=None, ge=1, strict=True)
     reply_offset: int | None = Field(default=None, ge=1, strict=True)
-
-
-class MessageEdit(BaseModel):
-    text: str = Field(min_length=1)
-    expected_revision: int
-    notify_ai: bool = False
 
 
 class ContentEdit(BaseModel):

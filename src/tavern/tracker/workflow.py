@@ -70,7 +70,9 @@ async def before_story(
             if local_window_enabled(settings)
             else 0
         )
-        trimming = request.mode == "send" and count > old_count
+        # Retries start at the same pre-turn snapshot. Recompute this exchange's
+        # exit once; attempt count must not become another story/window advance.
+        trimming = count > old_count
         covered = snapshot.get("memory_archive", {}).get("covered_count", 0)
         memory_needed = trimming and covered < count
         edit_needed = request.allow_content_edit and not edited
@@ -128,11 +130,9 @@ async def after_story(
 ):
     rounds = completed_rounds(history)
     archive = snapshot.get("memory_archive", {})
-    due = (
-        request.mode == "send"
-        and rounds - archive.get("last_round", 0) >= settings.memory_interval_turns
-        and archive.get("covered_count", 0) < len(history)
-    )
+    due = rounds - archive.get("last_round", 0) >= settings.memory_interval_turns and archive.get(
+        "covered_count", 0
+    ) < len(history)
     if not (due or request.update_variables or request.allow_content_edit):
         return document, []
     try:

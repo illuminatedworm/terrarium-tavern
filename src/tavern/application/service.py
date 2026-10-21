@@ -7,7 +7,7 @@ import shutil
 import httpx
 
 from tavern.character.cards import regex_scripts
-from tavern.conversation.message_editing import editable_message_ids
+from tavern.conversation.regeneration import turn_start
 from tavern.conversation.update_review import finish_turn
 from tavern.core.models import TurnRequest
 from tavern.memories.memory import Tracker, completed_rounds
@@ -263,50 +263,6 @@ class RoleplayRuntime:
         finally:
             await runtime.close()
         return self.store.session(sid)
-
-    async def edit_message(self, sid, mid, text, expected_revision, *, notify_ai=False):
-        session = self.store.session(sid)
-        if mid not in editable_message_ids(session["messages"], session["head"]):
-            raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
-        message = next((m for m in session["messages"] if m["id"] == mid), None)
-        if message is None:
-            raise ValueError("只能编辑当前会话分支中的消息")
-        card = self.store.session_card(sid)
-        snapshot = message["snapshot"]
-        document = (snapshot.get("content") or {}).get("document", card["document"])
-
-        async def host(method, args):
-            raise ValueError("消息编辑格式化不允许执行卡片交互")
-
-        # Only run the formatting rules; editing must not replay state updates or scripts.
-        runtime = await self.runtime.open(
-            document,
-            session["messages"],
-            snapshot,
-            False,
-            host,
-            scripts_override=[],
-            persona=session["persona"],
-        )
-        try:
-            rules = regex_scripts(document)
-            placement = 2 if message["role"] == "assistant" else 1
-            model = await runtime.call("transform", text, rules, placement, "model", 0)
-            display = await runtime.call("transform", text, rules, placement, "display", 0)
-            if card["permission"] and "<" in display:
-                await self.dependencies.resolve(card)
-                display = self.dependencies.markup(card, display)
-            return self.store.edit_message(
-                sid,
-                mid,
-                text,
-                expected_revision,
-                model=model,
-                display=display,
-                notify_ai=notify_ai,
-            )
-        finally:
-            await runtime.close()
 
     async def interaction(self, sid, payload):
         req = TurnRequest(
@@ -567,42 +523,10 @@ class RoleplayRuntime:
                 await self.refresh_scene(tid, req, settings, session)
                 return
             card = self.store.session_card(session["id"])
-            history = session["messages"]
-            reused_user = None
-            if req.mode == "regenerate":
-                target = req.message_id or session["head"]
-                found = next((i for i, m in enumerate(history) if m["id"] == target), None)
-                if found is None:
-                    raise ValueError("目标消息不在当前分支")
-                if history[found]["role"] != "assistant" or not found:
-                    raise ValueError("请选择可重生成的角色回复")
-                history = history[:found]
-                if history[-1]["role"] == "user":
-                    reused_user = copy.deepcopy(history[-1])
-                    req.text = history[-1]["raw"]
-                    history = history[:-1]
-            if not req.text.strip():
-                raise ValueError("请输入消息")
-            before = copy.deepcopy(
-                reused_user["snapshot"]
-                if reused_user
-                else history[-1]["snapshot"]
-                if history
-                else {
-                    "state": {},
-                    "memory_document": new_memory(),
-                    "lore": {},
-                    "scopes": {},
-                    "content": None,
-                }
-            )
+            start = turn_start(session, req)
+            history, reused_user, before = start.history, start.reused_user, start.snapshot
+            req.text = start.text
             snapshot = copy.deepcopy(before)
-            from tavern.conversation.message_editing import (
-                NOTIFICATIONS,
-                inherit_edit_notifications,
-            )
-
-            inherit_edit_notifications(snapshot, session["snapshot"])
             document = copy.deepcopy(
                 snapshot.get("content", {}).get("document", card["document"])
                 if snapshot.get("content")
@@ -770,7 +694,7 @@ class RoleplayRuntime:
                 "raw": input_raw,
                 "model": req.text,
                 "display": await runtime.call("transform", input_raw, rules, 1, "display", 0),
-                "snapshot": copy.deepcopy(snapshot),
+                "snapshot": copy.deepcopy(before),
             }
             # The compiler owns input insertion; memory tools may cite the pending user input.
             agent = Writer(self.store, tid, document, session, history, snapshot, req, runtime, settings)
@@ -931,7 +855,6 @@ class RoleplayRuntime:
                 "messages": [output] if reused_user else [user_message, output],
                 "before": before,
                 "reason": "Agent / MVU 回合提交",
-                "message_edit_notified": list(snapshot.get(NOTIFICATIONS, [])),
             }
             from tavern.conversation.half_context import finalize_record
 

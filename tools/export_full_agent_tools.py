@@ -24,7 +24,7 @@ ENTRY = {
     "secondary_keys": [],
     "enabled": True,
 }
-NOTE_META = {"key": NOTE_KEY, "kind": "plan", "status": "active", "sources": [], "stale": False}
+NOTE_META = {"key": NOTE_KEY, "kind": "plan", "status": "active", "sources": []}
 NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
     "find_lore_for_edit": (

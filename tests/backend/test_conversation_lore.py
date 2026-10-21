@@ -348,8 +348,6 @@ def test_global_mode_only_affects_new_sessions_and_fork_remaps_records(tmp_path)
     assert fork["lore_injection_mode"] == "conversation"
     assert fork["snapshot"]["lore_injections"][0]["anchor_id"] == fork["head"]
     assert fork["snapshot"]["lore_injections"][0]["source_ids"] == [fork["head"]]
-    edited = store.edit_message(fork["id"], fork["head"], "修改开场", 0)
-    assert edited["snapshot"]["lore_injections"] == []
     assert store.session(original["id"])["snapshot"] == snap
 
 

@@ -52,7 +52,6 @@ def test_review_compares_real_values_and_content_not_metadata():
         "lore": {"1": {"present": True}},
         "lore_injections": [{"id": "1"}],
         "memory_document": {"records": [{"content": "New memory"}]},
-        "message_edit_notifications": [],
     }
     assert review_changes(before, after, card) == []
     after["state"]["stat_data"] = {"hp": 3, "$meta": {"changed": True}}

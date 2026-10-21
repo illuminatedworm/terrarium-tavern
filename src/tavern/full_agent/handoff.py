@@ -6,13 +6,11 @@ exiting message covered. Written chapters stay as they are unless revised or
 merged. Only merged chapters are summarized again when the total limit requires
 coarser history; old detail stays reachable through the cited spans.
 
-Storage keeps message IDs and span fingerprints. H and C numbers are only the
-rendering shared by the model and the user, so a fork or edit never invalidates
-the stored identity, and changed sources surface as point-level staleness.
+Storage keeps immutable message identities and span endpoints. H and C numbers
+are only the rendering shared by the model and user; forks remap identities.
 """
 
 import copy
-import hashlib
 import uuid
 from typing import Annotated, Literal
 
@@ -26,7 +24,6 @@ from tavern.core.history_refs import (
     span_ref,
 )
 from tavern.core.tokens import count_text
-from tavern.full_agent.state import source_hash
 
 CURRENT_HEADING = "当前交接"
 
@@ -97,15 +94,10 @@ class HandoffWrite(_Arguments):
     )
 
 
-def span_hash(history, first, last):
-    return hashlib.sha256("".join(source_hash(m) for m in history[first - 1 : last]).encode()).hexdigest()
-
-
 def _span(history, first, last):
     return {
         "start": history[first - 1]["id"],
         "end": history[last - 1]["id"],
-        "hash": span_hash(history, first, last),
     }
 
 
@@ -196,7 +188,6 @@ def apply_write(handoff, write, history, *, archive_through=None):
             chapters[index].update(
                 title=op.title.strip(),
                 points=_points(op.points, history, spans[index]),
-                hash=span_hash(history, *spans[index]),
             )
         else:
             indexes = [located(ref) for ref in dict.fromkeys(op.chapters)]
@@ -215,35 +206,18 @@ def apply_write(handoff, write, history, *, archive_through=None):
     return result
 
 
-def _render_point(point, positions, history, status):
-    spans, stale = [], False
-    for ref in point["refs"]:
-        span = _positions(ref, positions)
-        if span is None:
-            spans.append("来源不在当前分支")
-            stale = True
-        else:
-            spans.append(span_ref(*span))
-            stale |= span_hash(history, *span) != ref["hash"]
+def _render_point(point, positions):
+    spans = [span_ref(positions[ref["start"]], positions[ref["end"]]) for ref in point["refs"]]
     prefix = "（推断）" if point["kind"] == "inference" else ""
-    suffix = "（来源已修改，须核对原文）" if status and stale else ""
     citation = f" [{', '.join(spans)}]" if spans else ""
-    return f"- {prefix}{point['text']}{citation}{suffix}"
+    return f"- {prefix}{point['text']}{citation}"
 
 
-def render_chapter(index, chapter, history, *, status=True, positions=None):
+def render_chapter(index, chapter, history, *, positions=None):
     positions = positions or message_positions(history)
-    span = _positions(chapter, positions)
-    # Without precise citations, edits invalidate the whole recorded range.
-    # The visible range is navigation/coverage metadata, not proof of each point.
-    stale = (
-        status
-        and any(not p["refs"] for p in chapter["points"])
-        and (span is None or span_hash(history, *span) != chapter["hash"])
-    )
-    suffix = "（范围内来源已修改，须核对原文）" if stale else ""
-    lines = [f"## C{index} {chapter['title']} [{span_ref(*span) if span else '范围不在当前分支'}]{suffix}"]
-    lines.extend(_render_point(p, positions, history, status) for p in chapter["points"])
+    span = span_ref(positions[chapter["start"]], positions[chapter["end"]])
+    lines = [f"## C{index} {chapter['title']} [{span}]"]
+    lines.extend(_render_point(point, positions) for point in chapter["points"])
     return "\n".join(lines)
 
 
@@ -257,7 +231,7 @@ def render_chapters(handoff, history):
 def render_written_current(points):
     """The current-handoff rendering a successful write produces, from its tool arguments.
 
-    Fresh spans carry no staleness; non-canonical spellings only cost one resend.
+    Non-canonical spellings only cost one resend.
     """
     lines = [f"## {CURRENT_HEADING}"]
     for point in points:
@@ -269,13 +243,11 @@ def render_written_current(points):
     return "\n".join(lines)
 
 
-def render_current(handoff, history, *, status=True):
+def render_current(handoff, history):
     if not handoff["current"]:
         return ""
     positions = message_positions(history)
-    return "\n".join(
-        [f"## {CURRENT_HEADING}", *(_render_point(p, positions, history, status) for p in handoff["current"])]
-    )
+    return "\n".join([f"## {CURRENT_HEADING}", *(_render_point(p, positions) for p in handoff["current"])])
 
 
 def render_text(handoff, history):
@@ -301,7 +273,7 @@ def chapter_index(handoff, history):
 def chapter_token_counts(handoff, history, settings):
     positions = message_positions(history)
     return [
-        count_text(render_chapter(index, chapter, history, status=False, positions=positions), settings)
+        count_text(render_chapter(index, chapter, history, positions=positions), settings)
         for index, chapter in enumerate(handoff["chapters"], 1)
     ]
 
@@ -321,7 +293,7 @@ def check_limits(handoff, history, config, settings):
             "CONTENT_LIMIT",
             f"章节总量约 {total} tokens，超过上限 {config.chapters_total_tokens}；请用 merge {hint}",
         )
-    current = count_text(render_current(handoff, history, status=False), settings)
+    current = count_text(render_current(handoff, history), settings)
     if not handoff["current"] or current > config.handoff_tokens:
         raise HandoffError("CONTENT_LIMIT", f"当前交接不能为空，且须在 {config.handoff_tokens} tokens 内")
 

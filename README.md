@@ -70,7 +70,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ### 管理角色卡与故事
 
-支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡。可编辑剧情、重新生成回复，并从任意选定进度创建独立分支。
+支持文本角色卡，以及带 HTML 界面和 MVU 变量的角色卡。可修改最新用户输入并重试、重新生成回复，并从任意选定进度创建独立分支；历史版本保留对应输入与状态。
 
 </td>
 <td width="33%" valign="top">
@@ -153,7 +153,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
    - [雾港来信](samples/雾港来信.json)：体验文本故事
    - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，使用前需启用该卡的脚本权限
 3. **开始故事** — 点击「开始新故事」，选择角色卡、运行模式、模型渠道、用户身份和开场。变量更新与设定修改按界面提示授权。
-4. **阅读与调整** — 在对话中续写行动，按需编辑、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。
+4. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。
 
 **模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 ChatGPT 订阅接入的操作见[设置指南](docs/guides/settings.md)。
 

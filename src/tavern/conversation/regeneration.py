@@ -1,4 +1,43 @@
-"""Opt-in rewrite reference, separate from committed history and story state."""
+"""Resolve a whole exchange from its immutable, pre-turn story snapshot."""
+
+import copy
+from dataclasses import dataclass
+
+from tavern.core.models import TurnRequest
+
+
+@dataclass
+class TurnStart:
+    history: list[dict]
+    snapshot: dict
+    text: str
+    reused_user: dict | None
+
+
+def turn_start(session: dict, request: TurnRequest) -> TurnStart:
+    history = session["messages"]
+    user = None
+    text = request.text
+    if request.mode == "regenerate":
+        target = request.message_id or session["head"]
+        index = next((i for i, message in enumerate(history) if message["id"] == target), None)
+        if (
+            index is None
+            or index == 0
+            or history[index]["role"] != "assistant"
+            or history[index - 1]["role"] != "user"
+        ):
+            raise ValueError("请选择可重生成的角色回复")
+        user = history[index - 1]
+        history = history[: index - 1]
+        text = user["raw"] if request.replacement_text is None else request.replacement_text
+    if not text.strip():
+        raise ValueError("请输入消息")
+    # A user snapshot is captured before scripts and Tracker run. Replaying a
+    # replacement must never inherit decisions made from the previous input.
+    snapshot = copy.deepcopy(user["snapshot"] if user else session["snapshot"])
+    reused = copy.deepcopy(user) if user and request.replacement_text is None else None
+    return TurnStart(history, snapshot, text, reused)
 
 
 def reply_for_regeneration(request, session):

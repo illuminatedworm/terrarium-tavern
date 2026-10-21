@@ -46,7 +46,7 @@ async def test_minimal_wire_response_fills_exact_expanded_sources_without_long_i
         return answer({"category": "current", "content": "戒指暂由用户保管", "sources": [source["ref"]]})
 
     result = await consolidate(
-        messages, Settings(), generate, memory={"version": 2, "records": []}, persona="用户", document={}
+        messages, Settings(), generate, memory={"version": 3, "records": []}, persona="用户", document={}
     )
     record = result["records"][0]
     assert len(record["id"]) == 32
@@ -65,7 +65,7 @@ async def test_minimal_wire_response_fills_exact_expanded_sources_without_long_i
 async def test_existing_record_alias_updates_stable_id_and_preserves_omitted_items():
     messages = history(["她收回了戒指。"])
     old = {
-        "version": 2,
+        "version": 3,
         "records": [
             Record(id="very-long-stored-ring-id", category="current", content="戒指借出").model_dump(),
             Record(id="very-long-stored-promise-id", category="open", content="明早见面").model_dump(),
@@ -86,7 +86,7 @@ async def test_existing_record_alias_updates_stable_id_and_preserves_omitted_ite
 
 async def test_only_manual_deletion_is_returned_to_tracker():
     old = {
-        "version": 2,
+        "version": 3,
         "records": [
             Record(
                 id="automatic-retired", category="episode", content="自动退出的旧事", status="superseded"
@@ -161,7 +161,7 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
         )
 
     result = await consolidate(
-        history(["艾琳把戒指借给旅人。"]), Settings(), generate, memory={"version": 2, "records": []}
+        history(["艾琳把戒指借给旅人。"]), Settings(), generate, memory={"version": 3, "records": []}
     )
     record = result["records"][0]
     assert phases == ["memory", "memory_review"]
@@ -195,7 +195,7 @@ async def test_questions_can_reference_unnamed_adds_by_position():
         history(["一、二、三、四。"]),
         Settings(memory_review_enabled=False),
         generate,
-        memory={"version": 2, "records": []},
+        memory={"version": 3, "records": []},
     )
     assert [r["content"] for r in result["records"]] == ["一", "二待确认", "三", "四待确认"]
     assert [r["category"] for r in result["records"]] == ["episode", "uncertain", "episode", "uncertain"]
@@ -225,7 +225,7 @@ async def test_question_outside_add_positions_still_rejects_batch():
             history(["一件待确认的事。"]),
             Settings(memory_review_enabled=False),
             generate,
-            memory={"version": 2, "records": []},
+            memory={"version": 3, "records": []},
         )
 
 
@@ -233,14 +233,14 @@ async def test_question_outside_add_positions_still_rejects_batch():
     "sources,match", [(["H9#1"], "本次未提供"), (["H2"], "未知"), (["H1#1"], "batch_range")]
 )
 async def test_unknown_or_background_only_citation_preserves_old_memory(sources, match):
-    old = {"version": 2, "records": []}
+    old = {"version": 3, "records": []}
 
     async def generate(prompt, **kwargs):
         return answer({"category": "episode", "content": "不能保存的结论", "sources": sources})
 
     with pytest.raises(ValueError, match=match):
         await consolidate(history(["旧事。", "新事。"]), Settings(), generate, memory=old, start=1)
-    assert old == {"version": 2, "records": []}
+    assert old == {"version": 3, "records": []}
 
 
 @pytest.mark.parametrize("protected", ["manual", "source_stale"])
@@ -253,7 +253,7 @@ async def test_short_record_ids_do_not_bypass_edit_protection(protected):
 
     with pytest.raises(ValueError, match="不可自动修改"):
         await consolidate(
-            history(["新事件。"]), Settings(), generate, memory={"version": 2, "records": [record]}
+            history(["新事件。"]), Settings(), generate, memory={"version": 3, "records": [record]}
         )
 
 
@@ -270,7 +270,7 @@ async def test_short_deleted_record_id_is_suppressed():
         history(["新事件。"]),
         Settings(),
         generate,
-        memory={"version": 2, "records": [record]},
+        memory={"version": 3, "records": [record]},
         event=lambda kind, payload: events.append(kind),
     )
     assert result["records"][0]["status"] == "deleted"
@@ -338,7 +338,7 @@ async def test_native_tool_short_refs_use_batch_cutoff_and_resolve_history_evide
         )
 
     result = await consolidate(
-        messages[:-1], settings, generate, memory={"version": 2, "records": []}, start=6, budget=budget
+        messages[:-1], settings, generate, memory={"version": 3, "records": []}, start=6, budget=budget
     )
     assert provider.calls == 2 and budget.history.calls == 1
     assert {s["message_id"] for s in result["records"][0]["sources"]} == {
@@ -369,7 +369,7 @@ async def test_optional_bad_ref_is_discarded_without_losing_valid_change():
         history(["她收回戒指。"]),
         Settings(),
         generate,
-        memory={"version": 2, "records": []},
+        memory={"version": 3, "records": []},
         event=lambda k, p: events.append((k, p)),
     )
     assert len(result["records"]) == 1 and result["records"][0]["content"] == "戒指已归还"
@@ -381,7 +381,7 @@ async def test_stable_refs_cite_only_this_batch_view_and_final_failure_is_atomic
     for i, message in enumerate(messages):
         message["role"] = "user" if i % 2 == 0 else "assistant"
     settings = Settings(memory_input_tokens=8000, memory_evidence_tokens=0)
-    original = {"version": 2, "records": []}
+    original = {"version": 3, "records": []}
     calls, firsts = [], []
     fail = False
 
@@ -407,4 +407,4 @@ async def test_stable_refs_cite_only_this_batch_view_and_final_failure_is_atomic
     fail = True
     with pytest.raises(ValueError, match="本次未提供"):
         await consolidate(messages, settings, generate, memory=original, budget=CallBudget(manual=True))
-    assert original == {"version": 2, "records": []}
+    assert original == {"version": 3, "records": []}

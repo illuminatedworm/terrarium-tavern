@@ -4,6 +4,7 @@ import asyncio
 import copy
 
 from tavern.character.cards import regex_scripts
+from tavern.conversation.regeneration import turn_start
 from tavern.conversation.update_review import finish_turn
 from tavern.core.cache_policy import fingerprint
 from tavern.core.models import TurnRequest
@@ -119,35 +120,11 @@ class FullAgentRuntime:
             )
             if request.reasoning_effort is not None:
                 settings.reasoning_effort = request.reasoning_effort
-            history, reused = session["messages"], None
-            if request.mode == "regenerate":
-                target = request.message_id or session["head"]
-                index = next((i for i, m in enumerate(history) if m["id"] == target), None)
-                if index is None or index == 0 or history[index]["role"] != "assistant":
-                    raise ValueError("请选择可重生成的角色回复")
-                history = history[:index]
-                if history[-1]["role"] == "user":
-                    reused = copy.deepcopy(history.pop())
-                    request.text = reused["raw"]
-            if not request.text.strip():
-                raise ValueError("请输入消息")
-            from tavern.full_agent.state import new_state
-
-            before = copy.deepcopy(
-                reused["snapshot"]
-                if reused
-                else history[-1]["snapshot"]
-                if history
-                else {"state": {}, "scopes": {}, "lore": {}, "content": None, "full_agent": new_state()}
-            )
+            start = turn_start(session, request)
+            history, reused, before = start.history, start.reused_user, start.snapshot
+            request.text = start.text
             progress = self.store.full_agent_progress(tid)
             snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
-            from tavern.conversation.message_editing import (
-                NOTIFICATIONS,
-                inherit_edit_notifications,
-            )
-
-            inherit_edit_notifications(snapshot, session["snapshot"])
             card = self.store.session_card(session["id"])
             document = copy.deepcopy(
                 progress["document"]
@@ -200,7 +177,7 @@ class FullAgentRuntime:
                     "raw": input_raw,
                     "model": request.text,
                     "display": await script.call("transform", input_raw, rules, 1, "display", 0),
-                    "snapshot": copy.deepcopy(snapshot),
+                    "snapshot": copy.deepcopy(before),
                 }
             )
             if not progress:
@@ -293,7 +270,6 @@ class FullAgentRuntime:
                 "before": before,
                 "reason": "Full Agent 回合提交",
                 "full_agent_trace": agent.new_trace,
-                "message_edit_notified": list(snapshot.get(NOTIFICATIONS, [])),
             }
             agent.preview.replace(text)
             finish_turn(self.store, tid, session, pending, snapshot)

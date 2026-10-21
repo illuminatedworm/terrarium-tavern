@@ -20,7 +20,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `write_handoff` | 更新交接笔记，不换窗 | `chapters: array=[]`；`current: array` | 章节默认范围由程序记录，可 revise／merge；current 整体替换；要点的 H 引用可省略。 |
 | `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
-| `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型、H 来源和 `stale`；过时来源应核对。 |
+| `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型与 H 来源；引用指向对应版本的不可变原文。 |
 | `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；已有键须有当前全文上下文依据，否则先 read_note。新 key 无需读取，覆盖归档键会激活。 |
 | `archive_note` | 归档笔记 | `key: string` | 当前全文须已在上下文，否则先 read_note；归档项从普通搜索中退出，仍可按键读取或重新激活。 |
 | `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后按需更新。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
@@ -202,13 +202,13 @@ Search active notes in this branch by literal terms in content or keys; query=* 
 成功返回：
 
 ```json
-{"ok":true,"data":{"matches":[{"key":"计划/港口","kind":"plan","status":"active","sources":[],"stale":false,"preview":"明天去港口。"}],"notice":"使用 read 工具读取完整原文。"}}
+{"ok":true,"data":{"matches":[{"key":"计划/港口","kind":"plan","status":"active","sources":[],"preview":"明天去港口。"}],"notice":"使用 read 工具读取完整原文。"}}
 ```
 
 ### `read_note`
 
 ```text
-Read a complete active or archived note by key, with optional kind, H sources and stale status. Stale means sources changed or became unavailable; verify them before relying on the note.
+Read a complete active or archived note by key, with optional kind and H sources.
 ```
 
 请求：
@@ -220,7 +220,7 @@ Read a complete active or archived note by key, with optional kind, H sources an
 成功返回：
 
 ```json
-{"ok":true,"data":{"key":"计划/港口","kind":"plan","status":"active","sources":[],"stale":false,"text":"明天去港口。"}}
+{"ok":true,"data":{"key":"计划/港口","kind":"plan","status":"active","sources":[],"text":"明天去港口。"}}
 ```
 
 ### `write_note`

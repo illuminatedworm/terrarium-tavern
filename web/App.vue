@@ -88,6 +88,7 @@ import type {
   StoryContextPreview,
   StoryMessageRecord,
   TurnRecord,
+  TurnRequest,
 } from './lib/types';
 
 const SettingsPanel = defineAsyncComponent({
@@ -353,15 +354,21 @@ watch(
 );
 const pendingInput = ref<PendingInput | null>(null);
 // Finished turns are reopened without replaying SSE, so recover their input
-// from the persisted request. Regeneration reuses an already committed input.
+// from the persisted request, including replacements awaiting an atomic commit.
 const visiblePendingInput = computed((): PendingInput | null => {
   if (pendingInput.value) return pendingInput.value;
   const request = activeTurn.value?.request;
-  return request?.mode === 'send' && !request.scene_refresh && request.text ? { raw: request.text } : null;
+  if (!request || request.scene_refresh) return null;
+  const text = request.mode === 'regenerate' ? request.replacement_text : request.text;
+  return text ? { raw: text } : null;
 });
 const pendingLore = ref<LoreRecord[]>([]);
 const pendingVisible = computed(
-  () => activeTurn.value && currentTurn().status !== 'committed' && !currentTurn().request?.scene_refresh,
+  () =>
+    activeTurn.value &&
+    !currentTurn().request.scene_refresh &&
+    (['queued', 'running', 'awaiting_review'].includes(currentTurn().status) ||
+      canRetryTurn(activeTurn.value, session.value)),
 );
 watch(
   () => session.value?.id,
@@ -441,10 +448,8 @@ const pageMode = ref(''),
   quickEffort = ref('inherit');
 const editingMessageId = ref(''),
   editingMessageText = ref('');
-const editingNotifyChoice = ref<boolean | null>(null);
 const savingMessageEdit = ref(false);
 let editingWasFollowing = false;
-const editNotice = ref('');
 const sceneSaving = ref<'memory' | null>(null);
 const memoryRebuildEstimate = ref<MemoryRebuildEstimate | null>(null);
 const memoryProgress = computed(() => {
@@ -506,18 +511,6 @@ const storyView = ref<'dialogue' | 'work'>('dialogue');
 const sceneUpdating = computed(
   () => sceneSubmitting.value || (busy.value ? activeTurn.value?.request?.scene_refresh : null),
 );
-let editNoticeTimer: ReturnType<typeof setTimeout> | undefined;
-function clearEditNotice() {
-  clearTimeout(editNoticeTimer);
-  editNoticeTimer = undefined;
-  editNotice.value = '';
-}
-function showEditNotice() {
-  clearEditNotice();
-  editNotice.value =
-    '修改的消息已被当前记忆覆盖。现有记忆已保留；如需按修改后的内容更新，请在右侧“场景”中重新整理。';
-  editNoticeTimer = setTimeout(clearEditNotice, 5000);
-}
 const sidebarSection = ref(
   ['cards', 'editor'].includes(localStorage.getItem('tavern-sidebar-section') || '')
     ? localStorage.getItem('tavern-sidebar-section')!
@@ -689,7 +682,11 @@ const retryableTurn = computed(() =>
 watch(
   () => activeTurn.value?.status,
   (status) => {
-    rewriteExpanded.value = status === 'error' && !!retryableTurn.value;
+    const request = retryableTurn.value?.request;
+    // Failed input stays directly editable; an automatic floating panel would
+    // cover its retry controls. Plain regeneration keeps its rewrite options.
+    rewriteExpanded.value =
+      status === 'error' && request?.mode === 'regenerate' && request.replacement_text == null;
   },
 );
 function turnError(value: string) {
@@ -703,10 +700,12 @@ const latestReply = computed(() =>
     : null,
 );
 const editableMessageIds = computed(() => {
-  const ids = new Set<string>(session.value?.head ? [openStory().head] : []);
+  const request = retryableTurn.value?.request;
+  // A failed send/replacement owns the latest input; edit its persisted request
+  // as a fresh attempt instead of offering another edit on the committed pair.
+  if (request && (request.mode === 'send' || request.replacement_text != null)) return new Set<string>();
   const user = session.value?.messages.at(-2);
-  if (user?.role === 'user' && user.id === latestReply.value?.parent) ids.add(user.id);
-  return ids;
+  return new Set(user?.role === 'user' && user.id === latestReply.value?.parent ? [user.id] : []);
 });
 const mvuPanel = computed(() => {
   for (const message of [...(session.value?.messages || [])].reverse()) {
@@ -789,7 +788,6 @@ const contextLabels: Record<string, string> = {
   context_policy: '上下文窗口机制',
   cloud_compaction: '云端压缩状态',
   context_budget: '窗口预算提示',
-  context_warning: '原文编辑提醒',
   mvu_rules: 'MVU 变量规则',
   turn_variable_instruction: '本轮变量授权',
   tool_definitions: '工具定义',
@@ -1003,7 +1001,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   inspectorTab.value = 'mvu';
   clearOptionsNotice();
   sourceHighlight.value = null;
-  clearEditNotice();
   trace.value = [];
   draft.value = '';
   cancelMessageEdit();
@@ -1272,37 +1269,21 @@ async function regenerateReply() {
 }
 async function retryTurn() {
   if (!retryableTurn.value || busy.value || variablePreferenceSaving.value || editingMessageId.value) return;
+  const turn = retryableTurn.value;
   const resumeFullAgent =
     session.value?.agent_mode === 'full_agent' &&
-    retryableTurn.value.resumable === true &&
-    retryableTurn.value.request.expected_revision === openStory().revision &&
-    allowEdit.value === !!retryableTurn.value.request.allow_content_edit &&
-    updateVariables.value === !!retryableTurn.value.request.update_variables &&
-    retryIncludeReply.value === !!retryableTurn.value.request.regenerate_include_reply;
-  const request = {
-    ...retryableTurn.value.request,
-    allow_content_edit: allowEdit.value,
-    update_variables: updateVariables.value,
+    turn.resumable &&
+    turn.request.expected_revision === openStory().revision &&
+    allowEdit.value === !!turn.request.allow_content_edit &&
+    updateVariables.value === !!turn.request.update_variables &&
+    retryIncludeReply.value === !!turn.request.regenerate_include_reply;
+  await submitStoryTurn({
+    ...turn.request,
+    ...storyTurnOptions(),
     regenerate_note: retryNote.value.trim(),
     regenerate_include_reply: retryIncludeReply.value,
-    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
-    operation_id: crypto.randomUUID(),
-    expected_revision: openStory().revision,
-    ...(resumeFullAgent ? { resume_turn_id: retryableTurn.value.id } : { resume_turn_id: null }),
-  };
-  const token = viewScope.current();
-  busy.value = true;
-  try {
-    activeTurn.value = await viewApi(`/sessions/${openStory().id}/turns`, request);
-    workCount.value += 1;
-    void scroll(true);
-    observe(currentTurn().id);
-  } catch (e: any) {
-    if (viewScope.owns(token)) {
-      busy.value = false;
-      error.value = e.message;
-    }
-  }
+    resume_turn_id: resumeFullAgent ? turn.id : null,
+  });
 }
 async function importCard(file: File) {
   const form = new FormData();
@@ -1474,21 +1455,46 @@ function setEffort(value: string) {
   quickEffort.value = value;
   if (session.value) localStorage.setItem(`tavern-effort-${openStory().id}`, value);
 }
-async function send(mode = 'send', message?: StoryMessageRecord, text?: string, note = '') {
-  if (variablePreferenceSaving.value) return;
-  if (modelSaving.value || contextBusy.value || !session.value?.channel_origin || !channelModelsReady.value) {
+function storyTurnOptions() {
+  return {
+    operation_id: crypto.randomUUID(),
+    expected_revision: openStory().revision,
+    allow_content_edit: allowEdit.value,
+    update_variables: updateVariables.value,
+    reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
+  };
+}
+async function send(
+  mode: 'send' | 'regenerate' = 'send',
+  message?: StoryMessageRecord,
+  text?: string,
+  note = '',
+) {
+  if (!session.value) return;
+  const value = text ?? input.value;
+  if (mode === 'send' && !value.trim()) return;
+  const submitted = await submitStoryTurn({
+    ...storyTurnOptions(),
+    text: value,
+    mode,
+    message_id: message?.id,
+    regenerate_note: note,
+    regenerate_include_reply: mode === 'regenerate' && regenerateIncludeReply.value,
+  });
+  if (submitted && mode === 'send' && input.value === value) input.value = '';
+}
+async function submitStoryTurn(request: TurnRequest): Promise<boolean> {
+  if (!session.value || busy.value || sceneSubmitting.value || variablePreferenceSaving.value) return false;
+  if (modelSaving.value || contextBusy.value || !session.value.channel_origin || !channelModelsReady.value) {
     notify(
       contextBusy.value
         ? '请先完成或取消上下文整理。'
-        : !session.value?.channel_origin
+        : !session.value.channel_origin
           ? '请先确认此对话的渠道归属。'
           : '请先配置此渠道的模型连接。',
     );
-    return;
+    return false;
   }
-  if (!session.value || busy.value || sceneSubmitting.value) return;
-  const value = text ?? input.value;
-  if (mode === 'send' && !value.trim()) return;
   const sid = openStory().id,
     token = viewScope.current();
   busy.value = true;
@@ -1496,33 +1502,24 @@ async function send(mode = 'send', message?: StoryMessageRecord, text?: string, 
   pendingInput.value = null;
   pendingLore.value = [];
   try {
-    const turn: TurnRecord = await api(`/sessions/${sid}/turns`, {
-      text: value,
-      mode,
-      message_id: message?.id,
-      operation_id: crypto.randomUUID(),
-      expected_revision: openStory().revision,
-      allow_content_edit: allowEdit.value,
-      update_variables: updateVariables.value,
-      reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
-      regenerate_note: note,
-      regenerate_include_reply: mode === 'regenerate' && regenerateIncludeReply.value,
-    });
-    if (!viewScope.owns(token)) return;
+    const turn: TurnRecord = await api(`/sessions/${sid}/turns`, request);
+    if (!viewScope.owns(token)) return false;
     activeTurn.value = turn;
-    if (mode === 'send') pendingInput.value = { raw: value };
-    if (mode === 'send' && input.value === value) input.value = '';
+    const pendingText = request.mode === 'regenerate' ? request.replacement_text : request.text;
+    if (pendingText) pendingInput.value = { raw: pendingText };
     regenerateNote.value = '';
     regenerateIncludeReply.value = false;
     rewriteExpanded.value = false;
     workCount.value += 1;
     void scroll(true);
     observe(turn.id);
+    return true;
   } catch (e: any) {
     if (viewScope.owns(token)) {
       error.value = e.message;
       busy.value = false;
     }
+    return false;
   }
 }
 
@@ -1699,32 +1696,23 @@ async function review(accept: boolean) {
   });
 }
 function beginPendingEdit() {
+  if (!retryableTurn.value || busy.value || editingMessageId.value || !visiblePendingInput.value) return;
   pauseForMessageEdit();
   editingMessageId.value = '__pending__';
-  editingMessageText.value = visiblePendingInput.value!.raw;
+  editingMessageText.value = visiblePendingInput.value.raw;
 }
 async function savePendingEdit() {
-  if (!editingMessageText.value.trim() || !retryableTurn.value || savingMessageEdit.value) return;
-  const text = editingMessageText.value;
-  const token = viewScope.current();
-  savingMessageEdit.value = true;
-  try {
-    await guarded(async () => {
-      activeTurn.value = await viewApi(
-        `/turns/${currentTurn().id}/input`,
-        { text, expected_revision: openStory().revision },
-        'PUT',
-      );
-      pendingInput.value = { raw: text };
-      pendingLore.value = [];
-      draft.value = '';
-      cancelMessageEdit();
-    });
-  } finally {
-    if (viewScope.owns(token)) savingMessageEdit.value = false;
-  }
+  if (!retryableTurn.value) return;
+  const previous = retryableTurn.value.request;
+  await submitInputEdit({
+    ...previous,
+    ...(previous.mode === 'regenerate'
+      ? { replacement_text: editingMessageText.value }
+      : { text: editingMessageText.value }),
+  });
 }
 function pauseForMessageEdit() {
+  rewriteExpanded.value = false;
   const top = chat.value?.scrollTop || 0;
   const token = viewScope.current();
   editingWasFollowing = followLatest.value;
@@ -1736,7 +1724,7 @@ function pauseForMessageEdit() {
     }),
   );
 }
-function beginMessageEdit(message: StoryMessageRecord, notifyAi: boolean | null = null) {
+function beginMessageEdit(message: StoryMessageRecord) {
   if (
     !editableMessageIds.value.has(message.id) ||
     busy.value ||
@@ -1746,7 +1734,6 @@ function beginMessageEdit(message: StoryMessageRecord, notifyAi: boolean | null 
   )
     return;
   pauseForMessageEdit();
-  editingNotifyChoice.value = notifyAi;
   editingMessageId.value = message.id;
   editingMessageText.value = message.raw;
 }
@@ -1754,7 +1741,6 @@ function cancelMessageEdit() {
   const previous = editingMessageId.value;
   editingMessageId.value = '';
   editingMessageText.value = '';
-  editingNotifyChoice.value = null;
   savingMessageEdit.value = false;
   if (previous)
     void nextTick(() => {
@@ -1787,16 +1773,29 @@ async function switchReplyVersion(message: StoryMessageRecord, offset: number) {
         { head: target, expected_revision: openStory().revision },
         'PUT',
       );
+      activeTurn.value = null;
+      pendingInput.value = null;
+      pendingLore.value = [];
+      draft.value = '';
+      error.value = '';
       await refreshContextStats();
     });
   } finally {
     switchingVersion.value = false;
   }
 }
-async function saveMessageEdit(message: StoryMessageRecord, notifyAi: boolean) {
+async function saveMessageEdit(message: StoryMessageRecord) {
+  if (!editableMessageIds.value.has(message.id) || !latestReply.value) return;
+  await submitInputEdit({
+    ...storyTurnOptions(),
+    mode: 'regenerate',
+    message_id: latestReply.value.id,
+    replacement_text: editingMessageText.value,
+  });
+}
+async function submitInputEdit(request: TurnRequest) {
   if (
     !editingMessageText.value.trim() ||
-    !editableMessageIds.value.has(message.id) ||
     busy.value ||
     switchingVersion.value ||
     savingMessageEdit.value ||
@@ -1805,19 +1804,15 @@ async function saveMessageEdit(message: StoryMessageRecord, notifyAi: boolean) {
     return;
   const token = viewScope.current();
   savingMessageEdit.value = true;
-  editingNotifyChoice.value = notifyAi;
   try {
-    await guarded(async () => {
-      session.value = await viewApi(
-        `/sessions/${openStory().id}/messages/${message.id}`,
-        { text: editingMessageText.value, expected_revision: openStory().revision, notify_ai: notifyAi },
-        'PUT',
-      );
-      cancelMessageEdit();
-      if (openStory().edit_affected_memory) showEditNotice();
-      await load();
-      await refreshContextStats();
+    const submitted = await submitStoryTurn({
+      ...request,
+      ...storyTurnOptions(),
+      resume_turn_id: null,
+      regenerate_note: '',
+      regenerate_include_reply: false,
     });
+    if (submitted) cancelMessageEdit();
   } finally {
     if (viewScope.owns(token)) savingMessageEdit.value = false;
   }
@@ -2132,7 +2127,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   mobileSidebarQuery.removeEventListener('change', syncMobileSidebar);
   rightOverlayQuery.removeEventListener('change', syncRightOverlay);
-  clearEditNotice();
   clearOptionsNotice();
   clearTimeout(contextRefreshTimer);
   document.removeEventListener('pointerdown', closeDeleteOnOutside);
@@ -2292,7 +2286,6 @@ useTimedError(error);
         <Icon name="menu" :size="19" />
       </button>
       <AppNotification :message="error" />
-      <AppNotification :message="editNotice" />
       <AppNotification :message="memoryDiscardNotice" />
 
       <CardWorkspace
@@ -2558,7 +2551,6 @@ useTimedError(error);
                   :switching-version="switchingVersion"
                   :editable="editableMessageIds.has(message.id)"
                   :editing-message-id="editingMessageId"
-                  :editing-notify-choice="editingNotifyChoice"
                   :saving-edit="savingMessageEdit"
                   v-model:editing-message-text="editingMessageText"
                   :reviewing="activeTurn?.status === 'awaiting_review'"
@@ -2583,6 +2575,7 @@ useTimedError(error);
                   >
                     <header class="message-meta">
                       <span class="avatar">你</span><strong>{{ session.persona }}</strong>
+                      <small class="message-ref">待提交输入</small>
                     </header>
                     <div class="message-body">
                       <InlineMessageEditor
@@ -2590,8 +2583,6 @@ useTimedError(error);
                         v-model="editingMessageText"
                         :original="visiblePendingInput.raw"
                         :busy="savingMessageEdit"
-                        :ask-notify="false"
-                        save-label="保存"
                         @cancel="cancelMessageEdit"
                         @save="savePendingEdit"
                       />
@@ -2606,7 +2597,7 @@ useTimedError(error);
                               class="icon-action"
                               :disabled="busy || !!editingMessageId"
                               aria-label="编辑"
-                              title="编辑最新消息"
+                              title="修改待提交输入并重试"
                               @click="beginPendingEdit"
                             >
                               <Icon name="pencil" :size="16" />
@@ -2619,7 +2610,7 @@ useTimedError(error);
                 </template>
               </template>
               <template #draft>
-                <article v-if="draft && activeTurn?.status !== 'committed'" class="message assistant">
+                <article v-if="draft && pendingVisible" class="message assistant">
                   <header class="message-meta">
                     <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
                     <strong>{{ name }}</strong

@@ -1029,7 +1029,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
         await service.close()
 
 
-async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_memory(tmp_path):
+async def test_rollover_rebases_without_reviving_old_runtime_memory(tmp_path):
     store, service, session = game(tmp_path)
     session = set_handoff(store, session, "MEMORY_A")
     try:
@@ -1042,14 +1042,6 @@ async def test_rollover_and_history_edits_rebase_without_reviving_old_runtime_me
         assert len(handoff_frames(messages)) == 2
         assert all("MEMORY_B" in frame["content"] for frame in handoff_frames(messages))
         assert "MEMORY_A" not in json.dumps(messages)
-        edited = store.edit_message(session["id"], session["head"], "edited narrative", session["revision"])
-        model = Model("continue")
-        result, edited = await turn(service, edited, model)
-        assert result["status"] == "committed", result["error"]
-        assert result["preview"]["context_ledger"]["rebuild_reason"]
-        assert "edited narrative" in json.dumps(model.requests[0]["messages"])
-        assert "after rollover" not in json.dumps(model.requests[0]["messages"])
-        assert len(handoff_frames(model.requests[0]["messages"])) == 2
     finally:
         await service.close()
 

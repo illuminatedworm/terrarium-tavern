@@ -55,7 +55,7 @@ def archiver(calls):
 
 async def test_periodic_archives_do_not_move_window_and_regeneration_never_maintains(tmp_path):
     manager = Tracker(Store(tmp_path))
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     calls = []
     await manager.prepare("t", {}, session(), history(9), snap, request(), config(), archiver(calls))
     assert "context_window" not in snap
@@ -79,7 +79,7 @@ async def test_periodic_archives_do_not_move_window_and_regeneration_never_maint
 @pytest.mark.parametrize("failure_kind", ["memory"])
 async def test_required_archive_failure_preserves_entire_snapshot(tmp_path, failure_kind):
     manager = Tracker(Store(tmp_path))
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     original = copy.deepcopy(snap)
     good = archiver([])
 
@@ -95,7 +95,7 @@ async def test_required_archive_failure_preserves_entire_snapshot(tmp_path, fail
 
 async def test_invalid_critical_evidence_preserves_window(tmp_path):
     manager = Tracker(Store(tmp_path))
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     original = copy.deepcopy(snap)
 
     async def summarize(messages, **kwargs):
@@ -108,7 +108,7 @@ async def test_invalid_critical_evidence_preserves_window(tmp_path):
 
 async def test_periodic_failure_and_cancel_preserve_original_archives(tmp_path):
     manager = Tracker(Store(tmp_path))
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     original = copy.deepcopy(snap)
 
     async def invalid(_, **kwargs):
@@ -129,7 +129,7 @@ async def test_periodic_failure_and_cancel_preserve_original_archives(tmp_path):
 async def test_periodic_timeout_has_visible_diagnostic(tmp_path):
     store = Store(tmp_path)
     manager = Tracker(store)
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
 
     async def timed_out(_, **kwargs):
         raise TimeoutError()
@@ -147,7 +147,7 @@ async def test_cap_forces_memory_coverage_before_period(tmp_path):
     messages = history(13)
     snap = {
         "state": {},
-        "memory_document": {"version": 2, "records": []},
+        "memory_document": {"version": 3, "records": []},
         "lore": {},
         "memory_archive": {"covered_count": 1, "fingerprint": fingerprint(messages[:1]), "last_round": 6},
     }
@@ -161,7 +161,7 @@ async def test_cap_forces_memory_coverage_before_period(tmp_path):
 
 @pytest.mark.parametrize("mode", ["messages", "tokens"])
 async def test_both_enabled_modes_obey_cap(tmp_path, mode):
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     await Tracker(Store(tmp_path)).prepare(
         "t", {}, session(), history(13), snap, request(), config(chunk_mode=mode), archiver([])
     )
@@ -179,7 +179,7 @@ async def test_token_pressure_trims_early_and_window_off_retains_everything(tmp_
         memory_interval_turns=5,
     )
     messages = history(11, size=800)
-    snap = {"state": {}, "memory_document": {"version": 2, "records": []}, "lore": {}}
+    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
     await manager.prepare("t", {}, session(), messages, snap, request(), cfg, archiver([]))
     assert snap["context_window"]["covered_count"] == 7
     cfg = cfg.model_copy(update={"chunk_mode": "off"})

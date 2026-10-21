@@ -153,7 +153,7 @@ function toggleGroup(id: string) {
             ><span v-if="record.status === 'completed'" class="memory-chip">已完成</span
             ><span v-if="record.kind === 'claim'" class="memory-chip">人物说法</span
             ><span v-if="record.kind === 'inference'" class="memory-chip">推断</span
-            ><span v-if="record.source_stale" class="memory-chip warn">原文已修改，尚未重建</span>
+            ><span v-if="record.source_stale" class="memory-chip warn">来源状态已变更，尚未核对</span>
             <span class="memory-card-actions"
               ><button
                 v-if="record.sources?.length"
@@ -240,7 +240,7 @@ function toggleGroup(id: string) {
               ><span v-if="record.status === 'completed'">已完成</span
               ><span v-if="record.kind === 'claim'">人物说法</span
               ><span v-if="record.kind === 'inference'">推断</span
-              ><span v-if="record.source_stale">原文已修改，尚未重建</span>
+              ><span v-if="record.source_stale">来源状态已变更，尚未核对</span>
               <span v-if="record.archived_round != null">归档时已完成 {{ record.archived_round }} 轮</span>
             </div>
             <StoryProse :text="record.content" />

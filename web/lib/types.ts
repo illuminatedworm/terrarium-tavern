@@ -68,17 +68,30 @@ export interface StoryMessageRecord {
   presentation?: StoryPresentation;
 }
 
+export interface TurnRequest {
+  operation_id: string;
+  expected_revision: number;
+  mode?: 'send' | 'regenerate';
+  text?: string;
+  message_id?: string | null;
+  replacement_text?: string | null;
+  regenerate_note?: string;
+  regenerate_include_reply?: boolean;
+  update_variables?: boolean;
+  allow_content_edit?: boolean;
+  reasoning_effort?: string | null;
+  generate?: JsonObject | null;
+  scene_refresh?: 'memory' | null;
+  resume_turn_id?: string | null;
+}
+
 /** `Store.turn()`. */
 export interface TurnRecord {
   id: string;
   session: string;
   status: TurnStatus;
   /** The submitted `TurnRequest`; scripts may add generate options. */
-  request: JsonObject & {
-    expected_revision: number;
-    update_variables?: boolean;
-    scene_refresh?: string | null;
-  };
+  request: TurnRequest;
   draft: string;
   error: string | null;
   pending: JsonObject | null;
@@ -122,8 +135,6 @@ export interface Session {
   /** Episodes retention moved out of the active projection; recalled by relevance. */
   archived_memory: JsonObject[];
   turns: Pick<TurnRecord, 'id' | 'status' | 'draft' | 'error'>[];
-  /** Only on the response to a message edit. */
-  edit_affected_memory?: boolean;
 }
 
 /** `GET /card-edits`: drafts kept after their library card was deleted. */

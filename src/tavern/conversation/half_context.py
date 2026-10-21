@@ -13,8 +13,8 @@ from tavern.scripting.native_response import message_digest, native_items
 from tavern.scripting.request_context import response_origin
 from tavern.search.retrieval_text import split_retrieval
 
-# v4 adds per-exchange frozen lore; v3 append frames remain compatible.
-VERSION = 4
+# v5 removes in-place edit notices; exchanges are replayed from immutable inputs.
+VERSION = 5
 DYNAMIC = {
     "author_note",
     "post",
@@ -22,11 +22,10 @@ DYNAMIC = {
     "memory_recall",
     "state",
     "turn_instruction",
-    "message_edit_notice",
     "regenerate_reference",
     *KEMINI_TRANSIENT,
 }
-TRANSIENT = {"message_edit_notice", "regenerate_reference", *KEMINI_TRANSIENT}
+TRANSIENT = {"regenerate_reference", *KEMINI_TRANSIENT}
 LABELS = {
     "author_note": "作者注",
     "post": "角色后置要求",
@@ -34,7 +33,6 @@ LABELS = {
     "memory_recall": "相关旧事",
     "state": "剧情状态",
     "turn_instruction": "本轮额外要求",
-    "message_edit_notice": "原文编辑提醒",
     "regenerate_reference": "待重写回复参考",
     "kemini_control": "Kemini 输出要求",
     "kemini_roleplay": "Kemini 角色扮演追加要求",
@@ -215,7 +213,7 @@ def apply_context(
     reason = None
     if previous is None:
         reason = "legacy_context" if history else "initial_context"
-    elif previous.get("version") not in (3, VERSION):
+    elif previous.get("version") != VERSION:
         reason = "context_version_changed"
     elif previous.get("origin") != origin:
         reason = "provider_or_model_changed"

@@ -21,7 +21,7 @@ const resultLabels: Record<string, string> = {
 };
 const metadataLabels: Record<string, string> = {
   read_history: '返回编号和角色',
-  read_note: '返回类型、来源和过时状态',
+  read_note: '返回类型和原文来源',
   read_state: '返回路径',
   read_character: '返回字段名',
 };

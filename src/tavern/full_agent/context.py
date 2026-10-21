@@ -72,7 +72,6 @@ def compile_window(
     complete_source = compact or replay_all
     visible = history if complete_source else history[window["start"] :]
     turn_instructions = {
-        "message_edit_notice": "",  # Filled after canonical history and input are present.
         "turn_instruction": (
             f"允许修改设定：{allow_content_edit}。" if require_state_patch or allow_content_edit else ""
         ),
@@ -192,14 +191,6 @@ def compile_window(
 
     records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}
-    from tavern.conversation.message_editing import edit_notification
-
-    turn_instructions["message_edit_notice"] = edit_notification(
-        snapshot,
-        session.get("edit_notification_history", session.get("messages", history)),
-        {**history_text, input_id: user_input},
-        expand,
-    )
     ledger = ContextLedger(
         settings,
         items,
@@ -223,7 +214,6 @@ def compile_window(
             "context_budget",
             "context_policy",
             "context_status",
-            "context_warning",
         ):
             return
         # Sent turn requirements stay in place. Their effective value is updated
@@ -331,10 +321,7 @@ def compile_window(
     # versions still need explicit updates when cleared or disabled.
     if planning["enabled"] or state["plot"]["text"] or "plot" in ledger.seen:
         update("plot", plan_message(planning), value=planning)
-    # Staleness remains truthful in the user's notes and source checks. Proactive
-    # edit instructions now come only from the user's explicit notification queue.
     if not complete_source:
-        update("context_warning", "")
         # Chapters and the current handoff are separate frames: a mid-window
         # current update does not resend the whole chapter ledger.
         chapters = render_chapters(handoff, history)

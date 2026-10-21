@@ -154,7 +154,7 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
     snapshot = {
         "state": state,
         "memory_document": {
-            "version": 2,
+            "version": 3,
             "records": [
                 Record(
                     id=ID,

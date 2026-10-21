@@ -26,7 +26,7 @@ def story(tmp_path):
             mid = uid()
             snapshot = {
                 "state": {"place": text},
-                "memory_document": {"version": 2, "records": []},
+                "memory_document": {"version": 3, "records": []},
                 "lore": {"visits": 2},
                 "scopes": {"message:0": {"note": "保留"}},
                 "content": {"document": card["document"]},
@@ -56,10 +56,9 @@ def test_fork_copies_only_selected_prefix_and_survives_original_deletion(story):
     assert fork["card"] == original["card"]
     assert fork["title"] == f"{original['title']} · 副本"
     assert fork["turns"] == [] and fork["revision"] == 0
-    store.edit_message(fork["id"], fork["head"], "另一条剧情", 0)
     assert store.session(original["id"]) == original
     store.delete_session(original["id"])
-    assert store.session(fork["id"])["messages"][-1]["raw"] == "另一条剧情"
+    assert store.session(fork["id"])["messages"][-1]["raw"] == selected["raw"]
 
 
 def test_session_titles_are_persisted_and_forks_get_distinct_titles(story):

@@ -85,16 +85,4 @@ def initial_messages(task):
             "content": json.dumps(payload, ensure_ascii=False),
         },
     ]
-    from tavern.conversation.message_editing import edit_notification
-
-    notice = edit_notification(task.snapshot, task.session["messages"])
-    if notice:
-        messages.append(
-            {
-                "role": "system",
-                "message_type": "message_edit_notice",
-                "runtime_phase": "body",
-                "content": notice,
-            }
-        )
     return task.view.messages(runtime_messages(messages, "background"))

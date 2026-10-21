@@ -2,7 +2,6 @@
 import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import InlineMessageEditor from './InlineMessageEditor.vue';
-import EditMessageButton from './EditMessageButton.vue';
 import Icon from '../common/Icon.vue';
 import { computed } from 'vue';
 const props = defineProps<{
@@ -17,7 +16,6 @@ const props = defineProps<{
   switchingVersion: boolean;
   editable: boolean;
   editingMessageId: string;
-  editingNotifyChoice: boolean | null;
   savingEdit: boolean;
   reviewing: boolean;
   enabled: boolean;
@@ -37,8 +35,8 @@ const emit = defineEmits<{
   cancelEdit: [];
   toggleCacheBreakpoint: [];
   setCacheBreakpoint: [messageId: string];
-  saveEdit: [message: any, notifyAi: boolean];
-  edit: [message: any, notifyAi: boolean | null];
+  saveEdit: [message: any];
+  edit: [message: any];
   fork: [message: any];
   switchVersion: [message: any, direction: number];
   action: [
@@ -97,10 +95,8 @@ function forwardAction(
         v-model="editingMessageText"
         :original="message.raw"
         :busy="savingEdit"
-        :notify-choice="editingNotifyChoice"
-        :full-agent="session.agent_mode === 'full_agent'"
         @cancel="emit('cancelEdit')"
-        @save="emit('saveEdit', message, $event)"
+        @save="emit('saveEdit', message)"
       />
       <StoryMessage
         v-else
@@ -126,7 +122,7 @@ function forwardAction(
                 busy || switchingVersion || !!editingMessageId || reviewing || !message.version_index
               "
               aria-label="上一个版本"
-              title="上一个版本（更旧）"
+              title="本轮上一个版本（含用户输入与状态）"
               @click="emit('switchVersion', message, -1)"
             >
               <Icon name="chevron-left" :size="16" />
@@ -144,18 +140,23 @@ function forwardAction(
                 (message.version_index ?? 0) >= (message.versions?.length || 1) - 1
               "
               aria-label="下一个版本"
-              title="下一个版本（更新）"
+              title="本轮下一个版本（含用户输入与状态）"
               @click="emit('switchVersion', message, 1)"
             >
               <Icon name="chevron-right" :size="16" />
             </button>
             <span class="action-divider" aria-hidden="true"></span>
           </template>
-          <EditMessageButton
+          <button
             v-if="editable"
+            class="icon-action"
             :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
-            @edit="emit('edit', message, $event)"
-          />
+            aria-label="编辑"
+            title="修改本轮用户输入并重试"
+            @click="emit('edit', message)"
+          >
+            <Icon name="pencil" :size="16" />
+          </button>
           <button
             v-if="message.role === 'assistant'"
             class="icon-action"

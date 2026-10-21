@@ -2,7 +2,7 @@
 
 These are a projection of story history, not a second MVU state database. Omitted
 operations do not delete records. Tombstones prevent an old prompt from reviving
-user-deleted content. Source hashes detect edits; they deliberately do not trigger
+user-deleted content. Source hashes track macro inputs and setting changes; they deliberately do not trigger
 automatic rereading of an already archived source.
 """
 
@@ -14,9 +14,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# v2: retired episodes live in per-message ``memory_retired`` archive deltas
-# beside the active records (see memory_archive). Earlier formats are rejected.
-MEMORY_VERSION = 2
+# v3: user snapshots are pre-turn baselines, including before Tracker maintenance.
+# Retired episodes remain per-message archive deltas. Earlier stories are rejected.
+MEMORY_VERSION = 3
 
 CATEGORIES = {
     "current": "当前进展",

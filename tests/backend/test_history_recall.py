@@ -256,14 +256,14 @@ async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
         )
 
     result = await consolidate(
-        messages, cfg, generate, memory={"version": 2, "records": []}, start=9, budget=budget
+        messages, cfg, generate, memory={"version": 3, "records": []}, start=9, budget=budget
     )
     assert len(result["records"][0]["sources"]) == 2
     operation["record"]["sources"] = operation["record"]["sources"][:1]
     by_id = {m["id"]: m for m in messages}
     with pytest.raises(ValueError, match="batch_range"):
         apply_operations(
-            {"version": 2, "records": []},
+            {"version": 3, "records": []},
             {"operations": [operation]},
             by_id,
             by_id,

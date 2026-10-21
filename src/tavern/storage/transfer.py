@@ -125,7 +125,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 2,
+        "version": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -238,14 +238,59 @@ def validate_row(schema, table, row, required):
                 raise ValueError("数据包字段类型无效")
 
 
+def validate_full_sources(messages):
+    """Check imported immutable citations against every branch in linear tree time."""
+    children = {}
+    for message in messages.values():
+        children.setdefault(message["parent"], []).append(message["id"])
+    entered, exited, depths = {}, {}, {}
+    stack = [(mid, 1, False) for mid in children.get(None, [])]
+    while stack:
+        mid, depth, leaving = stack.pop()
+        if leaving:
+            exited[mid] = len(entered)
+        else:
+            entered[mid], depths[mid] = len(entered), depth
+            stack.append((mid, depth, True))
+            stack.extend((child, depth + 1, False) for child in children.get(mid, []))
+
+    def position(source, owner):
+        if source not in entered or not entered[source] <= entered[owner] < exited[source]:
+            raise ValueError("记忆来源不在所属剧情分支")
+        return depths[source]
+
+    def points(items, owner, span=None):
+        for point in items:
+            for ref in point["refs"]:
+                first, last = position(ref["start"], owner), position(ref["end"], owner)
+                if first > last or (span and not span[0] <= first <= last <= span[1]):
+                    raise ValueError("交接要点的引用范围无效")
+
+    for mid, message in messages.items():
+        state = message["snapshot"]["full_agent"]
+        for note in state["notes"].values():
+            for source in note["sources"]:
+                position(source["message_id"], mid)
+        through = 0
+        for chapter in state["handoff"]["chapters"]:
+            first, last = position(chapter["start"], mid), position(chapter["end"], mid)
+            if first != through + 1 or last < first:
+                raise ValueError("交接章节必须按当前分支连续覆盖")
+            points(chapter["points"], mid, (first, last))
+            through = last
+        points(state["handoff"]["current"], mid)
+
+
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
     for key in ("personas", "cards", "sessions"):
         if not isinstance(package.get(key), list):
             raise ValueError("数据包清单无效")
+    if package["sessions"] and package["version"] != 3:
+        raise ValueError("旧对话不支持整轮重试格式；请只导入角色卡、设置等非对话资料")
     identities = set()
     with store.connection() as db:
         schema = {
@@ -372,11 +417,9 @@ def validate_package(store, package, blobs):
                     "display",
                     "snapshot",
                     "created",
+                    "auxiliary",
                 }
-                if package["version"] == 2:
-                    required.add("auxiliary")
                 validate_row(schema, "messages", message, required)
-                message.setdefault("auxiliary", [])
                 if not isinstance(message["auxiliary"], list):
                     raise ValueError("实验辅助记录必须是列表")
                 message["auxiliary"] = [
@@ -390,6 +433,18 @@ def validate_package(store, package, blobs):
                 ):
                     raise ValueError("对话消息无效")
                 snapshot = message["snapshot"]
+                if session["agent_mode"] == "full_agent":
+                    from tavern.full_agent.state import read_full_state
+
+                    if not snapshot.get("full_agent"):
+                        raise ValueError("对话缺少 Full Agent 状态")
+                    read_full_state(snapshot)
+                else:
+                    from tavern.memories.memory_records import read_memory
+
+                    if not snapshot.get("memory_document"):
+                        raise ValueError("对话缺少 Half Agent 记忆")
+                    read_memory(snapshot)
                 for key in ("state", "scopes"):
                     if not isinstance(snapshot.get(key, {}), dict):
                         raise ValueError("对话变量状态无效")
@@ -417,6 +472,8 @@ def validate_package(store, package, blobs):
                     seen.add(cursor)
                     cursor = by_id[cursor]["parent"]
                 done.update(seen)
+            if session["agent_mode"] == "full_agent":
+                validate_full_sources(by_id)
             for table in ("full_agent_trace", "half_agent_trace"):
                 trace_keys = set()
                 for trace in bundle.get(table, []):

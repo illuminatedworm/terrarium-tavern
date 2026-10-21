@@ -740,7 +740,6 @@ p.context-footnote {
 
 /* ---------- Popovers ---------- */
 .regeneration-panel,
-.message-edit-popover,
 .delete-confirm-popover,
 .editor-restore-confirm,
 .advisor-clear-confirm,
@@ -803,53 +802,6 @@ p.context-footnote {
   top: auto;
   bottom: -5px;
   transform: rotate(225deg);
-}
-.message-edit-popover {
-  position: fixed;
-  inset: auto;
-  margin: 0;
-  padding: 6px;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100dvh - 16px);
-  overflow: auto;
-  border-radius: var(--radius-md);
-  font: var(--fs-md) / 1.7 var(--font-ui);
-}
-.edit-choice-menu {
-  width: 188px;
-}
-.edit-choice-menu button {
-  display: block;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  font: inherit;
-}
-.edit-choice-menu button:hover:not(:disabled),
-.edit-choice-menu button.selected,
-.edit-choice-menu button:focus-visible {
-  background: var(--hover-wash);
-  color: var(--accent-hover);
-}
-.edit-save-question {
-  width: 260px;
-  padding: 14px;
-}
-.edit-save-question p {
-  margin: 0 0 12px;
-}
-.edit-save-question > div {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.edit-save-question button {
-  padding: 6px 11px;
-  font: var(--fs-sm) / 1.5 var(--font-ui);
 }
 .editor-restore-confirm {
   position: fixed;

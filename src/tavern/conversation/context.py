@@ -1025,24 +1025,6 @@ def compile_context(
     ):
         at += 1
     messages[at:at] = constant_messages
-    from tavern.conversation.message_editing import edit_notification
-
-    notice = edit_notification(
-        snapshot,
-        session.get("messages", history),
-        {m["message_id"]: m["content"] for m in messages if m.get("message_id")},
-        expand,
-    )
-    if notice:
-        messages.append(
-            {
-                "role": "system",
-                "content": notice,
-                "source": "message_edit_notice",
-                "priority": 100,
-                "required": True,
-            }
-        )
     # Compare canonical text before rendering position labels, including a reused
     # regeneration input. Mark only prefixes we add; literal H lines are content.
     # The pending input is labeled by story_turn, not by script options: the same

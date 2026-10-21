@@ -444,7 +444,7 @@ async def test_failed_request_after_rollover_resumes_new_window_without_replayin
         await service.close()
 
 
-async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards_them(story):
+async def test_repeated_failure_keeps_prior_tool_results_and_fresh_input_starts_over(story):
     store, session = story
     service = runtime(store)
     try:
@@ -471,8 +471,6 @@ async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards
         assert retried_progress["snapshot"]["full_agent"]["notes"]["钟楼"]["content"] == "明天赴约"
         assert len(tool_exchanges(store.full_agent_progress(failed["id"])["new_trace"])) == 2
 
-        store.edit_pending_input(retried["id"], "改成另一个行动。", 0)
-        assert store.full_agent_progress(retried["id"]) is None
         model = Model("她看向新的方向。")
         service.full.provider_factory = lambda: model
         fresh = service.submit(
@@ -487,7 +485,7 @@ async def test_repeated_failure_keeps_prior_tool_results_and_input_edit_discards
         await service.close()
 
 
-async def test_fork_regeneration_source_edits_and_delete(story):
+async def test_fork_regeneration_and_delete(story):
     store, session = story
     service = runtime(store)
     try:
@@ -506,7 +504,7 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert fork["agent_mode"] == "full_agent"
         note = fork["snapshot"]["full_agent"]["notes"]["见面"]
         assert note["sources"][0]["message_id"] == fork["messages"][1]["id"]
-        assert not note_view(note, fork["messages"])["stale"]
+        assert note_view(note, fork["messages"])["sources"] == ["H2"]
         assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
         result, regenerated = await turn(
             service, first, Model("第二版正文"), mode="regenerate", regenerate_note="保留钟楼约定，缩短正文。"
@@ -517,23 +515,6 @@ async def test_fork_regeneration_source_edits_and_delete(story):
         assert instruction["content"] == store.settings().regenerate_prompt + "\n保留钟楼约定，缩短正文。"
         assert regenerated["snapshot"]["full_agent"]["notes"] == {}
         assert tool_exchanges(load_trace(store, first["id"], regenerated["messages"])) == []
-        switched = store.update_session(first["id"], regenerated["revision"], head=first["head"])
-        edited = store.edit_message(first["id"], first["head"], "最新正文已修改。", switched["revision"])
-        # Staleness is per cited span; the edited reply is not cited by the handoff.
-        assert "来源已修改" not in render_text(
-            edited["snapshot"]["full_agent"]["handoff"], edited["messages"]
-        )
-        assert not note_view(edited["snapshot"]["full_agent"]["notes"]["见面"], edited["messages"])["stale"]
-        edited_input = store.edit_message(
-            first["id"], first["messages"][1]["id"], "我们取消约定。", edited["revision"]
-        )
-        assert edited_input["head"] == first["head"]
-        assert edited_input["messages"][-1]["raw"] == "最新正文已修改。"
-        assert note_view(edited_input["snapshot"]["full_agent"]["notes"]["见面"], edited_input["messages"])[
-            "stale"
-        ]
-        forked = store.session(fork["id"])
-        assert not note_view(forked["snapshot"]["full_agent"]["notes"]["见面"], forked["messages"])["stale"]
         await service.delete_session(first["id"])
         assert len(tool_exchanges(load_trace(store, fork["id"], fork["messages"]))) == 6
         with store.connection() as db:
@@ -764,26 +745,25 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
                 db.execute(
                     "UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), session["head"])
                 )
-            edited = store.edit_message(session["id"], session["head"], "修订后的开场", 0, notify_ai=False)
+            current = store.session(session["id"])
             tid, _ = store.create_turn(
                 session["id"],
-                TurnRequest(operation_id="busy-window", expected_revision=edited["revision"], text="继续"),
+                TurnRequest(operation_id="busy-window", expected_revision=current["revision"], text="继续"),
             )
             assert (
-                await client.post(endpoint, json={"expected_revision": edited["revision"]})
+                await client.post(endpoint, json={"expected_revision": current["revision"]})
             ).status_code == 409
             store.set_turn(tid, status="cancelled")
             result = await client.post(
-                endpoint, json={"keep_recent": 0, "expected_revision": edited["revision"]}
+                endpoint, json={"keep_recent": 0, "expected_revision": current["revision"]}
             )
             assert result.status_code == 200
             assert result.json()["snapshot"]["full_agent"]["window"]["start"] == 1
             assert result.json()["snapshot"]["full_agent"]["handoff"] == original
             view = (await client.get(f"/api/sessions/{session['id']}/full-agent")).json()
-            assert view["handoff"] == {"text": render_text(original, edited["messages"])}
-            assert "来源已修改" in view["handoff"]["text"]
+            assert view["handoff"] == {"text": render_text(original, current["messages"])}
             assert (
-                await client.post(endpoint, json={"expected_revision": edited["revision"]})
+                await client.post(endpoint, json={"expected_revision": current["revision"]})
             ).status_code == 409
             assert (
                 await client.get(f"/api/sessions/{session['id']}/memory/rebuild-estimate")

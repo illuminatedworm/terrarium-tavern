@@ -99,9 +99,7 @@ TYPES = {
             for name, label in (
                 ("turn_instruction", "本轮额外要求"),
                 ("regenerate_instruction", "重生成要求"),
-                ("message_edit_notice", "原文编辑提醒"),
                 ("turn_variable_instruction", "本轮变量要求"),
-                ("context_warning", "资料过时提醒"),
                 ("context_status", "上下文状态"),
                 ("context_budget", "窗口预算提醒"),
                 ("reply_correction", "回复纠正要求"),
@@ -161,7 +159,6 @@ SCOPES = {
             "mvu_rules",
             "regenerate_instruction",
             "turn_variable_instruction",
-            "context_warning",
             "context_status",
             "context_budget",
         )
@@ -169,7 +166,6 @@ SCOPES = {
     "reply_correction": ("full_agent", "card_author"),
     "required_tool_notice": ("background",),
     "tracker_task_update": ("background",),
-    "message_edit_notice": ("foreground", "full_agent", "background"),
 }
 TYPES = {name: replace(item, scopes=SCOPES.get(name, item.scopes)) for name, item in TYPES.items()}
 SOURCES = {

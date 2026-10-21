@@ -18,13 +18,13 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     card = store.import_card(b'{"name":"fixture","first_mes":"hello"}', "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     assert session["persona"] == "用户"
-    assert read_memory(session["snapshot"]) == {"version": 2, "records": []}
+    assert read_memory(session["snapshot"]) == {"version": 3, "records": []}
     reopened = Store(tmp_path)
     assert reopened.settings_document() == store.settings_document()
     assert reopened.settings().tracker_system_prompt == cfg.tracker_system_prompt
     assert reopened.session(session["id"]) == store.session(session["id"])
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
         assert dict((r[1], r[3]) for r in db.execute("PRAGMA table_info(sessions)"))["card_data"] == 1
 
 

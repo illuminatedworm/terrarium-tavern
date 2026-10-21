@@ -66,13 +66,13 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 2
+        assert payload["version"] == 3
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
             from tavern.full_agent.state import note_view
 
             note = restored["snapshot"]["full_agent"]["notes"]["约定"]
-            assert note_view(note, restored["messages"])["stale"] is False
+            assert note_view(note, restored["messages"])["sources"] == ["H2"]
             assert note["sources"][0]["message_id"] == restored["messages"][1]["id"]
         assert target.cards() == []
         assert (target.root / "blobs" / restored["card_data"]["original"]).exists()
@@ -129,10 +129,6 @@ def test_all_branches_sources_cache_and_window_fingerprints_are_remapped(tmp_pat
     payload, blobs = package(
         store, settings=False, personas=[persona["id"]], cards=[card["id"]], sessions=[session["id"]]
     )
-    # Version 1 stories predate auxiliary records; original prose is authoritative.
-    payload["version"] = 1
-    for row in payload["sessions"][0]["messages"]:
-        row.pop("auxiliary")
     imported = import_package(store, payload, blobs)
     restored = store.session(imported["sessions"][0])
     message = restored["messages"][0]

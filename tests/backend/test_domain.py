@@ -185,18 +185,6 @@ def test_card_edits_replace_current_content_for_existing_sessions(store, session
     assert "NEW" in next(m["content"] for m in compiled["trace"] if m["source"] == "character")
 
 
-def test_message_edit_is_in_place_and_invalidates_window(store, session):
-    message = session["messages"][0]
-    snapshot = {**message["snapshot"], "context_window": {"covered_count": 1}}
-    with store.connection() as db:
-        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (json.dumps(snapshot), message["id"]))
-    updated = store.edit_message(session["id"], message["id"], "修改后的原文", 0)
-    assert updated["revision"] == 1
-    assert len(updated["messages"]) == 1 and updated["messages"][0]["id"] == message["id"]
-    assert updated["messages"][0]["raw"] == "修改后的原文"
-    assert "context_window" not in updated["snapshot"]
-
-
 def test_chinese_search():
     found = search([{"content": "蓝色灯塔在秋分亮起"}, {"content": "街角书店"}], "灯塔")
     assert len(found) == 1

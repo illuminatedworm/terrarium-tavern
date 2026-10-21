@@ -1,25 +1,11 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { positionPopover } from '../../lib/anchoredPopover';
 
-const props = withDefaults(
-  defineProps<{
-    original: string;
-    busy?: boolean;
-    notifyChoice?: boolean | null;
-    askNotify?: boolean;
-    fullAgent?: boolean;
-    saveLabel?: string;
-  }>(),
-  { notifyChoice: null, askNotify: true, saveLabel: '保存修改' },
-);
+const props = defineProps<{ original: string; busy?: boolean }>();
 const text = defineModel<string>({ required: true });
-const emit = defineEmits<{ cancel: []; save: [notifyAi: boolean] }>();
+const emit = defineEmits<{ cancel: []; save: [] }>();
 const root = ref<HTMLElement>();
 const textarea = ref<HTMLTextAreaElement>();
-const saveButton = ref<HTMLButtonElement>();
-const popup = ref<HTMLElement>();
-const choice = ref(props.notifyChoice);
 let observer: ResizeObserver | undefined;
 let appearance: MutationObserver | undefined;
 let frame = 0;
@@ -41,68 +27,22 @@ function scheduleResize() {
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(resize);
 }
-function closePrompt() {
-  popup.value?.hidePopover();
-}
-function repositionPrompt() {
-  if (popup.value?.matches(':popover-open') && saveButton.value)
-    positionPopover(popup.value, saveButton.value);
-}
-async function requestSave() {
-  if (props.busy) return;
-  if (text.value === props.original) {
-    emit('cancel');
-    return;
-  }
-  if (!text.value.trim()) return;
-  if (!props.askNotify || choice.value !== null) {
-    emit('save', choice.value === true);
-    return;
-  }
-  popup.value?.showPopover();
-  await nextTick();
-  if (popup.value && saveButton.value) {
-    positionPopover(popup.value, saveButton.value);
-    popup.value.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });
-  }
-}
-function choose(notifyAi: boolean) {
-  if (props.busy) return;
-  choice.value = notifyAi;
-  closePrompt();
-  emit('save', notifyAi);
+function requestSave() {
+  if (props.busy || !text.value.trim()) return;
+  if (text.value === props.original) emit('cancel');
+  else emit('save');
 }
 function keydown(event: KeyboardEvent) {
   if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Escape') {
     event.preventDefault();
-    if (popup.value?.matches(':popover-open')) closePrompt();
-    else if (!props.busy) emit('cancel');
+    if (!props.busy) emit('cancel');
   } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
-    void requestSave();
+    requestSave();
   }
 }
-function promptEscape() {
-  closePrompt();
-  saveButton.value?.focus({ preventScroll: true });
-}
-watch(text, () => {
-  closePrompt();
-  void nextTick(resize);
-});
-watch(
-  () => props.notifyChoice,
-  (value) => {
-    choice.value = value;
-  },
-);
-watch(
-  () => props.busy,
-  (busy) => {
-    if (busy) closePrompt();
-  },
-);
+watch(text, () => void nextTick(resize));
 onMounted(async () => {
   await nextTick();
   if (disposed) return;
@@ -113,7 +53,6 @@ onMounted(async () => {
     if (measured !== width) {
       width = measured;
       scheduleResize();
-      closePrompt();
     }
   });
   if (root.value) observer.observe(root.value);
@@ -125,16 +64,11 @@ onMounted(async () => {
     if (!disposed) scheduleResize();
   });
 });
-window.addEventListener('resize', repositionPrompt);
-window.addEventListener('scroll', repositionPrompt, true);
 onBeforeUnmount(() => {
   disposed = true;
   cancelAnimationFrame(frame);
   observer?.disconnect();
   appearance?.disconnect();
-  closePrompt();
-  window.removeEventListener('resize', repositionPrompt);
-  window.removeEventListener('scroll', repositionPrompt, true);
 });
 </script>
 
@@ -144,41 +78,17 @@ onBeforeUnmount(() => {
       ref="textarea"
       v-model="text"
       rows="1"
-      aria-label="编辑消息原文"
+      aria-label="修改用户输入"
       :readonly="busy"
       @input="resize"
       @keydown="keydown"
     />
     <div class="inline-edit-actions">
-      <span>{{
-        choice === null ? 'Ctrl + Enter 保存 · Esc 取消' : choice ? '保存后提醒 AI' : '保存后不提醒 AI'
-      }}</span>
+      <span>Ctrl + Enter 修改并重试 · Esc 取消</span>
       <button type="button" :disabled="busy" @click="emit('cancel')">取消</button>
-      <button
-        ref="saveButton"
-        type="button"
-        class="primary"
-        :disabled="busy || !text.trim()"
-        @click="requestSave"
-      >
-        {{ busy ? '保存中…' : saveLabel }}
+      <button type="button" class="primary" :disabled="busy || !text.trim()" @click="requestSave">
+        {{ busy ? '正在发起重试…' : '修改并重试' }}
       </button>
-    </div>
-  </div>
-  <div
-    ref="popup"
-    popover="auto"
-    class="message-edit-popover edit-save-question"
-    role="dialog"
-    aria-label="选择是否提醒 AI"
-    @keydown.esc.prevent.stop="promptEscape"
-    @click.stop
-  >
-    <p>这次修改要提醒 AI 吗？</p>
-    <p v-if="fullAgent" class="muted">提醒 AI 会使旧工具上下文失效，可能需要重新读取笔记；不提醒则保留。</p>
-    <div>
-      <button type="button" :disabled="busy" @click="choose(true)">提醒 AI</button>
-      <button type="button" :disabled="busy" @click="choose(false)">不提醒 AI</button>
     </div>
   </div>
 </template>

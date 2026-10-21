@@ -98,13 +98,11 @@ async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
         await call(owner, "patch_state", operations=[], comment="Repeat")
 
 
-async def test_note_sources_resolve_without_reads_and_remain_stale_after_history_edits(owner):
+async def test_note_sources_resolve_immutable_references_without_reads(owner):
     await call(owner, "write_note", key="Fact", content="Before", kind="fact", sources=["H1", "H2", "H1"])
     note = owner.state["notes"]["Fact"]
     assert [row["message_id"] for row in note["sources"]] == ["history", "input"]
-    assert len(note["sources"][0]["hash"]) == 64
-    owner.source_history[0]["raw"] = "Changed"
-    assert note_view(note, owner.source_history)["stale"]
+    assert note_view(note, owner.source_history)["sources"] == ["H1", "H2"]
     before = copy.deepcopy(note)
     for kind in ("fact", "hypothesis", "plan"):
         with pytest.raises(ValueError, match="无效的历史引用"):

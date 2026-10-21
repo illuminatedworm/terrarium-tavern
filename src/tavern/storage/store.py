@@ -11,7 +11,6 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 
 from tavern.character.cards import normalize, parse_card
-from tavern.conversation.message_editing import editable_message_ids
 from tavern.core.errors import NotFound
 from tavern.core.history_refs import message_ref
 from tavern.core.models import ContextRecipe, TurnRequest
@@ -20,7 +19,7 @@ from tavern.core.usage import aggregate_cache_usage
 from tavern.full_agent.recovery import resume_progress
 from tavern.memories.memory_records import new_memory
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
-from tavern.storage.turn_retry import can_retry, retry_head
+from tavern.storage.turn_retry import retry_head
 
 
 def uid():
@@ -83,7 +82,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 SETTINGS_VERSIONS = range(2, 9)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -128,6 +127,11 @@ def inspect_existing(root, path):
         if row is None or not row[0].isdigit() or not 1 <= int(row[0]) <= SCHEMA_VERSION:
             raise ValueError(f"数据库版本不受支持；需要 schema 1–{SCHEMA_VERSION}")
         version = int(row[0])
+        if version < 9 and db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone():
+            raise ValueError(
+                "旧对话不支持整轮重试格式；数据库未修改。请用旧版导出角色卡、设置等非对话资料，"
+                "并在新的数据目录中创建对话。"
+            )
         raw = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
         # Schema 1 predates the settings document version field.
         if version > 1 and raw.get("version") not in SETTINGS_VERSIONS:
@@ -728,7 +732,6 @@ class Store(MessageAdapters):
         from tavern.conversation.cache_breakpoint import reset_follow
         from tavern.conversation.half_compaction import remap_state
         from tavern.conversation.half_context import remap_record
-        from tavern.conversation.message_editing import NOTIFICATIONS
         from tavern.full_agent.state import remap_sources
         from tavern.memories.memory import fingerprint, window_valid
         from tavern.memories.memory_archive import remap_archive
@@ -779,10 +782,6 @@ class Store(MessageAdapters):
                 cloned.update(id=ids[message["id"]], session=new_sid, parent=ids.get(message["parent"]))
                 remap_sources(cloned["snapshot"], ids)
                 remap_state(cloned["snapshot"], ids)
-                if NOTIFICATIONS in cloned["snapshot"]:
-                    cloned["snapshot"][NOTIFICATIONS] = [
-                        ids[mid] for mid in cloned["snapshot"][NOTIFICATIONS] if mid in ids
-                    ]
                 for memory in cloned["snapshot"].get("memory_document", {}).get("records", []):
                     for source_ref in memory.get("sources", []) + memory.get("deleted_sources", []):
                         source_ref["message_id"] = ids.get(source_ref["message_id"], source_ref["message_id"])
@@ -898,6 +897,10 @@ class Store(MessageAdapters):
                 "content": None,
             }
         )
+        if result["agent_mode"] == "full_agent":
+            from tavern.full_agent.state import read_full_state
+
+            read_full_state(result["snapshot"])
         settings = self.session_settings(result, require_origin=False)
         result["compact_auto"] = bool(result["compact_auto"])
         result["plot_enabled"] = bool(result["plot_enabled"])
@@ -974,10 +977,17 @@ class Store(MessageAdapters):
                 r["id"]: dict(r)
                 for r in db.execute("SELECT * FROM messages WHERE session=? ORDER BY created,rowid", (sid,))
             }
+
+        def version_group(message):
+            parent = rows.get(message["parent"])
+            if parent is not None and parent["role"] == "user":
+                return "exchange", parent["parent"]
+            return "opening", message["parent"]
+
         versions = {}
         for row in rows.values():
             if row["role"] == "assistant":
-                versions.setdefault(row["parent"], []).append(row["id"])
+                versions.setdefault(version_group(row), []).append(row["id"])
         result, seen = [], set()
         while head:
             if head not in rows or head in seen:
@@ -986,7 +996,7 @@ class Store(MessageAdapters):
             row["snapshot"] = json.loads(row["snapshot"])
             row["auxiliary"] = json.loads(row["auxiliary"])
             if row["role"] == "assistant":
-                row["versions"] = versions[row["parent"]]
+                row["versions"] = versions[version_group(row)]
                 row["version_index"] = row["versions"].index(row["id"])
             result.append(row)
             seen.add(head)
@@ -1003,9 +1013,9 @@ class Store(MessageAdapters):
             raise Conflict("会话已改变，请刷新后重试")
         latest = session["messages"][-1] if session["messages"] else None
         if not latest or latest["role"] != "assistant" or latest["id"] != mid:
-            raise ValueError("只能切换最新 AI 回复的版本")
+            raise ValueError("只能切换最新一轮的版本")
         if target not in latest["versions"]:
-            raise ValueError("目标版本不属于这条 AI 回复")
+            raise ValueError("目标版本不属于当前轮次")
         return self.update_session(sid, expected_revision, head=target)
 
     def branches(self, sid):
@@ -1074,137 +1084,6 @@ class Store(MessageAdapters):
                 raise ValueError("世界书注入不存在")
             db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
         return self.session(sid)
-
-    def edit_message(self, sid, mid, text, expected_revision, *, model=None, display=None, notify_ai=False):
-        if not text.strip():
-            raise ValueError("消息不能为空")
-        session = self.session(sid)
-        branch = session["messages"]
-        if mid not in editable_message_ids(branch, session["head"]):
-            raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
-        from tavern.memories.memory import fingerprint, window_valid
-
-        archive = session["snapshot"].get("memory_archive")
-        affected_memory = bool(
-            window_valid(archive, branch)
-            and any(message["id"] == mid for message in branch[: archive["covered_count"]])
-        )
-        active_ids = {message["id"] for message in branch}
-        if mid not in active_ids:
-            raise ValueError("只能编辑当前会话分支中的消息")
-        affected = {m["id"] for m in branch[next(i for i, m in enumerate(branch) if m["id"] == mid) :]}
-        with self.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if db.execute(
-                "SELECT 1 FROM context_operations WHERE session=? AND status IN ('queued','running')", (sid,)
-            ).fetchone():
-                raise Conflict("请先完成或取消上下文整理")
-            active = db.execute(
-                "SELECT 1 FROM turns WHERE session=? AND status IN ('running','queued','awaiting_review')",
-                (sid,),
-            ).fetchone()
-            if active:
-                raise Conflict("请先完成或取消当前回合")
-            revision = db.execute("SELECT revision,head FROM sessions WHERE id=?", (sid,)).fetchone()
-            if revision is None:
-                raise NotFound("会话不存在")
-            if revision[0] != expected_revision:
-                raise Conflict("会话已改变，请刷新后重试")
-            rows = db.execute(
-                "SELECT id,parent,role,raw,model,display,snapshot FROM messages WHERE session=?", (sid,)
-            ).fetchall()
-            if mid not in editable_message_ids(rows, revision["head"]):
-                raise ValueError("只能编辑当前分支最后一轮的用户消息或 AI 回复")
-            messages = {row["id"]: dict(row) for row in rows}
-            original_messages = copy.deepcopy(messages)
-            result = db.execute(
-                "UPDATE messages SET raw=?,model=?,display=? WHERE id=? AND session=?",
-                (text, text if model is None else model, text if display is None else display, mid, sid),
-            )
-            if result.rowcount != 1:
-                raise NotFound("消息不存在")
-            messages[mid].update(
-                raw=text,
-                model=text if model is None else model,
-                display=text if display is None else display,
-            )
-
-            # The visible-history cursor may describe the message before this edit.
-            # Keep the user's current memory intact: an edit is not permission to roll it back
-            # or silently regenerate it. Rebase verified memory coverage onto the edited source
-            # so ordinary sends do not turn the notification into an automatic memory rewrite.
-            def lineage(head, source):
-                result, seen = [], set()
-                while head:
-                    if head not in source or head in seen:
-                        raise ValueError("剧情分支无效")
-                    message = source[head]
-                    result.append(message)
-                    seen.add(head)
-                    head = message["parent"]
-                return list(reversed(result))
-
-            for row in rows:
-                snapshot = json.loads(row["snapshot"])
-                old_history = lineage(row["id"], original_messages)
-                history = lineage(row["id"], messages)
-                from tavern.full_agent.state import mark_edited
-
-                mark_edited(snapshot, mid, history, notify_ai=notify_ai)
-                if row["id"] == revision["head"]:
-                    from tavern.conversation.message_editing import NOTIFICATIONS
-
-                    notices = [ref for ref in snapshot.get(NOTIFICATIONS, []) if ref != mid]
-                    if notify_ai:
-                        notices.append(mid)
-                    if notices:
-                        snapshot[NOTIFICATIONS] = notices
-                    else:
-                        snapshot.pop(NOTIFICATIONS, None)
-                if snapshot.get("memory_document"):
-                    from tavern.memories.memory_records import with_source_status
-
-                    # Preserve the user's archive; this is a warning, not an
-                    # instruction to rerun Tracker on already covered text.
-                    snapshot["memory_document"] = with_source_status(snapshot["memory_document"], history)
-                memory_archive = snapshot.get("memory_archive")
-                if memory_archive and window_valid(memory_archive, old_history):
-                    count = memory_archive["covered_count"]
-                    if any(message["id"] == mid for message in history[:count]):
-                        memory_archive["fingerprint"] = fingerprint(history[:count])
-                for key in ("context_window",):
-                    snapshot.pop(key, None)
-                if "lore_injections" in snapshot:
-                    snapshot["lore_injections"] = [
-                        record
-                        for record in snapshot["lore_injections"]
-                        if record["anchor_id"] not in affected and mid not in record.get("source_ids", [])
-                    ]
-                db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(snapshot), row["id"]))
-            db.execute("UPDATE messages SET retrieval_query='' WHERE session=?", (sid,))
-            # New half-context traces retain frozen sources after window exits.
-            # An edit invalidates the same injections there as in snapshots;
-            # otherwise a later cloud rebuild would resurrect rejected sources.
-            for row in db.execute(
-                "SELECT message_id,payload FROM half_agent_trace WHERE session=?", (sid,)
-            ).fetchall():
-                record = json.loads(row["payload"])
-                original = record.get("lore", [])
-                retained = [
-                    item
-                    for item in original
-                    if item["anchor_id"] not in affected and mid not in item.get("source_ids", [])
-                ]
-                if retained != original:
-                    record["lore"] = retained
-                    db.execute(
-                        "UPDATE half_agent_trace SET payload=? WHERE message_id=?",
-                        (dump(record), row["message_id"]),
-                    )
-            db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
-        result = self.session(sid)
-        result["edit_affected_memory"] = affected_memory
-        return result
 
     def set_session_script_permission(self, sid, expected, enabled):
         """Change the story-owned permission without replacing its card or replaying initialization."""
@@ -1403,7 +1282,7 @@ class Store(MessageAdapters):
                     raise Conflict("相同 operation_id 不能用于不同请求")
                 return existing["id"], False
             session = db.execute(
-                "SELECT revision,agent_mode,kemini FROM sessions WHERE id=?", (sid,)
+                "SELECT revision,agent_mode,kemini,head FROM sessions WHERE id=?", (sid,)
             ).fetchone()
             if not session:
                 raise NotFound("会话不存在")
@@ -1418,6 +1297,15 @@ class Store(MessageAdapters):
                 (sid,),
             ).fetchone():
                 raise Conflict("当前会话已有运行中的回合")
+            if request.replacement_text is not None:
+                target = request.message_id or session["head"]
+                user = db.execute(
+                    "SELECT u.id FROM messages a JOIN messages u ON u.id=a.parent "
+                    "WHERE a.session=? AND a.id=? AND a.role='assistant' AND u.role='user'",
+                    (sid, target),
+                ).fetchone()
+                if target != session["head"] or user is None:
+                    raise ValueError("只能修改当前分支最新一轮的用户输入并重试")
             if request.resume_turn_id:
                 if session["agent_mode"] != "full_agent":
                     raise Conflict("只有 Full Agent 回合可续接工具调用")
@@ -1449,6 +1337,7 @@ class Store(MessageAdapters):
                     "generate",
                     "scene_refresh",
                     "regenerate_include_reply",
+                    "replacement_text",
                 )
                 if any(getattr(previous, field) != getattr(request, field) for field in matching):
                     raise Conflict("续接请求的输入或授权已改变，请重新开始本轮")
@@ -1585,30 +1474,6 @@ class Store(MessageAdapters):
                 pending.get("before", {}), after, self.session_card(result["session"])["document"]
             )
         return result
-
-    def edit_pending_input(self, tid, text, expected_revision):
-        if not text.strip():
-            raise ValueError("消息不能为空")
-        with self.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM turns WHERE id=?", (tid,)).fetchone()
-            if row is None:
-                raise NotFound("回合不存在")
-            request = json.loads(row["request"])
-            session = db.execute(
-                "SELECT revision,head FROM sessions WHERE id=?", (row["session"],)
-            ).fetchone()
-            if (
-                request.get("mode", "send") != "send"
-                or session["revision"] != expected_revision
-                or not can_retry(db, row, session)
-            ):
-                raise Conflict("只能编辑当前会话最新的失败或取消发言")
-            request["text"] = text
-            request["expected_revision"] = expected_revision
-            db.execute("UPDATE turns SET request=?,draft='',pending=NULL WHERE id=?", (dump(request), tid))
-            db.execute("DELETE FROM full_agent_progress WHERE turn=?", (tid,))
-        return self.turn(tid)
 
     def set_turn(self, tid, **fields):
         if not set(fields).issubset({"status", "draft", "error", "preview", "pending"}):
@@ -1759,22 +1624,6 @@ class Store(MessageAdapters):
             scene = pending.get("scene")
             if scene and not req.get("scene_refresh"):
                 raise ValueError("当前回合不允许更新场景档案")
-            if not scene and pending.get("message_edit_notified"):
-                # Consume only with the atomic story commit. Failed requests,
-                # previews and rejected reviews keep the active branch's queue.
-                from tavern.conversation.message_editing import NOTIFICATIONS
-
-                notified = set(pending["message_edit_notified"])
-                messages = []
-                for message in pending.get("messages", []):
-                    snapshot = dict(message["snapshot"])
-                    remaining = [mid for mid in snapshot.get(NOTIFICATIONS, []) if mid not in notified]
-                    if remaining:
-                        snapshot[NOTIFICATIONS] = remaining
-                    else:
-                        snapshot.pop(NOTIFICATIONS, None)
-                    messages.append({**message, "snapshot": snapshot})
-                pending = {**pending, "messages": messages}
             last = scene["message_id"] if scene else pending["messages"][-1]["id"]
             # Every persisted snapshot keeps only its own archive delta; drafts
             # carry copies of their parent's delta (see memory_archive).

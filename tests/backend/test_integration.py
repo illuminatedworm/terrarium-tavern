@@ -31,162 +31,260 @@ def _assert_run_closed(path):
     renamed.rename(path)
 
 
-async def test_message_edit_reapplies_card_formatting_without_state_changes(tmp_path):
-    app = create_app(tmp_path)
-    store = app.state.store
-    document = json.loads(Path("samples/雾港来信.json").read_text(encoding="utf-8"))
-    document["data"]["extensions"]["regex_scripts"] = [
-        {
-            "findRegex": r"/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/g",
-            "replaceString": "",
-            "placement": [2],
-            "markdownOnly": True,
-        },
-        {
-            "findRegex": r"/<secret>[\s\S]*?<\/secret>/g",
-            "replaceString": "",
-            "placement": [2],
-            "promptOnly": True,
-        },
-    ]
-    card = store.import_card(json.dumps(document).encode(), "card.json")
-    session = store.new_session(SessionCreate(card_id=card["id"]))
-    message = session["messages"][-1]
-    text = "**修改正文**\n<UpdateVariable>_.set('能量', 999);</UpdateVariable><secret>隐藏设定</secret>"
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
-            response = await api.put(
-                f"/api/sessions/{session['id']}/messages/{message['id']}",
-                json={"text": text, "expected_revision": 0},
-            )
-            assert response.status_code == 200
-            edited = response.json()["messages"][-1]
-            assert edited["raw"] == text
-            assert edited["display"] == "**修改正文**\n<secret>隐藏设定</secret>"
-            assert edited["model"] == "**修改正文**\n<UpdateVariable>_.set('能量', 999);</UpdateVariable>"
-            assert edited["snapshot"]["state"] == message["snapshot"]["state"]
-            assert edited["snapshot"]["scopes"] == message["snapshot"]["scopes"]
-            assert response.json()["revision"] == 1
-            saved = await api.get(f"/api/sessions/{session['id']}")
-            assert saved.json()["messages"][-1]["display"] == edited["display"]
-    finally:
-        await app.state.service.close()
-
-
 @pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
-async def test_message_edits_only_accept_last_round_on_current_branch(tmp_path, monkeypatch, mode):
-    from tavern.storage.store import Conflict, uid
+async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_path, mode):
+    import copy
+    import hashlib
+
+    import jsonpatch
+
+    from tavern.storage.store import Conflict, dump, uid
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+    from tests.backend.test_full_agent import Model, Script, ScriptHost, handoff
+
+    opened = []
+
+    class ReplayScript(Script):
+        async def call(self, method, *args):
+            if method == "process" and args[1]:
+                self.mirror["state"]["stat_data"] = jsonpatch.apply_patch(
+                    self.mirror["state"]["stat_data"], args[1]
+                )
+            return await super().call(method, *args)
+
+    class ReplayHost(ScriptHost):
+        async def open(self, document, history, snapshot, *args, **kwargs):
+            opened.append(copy.deepcopy(snapshot))
+            script = ReplayScript(history, snapshot)
+            script.mirror["lore"] = []
+            script.mirror["state"]["script_runs"] += 1
+            return script
 
     app = create_app(tmp_path)
-    store = app.state.store
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
-    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
-    opening = session["head"]
-    previous_input, previous_reply, input_id, reply_id = (uid() for _ in range(4))
-    for index, (user, reply) in enumerate(((previous_input, previous_reply), (input_id, reply_id))):
-        tid, _ = store.create_turn(
-            session["id"],
-            TurnRequest(text="input", operation_id=f"setup-{index}", expected_revision=session["revision"]),
-        )
-        store.set_turn(tid, status="running")
-        store.commit_turn(
-            tid,
-            {
-                "before": session["snapshot"],
-                "messages": [
+    store, service = app.state.store, app.state.service
+    service.half.runtime = service.full.runtime = ReplayHost()
+    settings = store.settings()
+    settings.memory_interval_turns = 1
+    settings.full_agent_config.auto_retrieval = False
+    settings.retrieval.channels = ["keyword"]
+    store.save_settings(settings)
+    card = store.import_card(
+        b'{"name":"fixture","first_mes":"opening","description":"BASE_DESCRIPTION"}', "card.json"
+    )
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, policy="automatic"))
+    baseline = copy.deepcopy(session["snapshot"])
+    baseline["state"] = {"stat_data": {"hp": 0}, "script_runs": 0}
+    with store.connection() as db:
+        db.execute("UPDATE messages SET snapshot=? WHERE id=?", (dump(baseline), session["head"]))
+        if mode == "full_agent":
+            db.execute("UPDATE sessions SET plot_enabled=1 WHERE id=?", (session["id"],))
+    sid, opening = session["id"], session["head"]
+    tracker_models = []
+
+    def tracker():
+        def first(messages):
+            payload = next(
+                json.loads(m["content"])
+                for m in messages
+                if m["role"] == "user" and '"current_input"' in m["content"]
+            )
+            value = payload["current_input"]
+            if payload["task"]["phase"] == "pre":
+                assert payload["character"]["description"] == "BASE_DESCRIPTION"
+                return "revise_content", {
+                    "operations": [{"op": "replace", "path": "/description", "value": "DESC_" + value}],
+                    "comment": "本轮明确的设定要求",
+                }
+            batch = batch_payload(messages)
+            return "write_memory", {
+                "operations": [
                     {
-                        "id": user,
-                        "parent": session["head"],
-                        "role": "user",
-                        "raw": "input",
-                        "model": "input",
-                        "display": "input",
-                        "snapshot": session["snapshot"],
-                    },
-                    {
-                        "id": reply,
-                        "parent": user,
-                        "role": "assistant",
-                        "raw": "reply",
-                        "model": "reply",
-                        "display": "reply",
-                        "snapshot": session["snapshot"],
-                    },
+                        "op": "add",
+                        "record": {
+                            "category": "episode",
+                            "content": "MEMORY_" + value,
+                            "sources": [batch["messages"][-1]["passages"][0]["ref"]],
+                        },
+                    }
                 ],
-            },
+                "questions": [],
+            }
+
+        def second(messages):
+            payload = next(
+                json.loads(m["content"])
+                for m in messages
+                if m["role"] == "user" and '"current_input"' in m["content"]
+            )
+            if payload["task"]["phase"] == "pre":
+                return "完成"
+            return "patch_state", {
+                "operations": [
+                    {
+                        "op": "replace",
+                        "path": "/hp",
+                        "value": 1 if payload["current_input"] == "OLD_INPUT" else 2,
+                    }
+                ],
+                "comment": "本轮变量",
+            }
+
+        model = TrackerModel(first, second, "完成")
+        tracker_models.append(model)
+        return model
+
+    service.half.tracker_provider_factory = tracker
+
+    def model(value, fail=False):
+        if mode == "half_agent":
+            return ScriptedLLM([] if fail else ["BODY_" + value])
+        return Model(
+            (
+                "revise_content",
+                {
+                    "operations": [{"op": "replace", "path": "/description", "value": "DESC_" + value}],
+                    "comment": "本轮设定",
+                },
+            ),
+            ("write_note", {"key": "event", "content": "NOTE_" + value, "kind": "fact", "sources": ["H2"]}),
+            ("write_handoff", handoff("HANDOFF_" + value, through=None)),
+            ("write_plot", {"content": "PLOT_" + value}),
+            ("read_state", {"path": ""}),
+            (
+                "patch_state",
+                {
+                    "operations": [
+                        {"op": "replace", "path": "/hp", "value": 1 if value == "OLD_INPUT" else 2}
+                    ],
+                    "comment": "本轮变量",
+                },
+            ),
+            RuntimeError("replacement failed") if fail else "BODY_" + value,
         )
-        session = store.session(session["id"])
-    runtime_open = app.state.service.half.runtime.open
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("Rejected historical edits must not start formatting")
+    async def attempt(provider, **options):
+        current = store.session(sid)
+        service.provider_factory = lambda: provider
+        request = TurnRequest(
+            text="OLD_INPUT",
+            operation_id=uid(),
+            expected_revision=current["revision"],
+            allow_content_edit=True,
+            update_variables=True,
+            **options,
+        )
+        queued = service.submit(sid, request)
+        await service.tasks[queued["id"]]
+        return store.turn(queued["id"])
 
-    monkeypatch.setattr(app.state.service.half.runtime, "open", forbidden)
     try:
+        original_turn = await attempt(model("OLD_INPUT"))
+        assert original_turn["status"] == "committed", original_turn["error"]
+        original = store.session(sid)
+        original_user = original["messages"][-2]
+        assert original_user["snapshot"] == baseline
+        assert original["snapshot"]["state"] == {"stat_data": {"hp": 1}, "script_runs": 1}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
-            for mid in (opening, previous_input, previous_reply):
-                with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
-                    store.edit_message(session["id"], mid, "changed", session["revision"])
-                rejected = await api.put(
-                    f"/api/sessions/{session['id']}/messages/{mid}",
-                    json={"text": "changed", "expected_revision": session["revision"]},
+            removed = await api.put(
+                f"/api/sessions/{sid}/messages/{original['head']}",
+                json={"text": "forbidden", "expected_revision": original["revision"]},
+            )
+            assert removed.status_code in (404, 405)
+            for target in (opening, original_user["id"]):
+                rejected = await api.post(
+                    f"/api/sessions/{sid}/turns",
+                    json={
+                        "mode": "regenerate",
+                        "message_id": target,
+                        "replacement_text": "NEW_INPUT",
+                        "operation_id": uid(),
+                        "expected_revision": original["revision"],
+                    },
                 )
                 assert rejected.status_code == 400
-                assert rejected.json()["detail"] == "只能编辑当前分支最后一轮的用户消息或 AI 回复"
-                assert store.session(session["id"]) == session
-            monkeypatch.setattr(app.state.service.half.runtime, "open", runtime_open)
-            accepted_input = await api.put(
-                f"/api/sessions/{session['id']}/messages/{input_id}",
-                json={"text": "latest input edited", "expected_revision": session["revision"]},
-            )
-            assert accepted_input.status_code == 200, accepted_input.text
-            edited_input = accepted_input.json()
-            assert edited_input["head"] == reply_id and edited_input["revision"] == session["revision"] + 1
-            assert edited_input["messages"][-1]["raw"] == "reply"
-            assert edited_input["messages"][-1]["snapshot"]["state"] == session["snapshot"]["state"]
-            accepted = await api.put(
-                f"/api/sessions/{session['id']}/messages/{reply_id}",
-                json={"text": "latest edited", "expected_revision": edited_input["revision"]},
-            )
-            assert accepted.status_code == 200, accepted.text
-            edited = accepted.json()
-            assert edited["head"] == reply_id and edited["revision"] == session["revision"] + 2
-            assert [m["raw"] for m in edited["messages"]] == [
-                "opening",
-                "input",
-                "reply",
-                "latest input edited",
-                "latest edited",
-            ]
-            for mid in (input_id, reply_id):
-                with pytest.raises(Conflict):
-                    store.edit_message(session["id"], mid, "stale", session["revision"])
-            active_id, _ = store.create_turn(
-                session["id"],
-                TurnRequest(text="next", operation_id="active", expected_revision=edited["revision"]),
-            )
-            for status in ("running", "awaiting_review"):
-                store.set_turn(active_id, status=status)
-                for mid in (input_id, reply_id):
-                    with pytest.raises(Conflict):
-                        store.edit_message(session["id"], mid, "busy", edited["revision"])
-            store.set_turn(active_id, status="cancelled")
-            # Selecting an earlier branch changes which exchange can be edited.
-            selected = store.update_session(session["id"], edited["revision"], head=previous_reply)
-            with pytest.raises(ValueError, match="只能编辑当前分支最后一轮"):
-                store.edit_message(session["id"], input_id, "off branch", selected["revision"])
-            selected = store.edit_message(
-                session["id"], previous_input, "selected input", selected["revision"]
-            )
-            assert selected["head"] == previous_reply and selected["messages"][-2]["raw"] == "selected input"
-            selected = store.update_session(session["id"], selected["revision"], head=opening)
-            edited_opening = store.edit_message(
-                session["id"], opening, "selected latest", selected["revision"]
-            )
-            assert edited_opening["head"] == opening
-            assert edited_opening["messages"][-1]["raw"] == "selected latest"
+
+        replacement = {"mode": "regenerate", "message_id": original["head"], "replacement_text": "NEW_INPUT"}
+        failed = await attempt(model("NEW_INPUT", fail=True), **replacement)
+        assert failed["status"] == "error"
+        assert store.session(sid)["snapshot"] == original["snapshot"]
+        assert store.session(sid)["head"] == original["head"]
+        if mode == "full_agent":
+            with pytest.raises(Conflict, match="输入或授权已改变"):
+                store.create_turn(
+                    sid,
+                    TurnRequest(
+                        **{
+                            **failed["request"],
+                            "replacement_text": "THIRD_INPUT",
+                            "operation_id": uid(),
+                            "resume_turn_id": failed["id"],
+                        }
+                    ),
+                )
+        store.update_session(sid, original["revision"], policy="review")
+        reviewed = await attempt(model("NEW_INPUT"), **replacement)
+        assert reviewed["status"] == "awaiting_review", reviewed["error"]
+        assert store.session(sid)["head"] == original["head"]
+        assert reviewed["pending"]["messages"][0]["raw"] == "NEW_INPUT"
+        service.review(reviewed["id"], False)
+        assert store.session(sid)["snapshot"] == original["snapshot"]
+
+        fresh_model = model("NEW_INPUT")
+        accepted = await attempt(fresh_model, **replacement)
+        assert accepted["status"] == "awaiting_review", accepted["error"]
+        service.review(accepted["id"], True)
+        store.commit_turn(accepted["id"], accepted["pending"])  # Duplicate delivery is idempotent.
+        current = store.session(sid)
+        assert current["messages"][-2]["id"] != original_user["id"]
+        assert current["messages"][-2]["snapshot"] == baseline
+        assert [m["raw"] for m in current["messages"]] == ["opening", "NEW_INPUT", "BODY_NEW_INPUT"]
+        assert current["snapshot"]["state"] == {"stat_data": {"hp": 2}, "script_runs": 1}
+        assert current["messages"][-1]["versions"] == [original["head"], current["head"]]
+        assert (
+            current["cache_breakpoint_follow"]["progress"] == original["cache_breakpoint_follow"]["progress"]
+        )
+        if mode == "half_agent":
+            assert [r["content"] for r in current["memory_view"]["records"]] == ["MEMORY_NEW_INPUT"]
+            assert current["snapshot"]["memory_archive"]["covered_count"] == 3
+            sent = fresh_model.last_messages
+        else:
+            state = current["snapshot"]["full_agent"]
+            assert state["notes"]["event"]["sources"] == [{"message_id": current["messages"][-2]["id"]}]
+            assert state["notes"]["event"]["content"] == "NOTE_NEW_INPUT"
+            assert state["plot"]["text"] == "PLOT_NEW_INPUT"
+            assert state["handoff"]["current"][0]["text"] == "HANDOFF_NEW_INPUT"
+            sent = fresh_model.requests[0]["messages"]
+        wire = json.dumps(sent, ensure_ascii=False)
+        assert "NEW_INPUT" in wire and "OLD_INPUT" not in wire
+        assert "message_edit_notice" not in wire
+        assert all(snapshot == baseline for snapshot in opened)
+        selected = store.switch_message_version(sid, current["head"], original["head"], current["revision"])
+        assert selected["snapshot"] == original["snapshot"]
+        assert selected["messages"][-2]["raw"] == "OLD_INPUT"
+        restored = store.switch_message_version(sid, selected["head"], current["head"], selected["revision"])
+        assert restored["snapshot"] == current["snapshot"]
+        assert restored["messages"][-2]["raw"] == "NEW_INPUT"
+        fork = store.fork_session(sid, restored["head"], restored["revision"])
+        assert fork["messages"][-2]["raw"] == "NEW_INPUT"
+        assert len(fork["messages"][-1]["versions"]) == 1
+        package, blobs = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[sid])), store
+        )
+        imported = import_package(store, package, blobs)
+        imported_story = store.session(imported["sessions"][0])
+        assert imported_story["messages"][-2]["raw"] == "NEW_INPUT"
+        assert len(imported_story["messages"][-1]["versions"]) == 2
+        package["version"] = 2
+        with pytest.raises(ValueError, match="旧对话"):
+            import_package(store, package, blobs)
+        with store.connection() as db:
+            db.execute("UPDATE meta SET value='8' WHERE key='schema_version'")
+        before = hashlib.sha256(store.path.read_bytes()).hexdigest()
+        with pytest.raises(ValueError, match="旧对话"):
+            Store(tmp_path)
+        assert hashlib.sha256(store.path.read_bytes()).hexdigest() == before
     finally:
-        await app.state.service.close()
+        await service.close()
 
 
 async def test_missing_model_fails_before_creating_turn_or_message(tmp_path):
@@ -318,7 +416,7 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path):
         assert (await c.get("/api/settings", headers={"host": "evil.example"})).status_code == 403
 
 
-async def test_preview_edit_and_cancel_are_atomic(tmp_path):
+async def test_preview_and_cancel_are_atomic(tmp_path):
     store = Store(tmp_path)
     c = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     s = store.new_session(SessionCreate(card_id=c["id"], policy="preview"))
@@ -343,10 +441,8 @@ async def test_preview_edit_and_cancel_are_atomic(tmp_path):
         assert store.turn(t["id"])["status"] == "awaiting_review"
         assert store.session(s["id"])["head"] == s["head"]
         service.review(t["id"], True)
-        head = store.session(s["id"])["head"]
-        current = store.edit_message(s["id"], head, "edited reply", 1)
+        current = store.session(s["id"])
         assert current["messages"][-1]["role"] == "assistant"
-        assert current["messages"][-1]["raw"] == "edited reply"
         assert len(current["messages"]) == 3
         service.provider_factory = lambda: ScriptedLLM(
             [ScriptEntry(response="a" * 100, delay_per_chunk=0.3, chunk_size=1)]
@@ -645,7 +741,7 @@ async def test_regeneration_reuses_the_committed_chunk_window(tmp_path, invalid_
         after = store.session(s["id"])
         assert after["snapshot"]["context_window"] == window
         assert after["messages"][-2]["id"] == user_id
-        assert memory_model.call_count == calls_before
+        assert memory_model.call_count > calls_before
         assert len(after["messages"]) == len(before["messages"])
     finally:
         await service.close()

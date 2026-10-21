@@ -24,7 +24,7 @@ from tavern.full_agent.handoff import (
 )
 from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads, state_scope
-from tavern.full_agent.state import note_view, rollover, rollover_start, source_hash
+from tavern.full_agent.state import note_view, rollover, rollover_start
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
 
@@ -242,8 +242,7 @@ SPECS = {
     ),
     "read_note": (
         NoteRead,
-        "Read a complete active or archived note by key, with optional kind, H sources and stale status. "
-        "Stale means sources changed or became unavailable; verify them before relying on the note.",
+        "Read a complete active or archived note by key, with optional kind and H sources.",
     ),
     "write_note": (
         Note,
@@ -536,7 +535,7 @@ class AgentTools:
                     raise ToolError(
                         "INVALID_REFERENCE", "sources 包含当前分支无效的历史引用；请使用有效的 H 引用"
                     )
-                sources.append({"message_id": source["id"], "hash": source_hash(source)})
+                sources.append({"message_id": source["id"]})
             state["notes"][args.key] = {
                 "key": args.key,
                 "content": args.content,

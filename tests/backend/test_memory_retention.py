@@ -54,7 +54,7 @@ def record(history, rid, category, round_number, *, content=None, **fields):
 
 
 def memory(*records):
-    return {"version": 2, "records": list(records)}
+    return {"version": 3, "records": list(records)}
 
 
 def test_current_limit_keeps_newest_automatic_items_and_manual_item():

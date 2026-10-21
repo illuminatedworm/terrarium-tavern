@@ -88,7 +88,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
         <p v-else-if="records" class="state-empty">尚无交接笔记，Agent 会在需要时整理。</p>
       </section>
       <p class="inspector-note">
-        这里显示模型实际使用的交接及来源标注。发现错误或“来源已修改”提示时，请在对话中要求 Agent 核对并更新。
+        这里显示模型实际使用的交接及来源标注。发现记忆错误时，请在对话中要求 Agent 核对并更新。
       </p>
       <form class="handoff-actions" @submit.prevent="newWindow">
         <label>
@@ -109,7 +109,7 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
       </form>
       <p class="inspector-note">
         手动换窗复用已有交接，默认保留最近 2
-        条剧情消息，并扩展到完整交流。退出范围须已有章节覆盖，交接正文和来源状态保持不变。
+        条剧情消息，并扩展到完整交流。退出范围须已有章节覆盖，交接正文和来源引用保持不变。
         长期笔记与完整剧情继续保留。
       </p>
     </template>
@@ -144,13 +144,11 @@ const kindLabel: Record<string, string> = { fact: '有据事实', hypothesis: '�
         <span class="note-key">{{ note.key }}</span
         ><span class="note-chip">{{ kindLabel[note.kind] }}</span
         ><span class="note-chip note-status">{{ note.status === 'archived' ? '已归档' : '有效' }}</span
-        ><span v-if="note.stale" class="note-chip warn">需核对</span
         ><span v-if="note.sources.length" class="note-sources"
           >来源 · {{ historyRefLabel(note.sources) }}</span
         >
         <span class="note-preview">{{ note.content }}</span>
       </summary>
-      <p v-if="note.stale" role="status">来源已编辑或不在当前分支，请核对。</p>
       <p class="note-content">{{ note.content }}</p>
       <small v-if="note.sources.length">原文来源：{{ note.sources.join('、') }}</small>
     </details>

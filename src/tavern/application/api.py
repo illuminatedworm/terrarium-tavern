@@ -19,7 +19,6 @@ from tavern.core.models import (
     ContentEdit,
     ContextRecipe,
     LoreInjectionRemoval,
-    MessageEdit,
     PersonaEdit,
     RevisionRequest,
     SceneRefreshRequest,
@@ -517,16 +516,6 @@ def create_app(data_dir=None):
     async def fork_session(sid: str, payload: SessionFork):
         return store.fork_session(sid, payload.message_id, payload.expected_revision)
 
-    @app.put("/api/turns/{tid}/input")
-    async def edit_pending_input(tid: str, edit: MessageEdit):
-        return store.edit_pending_input(tid, edit.text, edit.expected_revision)
-
-    @app.put("/api/sessions/{sid}/messages/{mid}")
-    async def edit_message(sid: str, mid: str, edit: MessageEdit):
-        return await service.edit_message(
-            sid, mid, edit.text, edit.expected_revision, notify_ai=edit.notify_ai
-        )
-
     @app.put("/api/sessions/{sid}/messages/{mid}/version")
     async def switch_message_version(sid: str, mid: str, change: RevisionRequest):
         return store.switch_message_version(sid, mid, change.head, change.expected_revision)
@@ -563,6 +552,12 @@ def create_app(data_dir=None):
             snapshot = copy.deepcopy(session["snapshot"])
             snapshot["content"] = {"document": document, "reason": reason, "turn": tid}
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
+            # This card-only version preserves the exact story text. Its
+            # handoff/notes must cite the copied node on this version's branch.
+            if session["agent_mode"] == "full_agent":
+                from tavern.full_agent.state import remap_sources
+
+                remap_sources(snapshot, {session["head"]: message["id"]})
             pending = {"messages": [message], "before": session["snapshot"], "reason": reason}
             finish_turn(store, tid, session, pending, snapshot)
         except Exception as error:

@@ -567,15 +567,11 @@ def test_handoff_chapters_cover_sources_and_reject_old_formats():
     legacy["version"] = 2
     with pytest.raises(ValueError, match="格式版本 2 不受支持"):
         full_state({"full_agent": legacy})
-    # Editing an original marks only the points citing it.
-    history[1]["raw"] = "改过的原文"
-    assert render_text(merged, history).count("来源已修改") == 1
     revised = write(
         merged,
         [{"op": "revise", "chapter": "C1", "title": "港口", "points": [point("核对后的经过", "H2")]}],
     )
     assert revised["chapters"][0]["id"] == merged["chapters"][0]["id"]
-    assert "来源已修改" not in render_text(revised, history)
     # Ordinary writes contain no mechanical H fields; Runtime supplies the exiting
     # range, while current can carry this turn's instructions without a fake source.
     plain = HandoffWrite.model_validate(
@@ -597,8 +593,6 @@ def test_handoff_chapters_cover_sources_and_reject_old_formats():
         plain_text
         == "## C1 港口 [H1-H3]\n- 已借出戒指\n- 船票仍未找到\n\n## 当前交接\n- 按本轮用户要求保持第一人称"
     )
-    history[1]["raw"] = "戒指已收回"
-    assert render_text(automatic, history).count("来源已修改") == 1
     # Full-source replay must drop both handoff frames even when the baseline
     # still matches (local -> cloud -> local with no intervening story request).
     state = new_state()
@@ -653,13 +647,11 @@ async def test_new_context_reuses_handoff_and_checks_only_exiting_history():
             }
         ),
     )
-    history[0]["raw"] = "用户修改了开场"
     before = copy.deepcopy(owner.state["handoff"])
     # keep_recent=1 expands to H6-H7, so coverage through H5 is sufficient.
     await tools.execute("new_context", '{"keep_recent":1}')
     assert owner.state["window"]["start"] == 5
     assert owner.state["handoff"] == before
-    assert "来源已修改" in render_text(owner.state["handoff"], history)
     # Retiring the previously retained exchange does require a chapter.
     unchanged = copy.deepcopy(owner.state)
     with pytest.raises(ToolError) as gap:

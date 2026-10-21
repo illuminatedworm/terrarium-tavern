@@ -45,7 +45,7 @@ class FullAgent:
         progress=None,
     ):
         self.store, self.tid, self.document = store, tid, document
-        self.session = {**session, "messages": history, "edit_notification_history": session["messages"]}
+        self.session = {**session, "messages": history}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.regenerate_reply = reply_for_regeneration(request, session)
         self.settings, self.user_message, self.lane = settings, user_message, retrieval

@@ -212,37 +212,6 @@ async def main():
                             else:
                                 await expect(panel.get_by_label("每新增几轮跟进")).to_have_value("3")
                                 await expect(panel.get_by_label("倒数第几个 AI 回复")).to_have_value("2")
-                        await rail.focus()
-                        await rail.press("End")
-                        editable = page.locator(f'[data-message-id="{messages[-1]["id"]}"]')
-                        await editable.get_by_role("button", name="编辑", exact=True).click()
-                        await editable.locator("textarea").fill("threshold fixture")
-                        await editable.locator("textarea").evaluate(
-                            "node => { node.value = 'A longer paragraph. '.repeat(10001); node.dispatchEvent(new Event('input', {bubbles: true})); }"
-                        )
-                        async with page.expect_response(
-                            lambda response: (
-                                response.request.method == "PUT" and "/messages/" in response.url
-                            ),
-                            timeout=30000,
-                        ) as saved_edit:
-                            await editable.get_by_role("button", name="保存修改", exact=True).click()
-                            await page.get_by_role("button", name="不提醒 AI", exact=True).click()
-                        saved_response = await saved_edit.value
-                        assert saved_response.status == 200, (
-                            saved_response.status,
-                            (await saved_response.text())[:500],
-                        )
-                        await page.wait_for_function(
-                            'document.querySelector(".story-history")?.dataset.virtual === "true"'
-                        )
-                        await page.wait_for_function('!document.querySelector(".inline-message-editor")')
-                        await editable.get_by_role("button", name="编辑", exact=True).click()
-                        await editable.locator("textarea").fill(messages[-1]["raw"])
-                        await editable.get_by_role("button", name="保存修改", exact=True).click()
-                        await page.get_by_role("button", name="不提醒 AI", exact=True).click()
-                        await expect(editable.locator("textarea")).to_have_count(0)
-                        await expect(history).to_have_attribute("data-virtual", "true")
                     report["cases"].append(
                         {
                             "mode": mode,

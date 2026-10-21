@@ -434,32 +434,6 @@ def test_removed_lore_reservation_exits_with_its_compressed_exchange():
     assert source_lore(scene.history, scene.snapshot) == [removed]
 
 
-def test_history_edit_invalidates_frozen_trace_sources_as_well_as_snapshots(tmp_path):
-    store, _, _ = connected_store(tmp_path)
-    card = store.import_card(
-        json.dumps(
-            {
-                "name": "Fixture",
-                "first_mes": "开场",
-                "character_book": {
-                    "entries": [
-                        {"id": "place", "keys": ["港口"], "enabled": True, "content": "港口的完整设定"}
-                    ]
-                },
-            }
-        ).encode(),
-        "card.json",
-    )
-    session = store.new_session(SessionCreate(card_id=card["id"]))
-    session = append(store, session, "前往港口", "抵达港口")
-    records = load_trace(store, session["id"], session["messages"])
-    assert any(record["lore"] for record in records.values())
-    store.edit_message(session["id"], session["messages"][-2]["id"], "改为去森林", session["revision"])
-    session = store.session(session["id"])
-    records = load_trace(store, session["id"], session["messages"])
-    assert not source_lore(session["messages"], session["snapshot"], records)
-
-
 async def test_context_operation_cancellation_blocks_story_and_restores_original(tmp_path):
     store, _, _ = connected_store(tmp_path)
     _, session = story(store)
