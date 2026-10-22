@@ -3,7 +3,7 @@
 import json
 import re
 
-from tavern.character.cards import normalize
+from tavern.character.cards import card_view
 from tavern.conversation.context import macros
 
 
@@ -21,7 +21,7 @@ def archive_history(history, document=None, persona=None):
         source_document = (snapshot.get("content") or {}).get("document", document)
         text = macros(
             message.get("model", message["raw"]),
-            normalize(source_document),
+            card_view(source_document),
             persona,
             snapshot.get("state", {}),
             snapshot.get("scopes"),

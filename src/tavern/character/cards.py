@@ -133,13 +133,19 @@ def parse_card(blob: bytes, filename: str):
     return document, container, resources, diagnose(document)
 
 
-def normalize(document):
+def card_view(document):
+    """Read-only card data. Macro expansion runs thousands of times per request; copying a
+    card with a large worldbook each time cost seconds, so read-only callers use this view."""
     if not isinstance(document, dict):
         raise ValueError("角色卡必须为 JSON 对象")
     data = document.get("data", document) if document.get("spec") else document
     if not isinstance(data, dict):
         raise ValueError("角色卡 data 必须为对象")
-    return copy.deepcopy(data)
+    return data
+
+
+def normalize(document):
+    return copy.deepcopy(card_view(document))
 
 
 def _lore_flag_values(fields):

@@ -7,7 +7,7 @@ import time
 import jsonpatch
 import jsonpointer
 
-from tavern.character.cards import lore_entries, lore_title, normalize
+from tavern.character.cards import card_view, lore_entries, lore_title
 from tavern.conversation.cache_breakpoint import model_messages
 from tavern.conversation.context import macros, wrap_lorebook
 from tavern.conversation.regeneration import reply_for_regeneration
@@ -140,7 +140,7 @@ class FullAgent:
     def expand(self, text):
         return macros(
             text,
-            normalize(self.document),
+            card_view(self.document),
             self.session["persona"],
             self.snapshot["state"],
             self.snapshot.get("scopes"),

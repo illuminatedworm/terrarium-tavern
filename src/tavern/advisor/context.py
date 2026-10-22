@@ -2,7 +2,7 @@
 
 import copy
 
-from tavern.character.cards import is_initvar, lore_entries, normalize
+from tavern.character.cards import card_view, is_initvar, lore_entries, normalize
 from tavern.conversation.context import macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.channels import require_channel
@@ -117,7 +117,7 @@ def memory_rows(story):
 def expanded(story, text, message=None):
     snap = (message or {}).get("snapshot") or story["snapshot"]
     document = (snap.get("content") or {}).get("document") or story["document"]
-    return macros(text, normalize(document), story["persona"], snap.get("state", {}), snap.get("scopes"))
+    return macros(text, card_view(document), story["persona"], snap.get("state", {}), snap.get("scopes"))
 
 
 def background(story, config):

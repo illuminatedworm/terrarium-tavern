@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 
-from tavern.character.cards import normalize, variable_rule_entries
+from tavern.character.cards import card_view, variable_rule_entries
 from tavern.conversation.context import macros
 from tavern.conversation.variable_rules import wrap_mvu_rules
 from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
@@ -37,7 +37,7 @@ async def analyze_variables(
     cfg = settings.for_role("background") if hasattr(settings, "for_role") else settings
     rules = []
     for entry in variable_rule_entries(document or {"name": ""}):
-        content = macros(entry.get("content", ""), normalize(document), persona, state, scopes)
+        content = macros(entry.get("content", ""), card_view(document), persona, state, scopes)
         rules.append(
             {
                 "id": entry["id"],
