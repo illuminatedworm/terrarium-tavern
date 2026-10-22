@@ -230,7 +230,7 @@ useTimedError(error);
         <p class="work-debug-meta">
           Turn <code>{{ turn.id }}</code> · {{ turn.mode }} · {{ turn.status }}
         </p>
-        <AppNotification :message="turn.error || ''" />
+        <p v-if="turn.error" class="work-error">{{ turn.error }}</p>
         <p v-if="!records[turn.id]" class="work-empty">正在读取本回合记录…</p>
         <details
           v-for="event in filtered(turn.id)"

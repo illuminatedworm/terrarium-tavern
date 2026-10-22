@@ -569,6 +569,12 @@
     0 0 0 4px rgb(var(--accent-rgb) / 0.09),
     var(--shadow-float);
 }
+.composer-notice {
+  margin: 6px 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
 .composer .conversation-compose-frame {
   border-color: transparent;
   border-radius: var(--radius-lg);

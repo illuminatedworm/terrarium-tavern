@@ -1049,7 +1049,6 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       if (active || canRetryTurn(turn, opened)) {
         restored = turn;
         restoredDraft = turn.draft;
-        if (turn.status === 'error') error.value = turnError(turn.error || '');
       }
     }
     session.value = opened;
@@ -2828,16 +2827,15 @@ useTimedError(error);
               >
                 <Icon name="arrow-down" :size="18" />
               </button>
-              <AppNotification
-                v-if="retryableTurn"
-                :message="
+              <p v-if="retryableTurn" class="composer-notice">
+                {{
                   retryableTurn.request.expected_revision !== session.revision
                     ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
                     : retryableTurn.status === 'cancelled'
                       ? '本次生成已停止，草稿未提交。'
                       : '本次生成失败，正文与状态未提交。'
-                "
-              />
+                }}
+              </p>
               <div class="compose-box conversation-compose-frame">
                 <ExpandableTextarea
                   v-model="input"
