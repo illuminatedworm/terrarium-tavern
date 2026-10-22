@@ -352,6 +352,17 @@ class Store(MessageAdapters):
             )
         return self.card(card)
 
+    def create_card(self):
+        """Blank V2 card stored like an imported JSON file, so export and editing need no special case."""
+        from tavern.character.editor_config import blank_card
+
+        with self.connection() as db:
+            names = {row[0] for row in db.execute("SELECT name FROM cards")}
+        name, index = "新角色", 2
+        while name in names:
+            name, index = f"新角色 {index}", index + 1
+        return self.import_card(dump(blank_card(name)).encode(), "card.json")
+
     @staticmethod
     def _card_row(row):
         return {

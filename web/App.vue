@@ -1307,17 +1307,24 @@ async function retryTurn() {
     resume_turn_id: resumeFullAgent ? turn.id : null,
   });
 }
-async function importCard(file: File) {
-  const form = new FormData();
-  form.append('file', file);
+// Imported and blank cards both open in the shelf editor once the library reloads.
+async function addLibraryCard(request: () => Promise<CardRecord>) {
   await guarded(async () => {
-    selected.value = await api('/cards/import', form);
+    selected.value = await request();
     await load();
     sidebarSection.value = 'cards';
     pageMode.value = 'card';
     panel.value = '';
     if (window.innerWidth < 760) layout.value.leftCollapsed = true;
   });
+}
+function importCard(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  return addLibraryCard(() => api('/cards/import', form));
+}
+function createCard() {
+  return addLibraryCard(() => api('/cards', {}));
 }
 async function refreshCardConversations() {
   cardConversations.value = await api('/card-author/conversations');
@@ -2330,6 +2337,7 @@ useTimedError(error);
           :cards="cards"
           :orphan-drafts="orphanDrafts"
           :active-id="pageMode === 'card' ? selected?.id : undefined"
+          @create="createCard"
           @import="importCard"
           @show="showCard"
           @copy="copyLibraryCard"

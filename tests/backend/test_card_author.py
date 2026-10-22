@@ -128,6 +128,19 @@ def test_copy_export_resources_and_session_isolation(tmp_path, container):
     assert parsed[0]["extensions"]["unknown"] == {"keep": True}
 
 
+def test_blank_cards_get_unique_names_and_export_as_json(tmp_path):
+    store = Store(tmp_path)
+    card = store.create_card()
+    assert store.create_card()["name"] == "新角色 2"
+    assert (card["name"], card["container"], card["document"]["data"]["first_mes"]) == ("新角色", "json", "")
+    document = copy.deepcopy(card["document"])
+    document["data"]["description"] = "填写后的设定"
+    edited = store.edit_card(card["id"], document, card["revision"])
+    original = (store.root / "blobs" / edited["original"]).read_bytes()
+    exported, _, ext = export_card(edited["document"], "json", original, {})
+    assert ext == "json" and json.loads(exported)["data"]["description"] == "填写后的设定"
+
+
 async def test_editor_tools_save_undo_and_recovery(tmp_path):
     store = Store(tmp_path)
     card = import_fixture(store)

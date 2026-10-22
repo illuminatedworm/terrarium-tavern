@@ -8,6 +8,7 @@ import type { CardRecord, OrphanDraft } from '../../lib/types';
 /** Left sidebar list of library cards and drafts whose card was deleted. */
 defineProps<{ cards: CardRecord[]; orphanDrafts: OrphanDraft[]; activeId?: string }>();
 const emit = defineEmits<{
+  create: [];
   import: [file: File];
   show: [card: CardRecord];
   copy: [card: CardRecord];
@@ -29,9 +30,20 @@ function chosen(event: Event) {
     <h2>角色卡</h2>
     <span class="panel-count">{{ cards.length }}</span>
   </header>
-  <button class="new-story import-only" @click="fileInput?.click()">
-    <Icon name="import" :size="17" />导入角色卡</button
-  ><input ref="fileInput" type="file" accept=".json,.png,.charx" hidden @change="chosen" />
+  <div class="panel-actions">
+    <button class="new-story" aria-label="新建角色卡" title="新建空白角色卡" @click="emit('create')">
+      <Icon name="plus" :size="17" />新建
+    </button>
+    <button
+      class="new-story"
+      aria-label="导入角色卡"
+      title="导入 JSON、PNG 或 CHARX 角色卡"
+      @click="fileInput?.click()"
+    >
+      <Icon name="import" :size="17" />导入
+    </button>
+  </div>
+  <input ref="fileInput" type="file" accept=".json,.png,.charx" hidden @change="chosen" />
   <nav class="session-list card-side-list" aria-label="角色卡列表">
     <div v-for="card in cards" :key="card.id" class="card-side-row" :data-card-id="card.id">
       <button class="card-side-item" :class="{ active: activeId === card.id }" @click="emit('show', card)">
@@ -59,7 +71,7 @@ function chosen(event: Event) {
         </button>
       </div>
     </div>
-    <p v-if="!cards.length" class="empty-small">从上方导入 JSON、PNG 或 CHARX 角色卡。</p>
+    <p v-if="!cards.length" class="empty-small">新建空白角色卡，或导入 JSON、PNG 与 CHARX 角色卡。</p>
     <p v-if="orphanDrafts.length" class="panel-subhead">原卡已删除的编辑草稿</p>
     <button
       v-for="draft in orphanDrafts"

@@ -337,6 +337,10 @@ def create_app(data_dir=None):
     async def cards():
         return store.cards()
 
+    @app.post("/api/cards", status_code=201)
+    async def create_card():
+        return store.create_card()
+
     @app.post("/api/cards/import")
     async def import_card(file: UploadFile = File(...)):
         return store.import_card(await file.read(32 * 1024 * 1024 + 1), file.filename or "card.json")
