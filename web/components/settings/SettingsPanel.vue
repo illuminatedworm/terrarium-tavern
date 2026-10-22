@@ -635,12 +635,12 @@ onMounted(async () => {
             </button>
           </CardAuthorSettings>
           <template v-else-if="page.key === 'web'">
-            <h4>联网服务</h4>
-            <WebSettings :value="draft.shared.web" />
             <h4>模型请求方式</h4>
             <SettingsFields :value="draft.shared" :fields="requestFields" layout="rows" />
             <h4>代理</h4>
             <SettingsFields :value="draft.shared" :fields="proxyFields" layout="rows" />
+            <h4>联网服务</h4>
+            <WebSettings :value="draft.shared.web" />
           </template>
           <LocalResourceSettings
             v-else-if="page.key === 'local'"
