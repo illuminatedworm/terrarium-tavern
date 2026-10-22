@@ -33,9 +33,11 @@ watch(
   />
   <section v-else class="editor-page story-setup">
     <button class="quiet editor-back" @click="emit('back')"><Icon name="arrow-left" :size="16" />返回</button>
-    <div class="story-steps"><span class="active">1 · 选择角色卡</span><span>2 · 用户与开场</span></div>
+    <div class="story-steps">
+      <span class="active">1 · 选择角色卡</span><span>2 · 用户与开场</span><span>3 · 挂载世界书</span>
+    </div>
     <h1>开始新故事</h1>
-    <p class="muted">先选择一张角色卡，再设置用户身份和开场。</p>
+    <p class="muted">先选择一张角色卡，再设置用户身份、开场和要挂载的世界书。</p>
     <div class="story-card-search">
       <Icon name="search" :size="16" />
       <input v-model="search" aria-label="搜索角色卡" placeholder="搜索角色卡…" />

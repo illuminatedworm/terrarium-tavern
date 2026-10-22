@@ -10,6 +10,7 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
+import type { CardDefaults, WorldbookSummary } from '../../lib/types';
 
 const props = defineProps<{ card: any; settings?: any }>();
 const emit = defineEmits<{ started: [session: any]; back: []; settings: [channel: Channel, mode: string] }>();
@@ -22,6 +23,11 @@ const greeting = ref(0),
   busy = ref(false),
   error = ref('');
 const agentMode = ref('half_agent');
+// Step 2 sets the user and opening; step 3 picks library worldbooks to mount.
+const step = ref<2 | 3>(2);
+const worldbooks = ref<WorldbookSummary[]>([]),
+  chosen = ref(new Set<string>()),
+  defaults = ref<CardDefaults | null>(null);
 // Kemini conversations are fixed at creation and exist only on the standard channel.
 const kemini = ref(false);
 const keminiAvailable = computed(() => !!(props.settings || settings.value)?.shared?.kemini?.enabled);
@@ -46,6 +52,12 @@ const opening = computed(() =>
     )
     .replace(/\{\{char\}\}/g, () => data.value.name),
 );
+function toggleWorldbook(id: string, on: boolean) {
+  const next = new Set(chosen.value);
+  if (on) next.add(id);
+  else next.delete(id);
+  chosen.value = next;
+}
 function moveGreeting(event: KeyboardEvent, index: number) {
   const next = (index + greetings.value.length) % greetings.value.length;
   greeting.value = next;
@@ -66,6 +78,8 @@ async function start() {
       agent_mode: agentMode.value,
       channel_origin: channel.value,
       kemini: kemini.value,
+      // Mount order follows the library list, as shown in step 3.
+      worldbook_ids: worldbooks.value.filter((book) => chosen.value.has(book.id)).map((book) => book.id),
     });
     emit('started', session);
   } catch (e: any) {
@@ -75,8 +89,16 @@ async function start() {
 }
 onMounted(async () => {
   try {
-    [personas.value, settings.value] = await Promise.all([api('/personas'), api('/settings')]);
+    [personas.value, settings.value, worldbooks.value, defaults.value] = await Promise.all([
+      api('/personas'),
+      api('/settings'),
+      api('/worldbooks'),
+      api(`/cards/${props.card.id}/defaults`),
+    ]);
     channel.value = settings.value?.[agentMode.value]?.default_channel || 'standard';
+    // Card defaults only preselect; deleted targets were already dropped with them.
+    personaId.value = defaults.value?.persona_id || '';
+    chosen.value = new Set(defaults.value?.worldbook_ids);
   } catch (e: any) {
     error.value = e.message;
   }
@@ -91,7 +113,10 @@ useTimedError(error);
       <Icon name="arrow-left" :size="16" />重新选择角色卡
     </button>
     <div class="story-steps">
-      <button @click="emit('back')">1 · 选择角色卡</button><span class="active">2 · 用户与开场</span>
+      <button @click="emit('back')">1 · 选择角色卡</button
+      ><button v-if="step === 3" @click="step = 2">2 · 用户与开场</button
+      ><span v-else class="active">2 · 用户与开场</span
+      ><span :class="{ active: step === 3 }">3 · 挂载世界书</span>
     </div>
     <div class="character-heading">
       <CharacterPortrait :src="cardPortraitUrl(card)" :name="data.name" size="detail" fit="contain" />
@@ -102,7 +127,36 @@ useTimedError(error);
     </div>
     <AppNotification :message="error" />
     <div class="story-setup-grid">
-      <div class="story-setup-options">
+      <div v-if="step === 3" class="story-setup-options">
+        <h3>挂载世界书</h3>
+        <p class="muted">
+          所选世界书的条目复制进本对话的角色卡世界书，与角色卡自带条目一起参与检索。之后修改书库不会影响这个对话；可在“场景
+          → 编辑对话世界书 → 挂载世界书”中重新载入或卸载。
+        </p>
+        <p v-if="defaults?.worldbook_ids.length" class="muted">已按角色卡默认项预选。</p>
+        <p v-if="!worldbooks.length" class="empty-small">
+          世界书库为空，可直接进入故事，之后也能在对话中挂载。
+        </p>
+        <div v-else class="worldbook-choice-list">
+          <label v-for="book in worldbooks" :key="book.id" class="check worldbook-choice">
+            <input
+              type="checkbox"
+              :checked="chosen.has(book.id)"
+              :aria-label="`挂载世界书 ${book.name}`"
+              @change="toggleWorldbook(book.id, ($event.target as HTMLInputElement).checked)"
+            /><span>{{ book.name }}</span
+            ><small>{{ book.entries }} 条</small>
+          </label>
+        </div>
+        <button class="primary" :disabled="busy || (!personaId && !personaName.trim())" @click="start">
+          {{ busy ? '正在准备…' : '进入故事'
+          }}<Icon v-if="!busy" name="arrow-right" :size="16" class="enter-icon" />
+        </button>
+        <button class="quiet story-setup-back" @click="step = 2">
+          <Icon name="arrow-left" :size="16" />上一步：用户与开场
+        </button>
+      </div>
+      <div v-else class="story-setup-options">
         <h3>对话渠道</h3>
         <ChannelSwitch v-model="channel" label="对话渠道" />
         <p class="muted">创建后渠道固定；可在同一渠道内更换模型。</p>
@@ -145,11 +199,13 @@ useTimedError(error);
             <option v-for="p in personas" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select></label
         >
+        <p v-if="defaults?.persona_id && personaId === defaults.persona_id" class="muted">
+          已按角色卡默认项预选。
+        </p>
         <label v-if="!personaId">临时用户名称<input v-model="personaName" /></label>
         <p v-else class="persona-preview">{{ personas.find((p) => p.id === personaId)?.description }}</p>
-        <button class="primary" :disabled="busy || (!personaId && !personaName.trim())" @click="start">
-          {{ busy ? '正在准备…' : '进入故事'
-          }}<Icon v-if="!busy" name="arrow-right" :size="16" class="enter-icon" />
+        <button class="primary" :disabled="!personaId && !personaName.trim()" @click="step = 3">
+          下一步：挂载世界书<Icon name="arrow-right" :size="16" class="enter-icon" />
         </button>
       </div>
       <div class="story-opening">

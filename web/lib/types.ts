@@ -37,6 +37,35 @@ export interface CardRecord {
   _workspaceId?: string;
 }
 
+/** `GET /worldbooks` rows; `entries` is the entry count. */
+export interface WorldbookSummary {
+  id: string;
+  name: string;
+  revision: number;
+  created: number;
+  entries: number;
+}
+
+/** A library worldbook; `book` is the stored ST or V2 worldbook JSON. */
+export interface Worldbook extends Omit<WorldbookSummary, 'entries'> {
+  book: JsonObject;
+}
+
+/** `snapshot.worldbooks`: one mounted library book and its copied entry IDs. */
+export interface WorldbookMount {
+  id: string;
+  name: string;
+  revision: number;
+  entries: string[];
+}
+
+/** `GET /cards/{id}/defaults`: new-conversation preselection; `version` 0 means unset. */
+export interface CardDefaults {
+  persona_id: string | null;
+  worldbook_ids: string[];
+  version: number;
+}
+
 /** `Store.sessions()` rows: raw columns plus the card name. */
 export interface SessionSummary {
   id: string;

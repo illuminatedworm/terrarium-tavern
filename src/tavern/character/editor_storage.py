@@ -7,9 +7,28 @@ import time
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
 from tavern.character.editor_environment import capture_environment
+from tavern.character.editor_worldbook import (
+    NAME_LIMIT,
+    is_worldbook,
+    library_document,
+    reject_worldbook,
+    validate_worldbook_document,
+)
 from tavern.core.errors import NotFound
 from tavern.core.model_view import ModelView
+from tavern.storage import worldbooks
 from tavern.storage.store import Conflict, dump, uid
+
+
+def copy_name(names, name, limit=None):
+    """First unused "（副本）" name; ``limit`` trims the original so numbered copies still fit."""
+    index = 1
+    while True:
+        tail = "（副本）" if index == 1 else f"（副本） {index}"
+        candidate = (name[: limit - len(tail)] if limit else name) + tail
+        if candidate not in names:
+            return candidate
+        index += 1
 
 
 def initialize(store):
@@ -259,6 +278,16 @@ class Conversations:
             # Compare against the library on read, including pending drafts. This
             # UI metadata never becomes a second persisted portrait source.
             for item in result["cards"] + (result["pending"]["cards"] if pending else []):
+                if is_worldbook(item):
+                    row = db.execute(
+                        "SELECT revision FROM worldbooks WHERE id=?", (item["worldbook"],)
+                    ).fetchone()
+                    item.update(
+                        source_exists=bool(row),
+                        source_changed=bool(row and row[0] != item["base_revision"]),
+                        portrait_changed=False,
+                    )
+                    continue
                 source = db.execute(
                     "SELECT revision,container,original FROM cards WHERE id=?", (item["card"],)
                 ).fetchone()
@@ -331,6 +360,33 @@ class Conversations:
                 self.write(db, workspace)
         return self.conversation(wid)
 
+    def attach_worldbook(self, wid, book_id, revision, expected_book_revision=None):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            workspace = self.check(db, wid, revision)
+            if not any(c.get("worldbook") == book_id for c in workspace["cards"]):
+                row = worldbooks.read(db, book_id)
+                if expected_book_revision is not None and expected_book_revision != row["revision"]:
+                    raise Conflict("世界书已改变，请刷新后引用")
+                document = library_document(row)
+                workspace["cards"].append(
+                    {
+                        "ref": f"C{workspace['next_ref']}",
+                        "card": None,
+                        "worldbook": book_id,
+                        "source": {},
+                        "kind": "reference",
+                        "target_mode": None,
+                        "base_revision": row["revision"],
+                        "base_document": document,
+                        "document": copy.deepcopy(document),
+                        "brief": "",
+                    }
+                )
+                db.execute("UPDATE card_author_conversations SET next_ref=next_ref+1 WHERE id=?", (wid,))
+                self.write(db, workspace)
+        return self.conversation(wid)
+
     def attach_persona(self, wid, pid, revision, expected_version):
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -364,12 +420,14 @@ class Conversations:
         return self.conversation(wid)
 
     def update_card(self, wid, ref, document, revision, reason="手工修改", target_mode=...):
-        validate_document(document)
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.check(db, wid, revision)
             item = self.item(workspace, ref)
-            target_changed = target_mode is not ... and target_mode != item.get("target_mode")
+            (validate_worldbook_document if is_worldbook(item) else validate_document)(document)
+            target_changed = (
+                not is_worldbook(item) and target_mode is not ... and target_mode != item.get("target_mode")
+            )
             if document != item["document"] or target_changed:
                 self.version(db, wid, item, reason)
                 item.update(document=document, kind="draft")
@@ -398,6 +456,8 @@ class Conversations:
 
     def reload_card(self, wid, ref, revision):
         item = self.item(self.conversation(wid), ref)
+        if is_worldbook(item):
+            return self.reload_worldbook(wid, ref, revision)
         source = self.store.card(item["card"])
         source["dependencies"] = self.store.card_manifest(source)
         with self.store.connection() as db:
@@ -417,6 +477,18 @@ class Conversations:
             self.write(db, workspace)
         return self.conversation(wid)
 
+    def reload_worldbook(self, wid, ref, revision):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            workspace = self.check(db, wid, revision)
+            item = self.item(workspace, ref)
+            row = worldbooks.read(db, item["worldbook"])
+            document = library_document(row)
+            self.version(db, wid, item, "重新载入前的草稿")
+            item.update(base_revision=row["revision"], base_document=document, document=document)
+            self.write(db, workspace)
+        return self.conversation(wid)
+
     def set_portrait(self, wid, ref, file_ref, revision):
         from tavern.character.editor_images import apply_portrait, portrait_png
 
@@ -424,6 +496,7 @@ class Conversations:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.check(db, wid, revision)
             item = self.item(workspace, ref)
+            reject_worldbook(item, "头像")
             file = (
                 next((f for f in workspace.get("files", []) if f["ref"] == file_ref), None)
                 if file_ref
@@ -491,6 +564,8 @@ class Conversations:
                 return result
             workspace = self.check(db, wid, revision)
             item = self.item(workspace, ref)
+            if is_worldbook(item):
+                return self.save_worldbook(db, wid, ref, workspace, item, mode, operation)
             document, source = copy.deepcopy(item["document"]), item["source"]
             dependencies = {"resources": {}, "scripts": {}, **source.get("dependencies", {})}
             validate_document(document)
@@ -520,11 +595,7 @@ class Conversations:
                 if mode == "copy":
                     data = document.get("data", document) if document.get("spec") else document
                     names = {r[0] for r in db.execute("SELECT name FROM cards")}
-                    base, index = data["name"] + "（副本）", 2
-                    name = base
-                    while name in names:
-                        name, index = f"{base} {index}", index + 1
-                    data["name"] = name
+                    data["name"] = copy_name(names, data["name"])
                 # Permission is a current user setting, not an editable draft field.
                 # A long-lived editor source may predate either approval or revocation.
                 live_source = db.execute(
@@ -565,6 +636,36 @@ class Conversations:
                 "INSERT INTO card_edit_saves VALUES (?,?,?)", (wid, operation, dump({**result, "_ref": ref}))
             )
             self.write(db, workspace)
+        return result
+
+    def save_worldbook(self, db, wid, ref, workspace, item, mode, operation):
+        """Write a worldbook draft to the library inside the caller's save transaction."""
+        document = copy.deepcopy(item["document"])
+        validate_worldbook_document(document)
+        if mode == "overwrite":
+            row = worldbooks.update(
+                db, item["worldbook"], document["name"], document["character_book"], item["base_revision"]
+            )
+        elif mode == "copy":
+            names = {r[0] for r in db.execute("SELECT name FROM worldbooks")}
+            name = copy_name(names, document["name"], NAME_LIMIT)
+            row = worldbooks.insert(db, name, document["character_book"])
+        else:
+            raise ValueError("世界书草稿只能覆盖原世界书或另存副本")
+        document = library_document(row)
+        item.update(
+            worldbook=row["id"],
+            base_revision=row["revision"],
+            base_document=document,
+            document=copy.deepcopy(document),
+            kind="draft",
+        )
+        result = {"id": row["id"], "name": row["name"], "revision": row["revision"]}
+        db.execute("DELETE FROM card_edit_versions WHERE workspace=? AND ref=?", (wid, ref))
+        db.execute(
+            "INSERT INTO card_edit_saves VALUES (?,?,?)", (wid, operation, dump({**result, "_ref": ref}))
+        )
+        self.write(db, workspace)
         return result
 
     def delete(self, wid, revision):

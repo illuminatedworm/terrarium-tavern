@@ -1,5 +1,14 @@
-export type TransferItem = { id: string; name: string; agent_mode?: string; messages?: number };
-export type TransferCatalog = Record<'personas' | 'cards' | 'sessions', TransferItem[]>;
+import type { CardDefaults } from './types';
+
+export type TransferItem = {
+  id: string;
+  name: string;
+  agent_mode?: string;
+  messages?: number;
+  /** Catalog cards only: the new-conversation defaults exported beside the card. */
+  defaults?: CardDefaults;
+};
+export type TransferCatalog = Record<'personas' | 'worldbooks' | 'cards' | 'sessions', TransferItem[]>;
 export type TransferPreview = TransferCatalog & {
   settings: boolean;
   includes_api_keys: boolean;
@@ -9,6 +18,7 @@ export type TransferPreview = TransferCatalog & {
 };
 export type TransferResult = {
   personas: string[];
+  worldbooks: string[];
   cards: string[];
   sessions: string[];
   settings_restored: boolean;

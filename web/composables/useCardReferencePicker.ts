@@ -14,6 +14,7 @@ export function useCardReferencePicker(config: {
   frame: Ref<HTMLElement | undefined>;
   cards: Ref<EditorCard[]>;
   library: Ref<LibraryReference[]>;
+  worldbooks: Ref<LibraryReference[]>;
   personas: Ref<EditorPersona[]>;
   attachedPersonas: Ref<Record<string, EditorPersona>>;
   disabled: Ref<boolean>;
@@ -30,6 +31,7 @@ export function useCardReferencePicker(config: {
       query.value?.query || '',
       config.personas.value,
       config.attachedPersonas.value,
+      config.worldbooks.value,
     ),
   );
   const activeId = computed(() => (options.value.length ? `${id}-${activeIndex.value}` : undefined));

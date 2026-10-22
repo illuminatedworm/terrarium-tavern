@@ -189,6 +189,12 @@ def test_shelf_sync_keeps_story_changes_unless_selected_and_full_selection_overw
     assert overwritten["data"]["first_mes"] == "开场" and "creator_notes" not in overwritten["data"]
     with pytest.raises(ValueError, match="同步项已变化"):
         apply_sync(base, overwritten, shelf, ["lore:a"])
+    # Entries mounted from the worldbook library are never offered and survive a full overwrite.
+    mounted = copy.deepcopy(story)
+    mounted["data"]["character_book"]["entries"]["m"] = {"content": "挂载条目"}
+    assert sync_items(base, mounted, shelf, {"m"}) == list(items.values())
+    kept = apply_sync(base, mounted, shelf, list(items), {"m"})["data"]["character_book"]["entries"]
+    assert kept == {**data["character_book"]["entries"], "m": {"content": "挂载条目"}}
     assert (base, story, shelf) == originals
 
 
@@ -231,6 +237,150 @@ async def test_session_card_sync_commits_selected_items_and_rejects_stale_shelf(
             store.delete_card(card["id"])
             response = await client.get(f"/api/sessions/{session['id']}/card-sync")
             assert response.status_code == 404 and "已删除" in response.json()["detail"]
+    finally:
+        await app.state.editor.close()
+        await app.state.service.close()
+
+
+def test_worldbook_library_validates_writes_and_card_defaults_follow_their_targets(tmp_path):
+    from tavern.core.models import CardDefaultsEdit, PersonaEdit, SessionCreate, WorldbookEdit
+    from tavern.storage import worldbooks
+    from tavern.storage.store import Conflict, Store
+
+    store = Store(tmp_path)
+    book = {"entries": {"0": {"uid": 0, "key": ["钟楼"], "content": "钟楼在北岸。"}}}
+    saved = worldbooks.save(store, None, WorldbookEdit(name=" 雾港 ", book=book))
+    assert (saved["name"], saved["book"], saved["revision"]) == ("雾港", book, 0)
+    for invalid in ({"entries": "x"}, {"entries": [{"extensions": {"terrarium": {"audience": "nobody"}}}]}):
+        with pytest.raises(ValueError):
+            worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=invalid))
+    assert worldbooks.worldbook(store, saved["id"]) == saved
+    worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=book))
+    with pytest.raises(Conflict):
+        worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=book))
+
+    card = store.import_card(json.dumps({"name": "旅人"}).encode(), "card.json")
+    persona = store.save_persona(None, PersonaEdit(name="玩家"))
+    other = worldbooks.save(store, None, WorldbookEdit(name="航线", book={"entries": []}))
+    edit = CardDefaultsEdit(persona_id=persona["id"], worldbook_ids=[other["id"], saved["id"]])
+    worldbooks.save_defaults(store, card["id"], edit)
+    with pytest.raises(Conflict):
+        worldbooks.save_defaults(store, card["id"], edit)
+    copied = store.copy_card(card["id"])
+    store.delete_persona(persona["id"])
+    worldbooks.delete(store, other["id"])
+    expected = {"persona_id": None, "worldbook_ids": [saved["id"]]}
+    assert worldbooks.card_defaults(store, card["id"]) == {**expected, "version": 1}
+    assert worldbooks.card_defaults(store, copied["id"]) == {**expected, "version": 1}
+    store.delete_card(card["id"])
+    with store.connection() as db:
+        assert db.execute("SELECT count(*) FROM card_default_worldbooks").fetchone()[0] == 1
+
+    # A schema 9 database with conversations upgrades after its automatic backup.
+    store.new_session(SessionCreate(card_id=copied["id"]))
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='9' WHERE key='schema_version'")
+    Store(tmp_path)
+    assert any(path.name.startswith("before-upgrade-schema9") for path in tmp_path.iterdir())
+
+
+async def test_new_story_mounts_worldbooks_as_fresh_entries_and_initializes_their_initvar(tmp_path):
+    from tavern.application.service import RoleplayRuntime
+    from tavern.character.card_sync import sync_items
+    from tavern.character.worldbooks import mounted_ids
+    from tavern.core.models import SessionCreate, WorldbookEdit
+    from tavern.storage import worldbooks
+    from tavern.storage.store import Store
+
+    store = Store(tmp_path)
+    document = {
+        "name": "雾港",
+        "first_mes": "开门。",
+        "character_book": {"entries": [{"id": "0", "content": "卡片设定"}]},
+    }
+    card = store.import_card(json.dumps(document).encode(), "card.json")
+    book = {
+        "entries": {
+            "0": {"id": "0", "content": "书库设定", "extensions": {"id": "0"}},
+            "1": {"comment": "[InitVar]", "enabled": False, "content": "Money: 7"},
+        }
+    }
+    library = worldbooks.save(store, None, WorldbookEdit(name="雾港设定", book=book))
+    service = RoleplayRuntime(store)
+    try:
+        session = store.new_session(SessionCreate(card_id=card["id"], worldbook_ids=[library["id"]]))
+        session = await service.initialize_session(session["id"])
+    finally:
+        await service.close()
+    current = session["snapshot"]["content"]["document"]
+    rows = lore_entries(current)
+    assert [entry["content"] for entry in rows] == ["卡片设定", "书库设定", "Money: 7"]
+    assert rows[0]["id"] == "0" and len({entry["id"] for entry in rows}) == 3
+    assert session["snapshot"]["worldbooks"] == [
+        {"id": library["id"], "name": "雾港设定", "revision": 0, "entries": [e["id"] for e in rows[1:]]}
+    ]
+    # The shelf copy stays the sync baseline, and mounted copies are not shelf differences.
+    assert session["card_data"]["document"] == document
+    assert sync_items(document, current, document, mounted_ids(session["snapshot"])) == []
+    assert session["snapshot"]["state"]["stat_data"]["Money"] == 7
+    assert worldbooks.worldbook(store, library["id"])["book"] == book
+
+
+async def test_adjusting_mounts_touches_only_that_books_copies_and_versions_restore_them(tmp_path):
+    from tavern.core.models import SessionCreate, WorldbookEdit
+    from tavern.storage import worldbooks
+
+    app = create_app(tmp_path)
+    store = app.state.store
+    document = {"name": "雾港", "character_book": {"entries": [{"id": "card", "content": "卡片设定"}]}}
+    card = store.import_card(json.dumps(document).encode(), "card.json")
+    first = worldbooks.save(store, None, WorldbookEdit(name="甲", book={"entries": [{"content": "甲一"}]}))
+    second = worldbooks.save(store, None, WorldbookEdit(name="乙", book={"entries": [{"content": "乙一"}]}))
+    session = store.new_session(SessionCreate(card_id=card["id"], worldbook_ids=[first["id"]]))
+    sid = session["id"]
+
+    def contents(value):
+        return [entry["content"] for entry in lore_entries(value["snapshot"]["content"]["document"])]
+
+    async def mount(client, ids, reload=(), operation="mount"):
+        payload = {
+            "worldbook_ids": ids,
+            "reload": list(reload),
+            "expected_revision": store.session(sid)["revision"],
+            "operation_id": operation,
+        }
+        return await client.put(f"/api/sessions/{sid}/worldbooks", json=payload)
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            edited = copy.deepcopy(session["snapshot"]["content"]["document"])
+            edited["character_book"]["entries"].append({"id": "story", "content": "对话新增"})
+            response = await client.put(
+                f"/api/sessions/{sid}/lorebook",
+                json={"document": edited, "expected_revision": 0, "operation_id": "edit"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["snapshot"]["worldbooks"] == session["snapshot"]["worldbooks"]
+            # Library edits reach the story only when the user reloads the book.
+            worldbooks.save(
+                store, first["id"], WorldbookEdit(name="甲", book={"entries": [{"content": "甲二"}]})
+            )
+            response = await mount(client, [first["id"], second["id"]], [first["id"]], "reload")
+            assert response.status_code == 200, response.text
+            assert contents(response.json()) == ["卡片设定", "对话新增", "甲二", "乙一"]
+            assert [item["revision"] for item in response.json()["snapshot"]["worldbooks"]] == [1, 0]
+            reloaded = response.json()["head"]
+            response = await mount(client, [second["id"]], operation="unmount")
+            unmounted = response.json()
+            assert contents(unmounted) == ["卡片设定", "对话新增", "乙一"]
+            assert unmounted["snapshot"]["content"]["reason"] == "卸载「甲」"
+            response = await mount(client, [second["id"]], operation="unchanged")
+            assert response.status_code == 400 and "没有变化" in response.json()["detail"]
+            # Each adjustment is a version of the latest reply; switching restores its mounts.
+            latest = unmounted["messages"][-1]
+            restored = store.switch_message_version(sid, latest["id"], reloaded, unmounted["revision"])
+            assert contents(restored) == ["卡片设定", "对话新增", "甲二", "乙一"]
+            assert [item["id"] for item in restored["snapshot"]["worldbooks"]] == [first["id"], second["id"]]
     finally:
         await app.state.editor.close()
         await app.state.service.close()

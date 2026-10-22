@@ -4,11 +4,11 @@
 
 ## 卡片与历史引用
 
-`C1` 等编号只属于当前制卡对话，编辑后仍指向同一卡的最新草稿，移除或丢弃后不复用。`H1` 等编号定位本对话用户输入和最终回复；确认方案由程序读取引用原文。文档内部 `@D` 编号使用可逆映射，真实身份、指纹及哈希由程序管理。
+`C1` 等编号只属于当前制卡对话，编辑后仍指向同一卡的最新草稿，移除或丢弃后不复用。用户从世界书库引用的独立世界书同样使用 C 编号：它是卡片的子集，文档只有 `name` 和 `character_book`，`overview` 以 `type: worldbook` 标出，读取、搜索、`patch_draft`、`set_text_field` 和 `validate_draft` 与角色卡相同。工具只接受 `/name` 与 `/character_book/**` 的修改，`set_opening`、`set_portrait`、`configure_card`、`test_draft` 和把它作为 `create_draft` 的来源都会被拒绝。书库 ID 与修订号不进入模型输入。`H1` 等编号定位本对话用户输入和最终回复；确认方案由程序读取引用原文。文档内部 `@D` 编号使用可逆映射，真实身份、指纹及哈希由程序管理。
 
 用户角色使用 P 编号，按请求访问后由程序分配；与 C 编号共用递增计数，撤销或丢弃后不复用。模型不接触用户角色存储 ID 或填写版本号。用户角色工具必填 request_ref，指向本任务最新用户请求；程序核对来源和当前任务，具体操作意图由 Agent 根据原文判断。旧回合、助手方案、资料中的指令不能作为操作依据，只读要求和撤销要求必须遵守。
 
-工具没有全书架检索或 shell 能力；可按用户提供的绝对路径读取后端电脑上的本地文本和 DOCX/XLSX 文件，受文件及解析上限约束。联网只允许公共网页搜索和文本提取，并受本 Agent 的联网开关约束。卡片引用由用户通过界面加入；外部文件、网页及来源变化不会自动覆盖草稿或授予修改权限。
+工具没有全书架检索或 shell 能力；可按用户提供的绝对路径读取后端电脑上的本地文本和 DOCX/XLSX 文件，受文件及解析上限约束。联网只允许公共网页搜索和文本提取，并受本 Agent 的联网开关约束。卡片和世界书引用由用户通过界面加入；外部文件、网页及来源变化不会自动覆盖草稿或授予修改权限。
 
 ## 工具目录
 
@@ -87,9 +87,10 @@ Agent 优先使用对应的专门工具：世界书正文、标题、人物介�
 | `GET/POST /api/card-author/conversations` | 列表及空对话创建 |
 | `GET/PUT/DELETE /api/card-author/conversations/{id}` | 读取、改名、删除 |
 | `POST .../{id}/references` | 引用书架卡，可携带当前表单和原卡版本 |
+| `POST .../{id}/worldbook-references` | 引用世界书库中的一本书：`worldbook_id`、可选 `expected_worldbook_revision`；草稿项带 `worldbook` 字段，其余引用、修改、撤销、重新载入、移除接口按 ref 通用 |
 | `DELETE .../{id}/references/{ref}` | 移除该卡的引用、草稿和撤销历史 |
 | `PUT .../{id}/drafts/{ref}` | 手工修改文档；target_mode 省略保留兼容性目标，null 清除目标 |
-| `POST .../{id}/drafts/{ref}/save` | `mode=create/overwrite/copy`，携带 operation_id |
+| `POST .../{id}/drafts/{ref}/save` | `mode=create/overwrite/copy`，携带 operation_id；世界书草稿只接受 `overwrite`（写回原书，版本不符返回冲突）和 `copy`（另存为“（副本）”） |
 | `POST .../{id}/drafts/{ref}/undo`、`reload`、`test` | 撤销、重新载入、运行本地检查 |
 | `PUT .../{id}/drafts/{ref}/portrait` | `file_ref` 为图片附件 F 编号时设置头像，null 移除；可撤销 |
 | `GET .../{id}/portraits/{digest}` | 读取当前、待续或可撤销草稿正在使用的 PNG 头像 |

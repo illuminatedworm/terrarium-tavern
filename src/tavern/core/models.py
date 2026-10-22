@@ -1,6 +1,14 @@
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import CacheSettings, runtime_cache
@@ -287,6 +295,15 @@ class Settings(BaseModel):
         return self
 
 
+def unique_worldbooks(value):
+    if len(set(value)) != len(value):
+        raise ValueError("世界书不能重复选择")
+    return value
+
+
+WorldbookIds = Annotated[list[str], Field(max_length=100), AfterValidator(unique_worldbooks)]
+
+
 class SessionCreate(BaseModel):
     card_id: str
     agent_mode: Literal["half_agent", "full_agent"] = "half_agent"
@@ -296,6 +313,8 @@ class SessionCreate(BaseModel):
     persona: str = "用户"
     policy: Policy | None = None
     persona_id: str | None = None
+    # Library worldbooks copied into the new conversation card, in mount order.
+    worldbook_ids: WorldbookIds = Field(default_factory=list)
 
 
 class TurnRequest(BaseModel):
@@ -421,3 +440,29 @@ class PersonaEdit(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = ""
     expected_version: int = 0
+
+
+class WorldbookEdit(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    book: dict[str, Any]
+    expected_revision: int = Field(default=0, ge=0)
+
+    @field_validator("name")
+    @classmethod
+    def nonblank_name(cls, value):
+        if not value.strip():
+            raise ValueError("世界书名称不能为空白")
+        return value.strip()
+
+
+class CardDefaultsEdit(BaseModel):
+    persona_id: str | None = None
+    worldbook_ids: WorldbookIds = Field(default_factory=list)
+    expected_version: int = Field(default=0, ge=0)
+
+
+class SessionWorldbooks(BaseModel):
+    worldbook_ids: WorldbookIds = Field(default_factory=list)
+    reload: WorldbookIds = Field(default_factory=list)
+    expected_revision: int = Field(ge=0)
+    operation_id: str | None = Field(default=None, max_length=100)

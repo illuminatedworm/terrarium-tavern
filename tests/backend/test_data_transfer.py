@@ -66,7 +66,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 3
+        assert payload["version"] == 4
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
             from tavern.full_agent.state import note_view
@@ -312,3 +312,46 @@ async def test_api_preview_download_and_import(tmp_path):
             assert blocked.status_code == 409
     finally:
         await app.state.service.close()
+
+
+def test_worldbooks_card_defaults_and_mount_records_are_remapped_together(tmp_path):
+    from tavern.core.models import CardDefaultsEdit, WorldbookEdit
+    from tavern.storage import worldbooks
+
+    source = Store(tmp_path / "source")
+    card, persona, _ = seed(source)
+    packed = worldbooks.save(
+        source, None, WorldbookEdit(name="雾港", book={"entries": [{"content": "钟楼"}]})
+    )
+    # An edited book (revision 1) must keep its revision so imported mounts stay current.
+    packed = worldbooks.save(
+        source, packed["id"], WorldbookEdit(name="雾港", book={"entries": {"0": {"content": "钟楼"}}})
+    )
+    left = worldbooks.save(source, None, WorldbookEdit(name="未导出", book={"entries": []}))
+    edit = CardDefaultsEdit(persona_id=persona["id"], worldbook_ids=[left["id"], packed["id"]])
+    worldbooks.save_defaults(source, card["id"], edit)
+    session = source.new_session(SessionCreate(card_id=card["id"], worldbook_ids=[packed["id"]]))
+    payload, blobs = package(
+        source, settings=False, worldbooks=[packed["id"]], cards=[card["id"]], sessions=[session["id"]]
+    )
+    # Defaults travel only with the personas and books packed beside them.
+    assert payload["cards"][0]["defaults"] == {"persona_id": None, "worldbook_ids": [packed["id"]]}
+    target = Store(tmp_path / "target")
+    imported = import_package(target, payload, blobs)
+    [book_id] = imported["worldbooks"]
+    assert book_id != packed["id"] and worldbooks.worldbook(target, book_id)["book"] == packed["book"]
+    assert worldbooks.cards_defaults(target, imported["cards"]) == {
+        imported["cards"][0]: {"persona_id": None, "worldbook_ids": [book_id], "version": 1}
+    }
+    [mount] = target.session(imported["sessions"][0])["snapshot"]["worldbooks"]
+    assert mount == {**session["snapshot"]["worldbooks"][0], "id": book_id}
+    [summary] = worldbooks.summaries(target)
+    assert summary["revision"] == mount["revision"] == 1 and summary["entries"] == 1
+
+    # Packages from before the library still import.
+    legacy = copy.deepcopy(payload)
+    legacy["version"] = 3
+    legacy.pop("worldbooks")
+    legacy["cards"][0].pop("defaults")
+    imported = import_package(target, legacy, blobs)
+    assert imported["worldbooks"] == [] and len(imported["sessions"]) == 1

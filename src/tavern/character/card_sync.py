@@ -9,6 +9,9 @@ Each difference is compared three ways against the card copied at story
 creation (``base``): a shelf-only change is offered by default, while a
 change made inside the story (by Tracker, scripts or manual edits) is shown
 but left unselected so syncing never silently reverts story progress.
+
+Entries mounted from the worldbook library are not shelf content: callers pass
+their IDs as ``exclude`` so they are never offered and survive a full overwrite.
 """
 
 import copy
@@ -38,13 +41,17 @@ def _unique(identities):
     return result
 
 
-def _lore_rows(data):
-    """{identity: (container key, raw entry)} in source order."""
+def _lore_rows(data, exclude=frozenset()):
+    """{identity: (container key, raw entry)} in source order, without ``exclude``."""
     book = data.get("character_book") or {}
     entries = book.get("entries", [])
     keys = list(entries) if isinstance(entries, dict) else list(range(len(entries)))
     ids = _unique(entry["id"] for entry in lore_entries({"character_book": book}))
-    return {identity: (key, entries[key]) for identity, key in zip(ids, keys, strict=True)}
+    return {
+        identity: (key, entries[key])
+        for identity, key in zip(ids, keys, strict=True)
+        if identity not in exclude
+    }
 
 
 def _regex_list(data):
@@ -113,7 +120,7 @@ def _regex_label(script, identity):
     return str(script.get("scriptName") or script.get("name") or f"正则脚本 {identity}")
 
 
-def sync_items(base, current, source):
+def sync_items(base, current, source, exclude=frozenset()):
     """Differences between the story card and the shelf card, grouped for selection."""
     base, current, source = normalize(base), normalize(current), normalize(source)
     items = []
@@ -122,7 +129,10 @@ def sync_items(base, current, source):
         if c != s:
             items.append(_item(f"field:{field}", "character", field, b, c, s))
 
-    for group, rows, label in (("lore", _lore_rows, _lore_label), ("regex", _regex_rows, _regex_label)):
+    for group, rows, label in (
+        ("lore", lambda data: _lore_rows(data, exclude), _lore_label),
+        ("regex", _regex_rows, _regex_label),
+    ):
         b_rows, c_rows, s_rows = rows(base), rows(current), rows(source)
         for identity in [*c_rows, *(key for key in s_rows if key not in c_rows)]:
             c = c_rows[identity][1] if identity in c_rows else _MISSING
@@ -176,7 +186,7 @@ def _set_helper_scripts(data, value):
         helper.pop("scripts", None)
 
 
-def _apply_lore(data, source, chosen, every):
+def _apply_lore(data, source, chosen, every, exclude):
     s_book = source.get("character_book") or {}
     s_entries = s_book.get("entries", [])
     if not isinstance(data.get("character_book"), dict):
@@ -185,10 +195,17 @@ def _apply_lore(data, source, chosen, every):
     book = data["character_book"]
     if every:
         # Selecting every entry is a full overwrite, including source order.
+        # Mounted library entries are not card content and follow the shelf's.
+        mounted = [(identity, raw) for identity, (_, raw) in _lore_rows(data).items() if identity in exclude]
         if source.get("character_book"):
             book["entries"] = copy.deepcopy(s_entries)
         else:
             book["entries"] = {} if isinstance(book.get("entries"), dict) else []
+        for identity, raw in mounted:
+            if isinstance(book["entries"], list):
+                book["entries"].append(raw)
+            else:
+                book["entries"][identity] = raw
         return
     c_rows, s_rows = _lore_rows(data), _lore_rows(source)
     entries = book.setdefault("entries", [])
@@ -246,13 +263,13 @@ def _apply_regex(data, source, chosen, every, order):
     extensions["regex_scripts"] = [script for _, script in rows]
 
 
-def apply_sync(base, current, source, keys):
+def apply_sync(base, current, source, keys, exclude=frozenset()):
     """Return ``current`` with the selected sync items taken from ``source``.
 
     Keys must come from :func:`sync_items` for the same three documents; a
     stale or unknown key fails so the user re-reviews the current differences.
     """
-    items = {item["key"]: item for item in sync_items(base, current, source)}
+    items = {item["key"]: item for item in sync_items(base, current, source, exclude)}
     keys = set(keys)
     if not keys:
         raise ValueError("请选择要同步的内容")
@@ -279,7 +296,7 @@ def apply_sync(base, current, source, keys):
         chosen = [key.split(":", 1)[1] for key in items if key in selected and key != "regex-order"]
         every = selected == group_keys
         if group == "lore":
-            _apply_lore(data, source, chosen, every)
+            _apply_lore(data, source, chosen, every, exclude)
         else:
             _apply_regex(data, source, chosen, every, "regex-order" in keys)
     return document

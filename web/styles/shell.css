@@ -222,6 +222,18 @@ main {
   border-color: rgb(var(--accent-rgb) / 0.42);
   background: rgb(var(--accent-rgb) / 0.15);
 }
+/* Two list actions side by side, e.g. create and import. */
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.panel-actions > .new-story {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
 .panel-subhead {
   margin: 14px 8px 6px;
   color: var(--text-faint);

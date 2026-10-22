@@ -2,21 +2,14 @@
 import Icon from '../common/Icon.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
 import CardSyncDialog from './CardSyncDialog.vue';
+import CardDefaults from './CardDefaults.vue';
+import WorldbookMountDialog from './WorldbookMountDialog.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
-import LoreFilter from './LoreFilter.vue';
-import { audiences, entryAudience, emptyLoreFilter, filterLore } from '../../lib/loreFilter';
-import FieldHelp from '../common/FieldHelp.vue';
+import LoreBookEditor from './LoreBookEditor.vue';
+import { emptyLoreFilter } from '../../lib/loreFilter';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
-import {
-  appendLoreBook,
-  isInitVar,
-  loreFlagHelp,
-  loreFlagValue,
-  loreTitle,
-  setLoreFlag,
-} from '../../lib/loreBook';
 import { appendRegexScripts } from '../../lib/regexScripts';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { positionPopover } from '../../lib/anchoredPopover';
@@ -57,31 +50,23 @@ const restorePopover = ref<HTMLElement>();
 const restoreConfirmation = ref<HTMLButtonElement>();
 const confirmingRestore = ref(false);
 const restorePopoverId = useId();
-const loreFile = ref<HTMLInputElement>();
 const regexFile = ref<HTMLInputElement>();
-const loreDialog = ref<{ mode: 'add' | 'edit'; index: number; entry: any } | null>(null);
-const confirmingLoreDelete = ref(false);
-const syncing = ref(false);
+const loreEditor = ref<InstanceType<typeof LoreBookEditor>>();
+const syncing = ref(false),
+  mounting = ref(false);
 const deletedGreetings = ref<{ index: number; text: string; cleared: boolean }[]>([]);
+// Entry ID → library book it was mounted from, shown beside conversation entries.
+const loreSources = computed<Record<string, string>>(() =>
+  Object.fromEntries(
+    (props.session?.snapshot.worldbooks || []).flatMap((item: any) =>
+      item.entries.map((id: string) => [id, item.name]),
+    ),
+  ),
+);
 const entries = computed<any[]>(() => {
   const e = data.value.character_book?.entries || [];
   return Array.isArray(e) ? e : Object.values(e);
 });
-const filteredLore = computed(() => filterLore(entries.value, loreFilter.value));
-const loreGroups = computed(() => [
-  {
-    id: 'constant',
-    title: '常驻条目',
-    description: '每轮都注入上下文，不依赖触发词。',
-    items: filteredLore.value.filter((x) => !!x.entry.constant),
-  },
-  {
-    id: 'conditional',
-    title: '条件触发条目',
-    description: '通过关键词、概率、递归和扫描深度等条件激活。',
-    items: filteredLore.value.filter((x) => !x.entry.constant),
-  },
-]);
 const regexScripts = computed<any[]>(() =>
   Array.isArray(data.value.extensions?.regex_scripts) ? data.value.extensions.regex_scripts : [],
 );
@@ -224,7 +209,7 @@ async function restoreSaved() {
     sessionStorage.removeItem(previousKey);
     sessionStorage.removeItem(draftKey());
     deletedGreetings.value = [];
-    closeLore();
+    loreEditor.value?.close();
     closeRestore();
     notice.value = props.draftMode
       ? '已放弃表单修改，恢复打开表单时的草稿。'
@@ -358,9 +343,6 @@ function undoDeleteGreeting() {
 function addGreeting() {
   (data.value.alternate_greetings ||= []).push('');
 }
-function setAudience(entry: any, value: string) {
-  ((entry.extensions ||= {}).terrarium ||= {}).audience = value;
-}
 async function permission(enabled: boolean) {
   await act(async () => {
     card.value = await api(`/cards/${card.value.id}/permission`, { enabled }, 'PUT');
@@ -372,17 +354,6 @@ async function dependencies() {
     const result = await api(`/cards/${card.value.id}/dependencies`, {});
     notice.value = `已缓存 ${Object.keys(result.resources).length} 项资源。`;
   });
-}
-async function importLore(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  await act(async () => {
-    const book = JSON.parse(await file.text());
-    data.value.character_book = appendLoreBook(data.value.character_book, book);
-    notice.value = '世界书条目已添加到草稿，保存后生效。';
-  });
-  input.value = '';
 }
 async function importRegex(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -406,91 +377,8 @@ async function importRegex(e: Event) {
 }
 function cardSynced(updated: any) {
   syncing.value = false;
+  mounting.value = false;
   emit('sessionSaved', updated);
-}
-function addLore() {
-  loreDialog.value = {
-    mode: 'add',
-    index: entries.value.length,
-    entry: {
-      id: crypto.randomUUID(),
-      keys: [],
-      content: '',
-      comment: '新条目',
-      enabled: true,
-      extensions: { position: 1, terrarium: { audience: 'writer' } },
-    },
-  };
-  confirmingLoreDelete.value = false;
-}
-function openLore(item: { index: number; entry: any }) {
-  loreDialog.value = { mode: 'edit', index: item.index, entry: clone(item.entry) };
-  confirmingLoreDelete.value = false;
-}
-function closeLore() {
-  loreDialog.value = null;
-  confirmingLoreDelete.value = false;
-}
-function loreSource() {
-  data.value.character_book ||= { name: data.value.name, entries: [] };
-  return data.value.character_book.entries;
-}
-function confirmLore() {
-  if (!loreDialog.value) return;
-  let source = loreSource();
-  if (loreDialog.value.mode === 'add') {
-    if (!Array.isArray(source)) {
-      source = Object.values(source || {});
-      data.value.character_book.entries = source;
-    }
-    source.push(clone(loreDialog.value.entry));
-  } else if (Array.isArray(source)) source[loreDialog.value.index] = clone(loreDialog.value.entry);
-  else {
-    const key = Object.keys(source)[loreDialog.value.index];
-    if (key !== undefined) source[key] = clone(loreDialog.value.entry);
-  }
-  notice.value =
-    loreDialog.value.mode === 'add'
-      ? '已添加世界书条目，保存角色后生效。'
-      : '已更新世界书条目，保存角色后生效。';
-  closeLore();
-}
-function deleteLore() {
-  if (!loreDialog.value || loreDialog.value.mode === 'add') return;
-  const source = loreSource();
-  if (Array.isArray(source)) source.splice(loreDialog.value.index, 1);
-  else {
-    const key = Object.keys(source)[loreDialog.value.index];
-    if (key !== undefined) delete source[key];
-  }
-  notice.value = '已删除世界书条目，保存角色后生效。';
-  closeLore();
-}
-function replaceLoreDialogEntry(text: string) {
-  if (!loreDialog.value) return;
-  try {
-    loreDialog.value.entry = JSON.parse(text);
-    error.value = '';
-  } catch {
-    error.value = '条目完整参数 JSON 格式无效。';
-  }
-}
-function listValue(value: any) {
-  return Array.isArray(value) ? value.join(', ') : String(value || '');
-}
-function setList(entry: any, field: string, alias: string, event: Event) {
-  const value = (event.target as HTMLInputElement).value
-    .split(/[,，]/)
-    .map((x) => x.trim())
-    .filter(Boolean);
-  entry[field] = value;
-  entry[alias] = value;
-}
-function positionValue(entry: any) {
-  return entry.extensions?.position ?? entry.position ?? 0;
-}
-function setPosition(entry: any, event: Event) {
-  (entry.extensions ||= {}).position = Number((event.target as HTMLInputElement).value);
 }
 function validateJson(text: string) {
   try {
@@ -529,6 +417,10 @@ useTimedError(error);
           :href="`/api/cards/${card.id}/export`"
           ><Icon name="import" :size="16" />导出角色卡</a
         >
+        <CardDefaults v-if="!props.session && !props.draftMode && !card._draftOnly" :card-id="card.id" />
+        <button v-if="props.session" :disabled="busy" @click="mounting = true">
+          <Icon name="book" :size="15" />挂载世界书
+        </button>
         <button v-if="props.session" :disabled="busy" @click="syncing = true">
           <Icon name="refresh" :size="15" />从书架卡同步
         </button>
@@ -553,6 +445,14 @@ useTimedError(error);
       :blocked="hasUnsavedChanges ? '编辑页有未保存修改，请先保存或恢复原稿状态后再同步。' : ''"
       @close="syncing = false"
       @synced="cardSynced"
+    />
+    <WorldbookMountDialog
+      v-if="mounting && props.session"
+      :session="props.session"
+      :document="card.document"
+      :blocked="hasUnsavedChanges ? '编辑页有未保存修改，请先保存或恢复原稿状态后再调整挂载。' : ''"
+      @close="mounting = false"
+      @mounted="cardSynced"
     />
     <AppNotification :message="error" />
     <AppNotification :message="notice" />
@@ -646,276 +546,19 @@ useTimedError(error);
             >历史后提示<ExpandableTextarea v-model="data.post_history_instructions" label="历史后提示"
           /></label>
         </template>
-        <template v-else-if="tab === 'lore'"
-          ><p class="muted">
-            随对话滚动方案下，非常驻条目统一作为 system
-            紧贴用户消息前注入，首次有开场白时放在开场白前；重复命中不移动。位置、插入深度和角色字段只对常驻与
-            ST 方案生效。持续轮数不再参与运行，原始兼容字段仍保留在 JSON 中。
-            列表尽量按同批注入顺序显示，不改变源数据顺序；实际注入仍受触发条件和上下文方案影响。
-          </p>
-          <div class="toolbar">
-            <button @click="addLore"><Icon name="plus" :size="16" />添加条目</button
-            ><button @click="loreFile?.click()"><Icon name="import" :size="16" />导入世界书 JSON</button
-            ><input ref="loreFile" type="file" accept=".json" hidden @change="importLore" />
-          </div>
-          <LoreFilter :filter="loreFilter" :count="filteredLore.length" :total="entries.length" />
-          <section v-for="group in loreGroups" :key="group.id" class="lore-group">
-            <div class="lore-group-heading">
-              <div>
-                <h3>
-                  {{ group.title }} <span>{{ group.items.length }}</span>
-                </h3>
-                <p>{{ group.description }}</p>
-              </div>
-            </div>
-            <p v-if="!group.items.length" class="empty-small">暂无{{ group.title }}。</p>
-            <div class="lore-entry-grid">
-              <details
-                v-for="item in group.items"
-                :key="item.entry.id ?? item.entry.uid ?? item.index"
-                class="lore-editor"
-                :class="{ 'mvu-lore-entry': isInitVar(item.entry) }"
-                :data-lore-id="String(item.entry.id ?? item.entry.uid ?? item.index)"
-                @click.prevent="openLore(item)"
-              >
-                <summary>
-                  {{ loreTitle(item.entry) || '条目 ' + (item.index + 1) }}
-                  <small>{{ audiences[entryAudience(item.entry)] }}</small>
-                  <small>{{ item.entry.enabled === false || item.entry.disable ? '未启用' : '' }}</small>
-                  <span
-                    v-if="isInitVar(item.entry)"
-                    class="mvu-entry-label"
-                    title="[InitVar] 无论启停与用途均参与初始化；标记 tracker_mvu 后也向变量任务提供完整正文。"
-                  >
-                    已识别 MVU 条目
-                  </span>
-                </summary>
-              </details>
-            </div>
-          </section>
-          <Teleport to="body">
-            <div v-if="loreDialog" class="modal-backdrop lore-modal-backdrop">
-              <section
-                class="modal wide modal-large lore-entry-modal"
-                role="dialog"
-                aria-modal="true"
-                :aria-label="loreDialog.mode === 'add' ? '添加世界书条目' : '编辑世界书条目'"
-                @click.stop
-                @keydown.esc.prevent
-              >
-                <header class="lore-modal-header">
-                  <div>
-                    <span class="eyebrow">世界书条目</span>
-                    <h2>
-                      {{ loreDialog.mode === 'add' ? '添加条目' : loreTitle(loreDialog.entry) || '编辑条目' }}
-                    </h2>
-                  </div>
-                </header>
-                <div class="modal-scroll lore-modal-form">
-                  <div class="lore-form-grid">
-                    <label
-                      >条目 ID <FieldHelp tooltip="世界书条目的稳定标识；脚本或外部工具可能依赖它。" /><input
-                        v-model="loreDialog.entry.id" /></label
-                    ><label
-                      >条目名称<input
-                        v-model="loreDialog.entry.comment"
-                        :placeholder="
-                          loreDialog.entry.name ? `留空时使用 name：${loreDialog.entry.name}` : ''
-                        "
-                        autofocus
-                    /></label>
-                  </div>
-                  <div class="lore-checks">
-                    <label class="check"
-                      ><input
-                        type="checkbox"
-                        :checked="loreDialog.entry.enabled !== false && !loreDialog.entry.disable"
-                        @change="
-                          loreDialog.entry.enabled = ($event.target as HTMLInputElement).checked;
-                          loreDialog.entry.disable = !loreDialog.entry.enabled;
-                        "
-                      />启用</label
-                    ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.constant" />常驻条目</label
-                    ><label class="check"
-                      ><input
-                        type="checkbox"
-                        :checked="loreFlagValue(loreDialog.entry, 'caseSensitive')"
-                        @change="
-                          setLoreFlag(
-                            loreDialog.entry,
-                            'caseSensitive',
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        " />区分大小写<FieldHelp
-                        :tooltip="loreFlagHelp(loreDialog.entry, 'caseSensitive')" /></label
-                    ><label class="check"
-                      ><input
-                        type="checkbox"
-                        :checked="loreFlagValue(loreDialog.entry, 'matchWholeWords')"
-                        @change="
-                          setLoreFlag(
-                            loreDialog.entry,
-                            'matchWholeWords',
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        " />全词匹配<FieldHelp
-                        :tooltip="loreFlagHelp(loreDialog.entry, 'matchWholeWords')" /></label
-                    ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.use_regex" />正则触发</label
-                    >
-                  </div>
-                  <label
-                    >主触发词（逗号分隔）<input
-                      :value="listValue(loreDialog.entry.keys ?? loreDialog.entry.key)"
-                      @change="setList(loreDialog.entry, 'keys', 'key', $event)" /></label
-                  ><label
-                    >辅助触发词（逗号分隔）
-                    <FieldHelp
-                      tooltip="与主触发词一起参与选择逻辑；是否需要任一、全部或排除，由“辅助词逻辑”决定。" /><input
-                      :value="listValue(loreDialog.entry.secondary_keys ?? loreDialog.entry.keysecondary)"
-                      @change="setList(loreDialog.entry, 'secondary_keys', 'keysecondary', $event)" /></label
-                  ><label
-                    >内容<ExpandableTextarea v-model="loreDialog.entry.content" label="世界书内容"
-                  /></label>
-                  <div class="lore-form-grid">
-                    <label
-                      >插入顺序
-                      <FieldHelp tooltip="数值越小通常越早参与排序；相同位置的条目按此值决定先后。" /><input
-                        type="number"
-                        v-model.number="loreDialog.entry.insertion_order" /></label
-                    ><label
-                      >插入位置 <FieldHelp tooltip="滚动方案下仅常驻使用；ST 方案按此位置注入。" /><input
-                        type="number"
-                        :value="positionValue(loreDialog.entry)"
-                        @input="setPosition(loreDialog.entry, $event)" /></label
-                    ><label
-                      >插入深度
-                      <FieldHelp
-                        tooltip="相对最近历史消息向前插入的层数；0 表示放在当前上下文末端附近。" /><input
-                        type="number"
-                        min="0"
-                        v-model.number="loreDialog.entry.depth" /></label
-                    ><label
-                      >扫描深度
-                      <FieldHelp tooltip="从最近多少条历史消息中搜索触发词；0 通常只检查本轮输入。" /><input
-                        type="number"
-                        min="0"
-                        v-model.number="loreDialog.entry.scan_depth" /></label
-                    ><label
-                      >触发概率 %
-                      <FieldHelp tooltip="关键词命中后仍需通过的概率；关闭“使用概率”时按 100% 处理。" /><input
-                        type="number"
-                        min="0"
-                        max="100"
-                        v-model.number="loreDialog.entry.probability" /></label
-                    ><label
-                      >辅助词逻辑
-                      <FieldHelp
-                        tooltip="0：任一命中；1：并非全部命中；2：全部不命中；3：全部命中。"
-                      /><select v-model.number="loreDialog.entry.selectiveLogic">
-                        <option :value="0">任一命中</option>
-                        <option :value="1">并非全部</option>
-                        <option :value="2">全部不命中</option>
-                        <option :value="3">全部命中</option>
-                      </select></label
-                    ><label
-                      >恢复尺度（轮）
-                      <FieldHelp tooltip="条目离开实际正文请求后才开始计时并逐渐提高再次触发机会。" /><input
-                        type="number"
-                        min="0"
-                        v-model.number="loreDialog.entry.cooldown" /></label
-                    ><label
-                      >延迟轮数
-                      <FieldHelp tooltip="部分角色卡前端用于推迟条目生效；保留并展示该兼容参数。" /><input
-                        type="number"
-                        min="0"
-                        v-model.number="loreDialog.entry.delay" /></label
-                    ><label
-                      >消息角色
-                      <FieldHelp tooltip="条目注入模型上下文时采用的消息角色；数字枚举会原样保留。" /><input
-                        v-model="loreDialog.entry.role"
-                    /></label>
-                  </div>
-                  <div class="lore-checks">
-                    <label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.useProbability" />使用概率</label
-                    ><label class="check"
-                      ><input
-                        type="checkbox"
-                        :checked="loreFlagValue(loreDialog.entry, 'preventRecursion')"
-                        @change="
-                          setLoreFlag(
-                            loreDialog.entry,
-                            'preventRecursion',
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        " />阻止递归<FieldHelp
-                        :tooltip="loreFlagHelp(loreDialog.entry, 'preventRecursion')" /></label
-                    ><label class="check"
-                      ><input
-                        type="checkbox"
-                        :checked="loreFlagValue(loreDialog.entry, 'excludeRecursion')"
-                        @change="
-                          setLoreFlag(
-                            loreDialog.entry,
-                            'excludeRecursion',
-                            ($event.target as HTMLInputElement).checked,
-                          )
-                        " />不参与递归扫描<FieldHelp
-                        :tooltip="loreFlagHelp(loreDialog.entry, 'excludeRecursion')" /></label
-                    ><label class="check"
-                      ><input type="checkbox" v-model="loreDialog.entry.group_override" />覆盖同组条目</label
-                    >
-                  </div>
-                  <div class="lore-form-grid">
-                    <label>分组<input v-model="loreDialog.entry.group" /></label
-                    ><label
-                      >分组权重<input type="number" v-model.number="loreDialog.entry.group_weight"
-                    /></label>
-                  </div>
-                  <details class="lore-all-params">
-                    <summary>
-                      全部参数（JSON）
-                      <FieldHelp
-                        tooltip="这里完整展示该条目的原始对象，包括当前表单未单独解释的扩展字段。修改后离开文本框即可应用。"
-                      />
-                    </summary>
-                    <ExpandableTextarea
-                      :model-value="JSON.stringify(loreDialog.entry, null, 2)"
-                      label="世界书全部参数（JSON）"
-                      code
-                      :validate="validateJson"
-                      @change="replaceLoreDialogEntry($event)"
-                    />
-                  </details>
-                  <label class="lore-audience-field"
-                    >条目用途<select
-                      :value="entryAudience(loreDialog.entry)"
-                      @change="setAudience(loreDialog.entry, ($event.target as HTMLSelectElement).value)"
-                    >
-                      <option v-for="(label, key) in audiences" :key="key" :value="key">{{ label }}</option>
-                    </select></label
-                  >
-                </div>
-                <footer class="modal-footer lore-modal-footer">
-                  <div class="lore-delete-zone" v-if="loreDialog.mode === 'edit'">
-                    <template v-if="confirmingLoreDelete">
-                      <span>确定删除此条目？</span>
-                      <button class="danger" @click="deleteLore">确认删除</button>
-                      <button @click="confirmingLoreDelete = false">保留条目</button>
-                    </template>
-                    <button v-else class="danger" @click="confirmingLoreDelete = true">删除条目</button>
-                  </div>
-                  <div class="lore-modal-actions">
-                    <button @click="closeLore">取消</button>
-                    <button class="primary" @click="confirmLore">确认</button>
-                  </div>
-                </footer>
-              </section>
-            </div>
-          </Teleport></template
-        >
+        <template v-else-if="tab === 'lore'">
+          <LoreBookEditor
+            ref="loreEditor"
+            v-model:book="data.character_book"
+            :book-name="data.name"
+            :filter="loreFilter"
+            :library="!props.session"
+            :sources="loreSources"
+            save-hint="保存角色后生效"
+            @notice="notice = $event"
+            @error="error = $event"
+          />
+        </template>
         <template v-else-if="tab === 'scripts'">
           <label class="check">
             <input

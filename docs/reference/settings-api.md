@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 8、数据库 schema 为 9、个人数据包格式为 3。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 8、数据库 schema 为 10、个人数据包格式为 4。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -99,20 +99,42 @@ Content-Type: application/json
 
 常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`；三者不能仅包含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表，设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只作为可复用内容，不自动关联或更新会话的 `turn_preference`。
 
+## 世界书库与挂载
+
+世界书库保存独立世界书，`book` 原样保存 ST World Info 或 V2 `character_book` 的 JSON 对象（`entries` 为数组或对象），校验规则与嵌入角色卡时相同。行为说明见[世界书库指南](../guides/worldbooks.md)。
+
+| 接口 | 请求与响应 |
+|---|---|
+| `GET /api/worldbooks` | 摘要数组：`id`、`name`、`revision`、`created`、`entries`（条目数） |
+| `POST /api/worldbooks` | `{name, book}`，新建或导入，返回完整记录 |
+| `GET /api/worldbooks/{id}` | 完整记录，含 `book` |
+| `PUT /api/worldbooks/{id}` | `{name, book, expected_revision}`；修订号不一致返回 409 |
+| `DELETE /api/worldbooks/{id}` | 删除书库记录；已挂载的对话保留各自副本 |
+| `GET /api/worldbooks/{id}/export` | JSON 附件，条目旗标按角色卡导出的规范名写入 `extensions` |
+| `GET /api/cards/{cid}/defaults` | `{persona_id, worldbook_ids, version}`，未设置时 `version` 为 0 |
+| `PUT /api/cards/{cid}/defaults` | `{persona_id, worldbook_ids, expected_version}`；只影响新建对话的预选项 |
+| `PUT /api/sessions/{sid}/worldbooks` | `{worldbook_ids, reload, expected_revision, operation_id}`；按顺序设定挂载，`reload` 只能包含仍挂载的书 |
+
+`POST /api/sessions` 可选 `worldbook_ids`（按挂载顺序，不可重复）。挂载把书库条目复制进对话级角色卡的 `character_book`，每个副本获得新的条目 ID；`card_data` 保持书架副本。剧情快照的可选字段 `worldbooks` 记录 `[{id, name, revision, entries}]`：书库 ID、挂载时的名称与修订号，以及该书在本对话中的条目 ID；缺少该字段表示没有挂载。这份记录不进入卡片文档，因此不会出现在模型输入中。
+
+调整挂载与手工编辑对话世界书相同，作为一轮设定修改提交：对话须空闲，审核策略下进入审核，生成最新回复的新版本，切换版本恢复对应的挂载。卸载和重新载入会移除该书在对话中的全部副本，包括对话中对它们的修改。书架卡同步不比较挂载条目，全量覆盖后保留它们。角色卡默认项保存在 `card_defaults` 与 `card_default_worldbooks` 中，不写入角色卡文件；删除角色卡、用户角色或世界书时由外键一并解除，复制角色卡时一并复制。
+
 ## 个人数据包
 
 导入导出位于全局设置页面 `shared.storage`（“数据与存储”），不参与普通字段写入；该页的撤回只作用于存储限额字段。
 
 | 接口 | 请求与响应 |
 |---|---|
-| `GET /api/data-transfer` | 返回可导出的用户角色、角色卡和对话简表 |
-| `POST /api/data-transfer/export` | JSON：`settings`、`include_api_keys`、`personas`、`cards`、`sessions`、`browser_preferences`；三组条目为 ID 数组，响应为 ZIP 附件 |
+| `GET /api/data-transfer` | 返回可导出的用户角色、世界书、角色卡（含 `defaults`）和对话简表 |
+| `POST /api/data-transfer/export` | JSON：`settings`、`include_api_keys`、`personas`、`worldbooks`、`cards`、`sessions`、`browser_preferences`；四组条目为 ID 数组，响应为 ZIP 附件 |
 | `POST /api/data-transfer/preview` | multipart `file`；返回类别和条目预览、`sha256`、`settings_revisions` |
 | `POST /api/data-transfer/import` | multipart `file` 与 JSON 字符串 `options`；包含预览的 `sha256`、`restore_settings`，恢复设置时还需 `settings_revisions` |
 
-导入响应包含新 ID 数组 `personas`、`cards`、`sessions`，以及 `settings_restored`、`browser_preferences`。客户端收到结果后重新读取资源列表；恢复设置时重新建立设置编辑会话，并应用返回的浏览器偏好。
+导入响应包含新 ID 数组 `personas`、`worldbooks`、`cards`、`sessions`，以及 `settings_restored`、`browser_preferences`。客户端收到结果后重新读取资源列表；恢复设置时重新建立设置编辑会话，并应用返回的浏览器偏好。
 
-ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 2，仍可读取版本 1。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
+角色卡记录附带 `defaults`（`persona_id`、`worldbook_ids`），导出时只保留同一包中的用户角色和世界书；导入时随新身份重映射。对话快照中的挂载记录同样重映射到包内世界书，未随包的世界书保留原名称，按“书库中已删除”显示。
+
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 4，仍可读取版本 1–3（视为没有世界书库）。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
 导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及制卡 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 
@@ -158,11 +180,15 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 8**，设置文档为 **version 8**，剧情快照中的 `memory_document.version` 为 **2**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **3**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 11**，设置文档为 **version 8**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
-存储层接受 schema 1–8，先只读核对版本与设置。数据库版本低于 8、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。全部步骤完成后写入 schema 9；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
+存储层接受 schema 1–11，先只读核对版本与设置。数据库版本低于 11、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 11；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
+
+schema 10 新增 `worldbooks`、`card_defaults`、`card_default_worldbooks` 三张表和剧情快照的可选字段 `worldbooks`（见[世界书库与挂载](#世界书库与挂载)）。schema 9 的剧情对话照常升级，升级前同样先备份；已有快照缺少该字段即没有挂载，无需改写。
+
+schema 11 在制卡对话的草稿项（`card_author_conversations.payload.cards[]`）新增可选字段 `worldbook`：存在时该项是世界书库的一本书的草稿，文档为 `{name, character_book}`，`card` 为空，`base_revision` 是库书修订号；缺少该字段的项照旧是角色卡草稿，无需改写。引用与保存接口见[制卡 agent 工具与接口](card-author-tools.md#http-接口)。
 
 schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemini` 标记（已有对话为普通对话）以及默认关闭的实验设置。原有提供商连接与故事正文保持原样；此前 schema 7 / 设置 version 4 引入的按提供商连接记录继续保留。设置导入接受旧版并使用相同迁移规则；旧程序不能直接打开新版数据库。
 

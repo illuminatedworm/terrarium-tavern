@@ -610,28 +610,30 @@
 .lore-editor > summary small {
   float: right;
 }
+.lore-editor > summary small.lore-source-label {
+  display: block;
+  float: none;
+  color: var(--accent-hover);
+}
 .lore-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 14px;
+  gap: 8px 12px;
+}
+.lore-form-grid.lore-cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.lore-form-grid.lore-cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .lore-checks {
   display: flex;
   align-items: center;
-  gap: 8px 18px;
+  gap: 6px 18px;
   flex-wrap: wrap;
-  margin: 12px 0;
-}
-.lore-checks label {
-  margin: 0;
 }
 .lore-all-params {
-  margin-top: 16px;
-}
-.lore-all-params .code-editor {
-  width: 100%;
-  min-height: 320px;
-  margin-top: 10px;
+  padding: 6px 0;
 }
 .lore-entry-grid {
   display: grid;
@@ -691,11 +693,11 @@
 }
 .lore-modal-header {
   flex: 0 0 auto;
-  padding: 24px 32px 18px;
+  padding: 14px 24px 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
 .lore-modal-header .eyebrow {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
 }
 .lore-modal-header h2 {
   margin: 0;
@@ -703,16 +705,29 @@
   overflow-wrap: anywhere;
 }
 .lore-modal-form {
-  padding: 24px 32px 28px;
+  padding: 12px 24px 10px;
 }
-.lore-modal-form > label,
-.lore-audience-field {
+.lore-modal-form > * + * {
+  margin-top: 8px;
+}
+/* Dense form: label text sits directly above its control, spacing comes from the grid. */
+.lore-modal-form label {
   display: block;
+  margin: 0;
 }
-.lore-audience-field {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border-subtle);
+.lore-modal-form label input:not([type='checkbox']),
+.lore-modal-form label select {
+  margin-top: 4px;
+}
+.lore-modal-form label .expandable-textarea {
+  margin-top: 4px;
+}
+/* Entry content stays the largest field, but a full entry must fit one modal height.
+   Only the content field: the full-parameter JSON editor keeps its own height. */
+.lore-modal-form .lore-content-field .expandable-textarea > .prompt-field > textarea {
+  height: 120px;
+  min-height: 120px;
+  max-height: 120px;
 }
 .lore-modal-footer {
   position: static;
@@ -722,7 +737,7 @@
   flex: 0 0 auto;
   gap: 16px;
   margin: 0;
-  padding: 14px 32px;
+  padding: 10px 24px;
   border-top: 1px solid var(--border-subtle);
   background: var(--glass-float);
 }
@@ -841,6 +856,40 @@
   .card-sync-compare {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* Worldbook library choices in the import picker and mount dialog. */
+.worldbook-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+.worldbook-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+}
+.worldbook-choice > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.worldbook-choice > small {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.worldbook-mounted {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.worldbook-mounted > label:not(.worldbook-choice) {
+  margin: 0 0 4px 28px;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
 }
 
 /* ---------- Story setup ---------- */
@@ -1020,6 +1069,10 @@
 .enter-icon {
   margin-left: 8px;
 }
+.story-setup-options > .story-setup-back {
+  display: flex;
+  margin: 10px auto 0;
+}
 .story-opening {
   padding: 20px 26px 26px;
   border-radius: var(--radius-lg);
@@ -1109,8 +1162,10 @@
   .editor-header {
     align-items: flex-start;
   }
-  .lore-form-grid {
-    grid-template-columns: 1fr;
+  .lore-form-grid,
+  .lore-form-grid.lore-cols-3,
+  .lore-form-grid.lore-cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 620px) {
@@ -1125,6 +1180,11 @@
     grid-template-columns: 1fr;
   }
   .lore-entry-grid {
+    grid-template-columns: 1fr;
+  }
+  .lore-form-grid,
+  .lore-form-grid.lore-cols-3,
+  .lore-form-grid.lore-cols-4 {
     grid-template-columns: 1fr;
   }
   .lore-modal-header,

@@ -16,6 +16,12 @@ from tavern.character.editor_files import read_document, read_text_file
 from tavern.character.editor_images import IMAGE_FORMATS
 from tavern.character.editor_personas import PERSONA_SPECS, PersonaTools
 from tavern.character.editor_reads import after_patch, known, remember
+from tavern.character.editor_worldbook import (
+    is_worldbook,
+    reject_worldbook,
+    validate_worldbook_document,
+    worldbook_report,
+)
 from tavern.core.model_view import hidden_field
 from tavern.core.tokens import count_text
 from tavern.storage.store import dump
@@ -401,6 +407,16 @@ SPECS = {
 }
 
 
+# Tools for card-only parts, checked once in ``execute``: a library worldbook draft
+# is only a name and entries, so these reject it before running.
+CARD_ONLY = {
+    "set_opening": "开场",
+    "set_portrait": "头像",
+    "configure_card": "目标模式",
+    "test_draft": "开场，无法做本地开场验证",
+}
+
+
 def tool_definitions():
     return [
         {
@@ -453,6 +469,10 @@ def report(document):
     }
 
 
+def item_report(item):
+    return worldbook_report(item["document"]) if is_worldbook(item) else report(item["document"])
+
+
 class EditorTools(PersonaTools):
     def __init__(self, owner):
         self.owner = owner
@@ -475,10 +495,16 @@ class EditorTools(PersonaTools):
                 "ref": item["ref"],
                 "name": data.get("name"),
                 "kind": item["kind"],
-                "target_mode": item.get("target_mode"),
-                "portrait": item.get("source", {}).get("container") == "png",
+                **(
+                    {"type": "worldbook"}
+                    if is_worldbook(item)
+                    else {
+                        "target_mode": item.get("target_mode"),
+                        "portrait": item.get("source", {}).get("container") == "png",
+                        "format": document.get("spec", "legacy"),
+                    }
+                ),
                 "root": prefix,
-                "format": document.get("spec", "legacy"),
                 "fields": [
                     {
                         "path": self.view.pointer(prefix + "/" + key.replace("~", "~0").replace("/", "~1")),
@@ -526,6 +552,8 @@ class EditorTools(PersonaTools):
             parsed = model.model_validate(args)
         except ValidationError as error:
             raise ValueError(argument_error(name, error)) from None
+        if name in CARD_ONLY:
+            reject_worldbook(self.card(parsed.card_ref), CARD_ONLY[name])
         result = await (self.overview_call(parsed) if name == "overview" else getattr(self, name)(parsed))
         return self.view.expose(result)
 
@@ -620,6 +648,8 @@ class EditorTools(PersonaTools):
         if proposal and proposal["seq"] >= confirmation["seq"]:
             raise ValueError("确认必须晚于方案")
         source = self.card(args.source_ref) if args.source_ref else None
+        if source and is_worldbook(source):
+            raise ValueError("世界书草稿不能作为角色卡草稿的复制来源")
         document = copy.deepcopy(source["document"]) if source else blank_card(args.name)
         data = document["data"] if document.get("spec") else document
         data["name"] = self.view.restore(args.name)
@@ -716,13 +746,13 @@ class EditorTools(PersonaTools):
             if "from" in op:
                 self.require_read(args.card_ref, self.view.pointer(op["from"], restore=True))
         changed = self.view.patch(item["document"], operations)
-        validate_document(changed)
+        (validate_worldbook_document if is_worldbook(item) else validate_document)(changed)
         after_patch(
             self.owner.reads, args.card_ref, item["document"], changed, self.view.operations(operations)
         )
         item.update(document=changed, kind="draft")
         self.owner.event("draft_change", {"card_ref": args.card_ref, "reason": args.comment})
-        return {"card_ref": args.card_ref, "accepted": True, **report(changed)}
+        return {"card_ref": args.card_ref, "accepted": True, **item_report(item | {"document": changed})}
 
     async def set_opening(self, args):
         item = self.card(args.card_ref)
@@ -775,7 +805,7 @@ class EditorTools(PersonaTools):
 
     async def validate_draft(self, args):
         item = self.card(args.card_ref)
-        return {"card_ref": args.card_ref, **report(item["document"])}
+        return {"card_ref": args.card_ref, **item_report(item)}
 
     async def test_draft(self, args):
         from tavern.character.editor_sandbox import test_card

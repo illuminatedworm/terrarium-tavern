@@ -258,10 +258,8 @@ def diagnose(document):
     }
 
 
-def _card_for_export(document):
-    result = copy.deepcopy(document)
-    data = result.get("data", result) if result.get("spec") else result
-    entries = (data.get("character_book") or {}).get("entries", [])
+def _canonicalize_lore(book):
+    entries = (book or {}).get("entries", [])
     for entry in entries.values() if isinstance(entries, dict) else entries:
         flags = _lore_flag_values({**entry, **entry.get("extensions", {})})
         for field, value in flags.items():
@@ -272,7 +270,20 @@ def _card_for_export(document):
             extensions = entry.setdefault("extensions", {})
             extensions.pop(field, None)
             extensions[alias] = value
+
+
+def _card_for_export(document):
+    result = copy.deepcopy(document)
+    data = result.get("data", result) if result.get("spec") else result
+    _canonicalize_lore(data.get("character_book"))
     return result
+
+
+def export_lorebook(book):
+    """A standalone worldbook file with the same flag names as card exports."""
+    result = copy.deepcopy(book)
+    _canonicalize_lore(result)
+    return json.dumps(result, ensure_ascii=False, indent=2).encode()
 
 
 def export_card(document, container, original, resources):

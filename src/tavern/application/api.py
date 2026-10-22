@@ -28,6 +28,7 @@ from tavern.core.models import (
     SessionOptions,
     SessionScriptPermission,
     SessionTitle,
+    SessionWorldbooks,
     TurnRequest,
 )
 from tavern.storage.store import Conflict, Store, dump
@@ -167,6 +168,9 @@ def create_app(data_dir=None):
     from tavern.application.transfer_api import register_transfer_routes
 
     register_transfer_routes(app, store)
+    from tavern.application.worldbook_api import register_worldbook_routes
+
+    register_worldbook_routes(app, store)
     from tavern.application.message_adapter_api import register_message_adapter_routes
 
     register_message_adapter_routes(app, store)
@@ -529,11 +533,18 @@ def create_app(data_dir=None):
             "document", store.session_card(session["id"])["document"]
         )
 
-    def commit_session_document(session, document, expected_revision, operation_id, text, reason):
-        """Commit a manual conversation-card edit as one reviewable turn."""
+    def commit_session_document(
+        session, document, expected_revision, operation_id, text, reason, worldbooks=None
+    ):
+        """Commit a manual conversation-card edit as one reviewable turn.
+
+        ``worldbooks`` replaces the mounted-library record when the edit mounts,
+        unmounts or reloads library worldbooks.
+        """
         import copy
 
         from tavern.character.card_workflow import validate_document
+        from tavern.character.worldbooks import REGISTRY
         from tavern.conversation.update_review import finish_turn
         from tavern.storage.message_copy import latest_version
         from tavern.storage.store import uid
@@ -552,6 +563,8 @@ def create_app(data_dir=None):
             store.set_turn(tid, status="running")
             snapshot = copy.deepcopy(session["snapshot"])
             snapshot["content"] = {"document": document, "reason": reason, "turn": tid}
+            if worldbooks is not None:
+                snapshot[REGISTRY] = worldbooks
             message = {**session["messages"][-1], "id": uid(), "snapshot": snapshot}
             pending = {
                 "messages": [message],
@@ -585,6 +598,42 @@ def create_app(data_dir=None):
             "手工编辑对话世界书",
         )
 
+    @app.put("/api/sessions/{sid}/worldbooks")
+    async def session_worldbooks(sid: str, change: SessionWorldbooks):
+        from tavern.character.worldbooks import REGISTRY, apply_mounts
+        from tavern.storage.worldbooks import read as read_worldbook
+
+        session = store.session(sid)
+        registry = session["snapshot"].get(REGISTRY, [])
+        names = {item["id"]: item["name"] for item in registry}
+        if set(names) == set(change.worldbook_ids) and not change.reload:
+            raise ValueError("挂载选择没有变化")
+        with store.connection() as db:
+            # Copies are taken now; later library edits never reach this story.
+            rows = {
+                wid: read_worldbook(db, wid)
+                for wid in change.worldbook_ids
+                if wid not in names or wid in change.reload
+            }
+        document, mounted = apply_mounts(
+            session_document(session), registry, change.worldbook_ids, change.reload, rows
+        )
+        groups = (
+            ("挂载", [rows[wid]["name"] for wid in change.worldbook_ids if wid not in names]),
+            ("卸载", [name for wid, name in names.items() if wid not in change.worldbook_ids]),
+            ("重新载入", [rows[wid]["name"] for wid in change.reload]),
+        )
+        reason = "；".join(f"{label}「{'」「'.join(items)}」" for label, items in groups if items)
+        return commit_session_document(
+            session,
+            document,
+            change.expected_revision,
+            change.operation_id,
+            "调整挂载世界书",
+            reason,
+            worldbooks=mounted,
+        )
+
     def shelf_card(session):
         # Stories keep their own card copy after the shelf card is deleted.
         try:
@@ -595,10 +644,16 @@ def create_app(data_dir=None):
     @app.get("/api/sessions/{sid}/card-sync")
     async def card_sync_items(sid: str):
         from tavern.character.card_sync import sync_items
+        from tavern.character.worldbooks import mounted_ids
 
         session = store.session(sid)
         card = shelf_card(session)
-        items = sync_items(store.session_card(sid)["document"], session_document(session), card["document"])
+        items = sync_items(
+            store.session_card(sid)["document"],
+            session_document(session),
+            card["document"],
+            mounted_ids(session["snapshot"]),
+        )
         return {
             "card": {"id": card["id"], "name": card["name"], "revision": card["revision"]},
             "items": items,
@@ -607,13 +662,18 @@ def create_app(data_dir=None):
     @app.post("/api/sessions/{sid}/card-sync")
     async def sync_session_card(sid: str, change: CardSync):
         from tavern.character.card_sync import apply_sync
+        from tavern.character.worldbooks import mounted_ids
 
         session = store.session(sid)
         card = shelf_card(session)
         if card["revision"] != change.card_revision:
             raise Conflict("书架角色卡已更新，请重新打开同步")
         document = apply_sync(
-            store.session_card(sid)["document"], session_document(session), card["document"], change.keys
+            store.session_card(sid)["document"],
+            session_document(session),
+            card["document"],
+            change.keys,
+            mounted_ids(session["snapshot"]),
         )
         return commit_session_document(
             session,

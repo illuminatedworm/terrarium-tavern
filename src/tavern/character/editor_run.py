@@ -10,6 +10,7 @@ from tavern.character.editor_context import EditorContext
 from tavern.character.editor_images import materialize_images, portrait_digest
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
+from tavern.character.editor_worldbook import is_worldbook, validate_worldbook_document
 from tavern.core.message_adapter import provider_messages
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation
@@ -245,7 +246,7 @@ class EditorRun:
 
     def commit(self, provider, text, assistant):
         for item in self.working["cards"]:
-            validate_document(item["document"])
+            (validate_worldbook_document if is_worldbook(item) else validate_document)(item["document"])
         response = self.context.view.restore(text)
         self.context.messages.append(assistant)
         self.trace.append(assistant)

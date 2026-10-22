@@ -18,12 +18,18 @@ const emit = defineEmits<{
 type Group = keyof TransferCatalog;
 const groups: { key: Group; label: string; unit: string }[] = [
   { key: 'personas', label: '用户角色', unit: '个' },
+  { key: 'worldbooks', label: '世界书', unit: '本' },
   { key: 'cards', label: '角色卡', unit: '张' },
   { key: 'sessions', label: '对话', unit: '个' },
 ];
-const catalog = ref<TransferCatalog>({ personas: [], cards: [], sessions: [] });
-const selected = ref<Record<Group, string[]>>({ personas: [], cards: [], sessions: [] });
-const enabled = ref<Record<Group, boolean>>({ personas: true, cards: true, sessions: true });
+const catalog = ref<TransferCatalog>({ personas: [], worldbooks: [], cards: [], sessions: [] });
+const selected = ref<Record<Group, string[]>>({ personas: [], worldbooks: [], cards: [], sessions: [] });
+const enabled = ref<Record<Group, boolean>>({
+  personas: true,
+  worldbooks: true,
+  cards: true,
+  sessions: true,
+});
 const settings = ref(true),
   includeKeys = ref(false),
   restoreSettings = ref(false);
@@ -41,6 +47,23 @@ const preview = ref<TransferPreview | null>(null),
 const exportable = computed(
   () => settings.value || groups.some(({ key }) => enabled.value[key] && selected.value[key].length),
 );
+// Card defaults travel only with the personas and worldbooks exported beside them.
+const partialDefaults = computed(() => {
+  if (!enabled.value.cards) return [];
+  const picked = (key: Group) => new Set(enabled.value[key] ? selected.value[key] : []);
+  const personas = picked('personas'),
+    worldbooks = picked('worldbooks'),
+    cards = picked('cards');
+  return catalog.value.cards
+    .filter(
+      (card) =>
+        cards.has(card.id) &&
+        card.defaults &&
+        ((card.defaults.persona_id && !personas.has(card.defaults.persona_id)) ||
+          card.defaults.worldbook_ids.some((id) => !worldbooks.has(id))),
+    )
+    .map((card) => card.name);
+});
 const importable = computed(
   () => preview.value && (restoreSettings.value || groups.some(({ key }) => preview.value![key].length)),
 );
@@ -134,7 +157,7 @@ async function importData() {
     const result: TransferResult = await api('/data-transfer/import', form);
     imported.value = result;
     preview.value = null;
-    notice.value = `导入完成：${result.personas.length} 个用户角色、${result.cards.length} 张角色卡、${result.sessions.length} 个对话。${result.settings_restored ? '个人设置已恢复。' : ''}`;
+    notice.value = `导入完成：${result.personas.length} 个用户角色、${result.worldbooks.length} 本世界书、${result.cards.length} 张角色卡、${result.sessions.length} 个对话。${result.settings_restored ? '个人设置已恢复。' : ''}`;
     emit('imported', result);
     await refresh();
   } catch (e) {
@@ -215,6 +238,11 @@ onMounted(refresh);
           </div>
         </div>
       </div>
+      <p v-if="partialDefaults.length" class="transfer-description">
+        {{
+          partialDefaults.join('、')
+        }}的新建对话默认项引用了未选中的用户角色或世界书，导出时省略这部分默认项。
+      </p>
       <label class="transfer-choice transfer-secrets"
         ><input v-model="includeKeys" type="checkbox" :disabled="!!busy || !settings" />包含 API
         Key（文件中将以明文保存）</label
@@ -241,7 +269,9 @@ onMounted(refresh);
         <button :disabled="!!busy" @click="fileInput?.click()">选择数据包</button
         ><span class="transfer-filename">{{ file?.name || '未选择文件' }}</span>
       </div>
-      <p class="transfer-description">用户角色、角色卡和对话将作为新副本导入。恢复个人设置前需确认。</p>
+      <p class="transfer-description">
+        用户角色、世界书、角色卡和对话将作为新副本导入。恢复个人设置前需确认。
+      </p>
       <p v-if="busy === 'preview'" role="status">正在校验数据包…</p>
       <div v-if="preview" class="transfer-preview">
         <h4>数据包预览</h4>

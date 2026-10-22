@@ -1,4 +1,4 @@
-import { cardName, type EditorCard, type EditorPersona } from './cardAuthor';
+import { cardName, isWorldbook, type EditorCard, type EditorPersona } from './cardAuthor';
 
 export interface LibraryReference {
   id: string;
@@ -11,6 +11,7 @@ export interface CardReferenceOption {
   detail: string;
   attached?: EditorCard;
   source?: LibraryReference;
+  worldbookSource?: LibraryReference;
   persona?: EditorPersona;
   personaRef?: string;
 }
@@ -34,13 +35,15 @@ export function cardReferenceOptions(
   query: string,
   personas: EditorPersona[] = [],
   attachedPersonas: Record<string, EditorPersona> = {},
+  worldbooks: LibraryReference[] = [],
 ): CardReferenceOption[] {
   const sources = new Set(attached.map((card) => card.card).filter(Boolean));
+  const attachedBooks = new Set(attached.map((card) => card.worldbook).filter(Boolean));
   const options: CardReferenceOption[] = [
     ...attached.map((card) => ({
       key: `card:${card.ref}`,
       name: cardName(card),
-      detail: card.card ? '角色卡 · 已引用' : '角色卡 · 当前草稿',
+      detail: isWorldbook(card) ? '世界书 · 已引用' : card.card ? '角色卡 · 已引用' : '角色卡 · 当前草稿',
       attached: card,
     })),
     ...library
@@ -50,6 +53,14 @@ export function cardReferenceOptions(
         name: card.name,
         detail: '角色卡',
         source: card,
+      })),
+    ...worldbooks
+      .filter((book) => !attachedBooks.has(book.id))
+      .map((book) => ({
+        key: `worldbook:${book.id}`,
+        name: book.name,
+        detail: '世界书',
+        worldbookSource: book,
       })),
     ...Object.entries(attachedPersonas).map(([ref, persona]) => ({
       key: `persona:${persona.id}`,
