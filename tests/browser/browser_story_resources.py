@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import re
 import socket
 import sys
 import tempfile
@@ -248,32 +249,38 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         bottom = last["y"] + last["height"] / 2
 
                         async def jump(index):
+                            # Pointer only: the rail click opens nearby rounds, then the exact round is clicked.
+                            # Navigation aligns the message start, not its frame, so only the target is checked.
                             await page.mouse.click(
                                 box["x"] + box["width"] / 2, top + (bottom - top) * index / 129
                             )
                             await page.get_by_role(
                                 "button", name=f"跳转到第 {index + 1} 个对话位置", exact=True
-                            ).press("Enter")
-                            # At 200% zoom the message header can fill the short reading area.
-                            # A reader scrolls beyond the pinned header to reach the form itself.
+                            ).click()
+                            await expect(
+                                page.locator(f'[data-message-id="resource-{index}"]')
+                            ).to_be_in_viewport()
+
+                        async def reach(index):
+                            # At 200% zoom the message header can fill the short reading area, so the reader
+                            # takes over scrolling. Frames start at 280px and shrink once the card reports its
+                            # height; forms are only used after that, through real pointer actions.
                             await page.locator(".messages").dispatch_event("wheel", {"deltaY": 120})
-                            await page.locator(
-                                f'[data-message-id="resource-{index}"] .frame-shell'
-                            ).scroll_into_view_if_needed()
+                            shell = page.locator(f'[data-message-id="resource-{index}"] .frame-shell')
+                            await shell.scroll_into_view_if_needed()
+                            node = shell.locator("iframe")
+                            await expect(node).not_to_have_attribute("style", re.compile(r"\bheight: 280px"))
+                            return node, await (await node.element_handle()).content_frame()
 
                         await jump(120)
-                        local = page.locator('[data-message-id="resource-120"] iframe')
-                        await expect(local).to_be_in_viewport()
-                        local_frame = await (await local.element_handle()).content_frame()
-                        await expect(local_frame.locator("#local-draft")).to_have_count(1)
-                        await local_frame.locator("#local-draft").evaluate("el=>el.value='未提交表单'")
+                        local, local_frame = await reach(120)
+                        await local_frame.locator("#local-draft").click()
+                        await local_frame.locator("#local-draft").fill("未提交表单")
                         local_id = await local_frame.evaluate("window.instance")
                         await jump(121)
-                        old = page.locator('[data-message-id="resource-121"] iframe')
-                        await expect(old).to_have_count(1)
-                        old_frame = await (await old.element_handle()).content_frame()
-                        await expect(old_frame.locator("#legacy-draft")).to_have_count(1)
-                        await old_frame.locator("#legacy-draft").evaluate("el=>el.value='旧卡输入'")
+                        old, old_frame = await reach(121)
+                        await old_frame.locator("#legacy-draft").click()
+                        await old_frame.locator("#legacy-draft").fill("旧卡输入")
                         old_id = await old_frame.evaluate("window.instance")
                         await rail.focus()
                         await rail.press("Home")
@@ -282,8 +289,8 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         assert await old_frame.evaluate("window.instance") == old_id
                         await expect(old_frame.locator("#legacy-draft")).to_have_value("旧卡输入")
                         await jump(120)
-                        await expect(local).to_be_in_viewport()
-                        restored = await (await local.element_handle()).content_frame()
+                        _, restored = await reach(120)
+                        await restored.locator("#local-draft").click()
                         await expect(restored.locator("#local-draft")).to_have_value("未提交表单")
                         assert await restored.evaluate("window.instance") != local_id
                         assert sum("/static/runtime.js" in url for url in requests) == 1
