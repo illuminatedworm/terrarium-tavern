@@ -317,6 +317,18 @@ class SessionCreate(BaseModel):
     worldbook_ids: WorldbookIds = Field(default_factory=list)
 
 
+def without_nulls(value):
+    """Script generation options are external JSON: null means omitted at any depth.
+
+    Empty strings, lists, zero and false keep their meaning.
+    """
+    if isinstance(value, dict):
+        return {key: without_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [without_nulls(item) for item in value if item is not None]
+    return value
+
+
 class TurnRequest(BaseModel):
     text: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
@@ -332,6 +344,11 @@ class TurnRequest(BaseModel):
     replacement_text: str | None = None
     scene_refresh: Literal["memory"] | None = None
     resume_turn_id: str | None = None
+
+    @field_validator("generate")
+    @classmethod
+    def drop_generate_nulls(cls, value):
+        return without_nulls(value)
 
     @model_validator(mode="after")
     def validate_replacement(self):

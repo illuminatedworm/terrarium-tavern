@@ -96,7 +96,10 @@ def test_import_keeps_colliding_keys_and_extension_identities_independent():
     assert len({entry["id"] for entry in lore_entries({"character_book": book})}) == 4
 
 
-@pytest.mark.parametrize("imported", [None, {"entries": "invalid"}, {"entries": [{"extensions": []}]}])
+@pytest.mark.parametrize(
+    "imported",
+    [None, {"entries": "invalid"}, {"entries": [{"extensions": []}]}, {"entries": [{"id": None}]}],
+)
 async def test_invalid_lorebook_upload_preserves_saved_card(tmp_path, imported):
     app = create_app(tmp_path)
     card = app.state.store.import_card(

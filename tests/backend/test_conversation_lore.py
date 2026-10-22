@@ -4,9 +4,11 @@ import json
 import pytest
 
 from tavern.application.service import RoleplayRuntime
+from tavern.character.cards import _LORE_OPTIONAL_FIELDS
 from tavern.conversation.context import compile_context
 from tavern.core.models import ContextRecipe, SessionCreate, TurnRequest
 from tavern.core.models import Settings as AppSettings
+from tavern.full_agent.context import compile_window
 from tavern.memories.memory import fingerprint
 from tavern.storage.store import Store, dump
 
@@ -184,9 +186,33 @@ def test_constants_at_different_depths_are_sent_once_each():
         "name": "角色",
         "character_book": {
             "entries": [
-                {"id": "rules", "constant": True, "content": "常驻总规则", "position": 0},
-                {"id": "update", "constant": True, "content": "变量更新规则", "position": 4, "depth": 2},
-                {"id": "format", "constant": True, "content": "变量输出格式", "position": 4, "depth": 1},
+                {
+                    "id": "rules",
+                    "constant": True,
+                    "content": "常驻总规则",
+                    # Every optional null falls back to its default or legacy alias.
+                    **dict.fromkeys(_LORE_OPTIONAL_FIELDS - {"constant", "content"}),
+                },
+                {
+                    "id": "update",
+                    "constant": True,
+                    "content": "变量更新规则",
+                    "position": 4,
+                    "depth": 2,
+                    # An extension null must not hide the top-level depth.
+                    "extensions": {"role": None, "depth": None},
+                },
+                {
+                    "id": "format",
+                    "constant": True,
+                    "content": "变量输出格式",
+                    "position": 4,
+                    "depth": 1,
+                    "role": 0,
+                    "probability": 0,
+                    "useProbability": False,
+                    "scan_depth": 0,
+                },
             ]
         },
     }
@@ -195,7 +221,35 @@ def test_constants_at_different_depths_are_sent_once_each():
         message("u", "user", "行动"),
         message("a", "assistant", "回应"),
     ]
-    out = compile(doc, history, {}, text="继续")
+    original = copy.deepcopy(doc)
+    generate = TurnRequest(
+        text="继续",
+        operation_id="o",
+        expected_revision=0,
+        generate={
+            "overrides": None,
+            "ordered_prompts": None,
+            "injects": [None, {"role": None, "depth": None, "content": "默认角色注入"}],
+        },
+    ).generate
+    assert generate == {"injects": [{"content": "默认角色注入"}]}
+    out = compile(doc, history, {}, text="继续", generate=generate)
+    full = compile_window(
+        doc,
+        {**session(), "agent_mode": "full_agent"},
+        history,
+        {},
+        "继续",
+        Settings(runtime_mode="full_agent"),
+        [],
+    )
+    for compiled in (out, full):
+        lore = [row for row in compiled["trace"] if row.get("lore_region") == "constant"]
+        assert len(lore) == 3
+        assert all(row["role"] == "system" and row["message_type"] == "lore_constant" for row in lore)
+        assert all({"role": "system", "content": row["content"]} in compiled["messages"] for row in lore)
+    assert doc == original
+    assert next(row for row in out["trace"] if row["source"] == "inject")["content"] == "默认角色注入"
     for eid, content in [("rules", "常驻总规则"), ("update", "变量更新规则"), ("format", "变量输出格式")]:
         assert sum(eid in item.get("lore_ids", []) for item in out["trace"]) == 1
         assert sum(item["content"].count(content) for item in out["messages"]) == 1

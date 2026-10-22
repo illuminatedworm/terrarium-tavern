@@ -1,3 +1,5 @@
+import { loreField } from './loreBook';
+
 export const audiences: Record<string, string> = {
   writer: 'Writer 叙事',
   tracker_mvu: 'Tracker 变量规则',
@@ -8,20 +10,21 @@ export function entryAudience(entry: any): string {
   return entry.extensions?.terrarium?.audience || 'writer';
 }
 function loreOrder({ entry, index }: { entry: any; index: number }) {
-  const effective = { ...entry, ...entry.extensions };
-  const position = effective.constant
-    ? effective.position === 'before_char'
+  const field = (name: string) => loreField(entry, name);
+  const constant = field('constant');
+  const position = constant
+    ? field('position') === 'before_char'
       ? 0
-      : effective.position === 'after_char'
+      : field('position') === 'after_char'
         ? 1
-        : Number(effective.position ?? 0)
+        : Number(field('position') ?? 0)
     : 0;
-  const id = String(effective.id ?? effective.uid ?? index);
+  const id = String(field('id') ?? field('uid') ?? index);
   return [
-    effective.constant ? 0 : 1,
+    constant ? 0 : 1,
     position,
-    position === 4 ? -Number(effective.depth || 0) : 0,
-    Number(effective.insertion_order ?? effective.order ?? 100),
+    position === 4 ? -Number(field('depth') || 0) : 0,
+    Number(field('insertion_order') ?? 100),
     /^\d+$/.test(id) ? 0 : 1,
     /^\d+$/.test(id) ? BigInt(id) : id,
   ] as const;

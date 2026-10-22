@@ -9,7 +9,7 @@ import httpx
 from tavern.character.cards import regex_scripts
 from tavern.conversation.regeneration import turn_start
 from tavern.conversation.update_review import finish_turn
-from tavern.core.models import TurnRequest
+from tavern.core.models import TurnRequest, without_nulls
 from tavern.memories.memory import Tracker, completed_rounds
 from tavern.memories.memory_records import new_memory
 from tavern.scripting.agent import Writer
@@ -552,6 +552,7 @@ class RoleplayRuntime:
                     self.store.event(tid, "script_log", args)
                     return None
                 if method == "generate":
+                    args = without_nulls(args)
                     # A nested request gets a read-only copy and no mutation tools.
                     from tavern.conversation.context import compile_context
                     from tavern.scripting.agent import make_provider

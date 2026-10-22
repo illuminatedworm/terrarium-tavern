@@ -13,10 +13,9 @@ AUDIENCES = {"writer", "tracker_mvu"}
 
 
 def audience(entry):
-    extensions = entry.get("extensions", {})
-    if not isinstance(extensions, dict):
-        raise ValueError("世界书扩展必须为对象")
-    metadata = extensions.get("terrarium", entry.get("terrarium", {}))
+    # Callers pass lore_entries views, whose terrarium already resolves extension
+    # precedence and treats null as unset.
+    metadata = entry.get("terrarium", {})
     if not isinstance(metadata, dict):
         raise ValueError("世界书 terrarium 扩展必须为对象")
     return metadata.get("audience", "writer")

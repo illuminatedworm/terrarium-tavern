@@ -443,12 +443,19 @@ def compile_context(
     visible_history, story_summary = window_history(history, snapshot, enabled=local_window_enabled(settings))
     memory_text = render_memory(snapshot, history)
     protected_memory = memory_text if len(visible_history) < len(history) else ""
+    # Callers pass script options through core.models.without_nulls, so omitted
+    # and null options are already the same here.
     gen = generate or {}
     overrides = gen.get("overrides", {})
     history_override = overrides.get("chat_history", {})
     if "prompts" in history_override:
         visible_history = [
-            {"id": f"override:{i}", "role": m["role"], "raw": m["content"], "model": m["content"]}
+            {
+                "id": f"override:{i}",
+                "role": m["role"],
+                "raw": m.get("content", ""),
+                "model": m.get("content", ""),
+            }
             for i, m in enumerate(history_override["prompts"])
         ]
     max_history = gen.get("max_chat_history", "all")

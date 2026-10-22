@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendLoreBook } from '../../web/lib/loreBook';
+import { appendLoreBook, loreField, loreFieldHelp, setLoreField } from '../../web/lib/loreBook';
 import { appendRegexScripts } from '../../web/lib/regexScripts';
 
 describe('additive worldbook imports', () => {
@@ -88,14 +88,6 @@ describe('additive worldbook imports', () => {
     expect(new Set(rows.map((row) => row.extensions?.id ?? row.id)).size).toBe(3);
   });
 
-  it('avoids collisions with the runtime identities of nullable legacy IDs', () => {
-    const book = appendLoreBook(
-      { entries: [{ id: null, content: '原文' }] },
-      { entries: [{ id: 'None', content: '新文' }] },
-    );
-    expect(Object.values(book.entries!)[1].id).not.toBe('None');
-  });
-
   it.each([
     null,
     [],
@@ -105,6 +97,8 @@ describe('additive worldbook imports', () => {
     { entries: [null] },
     { entries: { bad: null } },
     { entries: [{ extensions: [] }] },
+    { entries: [{ id: null }] },
+    { entries: [{ extensions: { uid: true } }] },
   ])('rejects invalid imports without changing the current book: %j', (imported) => {
     const current = { entries: [{ id: 'old', content: '保留原文' }] };
     const original = JSON.stringify(current);
@@ -115,6 +109,34 @@ describe('additive worldbook imports', () => {
   it('keeps an existing book unchanged when importing an empty book', () => {
     const current = { name: '保留', entries: { old: { content: '保留原文' } } };
     expect(appendLoreBook(current, { name: '不覆盖', entries: [] })).toEqual(current);
+  });
+});
+
+describe('worldbook entry fields', () => {
+  it('shows and edits the value the runtime uses across extensions, aliases and nulls', () => {
+    const entry: Record<string, any> = {
+      depth: 2,
+      scanDepth: 6,
+      role: 'user',
+      extensions: { depth: null, role: 'assistant' },
+    };
+    expect([loreField(entry, 'depth'), loreField(entry, 'scan_depth'), loreField(entry, 'role')]).toEqual([
+      2,
+      6,
+      'assistant',
+    ]);
+    expect(loreFieldHelp(entry, 'role', '为 system')).toContain('被覆盖的冲突值：role = "user"');
+    expect(loreFieldHelp(entry, 'depth', '为 0')).toContain('extensions.depth 为 null，视为未设置');
+    setLoreField(entry, 'role', 'system');
+    setLoreField(entry, 'depth', 3);
+    setLoreField(entry, 'probability', 50);
+    expect(entry).toEqual({
+      depth: 3,
+      scanDepth: 6,
+      role: 'system',
+      probability: 50,
+      extensions: { depth: 3, role: 'system' },
+    });
   });
 });
 

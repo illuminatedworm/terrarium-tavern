@@ -16,6 +16,52 @@ export function isInitVar(entry: LoreEntry | null | undefined): boolean {
   return /\[initvar\]/i.test(loreTitle(entry));
 }
 
+// Legacy spellings the runtime reads after the main field (context.activate_lore).
+const loreFieldAliases: Record<string, string> = { scan_depth: 'scanDepth', insertion_order: 'order' };
+
+function loreFieldSources(entry: LoreEntry, field: string) {
+  // Match cards.lore_entries: the main spelling before its alias, extensions first
+  // within each spelling. Null copies are listed but mean unset.
+  return [field, loreFieldAliases[field]]
+    .filter(Boolean)
+    .flatMap((key) => [
+      ...(entry.extensions && Object.hasOwn(entry.extensions, key)
+        ? [{ owner: entry.extensions as LoreEntry, key, path: `extensions.${key}` }]
+        : []),
+      ...(Object.hasOwn(entry, key) ? [{ owner: entry, key, path: key }] : []),
+    ]);
+}
+
+/** The value the runtime uses, or undefined when every copy is missing or null. */
+export function loreField(entry: LoreEntry, field: string): any {
+  const source = loreFieldSources(entry, field).find((item) => item.owner[item.key] != null);
+  return source?.owner[source.key];
+}
+
+/** Sync every existing copy so no hidden location keeps an old value; create the main field if none. */
+export function setLoreField(entry: LoreEntry, field: string, value: unknown): void {
+  const sources = loreFieldSources(entry, field);
+  if (!sources.length) entry[field] = value;
+  else for (const source of sources) source.owner[source.key] = value;
+}
+
+export function loreFieldHelp(entry: LoreEntry, field: string, fallback: string): string {
+  const sources = loreFieldSources(entry, field);
+  const [source, ...others] = sources.filter((item) => item.owner[item.key] != null);
+  const unset = sources.filter((item) => item.owner[item.key] == null).map((item) => item.path);
+  const nulls = unset.length ? `${unset.join('、')} 为 null，视为未设置。` : '';
+  if (!source)
+    return `未设置${fallback ? `，默认${fallback}` : ''}。${nulls}修改后写入 ${unset.join('、') || field}。`;
+  const current = `当前生效：${source.path} = ${JSON.stringify(source.owner[source.key])}。`;
+  if (!others.length && !unset.length) return `${current}修改会写回此字段。`;
+  const values = others.map((item) => `${item.path} = ${JSON.stringify(item.owner[item.key])}`);
+  const conflict = others.some((item) => item.owner[item.key] !== source.owner[source.key]);
+  const shadowed = values.length
+    ? `${conflict ? '被覆盖的冲突值' : '其他同值位置'}：${values.join('；')}。`
+    : '';
+  return `${current}${shadowed}${nulls}修改会同步写入以上所有位置。`;
+}
+
 const loreFlagAliases = {
   matchWholeWords: 'match_whole_words',
   excludeRecursion: 'exclude_recursion',
@@ -58,10 +104,13 @@ export function setLoreFlag(entry: LoreEntry, field: LoreFlag, value: boolean): 
 function entryId(entry: LoreEntry, key: string, keyed: boolean) {
   if (!isObject(entry) || (entry.extensions !== undefined && !isObject(entry.extensions)))
     throw Error('世界书条目及其扩展必须为对象');
+  // Match cards.lore_entries: V2/V3 IDs and ST's uid are strings or numbers only.
+  for (const fields of [entry, entry.extensions ?? {}])
+    for (const field of ['id', 'uid'])
+      if (Object.hasOwn(fields, field) && !['string', 'number'].includes(typeof fields[field]))
+        throw Error(`世界书条目 ${field} 必须为字符串或数字`);
   const view = { ...entry, ...(keyed ? { uid: key } : {}), ...entry.extensions };
-  const id = Object.hasOwn(view, 'id') ? view.id : Object.hasOwn(view, 'uid') ? view.uid : key;
-  // Match the runtime's string identities, including nullable legacy IDs.
-  return id === null ? 'None' : typeof id === 'boolean' ? (id ? 'True' : 'False') : String(id);
+  return String(Object.hasOwn(view, 'id') ? view.id : Object.hasOwn(view, 'uid') ? view.uid : key);
 }
 
 export function appendLoreBook(current: LoreBook | null | undefined, imported: unknown): LoreBook {

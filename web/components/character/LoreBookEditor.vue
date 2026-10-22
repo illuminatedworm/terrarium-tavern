@@ -14,8 +14,11 @@ import {
   appendLoreBook,
   isInitVar,
   loreFlagHelp,
+  loreField,
+  loreFieldHelp,
   loreFlagValue,
   loreTitle,
+  setLoreField,
   setLoreFlag,
 } from '../../lib/loreBook';
 import { positionPopover } from '../../lib/anchoredPopover';
@@ -206,6 +209,30 @@ function setList(entry: any, field: string, alias: string, event: Event) {
   entry[field] = value;
   entry[alias] = value;
 }
+// Description and runtime default of fields that may live at the top level, in
+// extensions or under a legacy alias; the tip names the effective location.
+const fieldNotes: Record<string, [string, string]> = {
+  insertion_order: ['数值越小通常越早参与排序；相同位置的条目按此值决定先后。', '为 100'],
+  depth: ['相对最近历史消息向前插入的层数；0 表示放在当前上下文末端附近。', '为 0'],
+  scan_depth: ['从最近多少条历史消息中搜索触发词；0 通常只检查本轮输入。', '为 4'],
+  probability: ['关键词命中后仍需通过的概率；关闭“使用概率”时按 100% 处理。', '为 100%'],
+  selectiveLogic: ['0：任一命中；1：并非全部命中；2：全部不命中；3：全部命中。', '为“任一命中”'],
+  cooldown: ['条目离开实际正文请求后才开始计时并逐渐提高再次触发机会。', '为 0'],
+  delay: ['部分角色卡前端用于推迟条目生效；保留并展示该兼容参数。', ''],
+  role: ['用于识别条目来源类型，数字枚举原样保留；最终发送角色以消息适配为准。', '为 system'],
+  group: ['', ''],
+  group_weight: ['', ''],
+  useProbability: ['', '开启'],
+};
+function fieldTip(entry: any, field: string) {
+  const [note, fallback] = fieldNotes[field];
+  return [note, loreFieldHelp(entry, field, fallback)].filter(Boolean).join('');
+}
+function numberValue(event: Event) {
+  // Same as v-model.number: an empty field stays an empty string.
+  const value = (event.target as HTMLInputElement).value;
+  return value === '' ? '' : Number(value);
+}
 function positionValue(entry: any) {
   return entry.extensions?.position ?? entry.position ?? 0;
 }
@@ -392,36 +419,44 @@ defineExpose({ close: closeLore });
           /></label>
           <div class="lore-form-grid lore-cols-4">
             <label
-              >插入顺序 <FieldHelp tooltip="数值越小通常越早参与排序；相同位置的条目按此值决定先后。" /><input
+              >插入顺序 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'insertion_order')" /><input
                 type="number"
-                v-model.number="loreDialog.entry.insertion_order" /></label
+                :value="loreField(loreDialog.entry, 'insertion_order')"
+                @input="setLoreField(loreDialog.entry, 'insertion_order', numberValue($event))" /></label
             ><label
               >插入位置 <FieldHelp tooltip="滚动方案下仅常驻使用；ST 方案按此位置注入。" /><input
                 type="number"
                 :value="positionValue(loreDialog.entry)"
                 @input="setPosition(loreDialog.entry, $event)" /></label
             ><label
-              >插入深度
-              <FieldHelp tooltip="相对最近历史消息向前插入的层数；0 表示放在当前上下文末端附近。" /><input
+              >插入深度 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'depth')" /><input
                 type="number"
                 min="0"
-                v-model.number="loreDialog.entry.depth" /></label
+                :value="loreField(loreDialog.entry, 'depth')"
+                @input="setLoreField(loreDialog.entry, 'depth', numberValue($event))" /></label
             ><label
-              >扫描深度 <FieldHelp tooltip="从最近多少条历史消息中搜索触发词；0 通常只检查本轮输入。" /><input
+              >扫描深度 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'scan_depth')" /><input
                 type="number"
                 min="0"
-                v-model.number="loreDialog.entry.scan_depth" /></label
+                :value="loreField(loreDialog.entry, 'scan_depth')"
+                @input="setLoreField(loreDialog.entry, 'scan_depth', numberValue($event))" /></label
             ><label
-              >触发概率 %
-              <FieldHelp tooltip="关键词命中后仍需通过的概率；关闭“使用概率”时按 100% 处理。" /><input
+              >触发概率 % <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'probability')" /><input
                 type="number"
                 min="0"
                 max="100"
-                v-model.number="loreDialog.entry.probability" /></label
+                :value="loreField(loreDialog.entry, 'probability')"
+                @input="setLoreField(loreDialog.entry, 'probability', numberValue($event))" /></label
             ><label
-              >辅助词逻辑
-              <FieldHelp tooltip="0：任一命中；1：并非全部命中；2：全部不命中；3：全部命中。" /><select
-                v-model.number="loreDialog.entry.selectiveLogic"
+              >辅助词逻辑 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'selectiveLogic')" /><select
+                :value="loreField(loreDialog.entry, 'selectiveLogic') ?? 0"
+                @change="
+                  setLoreField(
+                    loreDialog.entry,
+                    'selectiveLogic',
+                    Number(($event.target as HTMLSelectElement).value),
+                  )
+                "
               >
                 <option :value="0">任一命中</option>
                 <option :value="1">并非全部</option>
@@ -429,25 +464,48 @@ defineExpose({ close: closeLore });
                 <option :value="3">全部命中</option>
               </select></label
             ><label
-              >恢复尺度（轮）
-              <FieldHelp tooltip="条目离开实际正文请求后才开始计时并逐渐提高再次触发机会。" /><input
+              >恢复尺度（轮） <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'cooldown')" /><input
                 type="number"
                 min="0"
-                v-model.number="loreDialog.entry.cooldown" /></label
+                :value="loreField(loreDialog.entry, 'cooldown')"
+                @input="setLoreField(loreDialog.entry, 'cooldown', numberValue($event))" /></label
             ><label
-              >延迟轮数 <FieldHelp tooltip="部分角色卡前端用于推迟条目生效；保留并展示该兼容参数。" /><input
+              >延迟轮数 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'delay')" /><input
                 type="number"
                 min="0"
-                v-model.number="loreDialog.entry.delay" /></label
+                :value="loreField(loreDialog.entry, 'delay')"
+                @input="setLoreField(loreDialog.entry, 'delay', numberValue($event))" /></label
             ><label
-              >消息角色 <FieldHelp tooltip="条目注入模型上下文时采用的消息角色；数字枚举会原样保留。" /><input
-                v-model="loreDialog.entry.role" /></label
-            ><label>分组<input v-model="loreDialog.entry.group" /></label
-            ><label>分组权重<input type="number" v-model.number="loreDialog.entry.group_weight" /></label>
+              >消息角色 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'role')" /><input
+                :value="loreField(loreDialog.entry, 'role')"
+                @input="
+                  setLoreField(loreDialog.entry, 'role', ($event.target as HTMLInputElement).value)
+                " /></label
+            ><label
+              >分组 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'group')" /><input
+                :value="loreField(loreDialog.entry, 'group')"
+                @input="
+                  setLoreField(loreDialog.entry, 'group', ($event.target as HTMLInputElement).value)
+                " /></label
+            ><label
+              >分组权重 <FieldHelp :tooltip="fieldTip(loreDialog.entry, 'group_weight')" /><input
+                type="number"
+                :value="loreField(loreDialog.entry, 'group_weight')"
+                @input="setLoreField(loreDialog.entry, 'group_weight', numberValue($event))"
+            /></label>
           </div>
           <div class="lore-checks">
             <label class="check"
-              ><input type="checkbox" v-model="loreDialog.entry.useProbability" />使用概率</label
+              ><input
+                type="checkbox"
+                :checked="Boolean(loreField(loreDialog.entry, 'useProbability') ?? true)"
+                @change="
+                  setLoreField(
+                    loreDialog.entry,
+                    'useProbability',
+                    ($event.target as HTMLInputElement).checked,
+                  )
+                " />使用概率<FieldHelp :tooltip="fieldTip(loreDialog.entry, 'useProbability')" /></label
             ><label class="check"
               ><input
                 type="checkbox"

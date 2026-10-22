@@ -19,6 +19,29 @@ _LORE_FLAG_ALIASES = {
     "preventRecursion": "prevent_recursion",
     "caseSensitive": "case_sensitive",
 }
+_LORE_OPTIONAL_FIELDS = {
+    "terrarium",
+    "role",
+    "position",
+    "depth",
+    "insertion_order",
+    "order",
+    "scan_depth",
+    "scanDepth",
+    "keys",
+    "key",
+    "secondary_keys",
+    "keysecondary",
+    "enabled",
+    "disable",
+    "constant",
+    "cooldown",
+    "probability",
+    "useProbability",
+    "selectiveLogic",
+    "outletName",
+    "content",
+}
 
 
 def png_chunks(blob):
@@ -128,6 +151,12 @@ def _lore_flag_values(fields):
     }
 
 
+def _set_lore_fields(fields):
+    return {
+        key: value for key, value in fields.items() if value is not None or key not in _LORE_OPTIONAL_FIELDS
+    }
+
+
 def lore_title(entry):
     # Both are optional V2/V3 entry fields. ST keeps its title in comment, so name
     # only fills in for cards that leave comment empty.
@@ -147,7 +176,18 @@ def lore_entries(document, audience=None):
     for index, original in enumerate(entries):
         if not isinstance(original, dict) or not isinstance(original.get("extensions", {}), dict):
             raise ValueError("世界书条目及其扩展必须为对象")
-        e = {**original, **original.get("extensions", {})}
+        for fields in (original, original.get("extensions", {})):
+            for key in ("id", "uid"):
+                # V2 types ids as numbers, V3 as numbers or strings, and ST's own uid
+                # is a number; anything else has no identity to derive.
+                value = fields.get(key, "")
+                if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                    raise ValueError(f"世界书条目 {key} 必须为字符串或数字")
+        # Optional nulls mean unset, so every reader uses its existing default or
+        # legacy alias. Drop them per location before merging: an extension null
+        # must not hide the top-level value. Preserve zero/false, source JSON and
+        # the four flags whose explicit null must override another spelling.
+        e = {**_set_lore_fields(original), **_set_lore_fields(original.get("extensions", {}))}
         # ST exports these flags as snake_case extensions. Resolve only the view;
         # the editor and exporter use the same precedence without rewriting storage.
         e.update(_lore_flag_values(e))
@@ -155,6 +195,7 @@ def lore_entries(document, audience=None):
         e["keys"] = [str(key).strip() for key in e.get("keys", e.get("key", []))]
         e["secondary_keys"] = [str(key).strip() for key in e.get("secondary_keys", e.get("keysecondary", []))]
         e["enabled"] = e.get("enabled", not e.get("disable", False))
+        e.setdefault("content", "")
         if audience is None or e.get("terrarium", {}).get("audience", "writer") == audience:
             result.append(e)
     return result
