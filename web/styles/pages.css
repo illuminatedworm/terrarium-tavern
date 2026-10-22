@@ -715,6 +715,11 @@
   display: block;
   margin: 0;
 }
+/* 覆盖上面的 display: block，否则 .check 的 flex/gap 失效，勾选框紧贴文字。 */
+.lore-modal-form label.check {
+  display: flex;
+  gap: 6px;
+}
 .lore-modal-form label input:not([type='checkbox']),
 .lore-modal-form label select {
   margin-top: 4px;
