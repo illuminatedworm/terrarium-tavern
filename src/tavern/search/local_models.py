@@ -1,10 +1,12 @@
-"""Bounded CUDA workers. Only explicit download/warmup jobs may load models."""
+"""Bounded CUDA worker host. Only explicit download/warmup jobs may load models."""
 
 import asyncio
 import fnmatch
+import gc
 import json
 import multiprocessing as mp
 import os
+import threading
 import time
 import uuid
 from importlib.util import find_spec
@@ -13,185 +15,208 @@ from pathlib import Path
 from tavern.character.cards import lore_title
 from tavern.search.retrieval import digest
 
+PURPOSES = ("embedding", "reranker")
 
-def _worker(pipe, root, purpose, config):
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    try:
-        import torch
-        from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA 不可用；请安装 CUDA 版 PyTorch 并检查显卡驱动")
-        device = config["device"]
-        int8 = config.get("quantization", "none") == "int8"
-        if int8 and any(find_spec(package) is None for package in ("bitsandbytes", "accelerate")):
-            raise RuntimeError("INT8 需要 bitsandbytes 和 accelerate；请安装项目的 retrieval 可选依赖")
-        free, _ = torch.cuda.mem_get_info(device)
-        # Startup headroom only; inference also depends on batch size and sequence length.
-        required_gib = (5 if int8 else 9) if config["model"].endswith("4B") else (1.5 if int8 else 2)
-        required = int(required_gib * 1024**3)
-        if free < required:
-            hint = "请选择 0.6B 或释放其他 GPU 应用" if int8 else "请启用 INT8、选择 0.6B 或释放其他 GPU 应用"
-            raise RuntimeError(f"空闲显存不足（预热至少需要 {required_gib:g} GiB）；{hint}")
-        path = str(Path(root) / digest([config["model"], config["revision"]]))
-        tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True, padding_side="left")
-        cls = AutoModel if purpose == "embedding" else AutoModelForCausalLM
-        if int8:
-            from transformers import BitsAndBytesConfig
+def _load(torch, root, purpose, config):
+    from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
-            quantization = BitsAndBytesConfig(
-                load_in_8bit=True,
-                llm_int8_threshold=6.0,
-                llm_int8_enable_fp32_cpu_offload=False,
-                llm_int8_skip_modules=["lm_head"],
-            )
-            # Load directly on CUDA; moving an INT8 model afterward can invalidate its quantized state.
-            model = cls.from_pretrained(
-                path,
-                local_files_only=True,
-                dtype=torch.float16,
-                device_map={"": device},
-                quantization_config=quantization,
-            ).eval()
-        else:
-            model = cls.from_pretrained(path, local_files_only=True, dtype=torch.bfloat16).to(device).eval()
-        pipe.send(
-            {
-                "ready": True,
-                "metrics": {
-                    "device": torch.cuda.get_device_name(device),
-                    "allocated_bytes": torch.cuda.memory_allocated(device),
-                    "reserved_bytes": torch.cuda.memory_reserved(device),
-                },
-            }
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA 不可用；请安装 CUDA 版 PyTorch 并检查显卡驱动")
+    device = config["device"]
+    int8 = config.get("quantization", "none") == "int8"
+    if int8 and any(find_spec(package) is None for package in ("bitsandbytes", "accelerate")):
+        raise RuntimeError("INT8 需要 bitsandbytes 和 accelerate；请安装项目的 retrieval 可选依赖")
+    free, _ = torch.cuda.mem_get_info(device)
+    # Startup headroom only; inference also depends on batch size and sequence length.
+    required_gib = (5 if int8 else 9) if config["model"].endswith("4B") else (1.5 if int8 else 2)
+    required = int(required_gib * 1024**3)
+    if free < required:
+        hint = "请选择 0.6B 或释放其他 GPU 应用" if int8 else "请启用 INT8、选择 0.6B 或释放其他 GPU 应用"
+        raise RuntimeError(f"空闲显存不足（预热至少需要 {required_gib:g} GiB）；{hint}")
+    path = str(Path(root) / digest([config["model"], config["revision"]]))
+    tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True, padding_side="left")
+    cls = AutoModel if purpose == "embedding" else AutoModelForCausalLM
+    if int8:
+        from transformers import BitsAndBytesConfig
+
+        quantization = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_threshold=6.0,
+            llm_int8_enable_fp32_cpu_offload=False,
+            llm_int8_skip_modules=["lm_head"],
         )
+        # Load directly on CUDA; moving an INT8 model afterward can invalidate its quantized state.
+        model = cls.from_pretrained(
+            path,
+            local_files_only=True,
+            dtype=torch.float16,
+            device_map={"": device},
+            quantization_config=quantization,
+        ).eval()
+    else:
+        model = cls.from_pretrained(path, local_files_only=True, dtype=torch.bfloat16).to(device).eval()
+    return tokenizer, model
+
+
+def _infer(torch, tokenizer, model, config, request):
+    device = config["device"]
+    action, data = request["action"], request["data"]
+    instruction = request["instruction_prompt"]
+    results = []
+    batch_size = config["batch_size"]
+    # Peak statistics are per device, so they also cover the sibling model's concurrent work.
+    torch.cuda.reset_peak_memory_stats(device)
+    with torch.inference_mode():
+        if action == "embed":
+            texts = [f"Instruct: {instruction}\nQuery: {t}" if request.get("query") else t for t in data]
+            for offset in range(0, len(texts), batch_size):
+                inputs = tokenizer(
+                    texts[offset : offset + batch_size],
+                    padding=True,
+                    truncation=True,
+                    max_length=4096,
+                    return_tensors="pt",
+                ).to(device)
+                output = model(**inputs, use_cache=False).last_hidden_state[:, -1]
+                output = torch.nn.functional.normalize(output[:, : config["dimensions"]].float(), dim=1)
+                results.extend(output.cpu().tolist())
+        elif action == "index":
+            size, overlap = request["chunk_tokens"], request["chunk_overlap"]
+            for entry in data:
+                title = " ".join(
+                    [
+                        lore_title(entry) if request["title_in_retrieval"] else "",
+                        *entry.get("keys", []),
+                    ]
+                )
+                title_ids = tokenizer.encode(title, add_special_tokens=False)[: size // 4]
+                ids = tokenizer.encode(entry["content"], add_special_tokens=False)
+                capacity = size - len(title_ids)
+                stride = max(1, capacity - overlap)
+                texts = [
+                    tokenizer.decode(title_ids + ids[start : start + capacity])
+                    for start in range(0, max(1, len(ids)), stride)
+                ]
+                vectors = []
+                for offset in range(0, len(texts), batch_size):
+                    inputs = tokenizer(
+                        texts[offset : offset + batch_size],
+                        padding=True,
+                        truncation=True,
+                        max_length=size,
+                        return_tensors="pt",
+                    ).to(device)
+                    output = model(**inputs, use_cache=False).last_hidden_state[:, -1]
+                    vectors.extend(
+                        torch.nn.functional.normalize(output[:, : config["dimensions"]].float(), dim=1)
+                        .cpu()
+                        .tolist()
+                    )
+                results.append({"fragments": texts, "vectors": vectors})
+        elif action == "rerank":
+            prefix = "<|im_start|>system\n" + request["reranker_prompt"] + "<|im_end|>\n<|im_start|>user\n"
+            suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+            yes, no = tokenizer.convert_tokens_to_ids("yes"), tokenizer.convert_tokens_to_ids("no")
+            for query, document in data:
+                if isinstance(document, list):
+                    fragments = document
+                else:
+                    ids = tokenizer.encode(document, add_special_tokens=False)
+                    size = request["chunk_tokens"]
+                    fragments = [
+                        tokenizer.decode(ids[i : i + size])
+                        for i in range(0, max(1, len(ids)), size - request["chunk_overlap"])
+                    ]
+                    from tavern.search.retrieval import grams
+
+                    qgrams = set(grams(query))
+                    fragments.sort(key=lambda t: -len(qgrams & set(grams(t))))
+                texts = [
+                    prefix + f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {text}" + suffix
+                    for text in fragments[: request["rerank_fragments"]]
+                ]
+                fragment_scores = []
+                for offset in range(0, len(texts), batch_size):
+                    inputs = tokenizer(
+                        texts[offset : offset + batch_size],
+                        padding=True,
+                        truncation=True,
+                        max_length=4096,
+                        return_tensors="pt",
+                    ).to(device)
+                    # Reranking needs only the final yes/no logits, not a full sequence or KV cache.
+                    logits = (
+                        model(**inputs, use_cache=False, logits_to_keep=1).logits[:, -1, [no, yes]].float()
+                    )
+                    fragment_scores.append(float(torch.softmax(logits, dim=1)[:, 1].max().cpu()))
+                results.append(max(fragment_scores))
+        else:
+            raise ValueError("无效推理操作")
+    return results
+
+
+def _metrics(torch, device):
+    return {
+        "device": torch.cuda.get_device_name(device),
+        "allocated_bytes": torch.cuda.memory_allocated(device),
+        "reserved_bytes": torch.cuda.memory_reserved(device),
+    }
+
+
+def _serve(pipe, root, purpose):
+    model = tokenizer = config = None
+    try:
         while True:
             request = pipe.recv()
-            action, data = request["action"], request["data"]
-            instruction = request["instruction_prompt"]
-            results = []
-            batch_size = config["batch_size"]
-            torch.cuda.reset_peak_memory_stats(device)
-            with torch.inference_mode():
-                if action == "embed":
-                    texts = [
-                        f"Instruct: {instruction}\nQuery: {t}" if request.get("query") else t for t in data
-                    ]
-                    for offset in range(0, len(texts), batch_size):
-                        inputs = tokenizer(
-                            texts[offset : offset + batch_size],
-                            padding=True,
-                            truncation=True,
-                            max_length=4096,
-                            return_tensors="pt",
-                        ).to(device)
-                        output = model(**inputs, use_cache=False).last_hidden_state[:, -1]
-                        output = torch.nn.functional.normalize(
-                            output[:, : config["dimensions"]].float(), dim=1
-                        )
-                        results.extend(output.cpu().tolist())
-                elif action == "index":
-                    size, overlap = request["chunk_tokens"], request["chunk_overlap"]
-                    for entry in data:
-                        title = " ".join(
-                            [
-                                lore_title(entry) if request["title_in_retrieval"] else "",
-                                *entry.get("keys", []),
-                            ]
-                        )
-                        title_ids = tokenizer.encode(title, add_special_tokens=False)[: size // 4]
-                        ids = tokenizer.encode(entry["content"], add_special_tokens=False)
-                        capacity = size - len(title_ids)
-                        stride = max(1, capacity - overlap)
-                        texts = [
-                            tokenizer.decode(title_ids + ids[start : start + capacity])
-                            for start in range(0, max(1, len(ids)), stride)
-                        ]
-                        vectors = []
-                        for offset in range(0, len(texts), batch_size):
-                            inputs = tokenizer(
-                                texts[offset : offset + batch_size],
-                                padding=True,
-                                truncation=True,
-                                max_length=size,
-                                return_tensors="pt",
-                            ).to(device)
-                            output = model(**inputs, use_cache=False).last_hidden_state[:, -1]
-                            vectors.extend(
-                                torch.nn.functional.normalize(
-                                    output[:, : config["dimensions"]].float(), dim=1
-                                )
-                                .cpu()
-                                .tolist()
-                            )
-                        results.append({"fragments": texts, "vectors": vectors})
-                elif action == "rerank":
-                    prefix = (
-                        "<|im_start|>system\n" + request["reranker_prompt"] + "<|im_end|>\n<|im_start|>user\n"
-                    )
-                    suffix = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
-                    yes, no = tokenizer.convert_tokens_to_ids("yes"), tokenizer.convert_tokens_to_ids("no")
-                    for query, document in data:
-                        if isinstance(document, list):
-                            fragments = document
-                        else:
-                            ids = tokenizer.encode(document, add_special_tokens=False)
-                            size = request["chunk_tokens"]
-                            fragments = [
-                                tokenizer.decode(ids[i : i + size])
-                                for i in range(0, max(1, len(ids)), size - request["chunk_overlap"])
-                            ]
-                            from tavern.search.retrieval import grams
+            try:
+                import torch
 
-                            qgrams = set(grams(query))
-                            fragments.sort(key=lambda t: -len(qgrams & set(grams(t))))
-                        texts = [
-                            prefix
-                            + f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {text}"
-                            + suffix
-                            for text in fragments[: request["rerank_fragments"]]
-                        ]
-                        fragment_scores = []
-                        for offset in range(0, len(texts), batch_size):
-                            inputs = tokenizer(
-                                texts[offset : offset + batch_size],
-                                padding=True,
-                                truncation=True,
-                                max_length=4096,
-                                return_tensors="pt",
-                            ).to(device)
-                            # Reranking needs only the final yes/no logits, not a full sequence or KV cache.
-                            logits = (
-                                model(**inputs, use_cache=False, logits_to_keep=1)
-                                .logits[:, -1, [no, yes]]
-                                .float()
-                            )
-                            fragment_scores.append(float(torch.softmax(logits, dim=1)[:, 1].max().cpu()))
-                        results.append(max(fragment_scores))
-                else:
-                    raise ValueError("无效推理操作")
-            pipe.send(
-                {
-                    "result": results,
-                    "metrics": {
-                        "device": torch.cuda.get_device_name(device),
-                        "allocated_bytes": torch.cuda.memory_allocated(device),
-                        "reserved_bytes": torch.cuda.memory_reserved(device),
-                        "peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
-                        "peak_reserved_bytes": torch.cuda.max_memory_reserved(device),
-                    },
-                }
-            )
-    except EOFError:
+                if request["action"] in ("load", "unload"):
+                    # Release the previous weights before the VRAM headroom check of a replacement.
+                    model = tokenizer = None
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    if request["action"] == "unload":
+                        pipe.send({"result": None})
+                        continue
+                    config = request["config"]
+                    tokenizer, model = _load(torch, root, purpose, config)
+                    pipe.send({"ready": True, "metrics": _metrics(torch, config["device"])})
+                    continue
+                results = _infer(torch, tokenizer, model, config, request)
+                device = config["device"]
+                pipe.send(
+                    {
+                        "result": results,
+                        "metrics": {
+                            **_metrics(torch, device),
+                            "peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
+                            "peak_reserved_bytes": torch.cuda.max_memory_reserved(device),
+                        },
+                    }
+                )
+            except Exception as error:
+                # Drop only this purpose's model; the sibling thread and the shared CUDA runtime stay up.
+                model = tokenizer = None
+                gc.collect()
+                pipe.send({"error": str(error)})
+    except (EOFError, BrokenPipeError, OSError):
         pass
-    except BaseException as error:
-        try:
-            pipe.send({"error": str(error)})
-        except (BrokenPipeError, OSError):
-            pass
     finally:
         pipe.close()
+
+
+def _host(pipes, root):
+    """Serve every purpose from one process so PyTorch/CUDA host memory (~1.2 GiB) is paid once."""
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    # One thread per purpose keeps embedding and reranking independent; CUDA kernels release the GIL.
+    threads = [threading.Thread(target=_serve, args=(pipe, root, purpose)) for purpose, pipe in pipes.items()]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
 
 def _download(pipe, root, config, network):
@@ -221,13 +246,19 @@ def _download(pipe, root, config, network):
         pipe.close()
 
 
+class WorkerError(RuntimeError):
+    """A purpose thread reported a failure and already dropped its model."""
+
+
 class LocalModelManager:
     def __init__(self, store):
         self.store = store
         self.startup_id = str(uuid.uuid4())
         self.root = store.root / "models"
-        self.workers = {}
-        self.locks = {name: asyncio.Lock() for name in ("embedding", "reranker")}
+        # One spawned process hosts both purposes: (process, {purpose: pipe}).
+        self.host = None
+        self.loaded = {}
+        self.locks = {name: asyncio.Lock() for name in PURPOSES}
         self.jobs = {}
         self.tasks = {}
         self.indexing = set()
@@ -243,16 +274,15 @@ class LocalModelManager:
 
     def status(self, settings):
         result = {}
-        for purpose in ("embedding", "reranker"):
+        for purpose in PURPOSES:
             config = getattr(settings.local_models, purpose)
-            worker = self.workers.get(purpose)
             result[purpose] = {
                 "downloaded": (self.path(config) / "tavern-ready.json").exists(),
                 "ready": bool(
                     purpose in self.ready
-                    and worker
-                    and worker[0].is_alive()
-                    and worker[2] == digest(config.model_dump())
+                    and self.host
+                    and self.host[0].is_alive()
+                    and self.loaded.get(purpose) == digest(config.model_dump())
                 ),
                 "model": config.model,
                 "quantization": config.quantization,
@@ -264,15 +294,35 @@ class LocalModelManager:
             "metrics": self.metrics,
         }
 
-    def stop_worker(self, purpose):
-        self.ready.discard(purpose)
-        worker = self.workers.pop(purpose, None)
-        if worker:
-            process, pipe, _ = worker
-            if process.is_alive():
-                process.terminate()
-            process.join(timeout=1)
+    def start_host(self):
+        if self.host and self.host[0].is_alive():
+            return
+        self.stop_host(self.host)
+        context = mp.get_context("spawn")
+        pipes, children = {}, {}
+        for purpose in PURPOSES:
+            pipes[purpose], children[purpose] = context.Pipe()
+        process = context.Process(target=_host, args=(children, str(self.root)), daemon=True)
+        process.start()
+        for child in children.values():
+            child.close()
+        self.host = (process, pipes)
+
+    def stop_host(self, host):
+        # A stuck CUDA call cannot be interrupted per thread, so both models stop together.
+        # Only the host that failed is cleared; a replacement started meanwhile stays.
+        if host is None:
+            return
+        process, pipes = host
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=1)
+        for pipe in pipes.values():
             pipe.close()
+        if self.host is host:
+            self.host = None
+            self.loaded.clear()
+            self.ready.clear()
 
     async def receive(self, process, pipe, timeout):
         deadline = time.monotonic() + timeout
@@ -280,12 +330,38 @@ class LocalModelManager:
             if pipe.poll():
                 value = pipe.recv()
                 if "error" in value:
-                    raise RuntimeError(value["error"])
+                    raise WorkerError(value["error"])
                 return value
             if not process.is_alive():
-                raise RuntimeError("本地推理进程已退出")
+                raise RuntimeError("本地推理进程已退出；两个本地模型都需要重新预热")
             await asyncio.sleep(0.01)
-        raise TimeoutError("本地推理超时；工作进程已隔离终止，请重新预热")
+        raise TimeoutError("本地推理超时；本地模型进程已终止，两个本地模型都需要重新预热")
+
+    async def request(self, purpose, payload, timeout):
+        host = self.host
+        process, pipes = host
+        try:
+            pipes[purpose].send(payload)
+            return await self.receive(process, pipes[purpose], timeout)
+        except WorkerError:
+            self.ready.discard(purpose)
+            self.loaded.pop(purpose, None)
+            raise
+        except BaseException:
+            # Timeout, exit or cancellation leaves a reply in flight; only a fresh host is in sync.
+            self.stop_host(host)
+            raise
+
+    async def unload(self, purpose):
+        if purpose not in self.loaded:
+            return
+        if not self.host[0].is_alive():
+            self.stop_host(self.host)
+            return
+        async with self.locks[purpose]:
+            self.ready.discard(purpose)
+            self.loaded.pop(purpose)
+            await self.request(purpose, {"action": "unload"}, 10)
 
     async def warmup(self, purpose, settings):
         async with self.locks[purpose]:
@@ -297,51 +373,38 @@ class LocalModelManager:
             config = getattr(settings.local_models, purpose)
             if not (self.path(config) / "tavern-ready.json").exists():
                 raise ValueError("模型未下载，请先下载再预热")
-            self.stop_worker(purpose)
-            parent, child = mp.get_context("spawn").Pipe()
-            process = mp.get_context("spawn").Process(
-                target=_worker, args=(child, str(self.root), purpose, config.model_dump()), daemon=True
-            )
-            process.start()
-            child.close()
-            self.workers[purpose] = (process, parent, digest(config.model_dump()))
-            try:
-                response = await self.receive(process, parent, 180)
-                self.metrics[purpose] = response.get("metrics", {})
-                self.ready.add(purpose)
-            except BaseException:
-                self.stop_worker(purpose)
-                raise
+            self.ready.discard(purpose)
+            self.loaded.pop(purpose, None)
+            self.start_host()
+            response = await self.request(purpose, {"action": "load", "config": config.model_dump()}, 180)
+            self.metrics[purpose] = response.get("metrics", {})
+            self.loaded[purpose] = digest(config.model_dump())
+            self.ready.add(purpose)
 
     async def infer(self, purpose, action, data, settings, *, timeout, query=False):
         if self.locks[purpose].locked():
             raise RuntimeError("本地模型忙，已跳过本次推理以避免排队延迟")
         async with self.locks[purpose]:
             config = getattr(settings.local_models, purpose)
-            worker = self.workers.get(purpose)
-            if purpose not in self.ready or not worker or worker[2] != digest(config.model_dump()):
+            if purpose not in self.ready or self.loaded.get(purpose) != digest(config.model_dump()):
                 raise RuntimeError("模型尚未预热或配置已改变")
-            process, pipe, _ = worker
-            try:
-                pipe.send(
-                    {
-                        "action": action,
-                        "data": data,
-                        "query": query,
-                        "instruction_prompt": settings.local_models.instruction_prompt,
-                        "reranker_prompt": settings.local_models.reranker_prompt,
-                        "chunk_tokens": settings.retrieval.chunk_tokens,
-                        "chunk_overlap": settings.retrieval.chunk_overlap,
-                        "title_in_retrieval": settings.retrieval.title_in_retrieval,
-                        "rerank_fragments": settings.local_models.rerank_fragments,
-                    }
-                )
-                response = await self.receive(process, pipe, timeout)
-                self.metrics[purpose] = response.get("metrics", {})
-                return response["result"]
-            except BaseException:
-                self.stop_worker(purpose)
-                raise
+            response = await self.request(
+                purpose,
+                {
+                    "action": action,
+                    "data": data,
+                    "query": query,
+                    "instruction_prompt": settings.local_models.instruction_prompt,
+                    "reranker_prompt": settings.local_models.reranker_prompt,
+                    "chunk_tokens": settings.retrieval.chunk_tokens,
+                    "chunk_overlap": settings.retrieval.chunk_overlap,
+                    "title_in_retrieval": settings.retrieval.title_in_retrieval,
+                    "rerank_fragments": settings.local_models.rerank_fragments,
+                },
+                timeout,
+            )
+            self.metrics[purpose] = response.get("metrics", {})
+            return response["result"]
 
     def job(self, kind, action):
         # Keep the last 30 completed jobs for inspection, without retaining task
@@ -380,7 +443,7 @@ class LocalModelManager:
                 return
             if self.locks[purpose].locked():
                 raise ValueError("模型正在运行，请稍后重新下载")
-            self.stop_worker(purpose)
+            await self.unload(purpose)
             parent, child = mp.get_context("spawn").Pipe()
             process = mp.get_context("spawn").Process(
                 target=_download,
@@ -482,5 +545,4 @@ class LocalModelManager:
         for task in self.tasks.values():
             task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
-        for purpose in list(self.workers):
-            self.stop_worker(purpose)
+        self.stop_host(self.host)

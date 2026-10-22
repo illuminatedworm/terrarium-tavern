@@ -236,17 +236,41 @@ async def test_timeout_terminates_worker_and_requires_explicit_rewarm(tmp_path):
     process = mp.get_context("spawn").Process(target=stalled_worker, args=(child,), daemon=True)
     process.start()
     child.close()
-    manager.workers["embedding"] = (process, parent, digest(settings.local_models.embedding.model_dump()))
-    manager.ready.add("embedding")
+    manager.host = (process, {"embedding": parent})
+    for purpose in ("embedding", "reranker"):
+        manager.loaded[purpose] = digest(getattr(settings.local_models, purpose).model_dump())
+        manager.ready.add(purpose)
     try:
         with pytest.raises(TimeoutError):
             await manager.infer("embedding", "embed", ["query"], settings, timeout=0.05)
         assert not process.is_alive()
-        assert "embedding" not in manager.workers
+        # Both purposes share the terminated host process, so both need an explicit rewarm.
+        assert manager.host is None and not manager.ready and not manager.loaded
         with pytest.raises(RuntimeError, match="预热"):
             await manager.infer("embedding", "embed", ["query"], settings, timeout=0.05)
     finally:
         await manager.close()
+
+
+async def test_reported_model_error_keeps_sibling_model_warm(tmp_path):
+    from types import SimpleNamespace
+
+    from tavern.search.local_models import LocalModelManager
+    from tavern.search.retrieval import digest
+    from tavern.storage.store import Store
+
+    manager = LocalModelManager(Store(tmp_path))
+    settings = Settings()
+    pipe = SimpleNamespace(send=lambda payload: None, poll=lambda: True, recv=lambda: {"error": "CUDA OOM"})
+    process = SimpleNamespace(is_alive=lambda: True)
+    host = manager.host = (process, {"embedding": pipe, "reranker": pipe})
+    for purpose in ("embedding", "reranker"):
+        manager.loaded[purpose] = digest(getattr(settings.local_models, purpose).model_dump())
+        manager.ready.add(purpose)
+    with pytest.raises(RuntimeError, match="CUDA OOM"):
+        await manager.infer("reranker", "rerank", [["q", "d"]], settings, timeout=1)
+    assert manager.host is host
+    assert manager.ready == {"embedding"} and set(manager.loaded) == {"embedding"}
 
 
 async def test_changed_and_deleted_entries_are_not_served_from_stale_indexes(tmp_path):

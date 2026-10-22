@@ -329,7 +329,8 @@ async def test_local_prompt_overrides_reach_worker(tmp_path):
 
     manager.receive = receive
     manager.ready.add("reranker")
-    manager.workers["reranker"] = (None, Pipe(), digest(config.local_models.reranker.model_dump()))
+    manager.host = (None, {"reranker": Pipe()})
+    manager.loaded["reranker"] = digest(config.local_models.reranker.model_dump())
     result = await manager.infer("reranker", "rerank", [["query", "document"]], config, timeout=1)
     assert result == [0.9]
     assert sent[0]["instruction_prompt"] == "LOCAL TASK"

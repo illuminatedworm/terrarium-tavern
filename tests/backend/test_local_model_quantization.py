@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from tavern.core.models import Settings
 from tavern.core.settings import SettingsDocument
-from tavern.search.local_models import LocalModelManager, _worker
+from tavern.search.local_models import LocalModelManager, _serve
 from tavern.search.retrieval import digest
 
 
@@ -25,7 +25,8 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
     path = manager.path(config)
     path.mkdir(parents=True)
     (path / "tavern-ready.json").write_text(json.dumps({"revision": "cached"}), encoding="utf-8")
-    manager.workers["embedding"] = (SimpleNamespace(is_alive=lambda: True), None, digest(config.model_dump()))
+    manager.host = (SimpleNamespace(is_alive=lambda: True), {})
+    manager.loaded["embedding"] = digest(config.model_dump())
     manager.ready.add("embedding")
     assert manager.status(settings)["models"]["embedding"]["ready"]
     config.quantization = "int8"
@@ -99,7 +100,14 @@ def test_int8_worker_stays_on_selected_gpu_and_batches_rerank_fragments(monkeypa
         "reranker_prompt": "judge",
         "rerank_fragments": 3,
     }
-    requests = iter([request])
+    config = {
+        "model": "Qwen/Qwen3-Reranker-4B",
+        "revision": "main",
+        "device": "cuda:1",
+        "quantization": "int8",
+        "batch_size": 1,
+    }
+    requests = iter([{"action": "load", "config": config}, request])
 
     def receive():
         try:
@@ -108,14 +116,7 @@ def test_int8_worker_stays_on_selected_gpu_and_batches_rerank_fragments(monkeypa
             raise EOFError from None
 
     pipe = SimpleNamespace(recv=receive, send=messages.append, close=lambda: None)
-    config = {
-        "model": "Qwen/Qwen3-Reranker-4B",
-        "revision": "main",
-        "device": "cuda:1",
-        "quantization": "int8",
-        "batch_size": 1,
-    }
-    _worker(pipe, tmp_path, "reranker", config)
+    _serve(pipe, tmp_path, "reranker")
     assert not any("error" in message for message in messages), messages
     assert loaded[0]["device_map"] == {"": "cuda:1"}
     assert loaded[0]["local_files_only"] is True
