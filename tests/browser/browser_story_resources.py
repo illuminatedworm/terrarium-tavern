@@ -237,7 +237,7 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                             await frame.evaluate("(()=>{try{return !!parent.document}catch{return false}})()")
                             is False
                         )
-                        if width <= 760:
+                        if width <= 1200:
                             await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
                         # Navigate using actual rail positions, then release and restore the opt-in frame.
                         rail = page.get_by_role("slider", name="对话历史导航")
@@ -298,6 +298,13 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         assert await page.evaluate(
                             "document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight"
                         )
+                        # A squeezed story column once turned the composer into a tall strip over the prose.
+                        reading = await page.evaluate("""() => {
+                            const list = document.querySelector('.messages').getBoundingClientRect();
+                            const composer = document.querySelector('.composer').getBoundingClientRect();
+                            return (composer.top - list.top) / list.height;
+                        }""")
+                        assert reading >= 0.4, reading
                         await context.close()
                 finally:
                     await browser.close()

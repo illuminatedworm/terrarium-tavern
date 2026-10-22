@@ -60,7 +60,7 @@ async def main():
                         await page.goto(address)
                         await page.evaluate('sid=>localStorage.setItem("tavern-session",sid)', session["id"])
                         await page.reload()
-                        if width <= 760:
+                        if width <= 1200:
                             await page.get_by_role("button", name="展开右侧栏", exact=True).click()
                         await page.get_by_role("tab", name="缓存", exact=True).click()
                         await expect(page.get_by_label("缓存时效档位", exact=True)).to_have_count(0)
@@ -68,8 +68,9 @@ async def main():
                         await expect(
                             page.get_by_text("当前 Gemini 模型仅支持隐式缓存", exact=False)
                         ).to_be_visible()
-                        if width <= 760:
+                        if width <= 1200:
                             await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
+                        if width <= 760:
                             await page.get_by_role("button", name="切换左侧栏", exact=True).click()
                         await page.get_by_role("button", name="设置", exact=True).click()
                         dialog = page.get_by_role("dialog", name="设置", exact=True)

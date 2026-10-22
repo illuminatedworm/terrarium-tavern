@@ -1130,13 +1130,16 @@
 }
 
 /* ---------- Responsive ---------- */
+/* The floating inspector button sits at the end of the title row. */
+@media (max-width: 1200px) {
+  .story-title {
+    margin-right: 50px;
+  }
+}
 @media (max-width: 760px) {
   .dialogue-viewport {
     --reading-side: 16px;
     --dialogue-right-gutter: 64px;
-  }
-  .story-title {
-    margin-right: 50px;
   }
   .composer {
     padding: 0 12px 10px;

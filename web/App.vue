@@ -592,7 +592,7 @@ watch(
 );
 const mobileSidebarQuery = window.matchMedia('(max-width: 620px)');
 const mobileSidebar = ref(mobileSidebarQuery.matches);
-const rightOverlayQuery = window.matchMedia('(max-width: 760px)');
+const rightOverlayQuery = window.matchMedia('(max-width: 1200px)');
 const rightOverlay = ref(rightOverlayQuery.matches);
 // Drawers are transient on narrow screens: a stored "expanded" state (often saved
 // while a desktop window was being narrowed) must not reopen one over the story.
@@ -617,6 +617,8 @@ function syncMobileSidebar(event: MediaQueryListEvent) {
 }
 function syncRightOverlay(event: MediaQueryListEvent) {
   rightOverlay.value = event.matches;
+  // Zooming or narrowing a desktop window must not pop the inspector open over the story.
+  if (event.matches) layout.value.rightCollapsed = true;
 }
 async function toggleLeftSidebar() {
   if (layout.value.leftCollapsed && mobileSidebar.value) layout.value.rightCollapsed = true;
@@ -649,7 +651,7 @@ function resizeRightBy(delta: number) {
   layout.value.rightWidth = clampRightWidth(layout.value.rightWidth + delta);
 }
 function startRightResize(event: PointerEvent) {
-  if (layout.value.rightCollapsed || window.innerWidth <= 760) return;
+  if (layout.value.rightCollapsed || rightOverlay.value) return;
   event.preventDefault();
   stopRightResize?.();
   const startX = event.clientX,

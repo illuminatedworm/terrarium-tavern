@@ -751,8 +751,9 @@ main {
   }
 }
 /* The inspector becomes a drawer over the story, keeping its rail; a floating
-   button reopens it. */
-@media (max-width: 760px) {
+   button reopens it. Below 1200px an inline inspector would squeeze the story
+   column until the composer covers the reading area. */
+@media (max-width: 1200px) {
   .right-sidebar-scrim {
     display: block;
     position: fixed;

@@ -39,7 +39,7 @@ export function defaultReadingLayout(width: number) {
     readingWidth: 1120,
     fontFamily: 'sans',
     leftCollapsed: width < 760,
-    rightCollapsed: width < 760,
+    rightCollapsed: width <= 1200,
     rightWidth: 380,
     glass: true,
   };

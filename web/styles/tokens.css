@@ -128,8 +128,9 @@
 
   /* ---- Breakpoints ----
      Media queries cannot read custom properties, so the width steps are listed here
-     and used literally: 420 (small phone), 620 (phone: left drawer), 760 (tablet:
-     right drawer), 1000 / 1200 (compact desktop), 1400 (wide sidebar panel). */
+     and used literally: 420 (small phone), 620 (phone: left drawer), 760 (tablet),
+     1000 (compact desktop), 1200 (compact desktop: right drawer), 1400 (wide
+     sidebar panel). */
 
   /* ---- Shape & motion ---- */
   --radius-2xs: 3px;
