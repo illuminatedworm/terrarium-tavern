@@ -232,7 +232,7 @@ def cleanup(store, *, vacuum=False):
         editor_events = db.execute(
             f"""SELECT e.seq,length(CAST(e.payload AS BLOB)) AS bytes,r.created,
             NOT EXISTS(SELECT 1 FROM json_each(w.payload,'$.cards') a
-                WHERE json_extract(a.value,'$.card') IS NULL OR json_extract(a.value,'$.document') != json_extract(a.value,'$.base_document'))
+                WHERE COALESCE(json_extract(a.value,'$.card'), json_extract(a.value,'$.worldbook')) IS NULL OR json_extract(a.value,'$.document') != json_extract(a.value,'$.base_document'))
                 AND NOT EXISTS(SELECT 1 FROM card_author_progress p WHERE p.workspace=w.id) AS saved FROM card_edit_events e
             JOIN card_edit_runs r ON r.id=e.run JOIN card_author_conversations w ON w.id=r.workspace
             WHERE e.kind NOT IN ({placeholders})

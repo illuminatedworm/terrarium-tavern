@@ -12,8 +12,9 @@ from tavern.application.api import create_app
 from tavern.character.card_author import CardAuthorService
 from tavern.character.editor_sandbox import test_card as probe_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
-from tavern.core.models import CardAuthorRequest, SessionCreate
+from tavern.core.models import CardAuthorRequest, SessionCreate, WorldbookEdit
 from tavern.core.settings import SettingsDocument
+from tavern.storage import worldbooks
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import SCHEMA_VERSION, Conflict, Store, dump, uid
 from tests.backend.test_card_author import ToolLLM, import_fixture
@@ -242,6 +243,79 @@ async def test_reference_promotion_multi_card_and_invalid_target(tmp_path):
         await editor.close()
 
 
+async def test_library_worldbook_draft_is_a_card_subset_saved_back_with_conflict_checks(tmp_path):
+    store = Store(tmp_path)
+    editor = CardAuthorService(store)
+    entry_id = "a1" * 16
+    book = {"entries": [{"id": entry_id, "keys": ["龙"], "content": "龙居于北山。", "comment": "龙"}]}
+    library = worldbooks.save(store, None, WorldbookEdit(name="北山", book=book))
+    wid = editor.edits.create_conversation()["id"]
+    attached = editor.edits.attach_worldbook(wid, library["id"], 0)
+    assert attached["cards"][0]["kind"] == "reference" and attached["cards"][0]["card"] is None
+    provider = ToolLLM(
+        [
+            ("read_field", {"card_ref": "C1"}),
+            (
+                "set_text_field",
+                {
+                    "card_ref": "C1",
+                    "path": "/character_book/entries/0/content",
+                    "text": "龙居于北山，畏火。",
+                    "comment": "补充弱点",
+                },
+            ),
+            (
+                "patch_draft",
+                {
+                    "card_ref": "C1",
+                    "comment": "越界",
+                    "operations": [{"op": "add", "path": "/description", "value": "不属于世界书"}],
+                },
+            ),
+            ("set_opening", {"card_ref": "C1", "action": "update", "index": 0, "narrative": "开场"}),
+            ("set_portrait", {"card_ref": "C1", "file_ref": None}),
+            ("configure_card", {"card_ref": "C1", "target_mode": "half_agent", "confirmation_ref": "H1"}),
+            ("validate_draft", {"card_ref": "C1"}),
+        ]
+    )
+    try:
+        result = await run(editor, wid, provider, "补充龙的弱点")
+        assert result["status"] == "completed", result["error"]
+        sent = dump(provider.call_log)
+        # The library ID, its revision field and the entry's long ID never reach the model.
+        assert library["id"] not in sent and entry_id not in sent
+        for rejected in ("只能包含 name 和 character_book", "没有开场", "没有头像", "没有目标模式"):
+            assert rejected in sent
+        current = editor.edits.conversation(wid)
+        item = current["cards"][0]
+        assert item["kind"] == "draft" and set(item["document"]) == {"name", "character_book"}
+        assert item["document"]["character_book"]["entries"][0]["content"] == "龙居于北山，畏火。"
+
+        saved = editor.edits.save_card(wid, "C1", current["revision"], "overwrite", "worldbook-save")
+        assert saved["revision"] == 1
+        stored = worldbooks.worldbook(store, library["id"])
+        assert stored["book"]["entries"][0]["content"] == "龙居于北山，畏火。"
+        with pytest.raises(ValueError, match="覆盖原世界书或另存"):
+            editor.edits.save_card(
+                wid, "C1", editor.edits.conversation(wid)["revision"], "create", "no-create"
+            )
+
+        # A library edit made elsewhere turns the next overwrite into a conflict; copy still works.
+        worldbooks.save(store, library["id"], WorldbookEdit(name="北山", book=book, expected_revision=1))
+        current = editor.edits.conversation(wid)
+        assert current["cards"][0]["source_changed"]
+        edited = copy.deepcopy(current["cards"][0]["document"])
+        edited["name"] = "北山新稿"
+        current = editor.edits.update_card(wid, "C1", edited, current["revision"])
+        with pytest.raises(Conflict, match="世界书已改变"):
+            editor.edits.save_card(wid, "C1", current["revision"], "overwrite", "stale")
+        copied = editor.edits.save_card(wid, "C1", current["revision"], "copy", "as-copy")
+        assert copied["id"] != library["id"] and copied["name"].startswith("北山新稿（副本）")
+        assert [row["name"] for row in worldbooks.summaries(store)].count("北山") == 1
+    finally:
+        await editor.close()
+
+
 async def test_interrupt_and_steer_abort_unexecuted_calls_without_repeating_writes(tmp_path, monkeypatch):
     store = Store(tmp_path)
     editor = CardAuthorService(store)
@@ -411,6 +485,24 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
             current = (await client.get(base)).json()
             assert current["cards"][0]["source_changed"]
             assert current["cards"][0]["document"] == card["document"]
+            library = worldbooks.save(
+                app.state.store,
+                None,
+                WorldbookEdit(
+                    name="北山", book={"entries": [{"id": "a", "keys": ["龙"], "content": "龙。"}]}
+                ),
+            )
+            attached = await client.post(
+                base + "/worldbook-references",
+                json={"worldbook_id": library["id"], "expected_revision": current["revision"]},
+            )
+            added = attached.json()["cards"][1]
+            assert (added["ref"], added["worldbook"], added["source_exists"]) == ("C2", library["id"], True)
+            assert (
+                await client.post(
+                    base + "/drafts/C2/test", json={"expected_revision": attached.json()["revision"]}
+                )
+            ).status_code == 400
     finally:
         await editor.close()
         await app.state.service.close()

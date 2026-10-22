@@ -38,7 +38,9 @@ watch(
         @pointermove="$emit('highlight', index)"
         @click="$emit('choose', option)"
       >
-        <CardWorkspaceIcon :name="option.persona ? 'person' : option.attached ? 'book' : 'file'" />
+        <CardWorkspaceIcon
+          :name="option.persona ? 'person' : option.attached || option.worldbookSource ? 'book' : 'file'"
+        />
         <span class="reference-name">{{ option.name }}</span>
         <span class="reference-detail">{{ option.detail }}</span>
       </button>

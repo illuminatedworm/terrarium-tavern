@@ -13,6 +13,7 @@ from tavern.character.editor_context import EditorContext
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_sandbox import test_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
+from tavern.character.editor_worldbook import reject_worldbook
 from tavern.core.models import CardAuthorModelOptions, CardAuthorRequest
 from tavern.core.tokens import counting_info
 
@@ -47,6 +48,11 @@ class Document(Revision):
 class PersonaReference(Revision):
     persona_id: str
     expected_persona_version: int = Field(ge=0)
+
+
+class WorldbookReference(Revision):
+    worldbook_id: str
+    expected_worldbook_revision: int | None = Field(default=None, ge=0)
 
 
 class Save(Revision):
@@ -130,6 +136,12 @@ def register_conversation_routes(app, editor):
             wid, payload.persona_id, payload.expected_revision, payload.expected_persona_version
         )
 
+    @app.post(base + "/{wid}/worldbook-references")
+    async def attach_worldbook(wid: str, payload: WorldbookReference):
+        return editor.edits.attach_worldbook(
+            wid, payload.worldbook_id, payload.expected_revision, payload.expected_worldbook_revision
+        )
+
     @app.delete(base + "/{wid}/persona-references/{ref}")
     async def detach_persona(wid: str, ref: str, payload: Revision):
         return editor.edits.detach_persona(wid, ref, payload.expected_revision)
@@ -167,6 +179,7 @@ def register_conversation_routes(app, editor):
         with editor.store.connection() as db:
             workspace = editor.edits.check(db, wid, payload.expected_revision)
             item = editor.edits.item(workspace, ref)
+        reject_worldbook(item, "开场，无法做本地开场验证")
         return await test_card(editor.store, item, payload.index, payload.samples)
 
     @app.post(base + "/{wid}/runs")

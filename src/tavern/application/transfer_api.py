@@ -8,6 +8,7 @@ from fastapi import File, Form, UploadFile
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
+from tavern.storage import worldbooks
 from tavern.storage.transfer import (
     MAX_UPLOAD,
     ExportSelection,
@@ -21,9 +22,15 @@ from tavern.storage.transfer import (
 def register_transfer_routes(app, store):
     @app.get("/api/data-transfer")
     async def catalog():
+        cards = store.cards()
+        defaults = worldbooks.cards_defaults(store, [item["id"] for item in cards])
         return {
             "personas": [{"id": item["id"], "name": item["name"]} for item in store.personas()],
-            "cards": [{"id": item["id"], "name": item["name"]} for item in store.cards()],
+            "worldbooks": [{"id": item["id"], "name": item["name"]} for item in worldbooks.summaries(store)],
+            # Defaults let the export page show which bindings stay behind.
+            "cards": [
+                {"id": item["id"], "name": item["name"], "defaults": defaults[item["id"]]} for item in cards
+            ],
             "sessions": [
                 {
                     "id": item["id"],

@@ -10,7 +10,7 @@
 
 `shared.card_author_config.system_prompt` 是制卡 agent 主提示词的唯一配置来源，默认值为内置规则；新配置和恢复默认使用当前版本，已有保存内容不随默认文本更新而被覆盖。设置 API 的提示词目录、预览、任务开始和换窗均读取该字段，允许明确保存空文本，不用隐式默认值补回。任务内使用配置快照；下一次发送或续接时，提示词变化使上下文策略指纹失效，保留待提交草稿与已配对工具结果，并重新建立读取证据。旧设置增加该字段前备份，设置导入导出携带完整自定义文本。
 
-`card_author_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
+`card_author_conversations` 保存会话版本、标题、单调引用计数及完整卡片集合/创作状态。每个卡片对象保存 C 引用、当前文档、原卡快照、基准版本、目标模式与确认方案原文。用户从世界书库引用的独立世界书是同一种对象：文档为 `{name, character_book}`（`validate_book` 校验的卡子集），`card` 为空，另有 `worldbook` 字段保存书库 ID，基准版本为库书修订号；该 ID 只在服务端使用，不进入模型输入，也不参与上下文比较。世界书草稿的覆盖保存与库书修订号核对、另存副本都在制卡保存事务内完成，写入复用 `storage/worldbooks.py` 的 `update`/`insert`；工具与手工修改均限定顶层只有 `name` 和 `character_book`，不会悄悄丢弃其他字段。库中的书是模板，保存回书库不改变已挂载的对话。编辑引用时保持编号，变体另分配编号，丢弃的编号不复用。
 
 `card_author_messages` 保存完整用户输入与最终回复，以会话内 H 编号引用；`card_author_traces` 保存完整工具交换。`card_edit_contexts` 保存当前请求前缀、可逆编号映射和窗口状态。它们独立于可清理的动作诊断。
 
@@ -79,13 +79,13 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 | 从零制卡 | card-guide.md → card-format.md |
 | 变量、正则与脚本 | runtime-guide.md → references/regex-display.md |
 | 适配与状态栏迁移 | SKILL.md → runtime-guide.md → references/workflow.md → references/status-display.md、references/regex-display.md；含 ST-Prompt-Template 语法时加读 references/prompt-template.md |
-| 模式差异 | half-agent.md、full-agent.md：各模式的请求结构、可见数据、世界书位置、变量与脚本能力 |
+| 模式差异 | half-agent.md、full-agent.md：各模式的请求结构、可见数据、世界书位置、世界书库挂载、变量与脚本能力 |
 
 改变运行行为时同步修改对应指引。保存的自定义主提示词不随默认文本更新，旧提示词引用的资源名保持可读。
 
 ## API 与迁移
 
-主入口 `/api/card-author/conversations` 提供列表、创建、读取、改名与删除；其下 references、drafts、runs、progress、tools、preview 分别处理引用、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
+主入口 `/api/card-author/conversations` 提供列表、创建、读取、改名与删除；其下 references、worldbook-references、drafts、runs、progress、tools、preview 分别处理引用（角色卡与世界书库中的书）、逐卡操作、执行、续接进度、工具目录与预览。运行观察继续使用 `/api/card-edit-runs/{id}` 的 activity/events/cancel 接口。
 
 旧 `/api/cards/{cid}/edits` 和 `/api/card-edits/{id}` 作为单卡适配层；多卡操作必须明确目标。旧 new-context 只复制完成的单卡草稿，不复制旧聊天或未提交修改。
 

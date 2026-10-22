@@ -21,7 +21,7 @@ export interface EditorAction {
   searchFallback?: boolean;
 }
 const labels: Record<string, string> = {
-  overview: '查看角色卡概览',
+  overview: '查看草稿概览',
   read_field: '读取字段',
   read_text_file: '读取文本文件',
   read_document: '读取 Office 文档',

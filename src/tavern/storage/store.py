@@ -82,7 +82,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
 SETTINGS_VERSIONS = range(2, 9)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -250,6 +250,9 @@ class Store(MessageAdapters):
         from tavern.advisor.storage import initialize as initialize_advisor
 
         initialize_advisor(self)
+        from tavern.storage.worldbooks import initialize as initialize_worldbooks
+
+        initialize_worldbooks(self)
         self.initialize_message_adapters()
         # Every step above is idempotent, so an interrupted upgrade simply reruns.
         with self.connection() as db:
@@ -406,6 +409,9 @@ class Store(MessageAdapters):
                         dump(diagnose(document)),
                     ),
                 )
+                from tavern.storage.worldbooks import copy_defaults
+
+                copy_defaults(db, source["id"], new_id)
         except BaseException:
             path.unlink(missing_ok=True)
             raise
@@ -687,6 +693,17 @@ class Store(MessageAdapters):
             db.execute("BEGIN IMMEDIATE")
             if not db.execute("SELECT 1 FROM cards WHERE id=?", (card["id"],)).fetchone():
                 raise NotFound("角色卡不存在或已删除")
+            if options.worldbook_ids:
+                from tavern.character.worldbooks import REGISTRY, apply_mounts
+                from tavern.storage.worldbooks import read as read_worldbook
+
+                rows = {wid: read_worldbook(db, wid) for wid in options.worldbook_ids}
+                # card_data stays the plain shelf copy: it is the shelf-sync baseline.
+                document, snapshot[REGISTRY] = apply_mounts(
+                    card["document"], [], options.worldbook_ids, [], rows
+                )
+                validate_document(document)
+                snapshot["content"] = {"document": document, "reason": "新建对话时挂载世界书"}
             insert_row(
                 db,
                 "sessions",

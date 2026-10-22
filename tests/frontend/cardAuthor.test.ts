@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cardName,
   draftReview,
   editorTimeline,
   type EditorCard,
@@ -114,6 +115,16 @@ describe('current draft reading preview', () => {
     card.portrait_changed = true;
     expect(draftReview(card)).toEqual({ changes: [], count: 1, status: '独立草稿 · 有未保存修改' });
     expect(draftReview(saved)).toMatchObject({ count: 0, status: '与已保存版本一致' });
+    // A library worldbook draft has no card ID but a saved target of its own.
+    const book = {
+      ...structuredClone(saved),
+      card: null,
+      worldbook: 'book',
+      document: {},
+      base_document: {},
+    };
+    expect(draftReview(book)).toMatchObject({ count: 0, status: '与已保存版本一致' });
+    expect(cardName(book)).toBe('未命名世界书');
   });
 
   it('uses the current wrapped document and preserves complete object-style worldbook entries', () => {

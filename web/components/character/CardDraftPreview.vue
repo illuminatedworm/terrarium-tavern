@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { cardName, type EditorCard } from '../../lib/cardAuthor';
+import { cardName, isWorldbook, type EditorCard } from '../../lib/cardAuthor';
 import { previewCardData, previewLore } from '../../lib/cardPreview';
 import { cardPortraitUrl } from '../../lib/portraits';
 import CharacterPortrait from './CharacterPortrait.vue';
@@ -9,6 +9,7 @@ import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 
 const props = defineProps<{ card: EditorCard; conversationId: string; status: string; disabled?: boolean }>();
 defineEmits<{ edit: [] }>();
+const book = computed(() => isWorldbook(props.card));
 const data = computed(() => previewCardData(props.card.document));
 const lore = computed(() => previewLore(props.card.document));
 const opening = ref(0);
@@ -41,6 +42,7 @@ const matches = computed(() => {
 // A PNG portrait may be set in the draft before it reaches the library, so the
 // conversation serves the draft's own image; CHARX icons still come from the saved card.
 const portrait = computed(() => {
+  if (book.value) return '';
   const source = props.card.source || {};
   if (source.container === 'png' && source.original)
     return `/api/card-author/conversations/${encodeURIComponent(props.conversationId)}/portraits/${encodeURIComponent(source.original)}`;
@@ -69,14 +71,14 @@ watch(opening, () => {
       </button>
     </header>
     <p class="draft-preview-note">阅读预览 · 不运行脚本，原始内容可在“数据”中查看。</p>
-    <section v-for="field in fields" :key="field.key" class="draft-preview-section">
+    <section v-for="field in book ? [] : fields" :key="field.key" class="draft-preview-section">
       <h4>{{ field.label }}</h4>
       <CardPreviewProse :text="data[field.key]" />
     </section>
-    <p v-if="!fields.length" class="draft-preview-empty">
+    <p v-if="!book && !fields.length" class="draft-preview-empty">
       {{ lore.length ? '人物与世界设定请见下方世界书。' : '还没有填写人物或世界设定。' }}
     </p>
-    <section class="draft-preview-section" aria-label="开场预览">
+    <section v-if="!book" class="draft-preview-section" aria-label="开场预览">
       <div class="draft-section-heading">
         <h4>开场</h4>
         <select v-if="greetings.length > 1" v-model="opening" aria-label="预览开场">
@@ -138,7 +140,8 @@ watch(opening, () => {
       </details>
       <p v-if="!matches.length" class="draft-preview-empty">没有匹配的条目。</p>
     </section>
-    <details v-for="field in additional" :key="field.key" class="draft-extra">
+    <p v-else-if="book" class="draft-preview-empty">这本世界书还没有条目。</p>
+    <details v-for="field in book ? [] : additional" :key="field.key" class="draft-extra">
       <summary>{{ field.label }}</summary>
       <CardPreviewProse :text="data[field.key]" />
     </details>

@@ -53,10 +53,11 @@ async def main():
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 await page.goto(address)
-                await page.get_by_role("tab", name="会话", exact=True).click()
+                # The session list is the default panel; clicking its active tab would collapse it.
                 await page.get_by_role("button", name="开始新故事", exact=True).click()
                 await page.get_by_role("button", name=f"选择角色卡 {card['name']}").click()
                 await page.get_by_label("运行模式", exact=True).select_option("full_agent")
+                await page.get_by_role("button", name="下一步：挂载世界书", exact=True).click()
                 await page.get_by_role("button", name="进入故事", exact=True).click()
                 await page.locator(".story").wait_for()
                 await expect(page.locator(".story-heading")).to_contain_text("Full Agent")

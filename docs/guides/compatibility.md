@@ -7,7 +7,7 @@
 | V1/V2/V3 JSON | 保留原对象与未知字段；按原容器格式导出，四个世界书开关按下述规则统一字段名 |
 | PNG | chara / ccv3 tEXt，优先 V3；CRC 检查，保留其他 PNG chunks |
 | CHARX | card.json 与内嵌资源，路径/大小限制，资源保真导出 |
-| 世界书 | 内嵌、独立 JSON；保守关键词准入、辅助逻辑、常驻、概率、受原始查询约束的递归、深度、滚动注入及离开请求后概率冷却（旧持续字段保留但不执行） |
+| 世界书 | 内嵌、独立 JSON（可存入[世界书库](worldbooks.md)）；保守关键词准入、辅助逻辑、常驻、概率、受原始查询约束的递归、深度、滚动注入及离开请求后概率冷却（旧持续字段保留但不执行） |
 | 正则 | 原生 JavaScript RegExp；显示/模型阶段、placement 与 min/max depth |
 | 原始提示词 | 角色正文、system、post history、开场与示例映射到配方 |
 | 宏 | 模型文本保留 char、user、getvar / getglobalvar 读取；Helper 的 get / format / format_quoted 变量宏支持 message、chat、character、preset、global，用于模型上下文和文字、Markdown、HTML 展示；未知宏保留 |

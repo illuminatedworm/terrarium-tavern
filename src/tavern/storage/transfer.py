@@ -15,18 +15,21 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tavern.character.card_workflow import validate_document
 from tavern.character.cards import diagnose, normalize
+from tavern.character.worldbooks import REGISTRY, validate_book
 from tavern.core.kemini import AuxiliaryPart
 from tavern.core.message_adapter import MessageAdapterConfig
-from tavern.core.models import ContextRecipe, PersonaEdit
+from tavern.core.models import ContextRecipe, PersonaEdit, WorldbookEdit
 from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.search.retrieval_config import ModelProfile
 from tavern.storage.store import Conflict, dump, uid, write_blob
+from tavern.storage.worldbooks import read_defaults, write_defaults
 
 MAX_UPLOAD = 256 * 1024 * 1024
 MAX_UNPACKED = 512 * 1024 * 1024
 FORMAT = "terrarium-tavern-personal-data"
 JSON_FIELDS = {
+    "worldbooks": {"book"},
     "cards": {"resources", "document", "report"},
     "sessions": {
         "model_selection",
@@ -49,6 +52,7 @@ class ExportSelection(BaseModel):
     settings: bool = True
     include_api_keys: bool = False
     personas: list[str] = Field(default_factory=list)
+    worldbooks: list[str] = Field(default_factory=list)
     cards: list[str] = Field(default_factory=list)
     sessions: list[str] = Field(default_factory=list)
     browser_preferences: dict = Field(default_factory=dict)
@@ -121,15 +125,22 @@ def hashes(card):
 
 
 def export_package(store, selection):
-    if not (selection.settings or selection.personas or selection.cards or selection.sessions):
+    if not (
+        selection.settings
+        or selection.personas
+        or selection.worldbooks
+        or selection.cards
+        or selection.sessions
+    ):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 3,
+        "version": 4,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
         "personas": [],
+        "worldbooks": [],
         "cards": [],
         "sessions": [],
     }
@@ -157,13 +168,15 @@ def export_package(store, selection):
                 "document": raw,
                 "browser": browser_preferences(selection.browser_preferences),
             }
-        for table in ("personas", "cards", "sessions"):
+        for table in ("personas", "worldbooks", "cards", "sessions"):
             for identity in dict.fromkeys(getattr(selection, table)):
                 row = db.execute(f"SELECT * FROM {table} WHERE id=?", (identity,)).fetchone()
                 if row is None:
                     raise ValueError("选中的数据已被删除，请刷新后重试")
                 if table == "personas":
                     package[table].append(dict(row))
+                elif table == "worldbooks":
+                    package[table].append(decoded(table, row))
                 elif table == "cards":
                     if db.execute(
                         "SELECT 1 FROM card_edit_runs r JOIN card_edits e ON r.workspace=e.id "
@@ -171,7 +184,18 @@ def export_package(store, selection):
                         (identity,),
                     ).fetchone():
                         raise Conflict("请等待制卡 agent 任务完成后导出")
-                    package[table].append(pin(decoded(table, row)))
+                    card = pin(decoded(table, row))
+                    defaults = read_defaults(db, identity)
+                    if defaults["version"]:
+                        # Defaults travel only with the personas and books packed beside them.
+                        persona = defaults["persona_id"]
+                        card["defaults"] = {
+                            "persona_id": persona if persona in selection.personas else None,
+                            "worldbook_ids": [
+                                wid for wid in defaults["worldbook_ids"] if wid in selection.worldbooks
+                            ],
+                        }
+                    package[table].append(card)
                 else:
                     if db.execute(
                         "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
@@ -282,14 +306,18 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
-    for key in ("personas", "cards", "sessions"):
+    if package["version"] < 4:
+        # Older packages predate the worldbook library. Validation runs again on
+        # import, so filling the missing list must stay idempotent.
+        package.setdefault("worldbooks", [])
+    for key in ("personas", "worldbooks", "cards", "sessions"):
         if not isinstance(package.get(key), list):
             raise ValueError("数据包清单无效")
-    if package["sessions"] and package["version"] != 3:
+    if package["sessions"] and package["version"] < 3:
         raise ValueError("旧对话不支持整轮重试格式；请只导入角色卡、设置等非对话资料")
     identities = set()
     with store.connection() as db:
@@ -304,7 +332,9 @@ def validate_package(store, package, blobs):
         identities.add(value)
 
     def card(value, library=False):
-        raw = {key: item for key, item in value.items() if key not in ("dependencies", "session_id")}
+        raw = {
+            key: item for key, item in value.items() if key not in ("dependencies", "session_id", "defaults")
+        }
         validate_row(
             schema,
             "cards",
@@ -330,6 +360,21 @@ def validate_package(store, package, blobs):
             raise ValueError("角色资源清单无效") from None
         if any(not isinstance(digest, str) or digest not in blobs for digest in required):
             raise ValueError("数据包缺少角色资源")
+        if "defaults" in value:
+            defaults = value["defaults"]
+            books = defaults.get("worldbook_ids") if isinstance(defaults, dict) else None
+            if (
+                not library
+                or set(defaults) != {"persona_id", "worldbook_ids"}
+                or defaults["persona_id"] not in (None, *packed_personas)
+                or not isinstance(books, list)
+                or len(set(books)) != len(books)
+                or not set(books) <= packed_worldbooks
+            ):
+                raise ValueError("角色卡默认项引用了数据包外的数据")
+
+    packed_personas = {row.get("id") for row in package["personas"] if isinstance(row, dict)}
+    packed_worldbooks = {row.get("id") for row in package["worldbooks"] if isinstance(row, dict)}
 
     try:
         preferences = package.get("settings")
@@ -340,6 +385,11 @@ def validate_package(store, package, blobs):
             validate_row(schema, "personas", persona, {"id", "version", "name", "description"})
             PersonaEdit.model_validate({"name": persona["name"], "description": persona["description"]})
             identity(persona["id"])
+        for book in package["worldbooks"]:
+            validate_row(schema, "worldbooks", book, {"id", "name", "book", "revision", "created"})
+            WorldbookEdit.model_validate({"name": book["name"], "book": book["book"]})
+            validate_book(book["name"], book["book"])
+            identity(book["id"])
         for value in package["cards"]:
             card(value, True)
         for bundle in package["sessions"]:
@@ -459,6 +509,16 @@ def validate_package(store, package, blobs):
                         raise ValueError("对话历史窗口无效")
                 if snapshot.get("content"):
                     validate_document(snapshot["content"]["document"])
+                for item in snapshot.get(REGISTRY, []):
+                    if (
+                        set(item) != {"id", "name", "revision", "entries"}
+                        or not isinstance(item["id"], str)
+                        or not isinstance(item["name"], str)
+                        or type(item["revision"]) is not int
+                        or not isinstance(item["entries"], list)
+                        or not all(isinstance(eid, str) for eid in item["entries"])
+                    ):
+                        raise ValueError("对话挂载世界书记录无效")
                 by_id[message["id"]] = message
             if session["head"] is not None and session["head"] not in by_id:
                 raise ValueError("对话当前进度缺失")
@@ -568,6 +628,7 @@ def preview(package):
         "includes_api_keys": bool(package.get("includes_api_keys")),
         "settings": package.get("settings") is not None,
         "personas": [{"id": row["id"], "name": row["name"]} for row in package["personas"]],
+        "worldbooks": [{"id": row["id"], "name": row["name"]} for row in package["worldbooks"]],
         "cards": [{"id": row["id"], "name": row["name"]} for row in package["cards"]],
         "sessions": [
             {
@@ -583,12 +644,13 @@ def preview(package):
 
 def import_package(store, package, blobs, restore_settings=False, expected_revisions=None):
     validate_package(store, package, blobs)
-    ids = {row["id"]: uid() for key in ("personas", "cards") for row in package[key]}
+    ids = {row["id"]: uid() for key in ("personas", "worldbooks", "cards") for row in package[key]}
     for bundle in package["sessions"]:
         ids[bundle["session"]["id"]] = uid()
         ids.update({row["id"]: uid() for row in bundle["messages"]})
     result = {
         "personas": [],
+        "worldbooks": [],
         "cards": [],
         "sessions": [],
         "settings_restored": False,
@@ -649,12 +711,27 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 row.update(id=ids[row["id"]], version=1)
                 insert(db, "personas", row)
                 result["personas"].append(row["id"])
+            for book in package["worldbooks"]:
+                row = copy.deepcopy(book)
+                # Keep the packed revision: imported mount records compare against it.
+                row.update(id=ids[row["id"]])
+                insert(db, "worldbooks", row)
+                result["worldbooks"].append(row["id"])
             for card in package["cards"]:
                 row = copy.deepcopy(card)
                 dependencies = row.pop("dependencies", {})
+                defaults = row.pop("defaults", None)
                 row.pop("session_id", None)
                 row.update(id=ids[row["id"]], revision=0, report=diagnose(row["document"]))
                 insert(db, "cards", row)
+                if defaults:
+                    write_defaults(
+                        db,
+                        row["id"],
+                        ids.get(defaults["persona_id"]),
+                        [ids[wid] for wid in defaults["worldbook_ids"]],
+                        1,
+                    )
                 path = store.card_manifest_path(row)
                 path.parent.mkdir(exist_ok=True)
                 path.write_text(dump(dependencies), encoding="utf-8")

@@ -3,6 +3,8 @@ import { compare } from 'fast-json-patch';
 export interface EditorCard {
   ref: string;
   card: string | null;
+  /** Library ID, present only on library-worldbook drafts, which are `{name, character_book}` documents. */
+  worldbook?: string;
   kind: 'reference' | 'draft';
   document: Record<string, any>;
   base_document: Record<string, any>;
@@ -95,8 +97,14 @@ export function editorTimeline(messages: EditorMessage[], runs: EditorRun[]): Ed
   }
   return timeline;
 }
+export function isWorldbook(card: EditorCard) {
+  return 'worldbook' in card;
+}
 export function cardName(card: EditorCard) {
-  return (card.document.spec ? card.document.data : card.document)?.name || '未命名角色';
+  return (
+    (card.document.spec ? card.document.data : card.document)?.name ||
+    (isWorldbook(card) ? '未命名世界书' : '未命名角色')
+  );
 }
 
 export function draftReview(card: EditorCard | undefined, pending = false) {
@@ -108,7 +116,7 @@ export function draftReview(card: EditorCard | undefined, pending = false) {
       ? '独立草稿 · 有未保存修改'
       : card?.kind === 'reference'
         ? '引用快照 · 尚未修改'
-        : card?.card
+        : card?.card || card?.worldbook
           ? '与已保存版本一致'
           : '独立草稿 · 尚未保存';
   return { changes, count, status };

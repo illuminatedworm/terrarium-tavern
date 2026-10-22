@@ -5,6 +5,7 @@ import {
   cardName,
   draftReview,
   editorTimeline,
+  isWorldbook,
   type EditorCard,
   type EditorConversation,
   type EditorPersona,
@@ -25,6 +26,7 @@ import StoryProse from '../story/StoryProse.vue';
 import JsonDataTree from '../common/JsonDataTree.vue';
 import AppModal from '../common/AppModal.vue';
 import CharacterEditor from './CharacterEditor.vue';
+import WorldbookDraftForm from './WorldbookDraftForm.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardRunActivity from './CardRunActivity.vue';
 import CardMessage from './CardMessage.vue';
@@ -42,6 +44,7 @@ import { handleComposerKeydown, sendShortcutHint, type SendShortcut } from '../.
 const props = defineProps<{
   conversationId: string;
   library: any[];
+  worldbooks: any[];
   modelProfile: ModelProfile;
   providers: Provider[];
   sendShortcut?: SendShortcut;
@@ -145,6 +148,11 @@ const conversationTitle = computed(
     '新的制卡对话',
 );
 const draftStatus = computed(() => review.value.status);
+const worldbook = computed(() => !!current.value && isWorldbook(current.value));
+const saveTarget = computed(() => !!(current.value?.card || current.value?.worldbook));
+// Built-in skills adapt cards only; a selected worldbook falls back to the first card.
+const skillCards = computed(() => items.value.filter((card) => !isWorldbook(card)));
+const skillTarget = computed(() => (worldbook.value ? skillCards.value[0] : current.value));
 const referencePicker = reactive(
   useCardReferencePicker({
     input,
@@ -152,6 +160,7 @@ const referencePicker = reactive(
     frame: composerFrame,
     cards: computed(() => workspace.value?.cards || []),
     library: computed(() => props.library),
+    worldbooks: computed(() => props.worldbooks),
     personas: personaLibrary,
     attachedPersonas: personaAttachments,
     disabled: locked,
@@ -439,7 +448,17 @@ async function chooseReference(option: CardReferenceOption) {
       return;
     }
     let item = option.attached;
-    if (!item && option.source) {
+    if (!item && option.worldbookSource) {
+      const value = await api(base + '/worldbook-references', {
+        worldbook_id: option.worldbookSource.id,
+        expected_revision: workspace.value!.revision,
+        expected_worldbook_revision: option.worldbookSource.revision,
+      });
+      if (!alive) return;
+      workspace.value = value;
+      item = value.cards.find((card: EditorCard) => card.worldbook === option.worldbookSource!.id);
+      emit('changed');
+    } else if (!item && option.source) {
       const value = await api(base + '/references', {
         card_id: option.source.id,
         expected_revision: workspace.value!.revision,
@@ -451,7 +470,7 @@ async function chooseReference(option: CardReferenceOption) {
       emit('changed');
     }
     if (!alive) return;
-    if (!item) throw new Error('角色卡引用未完成，请重试。');
+    if (!item) throw new Error('引用未完成，请重试。');
     selected.value = item.ref;
     attached = true;
     scheduleStats();
@@ -495,8 +514,9 @@ async function referenceFromSkills() {
   await referencePicker.show();
 }
 function useSkill(preset: EditorSkillPreset) {
-  if (!current.value || busy.value || active.value) return;
-  input.value = appendSkillRequest(input.value, cardName(current.value), preset);
+  if (!skillTarget.value || busy.value || active.value) return;
+  selected.value = skillTarget.value.ref;
+  input.value = appendSkillRequest(input.value, cardName(skillTarget.value), preset);
   closeModal();
   void nextTick(() => composer.value?.focus({ preventScroll: true }));
 }
@@ -510,7 +530,7 @@ async function action(kind: string) {
     else {
       await api(base + `/drafts/${ref}/save`, { ...revision, mode: kind, operation_id: crypto.randomUUID() });
       if (alive) {
-        notice.value = '角色卡已保存。';
+        notice.value = worldbook.value ? '世界书已保存。' : '角色卡已保存。';
         emit('saved');
       }
     }
@@ -534,6 +554,7 @@ async function setPortrait(select: HTMLSelectElement | null) {
 }
 async function saveForm(document: any) {
   const ref = current.value!.ref;
+  // Shared with the form components, which keep unsaved form edits under this key.
   const draftKey = `tavern-card-draft-${formCard.value!.id}`;
   await guard(async () => {
     await api(base + `/drafts/${ref}`, { document, expected_revision: workspace.value!.revision }, 'PUT');
@@ -644,7 +665,7 @@ onBeforeUnmount(() => {
               <div v-if="workspace && !workspace.messages.length" class="cw-empty">
                 <span class="cw-agent-mark"><CardWorkspaceIcon name="pen" /></span>
                 <h2>从一个想法开始</h2>
-                <p>讨论人物、世界或互动情境，引用角色卡、用户角色或本地文件作为资料。</p>
+                <p>讨论人物、世界或互动情境，引用角色卡、世界书、用户角色或本地文件作为资料。</p>
                 <p>开启联网后可搜索、读取网页；本地支持文本、DOCX、XLSX 文件及 PNG、JPEG、静态 WebP 图片。</p>
                 <p>先讨论方案，再审阅草稿；适配导入卡、迁移状态栏可用“内置技能”。</p>
               </div>
@@ -713,7 +734,7 @@ onBeforeUnmount(() => {
                 v-for="item in workspace?.cards"
                 :key="item.ref"
                 :name="cardName(item)"
-                kind="card"
+                :kind="isWorldbook(item) ? 'worldbook' : 'card'"
                 :disabled="locked"
                 @inspect="inspectReference(item)"
                 @remove="removeReference('card', item.ref)"
@@ -738,7 +759,7 @@ onBeforeUnmount(() => {
               :placeholder="
                 workspace?.pending
                   ? '可补充新要求后继续，例如：保留 A 的改动，恢复 B…'
-                  : '描述想法，或输入 @ 引用角色卡、用户角色…'
+                  : '描述想法，或输入 @ 引用角色卡、世界书、用户角色…'
               "
               @input="referencePicker.update()"
               @click="referencePicker.update()"
@@ -848,9 +869,13 @@ onBeforeUnmount(() => {
             />
             <template v-else-if="tab === 'document'">
               <p class="muted cw-card-kind">
-                {{ current.kind === 'reference' ? '参考卡 · 修改时自动建立草稿' : '独立草稿' }}
+                {{
+                  current.kind === 'reference'
+                    ? `${worldbook ? '参考世界书' : '参考卡'} · 修改时自动建立草稿`
+                    : '独立草稿'
+                }}
               </p>
-              <label
+              <label v-if="!worldbook"
                 >兼容性目标（可选）<select
                   :value="current.target_mode || ''"
                   :disabled="locked || pendingView"
@@ -861,7 +886,7 @@ onBeforeUnmount(() => {
                   <option value="full_agent">Full Agent</option>
                 </select></label
               >
-              <label
+              <label v-if="!worldbook"
                 >头像<select
                   value=""
                   :disabled="
@@ -884,7 +909,7 @@ onBeforeUnmount(() => {
                 </select></label
               >
               <button
-                v-if="current.source.container === 'png'"
+                v-if="!worldbook && current.source.container === 'png'"
                 :disabled="locked || pendingView"
                 @click="setPortrait(null)"
               >
@@ -901,7 +926,9 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="tab === 'changes'">
               <p v-if="current.source_changed" class="cw-notice">
-                书架原卡已有新版本。覆盖会进行版本检查，当前草稿保持不变。
+                {{
+                  worldbook ? '世界书库中的原书' : '书架原卡'
+                }}已有新版本。覆盖会进行版本检查，当前草稿保持不变。
               </p>
               <div class="cw-save-actions">
                 <button :disabled="locked || !current.can_undo || pendingView" @click="action('undo')">
@@ -911,7 +938,7 @@ onBeforeUnmount(() => {
                   :disabled="locked || !current.source_exists || pendingView"
                   @click="openModal('reload')"
                 >
-                  重新载入原卡
+                  {{ worldbook ? '重新载入原书' : '重新载入原卡' }}
                 </button>
                 <button :disabled="locked || pendingView" @click="openModal('remove')">移除引用/草稿</button>
               </div>
@@ -943,8 +970,10 @@ onBeforeUnmount(() => {
               >
                 {{ problem }}
               </p>
-              <button :disabled="locked || pendingView" @click="testCard">本地验证默认开场</button>
-              <p class="muted">检查初始化、脚本启动和正则。实际互动与视觉效果需另行验收。</p>
+              <template v-if="!worldbook">
+                <button :disabled="locked || pendingView" @click="testCard">本地验证默认开场</button>
+                <p class="muted">检查初始化、脚本启动和正则。实际互动与视觉效果需另行验收。</p>
+              </template>
               <JsonDataTree v-if="probe?.card_ref === current.ref" :value="probe" />
             </template>
           </div>
@@ -952,19 +981,25 @@ onBeforeUnmount(() => {
             <span>{{
               pendingView
                 ? '未完成修改仅供查看'
-                : current.card && !current.source_exists
-                  ? '原卡已删除，请另存副本'
+                : saveTarget && !current.source_exists
+                  ? `原${worldbook ? '世界书' : '卡'}已删除，请另存副本`
                   : draftStatus
             }}</span>
             <div class="cw-save-buttons">
               <button :disabled="locked || pendingView" @click="action('copy')">另存副本</button>
               <button
                 class="primary"
-                :disabled="locked || pendingView || (!!current.card && !current.source_exists)"
-                :title="current.card ? '将当前草稿保存到所引用的书架角色卡' : '将草稿加入书架'"
-                @click="action(current.card ? 'overwrite' : 'create')"
+                :disabled="locked || pendingView || (saveTarget && !current.source_exists)"
+                :title="
+                  worldbook
+                    ? '将当前草稿保存回所引用的世界书'
+                    : current.card
+                      ? '将当前草稿保存到所引用的书架角色卡'
+                      : '将草稿加入书架'
+                "
+                @click="action(saveTarget ? 'overwrite' : 'create')"
               >
-                {{ current.card ? '保存角色卡' : '保存新卡' }}
+                {{ worldbook ? '保存世界书' : current.card ? '保存角色卡' : '保存新卡' }}
               </button>
             </div>
           </footer>
@@ -973,7 +1008,7 @@ onBeforeUnmount(() => {
           {{
             Object.keys(personaAttachments).length
               ? '已引用用户角色，可以直接开始讨论。'
-              : '还没有角色卡草稿。可以引用角色或直接开始讨论。'
+              : '还没有草稿。可以引用角色卡、世界书或直接开始讨论。'
           }}
         </p>
       </aside>
@@ -983,18 +1018,34 @@ onBeforeUnmount(() => {
     ><div v-if="modal" ref="modalOverlay" class="modal-backdrop cw-overlay" @keydown.esc="closeModal">
       <AppModal
         :class="{ 'cw-skills-modal': modal === 'skills' }"
-        :label="modal === 'form' ? '编辑角色卡草稿' : modal === 'skills' ? '内置技能' : '制卡对话操作'"
+        :label="
+          modal === 'form'
+            ? worldbook
+              ? '编辑世界书草稿'
+              : '编辑角色卡草稿'
+            : modal === 'skills'
+              ? '内置技能'
+              : '制卡对话操作'
+        "
         :size="['form', 'adapter'].includes(modal) ? 'large' : modal === 'skills' ? 'medium' : 'small'"
         @close="closeModal"
       >
         <CardSkills
           v-if="modal === 'skills'"
-          :cards="items"
-          :selected="current?.ref || ''"
+          :cards="skillCards"
+          :selected="skillTarget?.ref || ''"
           :disabled="busy || !!active"
           @select="selected = $event"
           @use="useSkill"
           @reference="referenceFromSkills"
+        />
+        <WorldbookDraftForm
+          v-else-if="modal === 'form' && formCard && worldbook"
+          :key="formCard.id"
+          :draft-key="`tavern-card-draft-${formCard.id}`"
+          :document="current!.document"
+          @draft-saved="saveForm"
+          @back="closeModal"
         />
         <CharacterEditor
           v-else-if="modal === 'form' && formCard"
@@ -1022,8 +1073,12 @@ onBeforeUnmount(() => {
                 : modal === 'discard'
                   ? '丢弃本轮未完成修改？'
                   : modal === 'reload'
-                    ? '重新载入原卡？'
-                    : '移除这张卡？'
+                    ? worldbook
+                      ? '重新载入原世界书？'
+                      : '重新载入原卡？'
+                    : worldbook
+                      ? '移除这本世界书？'
+                      : '移除这张卡？'
             }}
           </h2>
           <p>
@@ -1033,8 +1088,10 @@ onBeforeUnmount(() => {
                 : modal === 'discard'
                   ? '本轮未提交的修改将丢弃，恢复上次完成的草稿。聊天记录保留。'
                   : modal === 'reload'
-                    ? '使用书架最新版本替换当前草稿；可通过撤销恢复。'
-                    : '这张卡的引用、草稿与撤销记录将移除。书架卡片保留。'
+                    ? `使用${worldbook ? '世界书库' : '书架'}最新版本替换当前草稿；可通过撤销恢复。`
+                    : worldbook
+                      ? '这本世界书的引用、草稿与撤销记录将移除。世界书库中的书保留。'
+                      : '这张卡的引用、草稿与撤销记录将移除。书架卡片保留。'
             }}
           </p>
           <div class="cw-toolbar">

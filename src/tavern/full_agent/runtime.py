@@ -74,8 +74,11 @@ class FullAgentRuntime:
                 return None
             raise ValueError("开场初始化不允许调用模型")
 
+        # Worldbooks mounted at creation live in the snapshot document, so their
+        # [InitVar] entries initialize the opening like the card's own entries.
+        document = (session["snapshot"].get("content") or {}).get("document", card["document"])
         script = await self.runtime.open(
-            card["document"],
+            document,
             session["messages"],
             session["snapshot"],
             bool(card["permission"]),
@@ -90,7 +93,7 @@ class FullAgentRuntime:
             snapshot = session["snapshot"]
             snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
             greeting = session["messages"][-1]
-            rules = regex_scripts(card["document"])
+            rules = regex_scripts(document)
             model = await script.call("transform", greeting["raw"], rules, 2, "model", 0)
             display = await script.call("transform", greeting["raw"], rules, 2, "display", 0)
             if card["permission"] and "<" in display:

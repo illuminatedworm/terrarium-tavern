@@ -67,6 +67,7 @@ import HomeView from './components/story/HomeView.vue';
 import SessionList from './components/story/SessionList.vue';
 import CardList from './components/character/CardList.vue';
 import CardConversationList from './components/character/CardConversationList.vue';
+import WorldbookList from './components/character/WorldbookList.vue';
 import StoryLoading from './components/story/StoryLoading.vue';
 import PersonaEditor from './components/settings/PersonaEditor.vue';
 import WorkRecords from './components/records/WorkRecords.vue';
@@ -89,6 +90,8 @@ import type {
   StoryMessageRecord,
   TurnRecord,
   TurnRequest,
+  Worldbook,
+  WorldbookSummary,
 } from './lib/types';
 
 const SettingsPanel = defineAsyncComponent({
@@ -106,6 +109,12 @@ const CharacterEditor = defineAsyncComponent({
   loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载角色卡编辑器…') },
   errorComponent: { render: () => h('p', { role: 'alert' }, '角色卡编辑器加载失败，请刷新页面后重试。') },
 });
+const WorldbookEditor = defineAsyncComponent({
+  loader: () => import('./components/character/WorldbookEditor.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载世界书编辑器…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '世界书编辑器加载失败，请刷新页面后重试。') },
+});
 const CardWorkspace = defineAsyncComponent({
   loader: () => import('./components/character/CardWorkspace.vue'),
   delay: 0,
@@ -114,6 +123,8 @@ const CardWorkspace = defineAsyncComponent({
 });
 
 const orphanDrafts = ref<OrphanDraft[]>([]);
+const worldbooks = ref<WorldbookSummary[]>([]),
+  selectedWorldbook = ref<Worldbook | null>(null);
 const cardConversations = ref<CardConversationSummary[]>([]);
 const editorConversationId = ref('');
 const deletingCardConversationId = ref('');
@@ -512,13 +523,14 @@ const sceneUpdating = computed(
   () => sceneSubmitting.value || (busy.value ? activeTurn.value?.request?.scene_refresh : null),
 );
 const sidebarSection = ref(
-  ['cards', 'editor'].includes(localStorage.getItem('tavern-sidebar-section') || '')
+  ['cards', 'worldbooks', 'editor'].includes(localStorage.getItem('tavern-sidebar-section') || '')
     ? localStorage.getItem('tavern-sidebar-section')!
     : 'sessions',
 );
 type DeleteTarget =
   | { kind: 'session'; item: SessionSummary }
-  | { kind: 'editor'; item: CardConversationSummary };
+  | { kind: 'editor'; item: CardConversationSummary }
+  | { kind: 'worldbook'; item: WorldbookSummary };
 const deleteBubble = ref<
   (DeleteTarget & { title: string; above: boolean; left: number; arrowLeft: number; top: number }) | null
 >(null);
@@ -933,14 +945,21 @@ async function guarded(fn: () => Promise<any>) {
   }
 }
 async function load() {
-  [cards.value, sessions.value, settings.value, orphanDrafts.value, cardConversations.value] =
-    await Promise.all([
-      api('/cards'),
-      api('/sessions'),
-      api('/settings'),
-      api('/card-edits'),
-      api('/card-author/conversations'),
-    ]);
+  [
+    cards.value,
+    sessions.value,
+    settings.value,
+    orphanDrafts.value,
+    cardConversations.value,
+    worldbooks.value,
+  ] = await Promise.all([
+    api('/cards'),
+    api('/sessions'),
+    api('/settings'),
+    api('/card-edits'),
+    api('/card-author/conversations'),
+    api('/worldbooks'),
+  ]);
 }
 async function afterDataImport(result: {
   settings_restored: boolean;
@@ -1067,7 +1086,10 @@ function askDeleteConversation(target: DeleteTarget, event: MouseEvent) {
     left = Math.max(10, Math.min(window.innerWidth - width - 10, rect.right - width));
   deleteBubble.value = {
     ...target,
-    title: target.item.title || (target.kind === 'session' ? target.item.name : ''),
+    title:
+      target.kind === 'worldbook'
+        ? target.item.name
+        : target.item.title || (target.kind === 'session' ? target.item.name : ''),
     above: !below,
     left,
     arrowLeft: Math.max(12, Math.min(width - 12, rect.left + rect.width / 2 - left)),
@@ -1420,7 +1442,7 @@ function startNewStory() {
   if (window.innerWidth < 760) layout.value.leftCollapsed = true;
 }
 // Repeated selection toggles the list without reopening the current workspace.
-function openSidebarSection(section: 'sessions' | 'cards' | 'editor', toggle = false) {
+function openSidebarSection(section: 'sessions' | 'cards' | 'worldbooks' | 'editor', toggle = false) {
   if (toggle && sidebarSection.value === section) {
     void toggleLeftSidebar();
     return;
@@ -1428,7 +1450,62 @@ function openSidebarSection(section: 'sessions' | 'cards' | 'editor', toggle = f
   if (layout.value.leftCollapsed) void toggleLeftSidebar();
   if (section === 'sessions') sidebarSection.value = 'sessions';
   else if (section === 'cards') manageCards();
+  else if (section === 'worldbooks') sidebarSection.value = 'worldbooks';
   else void manageCardAgent();
+}
+async function showWorldbook(item: WorldbookSummary) {
+  await guarded(async () => {
+    selectedWorldbook.value = await api(`/worldbooks/${item.id}`);
+    sidebarSection.value = 'worldbooks';
+    pageMode.value = 'worldbook';
+    panel.value = '';
+    if (window.innerWidth < 760) layout.value.leftCollapsed = true;
+  });
+}
+async function refreshWorldbooks() {
+  worldbooks.value = await api('/worldbooks');
+}
+async function createWorldbook(name: string, book: JsonObject) {
+  await guarded(async () => {
+    const created: Worldbook = await api('/worldbooks', { name, book });
+    await refreshWorldbooks();
+    await showWorldbook({ ...created, entries: 0 });
+  });
+}
+function newWorldbook() {
+  const names = new Set(worldbooks.value.map((book) => book.name));
+  let name = '新世界书',
+    index = 2;
+  while (names.has(name)) name = `新世界书 ${index++}`;
+  void createWorldbook(name, { entries: [] });
+}
+async function importWorldbook(file: File) {
+  await guarded(async () => {
+    let book: JsonObject;
+    try {
+      book = JSON.parse(await file.text());
+    } catch {
+      throw new Error(`${file.name} 不是有效的 JSON 文件`);
+    }
+    // ST World Info files carry no name; V2 books may name themselves.
+    const named = typeof book?.name === 'string' && book.name.trim() ? book.name.trim() : '';
+    await createWorldbook(named || file.name.replace(/\.json$/i, '') || '导入的世界书', book);
+  });
+}
+async function worldbookSaved(book: Worldbook) {
+  selectedWorldbook.value = book;
+  await guarded(refreshWorldbooks);
+}
+async function deleteWorldbook(item: WorldbookSummary) {
+  closeDeleteBubble(false);
+  await guarded(async () => {
+    await api(`/worldbooks/${item.id}`, {}, 'DELETE');
+    if (selectedWorldbook.value?.id === item.id) {
+      selectedWorldbook.value = null;
+      if (pageMode.value === 'worldbook') pageMode.value = '';
+    }
+    await refreshWorldbooks();
+  });
 }
 function manageCards() {
   abandonStoryLoad();
@@ -2186,6 +2263,17 @@ useTimedError(error);
           <button
             role="tab"
             class="rail-tab"
+            :aria-selected="sidebarSection === 'worldbooks'"
+            :aria-expanded="sidebarSection === 'worldbooks' && !layout.leftCollapsed"
+            aria-controls="primary-sidebar-panel"
+            :class="{ active: sidebarSection === 'worldbooks' }"
+            @click="openSidebarSection('worldbooks', true)"
+          >
+            <Icon name="book" :size="20" /><span>世界书</span>
+          </button>
+          <button
+            role="tab"
+            class="rail-tab"
             :aria-selected="sidebarSection === 'editor'"
             :aria-expanded="sidebarSection === 'editor' && !layout.leftCollapsed"
             aria-controls="primary-sidebar-panel"
@@ -2253,6 +2341,15 @@ useTimedError(error);
           "
           @open-draft="openCardAgent"
         />
+        <WorldbookList
+          v-else-if="sidebarSection === 'worldbooks'"
+          :worldbooks="worldbooks"
+          :active-id="pageMode === 'worldbook' ? selectedWorldbook?.id : undefined"
+          @create="newWorldbook"
+          @import="importWorldbook"
+          @show="showWorldbook"
+          @delete="(item, event) => askDeleteConversation({ kind: 'worldbook', item }, event)"
+        />
         <CardConversationList
           v-else-if="sidebarSection === 'editor'"
           :conversations="cardConversations"
@@ -2293,6 +2390,7 @@ useTimedError(error);
         :key="editorConversationId"
         :conversation-id="editorConversationId"
         :library="cards"
+        :worldbooks="worldbooks"
         :model-profile="loadedSettings().shared.card_author"
         :providers="loadedSettings().shared.providers"
         :send-shortcut="loadedSettings().shared.send_shortcut"
@@ -2331,6 +2429,13 @@ useTimedError(error);
         :card="selected"
         :session="session"
         @session-saved="sessionLoreSaved"
+        @back="pageMode = ''"
+      />
+      <WorldbookEditor
+        v-else-if="pageMode === 'worldbook' && selectedWorldbook"
+        :key="selectedWorldbook.id"
+        :worldbook="selectedWorldbook"
+        @saved="worldbookSaved"
         @back="pageMode = ''"
       />
       <StoryWizard
@@ -3041,7 +3146,9 @@ useTimedError(error);
           {{
             deleteBubble.kind === 'editor'
               ? '聊天、草稿和撤销记录将删除。已保存的角色卡、用户角色和故事保留。'
-              : '剧情分支、会话记忆、检索线索和运行记录都会彻底清除，且无法恢复。'
+              : deleteBubble.kind === 'worldbook'
+                ? '书库中的这本世界书将删除，角色卡的默认项随之解除；已挂载它的对话保留各自的副本。'
+                : '剧情分支、会话记忆、检索线索和运行记录都会彻底清除，且无法恢复。'
           }}
         </p>
         <div>
@@ -3051,7 +3158,9 @@ useTimedError(error);
             @click="
               deleteBubble.kind === 'editor'
                 ? deleteCardConversation(deleteBubble.item)
-                : deleteSession(deleteBubble.item)
+                : deleteBubble.kind === 'worldbook'
+                  ? deleteWorldbook(deleteBubble.item)
+                  : deleteSession(deleteBubble.item)
             "
           >
             彻底删除

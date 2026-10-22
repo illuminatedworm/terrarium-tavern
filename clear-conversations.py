@@ -1,4 +1,4 @@
-"""离线清空剧情对话，保留角色卡、用户角色、设置和制卡资料。
+"""离线清空剧情对话，保留角色卡、用户角色、世界书库、设置和制卡资料。
 
 Windows 双击 clear-conversations.cmd；也可使用项目 Python 执行本文件：
   .venv/Scripts/python.exe clear-conversations.py --dry-run
@@ -174,7 +174,7 @@ def preserved_rows(db):
     tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     result = {}
     for table in sorted(tables):
-        if table in {"meta", "cards", "personas"} or table.startswith("card_"):
+        if table in {"meta", "cards", "personas", "worldbooks"} or table.startswith("card_"):
             query = f"SELECT * FROM {quote(table)} ORDER BY rowid"
         elif table == "message_adapter_configs":
             query = "SELECT * FROM message_adapter_configs WHERE owner_kind!='story' ORDER BY rowid"
@@ -321,7 +321,7 @@ def clear_conversations(root, expected):
             guard.rollback()
         publish(staged, root, original)
     print(
-        f"清理完成，可按原方式启动项目。\n保留：角色卡、用户角色、设置、制卡资料及共享资源。\n完整备份：{original}"
+        f"清理完成，可按原方式启动项目。\n保留：角色卡、用户角色、世界书库、设置、制卡资料及共享资源。\n完整备份：{original}"
     )
     return original
 
@@ -341,7 +341,7 @@ def main():
     info = inspect_data(root)
     print(f"数据目录：{root}\n数据库格式：schema {info['schema']}")
     print(f"将删除：{info['sessions']} 个剧情对话（含分支）、{info['messages']} 条消息及关联记录。")
-    print(f"将保留：{info['cards']} 张角色卡、{info['personas']} 个用户角色、设置及制卡资料。")
+    print(f"将保留：{info['cards']} 张角色卡、{info['personas']} 个用户角色、世界书库、设置及制卡资料。")
     if args.dry_run or not info["sessions"]:
         print("未修改任何数据。" if args.dry_run else "没有剧情对话，无需清理。")
         return

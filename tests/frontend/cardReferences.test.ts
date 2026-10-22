@@ -65,4 +65,23 @@ describe('card reference candidates', () => {
     expect(options[0].detail).toBe('用户角色 · 已引用');
     expect(cardReferenceOptions(attached, library, '雪山', [persona])).toHaveLength(2);
   });
+  it('offers library worldbooks once, separately from cards with the same name', () => {
+    const books = [
+      { id: 'book-a', name: '雪山', revision: 1 },
+      { id: 'book-b', name: '河流', revision: 0 },
+    ];
+    const draft = {
+      ...attached[0],
+      ref: 'C3',
+      card: null,
+      worldbook: 'book-a',
+      document: { name: '雪山', character_book: { entries: [] } },
+    };
+    const options = cardReferenceOptions([...attached, draft], library, '', [], {}, books);
+    expect(options.filter((option) => option.detail.startsWith('世界书')).map((o) => o.detail)).toEqual([
+      '世界书 · 已引用',
+      '世界书',
+    ]);
+    expect(options.find((option) => option.worldbookSource)?.worldbookSource).toBe(books[1]);
+  });
 });

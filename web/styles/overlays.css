@@ -742,6 +742,7 @@ p.context-footnote {
 .regeneration-panel,
 .delete-confirm-popover,
 .editor-restore-confirm,
+.lore-import-menu,
 .advisor-clear-confirm,
 .field-tooltip,
 .app-notification {
@@ -820,6 +821,24 @@ p.context-footnote {
 }
 .editor-restore-confirm .toolbar {
   justify-content: flex-end;
+}
+.lore-import-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(240px, calc(100vw - 16px));
+  padding: 6px;
+  border-radius: var(--radius-md);
+  font: var(--fs-md) / 1.5 var(--font-ui);
+}
+.lore-import-menu:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lore-import-menu button {
+  justify-content: flex-start;
+  width: 100%;
 }
 .editor-restore-confirm button {
   padding: 6px 10px;

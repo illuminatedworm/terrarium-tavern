@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
-defineProps<{ name: string; kind: 'card' | 'persona' | 'file'; disabled: boolean }>();
-const labels = { card: '角色卡', persona: '用户角色', file: '文件' };
+defineProps<{ name: string; kind: 'card' | 'worldbook' | 'persona' | 'file'; disabled: boolean }>();
+const labels = { card: '角色卡', worldbook: '世界书', persona: '用户角色', file: '文件' };
 defineEmits<{ inspect: []; remove: [] }>();
 </script>
 
 <template>
   <span class="reference-tag" :title="`${labels[kind]}：${name}`">
     <button
-      v-if="kind === 'card'"
+      v-if="kind === 'card' || kind === 'worldbook'"
       class="reference-content"
       type="button"
-      :aria-label="`查看角色卡引用 ${name}`"
+      :aria-label="`查看${labels[kind]}引用 ${name}`"
       @click="$emit('inspect')"
     >
       <CardWorkspaceIcon name="file" /><span>{{ name }}</span>

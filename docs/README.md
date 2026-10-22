@@ -15,6 +15,7 @@
 | 阅读旧剧情、编辑、重生成和创建分支 | [阅读、编辑与分支](guides/story-history.md) |
 | 咨询剧情、查资料、调整参谋 agent 模型和上下文 | [参谋 agent 聊天](guides/advisor.md) |
 | 配置世界书检索或排查未命中 | [世界书检索](guides/retrieval.md) |
+| 管理独立世界书、挂载到对话和设置新建对话默认项 | [世界书库与挂载](guides/worldbooks.md) |
 | 移除已经注入的世界书内容 | [中途注入移除](guides/lore-removal.md) |
 | 理解预计输入与实际用量 | [Token、字符与字节](guides/token-counting.md) |
 | 配置缓存位置与排查读取情况 | [提示缓存](guides/prompt-cache.md) |
