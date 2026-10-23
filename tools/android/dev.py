@@ -175,7 +175,7 @@ def smoke(device, output, suite):
             suite,
             INSTRUMENTATION,
             log=output / "smoke.log",
-            timeout=90,
+            timeout=240,
         )
         match = re.search(r"^INSTRUMENTATION_RESULT: report=(.+)$", result, re.MULTILINE)
         if not match or "INSTRUMENTATION_CODE: -1" not in result:
@@ -199,7 +199,11 @@ def main():
     parser.add_argument("--target", choices=("dev", "app"), default="dev", help="app 明确选择个人使用包")
     parser.add_argument("--web", action="store_true", help="web/compat/vendor 前端内容改变时重建资源")
     parser.add_argument("--online", action="store_true", help="允许 Gradle 下载缺失依赖；默认离线")
-    parser.add_argument("--suite", choices=("all", "native", "sessions", "models"), default="all")
+    parser.add_argument(
+        "--suite",
+        choices=("all", "native", "sessions", "scripts", "documents", "restart", "models"),
+        default="all",
+    )
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("当前工具使用 Windows Android 构建环境")

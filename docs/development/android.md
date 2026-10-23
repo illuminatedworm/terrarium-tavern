@@ -96,9 +96,9 @@ Gradle 不读取 `HTTP_PROXY`、`HTTPS_PROXY`。Maven 下载需要代理时在�
 .cache/android/build-env/Scripts/python.exe tools/android/dev.py check
 ```
 
-该命令依次离线增量构建、ADB 覆盖安装并运行真机自检。默认目标是独立的 `dev` 构建变体：包名 `com.terrarium.tavern.dev`，显示为“Terrarium Tavern 开发版”，使用自己的数据目录；个人使用包仍为 `com.terrarium.tavern`。自检代码只打包进 `dev` 变体，在临时目录中运行并在结束后清理，不使用个人设置、API 密钥或模型权重。
+该命令依次离线增量构建、ADB 覆盖安装并运行真机自检。默认目标是独立的 `dev` 构建变体：包名 `com.terrarium.tavern.dev`，显示为“Terrarium Tavern 开发版”，使用自己的数据目录；个人使用包仍为 `com.terrarium.tavern`。自检代码只打包进 `dev` 变体，不使用个人设置、API 密钥或模型权重。
 
-自检通过 Android Instrumentation 运行，覆盖原生分词依赖，以及 Half Agent 与 Full Agent 的角色卡导入、开场变量初始化和对话读取。运行期间会显示开发自检页，请保持该页在前台，避免厂商后台冻结；锁屏或熄屏时会直接报错，解锁后可只运行 `smoke`。
+自检通过 Android Instrumentation 运行，覆盖原生分词依赖；Half Agent 与 Full Agent 的角色卡导入、开场变量初始化和对话读取；带脚本的消息帧、制卡展示断言与依赖打包；制卡 agent 读取 DOCX/XLSX；以及后端停止后立即在原端口重启（会确认端口仍处于 TIME_WAIT）。重启检查启动开发版自己的后端与数据目录，其余检查只使用结束后即清理的临时目录。运行期间会显示开发自检页，请保持该页在前台，避免厂商后台冻结；锁屏或熄屏时会直接报错，解锁后可只运行 `smoke`。
 
 | 命令或参数               | 用途                                                       |
 | ------------------------ | ---------------------------------------------------------- |
@@ -108,6 +108,9 @@ Gradle 不读取 `HTTP_PROXY`、`HTTPS_PROXY`。Maven 下载需要代理时在�
 | `check`                  | 构建、覆盖安装并运行自检                                   |
 | `smoke --suite sessions` | 对已安装的开发版只运行两种会话初始化检查                   |
 | `smoke --suite native`   | 对已安装的开发版只检查原生分词依赖                         |
+| `smoke --suite scripts`  | 只运行消息帧、制卡展示断言与依赖打包检查                   |
+| `smoke --suite documents` | 只运行制卡 agent 的 DOCX/XLSX 读取检查                    |
+| `smoke --suite restart`  | 只运行后端停止后立即重启检查                               |
 | `smoke --suite models`   | 对已安装的开发版运行本地模型检查，见下文                   |
 | `logs`                   | 读取开发版主进程及各辅助进程的日志                         |
 | `logs --target app`      | 只读采集个人使用包的日志                                   |
