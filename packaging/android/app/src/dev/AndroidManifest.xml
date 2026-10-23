@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <application android:name="com.terrarium.tavern.DevApplication" tools:replace="android:name" />
+    <application android:name="com.terrarium.tavern.DevApplication" tools:replace="android:name">
+        <activity android:name="com.terrarium.tavern.DevSmokeActivity" android:exported="false" />
+    </application>
     <instrumentation
         android:name="com.terrarium.tavern.DevSmokeInstrumentation"
         android:targetPackage="${applicationId}" />

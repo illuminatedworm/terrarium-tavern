@@ -117,25 +117,6 @@ async def test_cached_download_never_starts_network_process(tmp_path, monkeypatc
     assert job["phase"] == "cached"
     assert job["progress"] == 1
     spawn.assert_not_called()
-    # A desktop backup may contain model files and settings, but Android must never
-    # launch a CUDA/download process or silently rewrite those saved settings.
-    original = settings.model_dump()
-    monkeypatch.setenv("TAVERN_PLATFORM", "android")
-    status = manager.status(settings)
-    assert not status["available"] and "Android" in status["reason"]
-    assert status["models"]["embedding"]["downloaded"]
-    assert not status["models"]["embedding"]["ready"]
-    with pytest.raises(ValueError, match="Android"):
-        manager.download("embedding", settings)
-    with pytest.raises(ValueError, match="Android"):
-        manager.start_host()
-    with pytest.raises(ValueError, match="Android"):
-        await manager.warmup("embedding", settings)
-    with pytest.raises(ValueError, match="Android"):
-        await manager.infer("embedding", "embed", ["query"], settings, timeout=1)
-    assert settings.model_dump() == original
-    spawn.assert_not_called()
-    await manager.close()
 
 
 async def test_download_metadata_is_progress_not_completion(tmp_path, monkeypatch):

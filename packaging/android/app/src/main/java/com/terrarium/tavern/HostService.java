@@ -93,6 +93,7 @@ public final class HostService extends Service {
         backend = new Thread(() -> {
             try {
                 Os.setenv("TAVERN_PLATFORM", "android", true);
+                Os.setenv("TAVERN_NATIVE_LIB_DIR", getApplicationInfo().nativeLibraryDir, true);
                 Os.setenv("TAVERN_DATA", data.getAbsolutePath(), true);
                 Os.setenv("TAVERN_STARTUP_TOKEN", startupToken, true);
                 if (!Python.isStarted()) Python.start(new com.chaquo.python.android.AndroidPlatform(this));
@@ -100,6 +101,7 @@ public final class HostService extends Service {
                 // os.environ is a snapshot; a retry uses a fresh token in the same interpreter.
                 var environment = python.getModule("os").get("environ");
                 environment.callAttr("__setitem__", "TAVERN_PLATFORM", "android");
+                environment.callAttr("__setitem__", "TAVERN_NATIVE_LIB_DIR", getApplicationInfo().nativeLibraryDir);
                 environment.callAttr("__setitem__", "TAVERN_DATA", data.getAbsolutePath());
                 environment.callAttr("__setitem__", "TAVERN_STARTUP_TOKEN", startupToken);
                 python.getModule("tavern.android.launcher").callAttr("main");

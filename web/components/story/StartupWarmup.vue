@@ -51,9 +51,7 @@ onMounted(() => {
       available.length ? '暂不预热' : '下载前'
     }}也可继续使用；不可用的检索或重排通道会降级。已保存的世界书向量缓存仍可复用。
   </p>
-  <p v-else class="muted">
-    已启用的向量或重排通道会记录不可用原因，继续遵守原有检索准入规则；可在设置中调整通道。
-  </p>
+  <p v-else class="muted">已启用的向量或重排通道会降级，可在设置中调整通道。</p>
   <AppNotification v-for="job in jobs" :key="`error-${job.id}`" :message="job.error || ''" />
   <p v-for="job in jobs.filter((j) => j.status !== 'error')" :key="job.id" role="status">
     {{ labels[job.kind.split(':')[1]] }}：{{

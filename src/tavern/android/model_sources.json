@@ -1,0 +1,59 @@
+{
+  "engine": {
+    "project": "https://github.com/ggml-org/llama.cpp",
+    "tag": "b11829",
+    "commit": "184f6536024668e8908ab8c86033d56708e62b40",
+    "android": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11829/llama-b11829-bin-android-arm64.tar.gz",
+      "sha256": "ce3a9ba03de5f35ce4e0e56f6d5690d29b235ff1b0d1b60ee544f5d17dc3833c"
+    },
+    "windows": {
+      "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11829/llama-b11829-bin-win-cpu-x64.zip",
+      "sha256": "c534f35ce9c842f3bc224fadaecc82e1b49768f63e8320922f6dbd603f66395e"
+    },
+    "licenses": {
+      "jsonhpp": {
+        "path": "licenses/LICENSE-jsonhpp",
+        "sha256": "61e08da79c44061654015ce6b0c4061c23ee1dd18237fbf09e9bfda3c0ea2831"
+      },
+      "cpp-httplib": {
+        "path": "vendor/cpp-httplib/LICENSE",
+        "sha256": "bb546eae5924d8ee842e0e567e6d533c5824bdebccf605f99a5b3429034e6697"
+      },
+      "xxhash": {
+        "path": "vendor/hash/xxhash/LICENSE",
+        "sha256": "a2973411d278045bde3c7161b911e0680d53e2d73d6457c77068d2e55d816d67"
+      },
+      "sha256": {
+        "path": "vendor/hash/sha256/LICENSE",
+        "sha256": "24836bd0f33996623060eabeb765fb0b091bcbca47e6e6e9493385df8ce9e30a"
+      }
+    }
+  },
+  "embedding": {
+    "repository": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+    "revision": "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
+    "filename": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
+    "bytes": 639150592
+  },
+  "reranker": {
+    "repository": "Qwen/Qwen3-Reranker-0.6B",
+    "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+    "filename": "Qwen3-Reranker-0.6B-Q8_0.gguf",
+    "sha256": "a00081d198558cd929d310397ad856fe0b414cbb40d046d7a95e8cb9cf1e15f8",
+    "bytes": 639152960
+  },
+  "reference": {
+    "embedding": {
+      "repository": "Qwen/Qwen3-Embedding-0.6B",
+      "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "weights_sha256": "0437e45c94563b09e13cb7a64478fc406947a93cb34a7e05870fc8dcd48e23fd"
+    },
+    "reranker": {
+      "repository": "Qwen/Qwen3-Reranker-0.6B",
+      "revision": "e61197ed45024b0ed8a2d74b80b4d909f1255473",
+      "weights_sha256": "27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b"
+    }
+  }
+}

@@ -2,7 +2,10 @@ package com.terrarium.tavern;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.app.KeyguardManager;
+import android.content.Intent;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.system.Os;
 import android.util.Log;
 import com.chaquo.python.Python;
@@ -20,8 +23,16 @@ public final class DevSmokeInstrumentation extends Instrumentation {
     @Override public void onStart() {
         Bundle result = new Bundle();
         int code = Activity.RESULT_CANCELED;
+        Activity progress = null;
         try {
+            if (!getTargetContext().getSystemService(PowerManager.class).isInteractive()
+                    || getTargetContext().getSystemService(KeyguardManager.class).isKeyguardLocked()) {
+                throw new IllegalStateException("请先解锁手机并保持亮屏，再运行开发版自检");
+            }
+            progress = startActivitySync(new Intent(getTargetContext(), DevSmokeActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             Os.setenv("TAVERN_PLATFORM", "android", true);
+            Os.setenv("TAVERN_NATIVE_LIB_DIR", getTargetContext().getApplicationInfo().nativeLibraryDir, true);
             Python.start(new com.chaquo.python.android.AndroidPlatform(getTargetContext()));
             String report = Python.getInstance().getModule("tavern_dev_smoke")
                     .callAttr("run", getTargetContext().getCacheDir().getAbsolutePath(), suite).toString();
@@ -32,6 +43,9 @@ public final class DevSmokeInstrumentation extends Instrumentation {
             String error = Log.getStackTraceString(failure);
             Log.e("TavernDev", error);
             result.putString("error", error);
+        } finally {
+            Activity activity = progress;
+            if (activity != null) runOnMainSync(activity::finish);
         }
         finish(code, result);
     }

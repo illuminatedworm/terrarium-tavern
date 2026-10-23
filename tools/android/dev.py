@@ -120,6 +120,12 @@ def proxy_options(environment):
 
 def build(cache, output, target, web, online, report):
     environment = build_environment(cache)
+    run(
+        [sys.executable, ROOT / "tools/android/prepare_llama.py", *([] if online else ["--offline"])],
+        env=environment,
+        log=output / "llama-prepare.log",
+        timeout=120,
+    )
     if web:
         started = time.perf_counter()
         print("构建前端与兼容 SDK…", flush=True)
@@ -193,7 +199,7 @@ def main():
     parser.add_argument("--target", choices=("dev", "app"), default="dev", help="app 明确选择个人使用包")
     parser.add_argument("--web", action="store_true", help="web/compat/vendor 前端内容改变时重建资源")
     parser.add_argument("--online", action="store_true", help="允许 Gradle 下载缺失依赖；默认离线")
-    parser.add_argument("--suite", choices=("all", "native", "sessions"), default="all")
+    parser.add_argument("--suite", choices=("all", "native", "sessions", "models"), default="all")
     args = parser.parse_args()
     if os.name != "nt":
         parser.error("当前工具使用 Windows Android 构建环境")

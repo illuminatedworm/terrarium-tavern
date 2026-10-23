@@ -179,7 +179,10 @@ def create_app(data_dir=None):
             "runtime": "KohakuTerrarium",
             "version": VERSION,
             "platform": "android" if is_android() else "desktop",
-            "capabilities": {"local_models": not is_android(), "office_documents": True},
+            "capabilities": {
+                "local_models": service.local_models.status(store.settings())["available"],
+                "office_documents": True,
+            },
         }
 
     @app.get("/api/storage")
@@ -223,11 +226,14 @@ def create_app(data_dir=None):
     async def local_model_status():
         return service.local_models.status(store.settings())
 
+    @app.post("/api/local-models/{purpose}/import")
+    async def import_local_model(purpose: Literal["embedding", "reranker"], file: UploadFile = File(...)):
+        return await service.local_models.import_model(purpose, file, store.settings())
+
     @app.post("/api/local-models/{purpose}/{action}")
     async def local_model_action(
         purpose: Literal["embedding", "reranker"], action: Literal["download", "warmup"]
     ):
-        service.local_models.require_available()
         config = store.settings()
         if action == "download":
             return service.local_models.download(purpose, config)
@@ -265,8 +271,6 @@ def create_app(data_dir=None):
 
         async def rebuild(record):
             config = store.session_settings(session)
-            if "embedding" in config.retrieval.channels:
-                service.local_models.require_available()
             if (
                 "embedding" in config.retrieval.channels
                 and not service.local_models.status(config)["models"]["embedding"]["ready"]

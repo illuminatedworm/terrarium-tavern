@@ -38,7 +38,7 @@ async def test_provider_connections_migrate_save_restore_and_undo_without_hidden
     app = create_app(tmp_path)
     store = app.state.store
     migrated = store.settings_document()
-    assert migrated.version == 8
+    assert migrated.version == 9
     assert migrated.full_agent.model.model_dump() == doc.full_agent.model.model_dump()
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1

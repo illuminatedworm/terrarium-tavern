@@ -36,7 +36,15 @@ android {
         }
     }
     sourceSets {
-        main { assets.srcDir "../../../.cache/android/distribution-assets" }
+        main {
+            assets.srcDir "../../../.cache/android/distribution-assets"
+            jniLibs.srcDir "../../../.cache/android/llama-jni"
+        }
+    }
+    packaging {
+        // Android executes the signed, installed helper from nativeLibraryDir.
+        // Writable app data contains weights only, never downloaded executable code.
+        jniLibs { useLegacyPackaging = true }
     }
 }
 

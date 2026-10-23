@@ -17,12 +17,12 @@ from tavern.character.cards import lore_title
 from tavern.search.retrieval import digest
 
 PURPOSES = ("embedding", "reranker")
-ANDROID_UNAVAILABLE = (
-    "Android 版暂不支持 CUDA 本地向量模型和重排模型；已保存配置保留，关键词与 BM25 仍可使用。"
-)
+GGUF_UNSUPPORTED = "此平台使用 CUDA 模型；Q8_0 GGUF 目前只在 Android CPU 上运行"
 
 
 def _load(torch, root, purpose, config):
+    if config["quantization"] == "q8_0":
+        raise ValueError(GGUF_UNSUPPORTED)
     from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
     if not torch.cuda.is_available():
@@ -276,20 +276,17 @@ class LocalModelManager:
         manifest = self.path(settings.local_models.embedding) / "tavern-ready.json"
         return json.loads(manifest.read_text("utf-8"))["revision"] if manifest.exists() else "unavailable"
 
-    def require_available(self):
-        if is_android():
-            raise ValueError(ANDROID_UNAVAILABLE)
+    async def import_model(self, purpose, file, settings):
+        raise ValueError("此平台请通过下载功能准备 CUDA 模型")
 
     def status(self, settings):
-        available = not is_android()
         result = {}
         for purpose in PURPOSES:
             config = getattr(settings.local_models, purpose)
             result[purpose] = {
                 "downloaded": (self.path(config) / "tavern-ready.json").exists(),
                 "ready": bool(
-                    available
-                    and purpose in self.ready
+                    purpose in self.ready
                     and self.host
                     and self.host[0].is_alive()
                     and self.loaded.get(purpose) == digest(config.model_dump())
@@ -299,15 +296,15 @@ class LocalModelManager:
             }
         return {
             "startup_id": self.startup_id,
-            "available": available,
-            "reason": "" if available else ANDROID_UNAVAILABLE,
+            "platform": "cuda",
+            "available": True,
+            "reason": "",
             "models": result,
             "jobs": list(self.jobs.values())[-30:],
             "metrics": self.metrics,
         }
 
     def start_host(self):
-        self.require_available()
         if self.host and self.host[0].is_alive():
             return
         self.stop_host(self.host)
@@ -377,7 +374,6 @@ class LocalModelManager:
             await self.request(purpose, {"action": "unload"}, 10)
 
     async def warmup(self, purpose, settings):
-        self.require_available()
         async with self.locks[purpose]:
             if any(
                 job["kind"] == "download:" + purpose and job["status"] in ("queued", "running")
@@ -396,7 +392,6 @@ class LocalModelManager:
             self.ready.add(purpose)
 
     async def infer(self, purpose, action, data, settings, *, timeout, query=False):
-        self.require_available()
         if self.locks[purpose].locked():
             raise RuntimeError("本地模型忙，已跳过本次推理以避免排队延迟")
         async with self.locks[purpose]:
@@ -450,7 +445,9 @@ class LocalModelManager:
         return record
 
     def download(self, purpose, settings):
-        self.require_available()
+        # An Android backup can carry a GGUF choice; its repository holds no CUDA weights.
+        if getattr(settings.local_models, purpose).quantization == "q8_0":
+            raise ValueError(GGUF_UNSUPPORTED)
 
         async def run(record):
             config = getattr(settings.local_models, purpose)
@@ -563,3 +560,11 @@ class LocalModelManager:
             task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         self.stop_host(self.host)
+
+
+def create_local_model_manager(store):
+    if is_android():
+        from tavern.android.local_models import AndroidLocalModelManager
+
+        return AndroidLocalModelManager(store)
+    return LocalModelManager(store)

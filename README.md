@@ -96,7 +96,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 快速开始
 
-Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本地。首包面向 Android 9+、ARM64、4 KiB 内存页设备；Android 上暂不提供 CUDA 本地向量与重排。构建、安装及已知限制见 [Android APK](docs/development/android.md)。
+Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本地。首包面向 Android 9+、ARM64、4 KiB 内存页设备；本地向量与重排以手机 CPU 运行固定的 Q8_0 GGUF，模型文件需单独导入。构建、安装及已知限制见 [Android APK](docs/development/android.md)。
 
 ### 环境要求
 
