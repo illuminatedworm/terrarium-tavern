@@ -23,7 +23,19 @@ const props = defineProps<{
   cacheEligible: boolean;
   cacheBreakpointId: string | null;
   cacheBreakpointBusy: boolean;
+  /** The inspector's MVU page, where split-out status panels render, is not on screen. */
+  panelHidden: boolean;
 }>();
+// The whole message was split into the inspector's status panel; without a pointer
+// the bubble would read as empty while the inspector is collapsed (always, on phones).
+const panelElsewhere = computed(() => {
+  const presentation = props.message.presentation;
+  return (
+    props.panelHidden &&
+    !!presentation?.panel.length &&
+    !presentation.body.some((part: any) => part.format === 'html' || part.text.trim())
+  );
+});
 const sentAt = computed(() => {
   const value = props.message.created;
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -39,6 +51,7 @@ const emit = defineEmits<{
   edit: [message: any];
   fork: [message: any];
   switchVersion: [message: any, direction: number];
+  showPanel: [];
   action: [
     method: string,
     args: any,
@@ -106,6 +119,13 @@ function forwardAction(
         :enabled="enabled"
         @action="forwardAction"
       />
+      <button
+        v-if="panelElsewhere && editingMessageId !== message.id"
+        class="panel-elsewhere"
+        @click="emit('showPanel')"
+      >
+        <Icon name="braces" :size="15" />在右栏查看状态面板
+      </button>
       <details v-if="message.retrieval_query" class="retrieval-clue">
         <summary>检索线索</summary>
         <p>{{ message.retrieval_query }}</p>

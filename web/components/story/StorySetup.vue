@@ -10,10 +10,15 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
-import type { CardDefaults, WorldbookSummary } from '../../lib/types';
+import type { CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
 
-const props = defineProps<{ card: any; settings?: any }>();
-const emit = defineEmits<{ started: [session: any]; back: []; settings: [channel: Channel, mode: string] }>();
+const props = defineProps<{ card: CardRecord; settings?: any }>();
+const emit = defineEmits<{
+  started: [session: any];
+  back: [];
+  settings: [channel: Channel, mode: string];
+  cardChanged: [card: CardRecord];
+}>();
 const channel = ref<Channel>('standard');
 const settings = ref<any>(null);
 const personas = ref<any[]>([]),
@@ -42,7 +47,23 @@ const models = computed(() => {
     : [scope?.[prefix + 'foreground'], scope?.[prefix + 'background']];
 });
 const modelLabel = computed(() => models.value.map((model) => model?.model || '待配置').join(' / '));
-const data = computed(() => props.card.document.data || props.card.document);
+const data = computed<any>(() => props.card.document.data || props.card.document);
+// Session creation runs the card scripts and refuses without the shelf card's permission,
+// so ask here instead of failing at the last step.
+const scriptsBlocked = computed(
+  () => props.card.report.interaction === 'needs_runtime_test' && !props.card.permission,
+);
+const permissionBusy = ref(false);
+async function enableScripts() {
+  permissionBusy.value = true;
+  try {
+    emit('cardChanged', await api(`/cards/${props.card.id}/permission`, { enabled: true }, 'PUT'));
+  } catch (e: any) {
+    error.value = e.message;
+  } finally {
+    permissionBusy.value = false;
+  }
+}
 const greetings = computed(() => [data.value.first_mes || '', ...(data.value.alternate_greetings || [])]);
 const opening = computed(() =>
   greetings.value[greeting.value]
@@ -125,6 +146,12 @@ useTimedError(error);
         <p class="muted">每次进入都会创建独立会话</p>
       </div>
     </div>
+    <div v-if="scriptsBlocked" class="edit-notice">
+      <span
+        >此卡含角色脚本，启用脚本权限后才能进入故事。脚本在隔离环境中运行，权限保存在书架角色卡上，新建对话沿用。</span
+      >
+      <button :disabled="permissionBusy" @click="enableScripts">启用脚本权限</button>
+    </div>
     <AppNotification :message="error" />
     <div class="story-setup-grid">
       <div v-if="step === 3" class="story-setup-options">
@@ -148,7 +175,11 @@ useTimedError(error);
             ><small>{{ book.entries }} 条</small>
           </label>
         </div>
-        <button class="primary" :disabled="busy || (!personaId && !personaName.trim())" @click="start">
+        <button
+          class="primary"
+          :disabled="busy || scriptsBlocked || (!personaId && !personaName.trim())"
+          @click="start"
+        >
           {{ busy ? '正在准备…' : '进入故事'
           }}<Icon v-if="!busy" name="arrow-right" :size="16" class="enter-icon" />
         </button>

@@ -7,8 +7,10 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,6 +20,7 @@ import android.os.Looper;
 import android.util.Base64;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -47,6 +50,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.Collections;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -71,6 +75,7 @@ public final class MainActivity extends Activity implements HostService.Listener
     private ExportTransfer transfer;
     private JavaScriptReplyProxy saveReply;
     private String saveRequest;
+    private String safeArea;
 
     private static final class ExportTransfer {
         int id;
@@ -95,13 +100,35 @@ public final class MainActivity extends Activity implements HostService.Listener
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Target 35 already draws edge-to-edge; API 30-34 opts in to match.
+            getWindow().setDecorFitsSystemWindows(false);
+            getWindow().setStatusBarColor(Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        }
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(23, 26, 28));
-        // Target 35 enforces edge-to-edge; keep system bars and keyboard outside the web viewport.
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
-                insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
-            return insets.consumeSystemWindowInsets();
+            if (Build.VERSION.SDK_INT < 30) {
+                // No separate keyboard inset before API 30: keep every system inset outside the page.
+                view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                    insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+                return insets.consumeSystemWindowInsets();
+            }
+            // The page draws under the system bars and cutout and pads itself with --safe-*;
+            // the keyboard still shrinks the WebView so focused inputs stay visible.
+            Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+            int keyboard = insets.getInsets(WindowInsets.Type.ime()).bottom;
+            view.setPadding(0, 0, 0, keyboard);
+            status.setPadding(28 + bars.left, 28 + bars.top, 28 + bars.right, 28 + Math.max(bars.bottom, keyboard));
+            float density = getResources().getDisplayMetrics().density;
+            safeArea = String.format(Locale.ROOT,
+                "(s=>{s.setProperty('--safe-top','%.1fpx');s.setProperty('--safe-right','%.1fpx');"
+                    + "s.setProperty('--safe-bottom','%.1fpx');s.setProperty('--safe-left','%.1fpx')})"
+                    + "(document.documentElement.style)",
+                bars.top / density, bars.right / density, Math.max(0, bars.bottom - keyboard) / density, bars.left / density);
+            web.evaluateJavascript(safeArea, null);
+            return WindowInsets.CONSUMED;
         });
         web = new WebView(this);
         web.setBackgroundColor(Color.rgb(23, 26, 28));
@@ -168,6 +195,16 @@ public final class MainActivity extends Activity implements HostService.Listener
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
+        try {
+            // Older releases served index.html without Cache-Control and with a fixed 1980
+            // Last-Modified, so the WebView may treat a previous page as fresh for years.
+            long installed = getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime;
+            SharedPreferences runtime = getSharedPreferences("runtime", MODE_PRIVATE);
+            if (runtime.getLong("web_cache_install", 0) != installed) {
+                web.clearCache(true);
+                runtime.edit().putLong("web_cache_install", installed).apply();
+            }
+        } catch (PackageManager.NameNotFoundException impossible) { throw new IllegalStateException(impossible); }
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
@@ -193,7 +230,9 @@ public final class MainActivity extends Activity implements HostService.Listener
                 if (!isLocal(Uri.parse(url))) view.stopLoading();
             }
             @Override public void onPageFinished(WebView view, String url) {
-                if (!pageFailed && isLocal(Uri.parse(url))) status.setVisibility(View.GONE);
+                if (pageFailed || !isLocal(Uri.parse(url))) return;
+                if (safeArea != null) view.evaluateJavascript(safeArea, null);
+                status.setVisibility(View.GONE);
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError failure) {
                 if (request.isForMainFrame()) {

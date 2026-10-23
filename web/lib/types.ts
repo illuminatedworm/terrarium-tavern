@@ -29,7 +29,8 @@ export interface CardRecord {
   resources: Record<string, string>;
   permission: number;
   document: JsonObject;
-  report: JsonObject & { variables?: string };
+  /** `diagnose()`: `interaction` is `needs_runtime_test` when the card has character scripts. */
+  report: JsonObject & { variables?: string; interaction?: string };
   revision: number;
   session_id?: string;
   _draftOnly?: boolean;

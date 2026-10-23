@@ -446,6 +446,9 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
         assert (await c.get("/api/settings")).status_code == 403
         c.cookies.set("tavern_session", token)
         assert (await c.get("/api/settings")).status_code == 200
+        # Extracted APK files share one mtime; unhashed entries must not survive an update.
+        for path in ("/", "/static/runtime.js"):
+            assert (await c.get(path)).headers["cache-control"] == "no-store"
 
 
 async def test_preview_and_cancel_are_atomic(tmp_path):

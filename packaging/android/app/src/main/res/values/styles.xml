@@ -7,6 +7,6 @@
         <item name="android:statusBarColor">#171A1C</item>
         <item name="android:navigationBarColor">#171A1C</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowLayoutInDisplayCutoutMode">never</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

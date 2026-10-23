@@ -865,7 +865,7 @@ p.context-footnote {
 .app-notification {
   position: fixed;
   z-index: var(--z-toast);
-  top: 22px;
+  top: calc(22px + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   width: max-content;

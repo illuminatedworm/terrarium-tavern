@@ -550,6 +550,9 @@ const inspectorPages = computed(() =>
 // Mirrors the left rail: clicking the open page collapses, any other page opens there.
 function openInspector(id: string) {
   if (inspectorTab.value === id && !layout.value.rightCollapsed) return void toggleRightSidebar();
+  showInspector(id);
+}
+function showInspector(id: string) {
   inspectorTab.value = id;
   if (layout.value.rightCollapsed) void toggleRightSidebar();
 }
@@ -1407,10 +1410,12 @@ function selectWorkspace(id: string) {
   selected.value = { ...card, _editorKey: card._editorKey || card._workspaceId || card.id, _workspaceId: id };
 }
 async function cardSaved(card: CardRecord) {
-  // Saving an Agent workspace, including Save As, must not remount its composer.
+  // The editor already holds the saved state. Keeping its mount key preserves the open
+  // tab, notice and, for an Agent workspace including Save As, the composer.
+  const current = selected.value;
   selected.value =
-    card?._workspaceId && selected.value
-      ? { ...card, _editorKey: selected.value._editorKey || selected.value._workspaceId || selected.value.id }
+    current && (card._workspaceId || card.id === current.id)
+      ? { ...card, _editorKey: current._editorKey || current._workspaceId || current.id }
       : card;
   await load();
 }
@@ -2448,6 +2453,7 @@ useTimedError(error);
         :cards="cards"
         :settings="settings"
         @started="cardStarted"
+        @card-changed="(card) => (cards = cards.map((item) => (item.id === card.id ? card : item)))"
         @settings="
           (channel, mode) => {
             settingsChannel = channel;
@@ -2654,6 +2660,8 @@ useTimedError(error);
                   :cache-eligible="eligibleCacheReplies.has(message.id)"
                   :cache-breakpoint-id="cacheBreakpointId"
                   :cache-breakpoint-busy="cacheBreakpointBusy"
+                  :panel-hidden="inspectorTab !== 'mvu' || layout.rightCollapsed"
+                  @show-panel="showInspector('mvu')"
                   @toggle-cache-breakpoint="toggleCacheBreakpointFollow"
                   @set-cache-breakpoint="saveCacheBreakpoint(false, $event)"
                   :regenerating-id="regeneratingId"

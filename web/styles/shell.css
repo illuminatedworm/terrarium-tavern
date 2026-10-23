@@ -4,6 +4,7 @@
   display: flex;
   height: 100dvh;
   overflow: hidden;
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
 main {
   position: relative;
@@ -24,7 +25,8 @@ main {
 /* Docked layouts inset the panes so the canvas light frames them. */
 @media (min-width: 621px) {
   .shell {
-    padding: 10px;
+    padding: calc(10px + var(--safe-top)) calc(10px + var(--safe-right)) calc(10px + var(--safe-bottom))
+      calc(10px + var(--safe-left));
     gap: 10px;
   }
   main {
@@ -774,6 +776,7 @@ main {
     bottom: 0;
     right: 0;
     z-index: 14;
+    padding: var(--safe-top) var(--safe-right) var(--safe-bottom) 0;
     width: min(420px, calc(100vw - 24px));
     border-radius: var(--radius-xl) 0 0 var(--radius-xl);
     background: var(--glass-sheen), var(--glass-float);
@@ -790,8 +793,9 @@ main {
     scrollbar-gutter: auto;
   }
   .right-sidebar.collapsed {
-    top: 10px;
-    right: 10px;
+    top: calc(10px + var(--safe-top));
+    right: calc(10px + var(--safe-right));
+    padding: 0;
     bottom: auto;
     width: auto;
     border-radius: var(--radius-md);
@@ -824,8 +828,8 @@ main {
   }
   .shell-navigation {
     position: fixed;
-    top: 10px;
-    left: 10px;
+    top: calc(10px + var(--safe-top));
+    left: calc(10px + var(--safe-left));
     z-index: 10;
     place-items: center;
     width: 40px;
@@ -839,6 +843,7 @@ main {
     top: 0;
     bottom: 0;
     width: min(328px, calc(100vw - 40px));
+    padding: var(--safe-top) 0 var(--safe-bottom) var(--safe-left);
     border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
     background: var(--glass-sheen), var(--glass-float);
     box-shadow: var(--shadow-float);

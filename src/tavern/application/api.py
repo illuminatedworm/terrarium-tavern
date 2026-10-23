@@ -38,6 +38,23 @@ from tavern.storage.store import Conflict, Store, dump
 VERSION = "0.7.0"
 
 
+class AppFiles(StaticFiles):
+    """Only content-hashed build assets may be cached.
+
+    The Android host extracts these files with fixed 1980 zip timestamps, so
+    Last-Modified never changes and Starlette's mtime-plus-size ETag repeats for
+    a same-size index.html. Heuristic caching or revalidation would keep the
+    previous release's page and card runtime after an update.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        # Starlette normalises the path with os.sep, so compare parts.
+        if Path(path).parts[:1] != ("assets",):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 def create_app(data_dir=None):
     # The native host generates this per launch. Never expose it through API state or logs.
     startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8")
@@ -941,10 +958,10 @@ def create_app(data_dir=None):
     async def favicon():
         return FileResponse(static / "favicon.ico", media_type="image/x-icon")
 
-    app.mount("/static", StaticFiles(directory=static), name="static")
+    app.mount("/static", AppFiles(directory=static), name="static")
     dist = Path(__file__).resolve().parents[3] / "dist"
     if not dist.exists():
         dist = static / "web"
     if dist.exists():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+        app.mount("/", AppFiles(directory=dist, html=True), name="web")
     return app

@@ -6,7 +6,12 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import type { Channel } from '../../lib/channels';
 const props = defineProps<{ cards: any[]; settings?: any }>();
-const emit = defineEmits<{ started: [session: any]; back: []; settings: [channel: Channel, mode: string] }>();
+const emit = defineEmits<{
+  started: [session: any];
+  back: [];
+  settings: [channel: Channel, mode: string];
+  cardChanged: [card: any];
+}>();
 const selectedId = ref(''),
   search = ref('');
 const selected = computed(() => props.cards.find((card) => card.id === selectedId.value));
@@ -30,6 +35,7 @@ watch(
     @back="selectedId = ''"
     @started="emit('started', $event)"
     @settings="(channel, mode) => emit('settings', channel, mode)"
+    @card-changed="emit('cardChanged', $event)"
   />
   <section v-else class="editor-page story-setup">
     <button class="quiet editor-back" @click="emit('back')"><Icon name="arrow-left" :size="16" />返回</button>
