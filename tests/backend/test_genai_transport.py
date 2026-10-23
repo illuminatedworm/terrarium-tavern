@@ -281,10 +281,10 @@ async def test_sdk_reports_stream_error_without_sse_separator_and_keeps_partial_
     assert stream.closed
     records = RequestDebugLog(tmp_path, cfg).records()
     assert len(records) == 1 and not records[0]["response"]["body"]["complete"]
-    assert records[0]["response"]["body"]["representation"] == "transport"
+    assert records[0]["response"]["body"]["representation"] == "decoded"
     assert records[0]["request"]["headers"]["x-goog-api-key"] == "[REDACTED]"
     with zipfile.ZipFile(RequestDebugLog(tmp_path, cfg).path(records[0]["id"])) as archive:
-        assert archive.read("response.bin") == compressed
+        assert archive.read("response.bin") == wire.encode()
         assert archive.read("request.bin") == requests[0].content
 
 

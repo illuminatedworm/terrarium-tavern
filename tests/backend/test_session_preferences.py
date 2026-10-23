@@ -66,11 +66,10 @@ def test_preference_persists_and_is_inherited(story):
     assert store.session(session["id"])["update_variables"] is True
 
 
-def test_variable_preference_migration_backs_up_existing_stories(story):
+def test_variable_preference_additive_migration_backs_up_existing_stories(story):
     store, session = story
     with store.connection() as db:
         db.execute("ALTER TABLE sessions DROP COLUMN update_variables")
-        db.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
     reopened_store = Store(store.root)
     reopened = reopened_store.session(session["id"])
     with reopened_store.connection() as db:

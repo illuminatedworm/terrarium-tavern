@@ -504,7 +504,7 @@ class Conversations:
             )
             if file_ref and file is None:
                 raise NotFound("文件引用不存在")
-            digest = portrait_png(self.store, wid, file) if file else None
+            digest = portrait_png(self.store, wid, file, db=db) if file else None
             if (
                 digest != item.get("source", {}).get("original")
                 or not digest
@@ -571,7 +571,7 @@ class Conversations:
             validate_document(document)
             # A portrait set in the draft replaces the PNG container image; removing it
             # leaves a JSON card whose original is the document itself.
-            original = source.get("original") or self.store.blob(dump(document).encode())
+            original = source.get("original") or self.store.blob(dump(document).encode(), db=db)
             if mode == "overwrite":
                 current = db.execute("SELECT revision FROM cards WHERE id=?", (item["card"],)).fetchone()
                 if not current or current[0] != item["base_revision"]:

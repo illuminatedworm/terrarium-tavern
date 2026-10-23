@@ -2,7 +2,10 @@ import copy
 import hashlib
 import io
 import json
+import sqlite3
 import zipfile
+from contextlib import contextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -218,6 +221,19 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     assert not imported["settings_restored"]
     assert target.settings_document().half_agent.system_prompt != "个人提示词"
     revisions = target.settings_document().revisions
+    card = target.import_card(b'{"name":"running consultation"}', "card.json")
+    session = target.new_session(SessionCreate(card_id=card["id"]))
+    before = target.settings_document()
+    with target.connection() as db:
+        db.execute(
+            "INSERT INTO advisor_runs(id,session,operation,request,status,created) VALUES (?,?,?,'{}','running',0)",
+            ("active-advisor", session["id"], "active-advisor"),
+        )
+    with pytest.raises(Conflict, match="运行中的任务"):
+        import_package(target, payload, blobs, True, revisions)
+    assert target.settings_document() == before
+    with target.connection() as db:
+        db.execute("UPDATE advisor_runs SET status='cancelled' WHERE id='active-advisor'")
     imported = import_package(target, payload, blobs, True, revisions)
     assert imported["settings_restored"]
     assert target.settings_document().half_agent.system_prompt == "个人提示词"
@@ -259,6 +275,77 @@ def test_invalid_graph_and_failed_write_leave_no_partial_import(tmp_path, monkey
     assert target.cards() == target.personas() == target.sessions() == []
     assert not list((target.root / "blobs").iterdir())
     assert not list((target.root / "dependencies").glob("*.json"))
+
+
+def test_failed_file_write_cleans_up_before_another_import_can_reuse_blobs(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    card = store.import_card(b'{"name":"fixture"}', "card.json")
+    payload, blobs = package(store, settings=False, cards=[card["id"]])
+    store.delete_card(card["id"])
+    asset = b"new imported asset"
+    digest = hashlib.sha256(asset).hexdigest()
+    payload["cards"][0]["resources"]["asset.txt"] = digest
+    blobs[digest] = asset
+    write_bytes = Path.write_bytes
+    failed = False
+
+    def incomplete_write(path, data):
+        nonlocal failed
+        if data == asset and not failed:
+            failed = True
+            write_bytes(path, data[:4])
+            raise OSError("disk full")
+        return write_bytes(path, data)
+
+    connection = store.connection
+    imported = {}
+
+    @contextmanager
+    def next_import_after_rollback():
+        try:
+            with connection() as db:
+                yield db
+        except OSError:
+            # Deterministically give the next importer the released write lock.
+            # The failed attempt must have removed its files before this point.
+            imported.update(import_package(store, payload, blobs))
+            raise
+
+    monkeypatch.setattr(Path, "write_bytes", incomplete_write)
+    monkeypatch.setattr(store, "connection", next_import_after_rollback)
+    with pytest.raises(OSError, match="disk full"):
+        import_package(store, payload, blobs)
+    assert [item["id"] for item in store.cards()] == imported["cards"]
+    assert {path.name for path in (store.root / "blobs").iterdir()} == set(blobs)
+    for digest, content in blobs.items():
+        assert (store.root / "blobs" / digest).read_bytes() == content
+
+    # SQLITE_FULL/IOERR can release the transaction before raising. Another
+    # import may already own the published blob when control returns to Python.
+    from tavern.storage import transfer
+
+    second_payload = copy.deepcopy(payload)
+    original = b'{"name":"second fixture"}'
+    original_hash = hashlib.sha256(original).hexdigest()
+    second_payload["cards"][0]["original"] = original_hash
+    second_blobs = {**blobs, original_hash: original}
+    insert = transfer.insert
+    interrupted = False
+
+    def fail_after_automatic_rollback(db, table, row):
+        nonlocal interrupted
+        if table == "cards" and not interrupted:
+            interrupted = True
+            db.rollback()
+            imported.update(import_package(store, second_payload, second_blobs))
+            raise sqlite3.OperationalError("disk I/O error")
+        insert(db, table, row)
+
+    monkeypatch.setattr(transfer, "insert", fail_after_automatic_rollback)
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O error"):
+        import_package(store, second_payload, second_blobs)
+    assert store.card(imported["cards"][0])["original"] == original_hash
+    assert (store.root / "blobs" / original_hash).read_bytes() == original
 
 
 @pytest.mark.parametrize("path", ["../escape", "blobs/not-a-hash", "dataset.json/extra"])

@@ -1574,7 +1574,7 @@ async function send(
   });
   if (submitted && mode === 'send' && input.value === value) input.value = '';
 }
-async function submitStoryTurn(request: TurnRequest): Promise<boolean> {
+async function submitStoryTurn(request: TurnRequest): Promise<TurnRecord | false> {
   if (!session.value || busy.value || sceneSubmitting.value || variablePreferenceSaving.value) return false;
   if (modelSaving.value || contextBusy.value || !session.value.channel_origin || !channelModelsReady.value) {
     notify(
@@ -1604,7 +1604,7 @@ async function submitStoryTurn(request: TurnRequest): Promise<boolean> {
     workCount.value += 1;
     void scroll(true);
     observe(turn.id);
-    return true;
+    return turn;
   } catch (e: any) {
     if (viewScope.owns(token)) {
       error.value = e.message;
@@ -2112,6 +2112,7 @@ async function frameAction(
   reject: (e: any) => void,
   onStream: (chunk: string) => void,
 ) {
+  const token = viewScope.current();
   try {
     if (method === 'input') {
       input.value = String(args.text || '');
@@ -2130,26 +2131,29 @@ async function frameAction(
     }
     if (method === 'generate') {
       if (busy.value) throw Error('当前回合正在运行');
-      const turn = await api(`/sessions/${openStory().id}/turns`, {
+      // Card generation has the same submission lifetime as the composer. In particular,
+      // switching stories during the POST must not attach this turn to the new view.
+      const turn = await submitStoryTurn({
         text: args.user_input || '继续',
         generate: args,
         expected_revision: openStory().revision,
         operation_id: crypto.randomUUID(),
         reasoning_effort: quickEffort.value === 'inherit' ? null : quickEffort.value,
       });
-      activeTurn.value = turn;
-      busy.value = true;
-      draft.value = '';
-      void scroll(true);
-      observe(turn.id);
-      const stream = args.should_stream ? new EventSource(`/api/turns/${turn.id}/events`) : null;
-      if (stream) {
-        stream.onmessage = (e) => {
-          const item = JSON.parse(e.data);
-          if (item.kind === 'text') onStream(item.payload.text);
-        };
-        stream.addEventListener('end', () => stream.close());
+      if (!turn) {
+        if (!viewScope.owns(token)) throw new StaleView('已切换对话，生成结果保留在原对话。');
+        throw Error(error.value || '当前状态无法启动回合，请检查对话的模型与上下文设置。');
       }
+      const stream = args.should_stream
+        ? observeTurn(
+            turn.id,
+            () => viewScope.owns(token),
+            (event) => {
+              if (event.kind === 'text') onStream(event.payload.text);
+            },
+            async () => {},
+          )
+        : null;
       const poll = async (): Promise<any> => {
         const t = await api(`/turns/${turn.id}`);
         if (['running', 'queued'].includes(t.status)) {
@@ -2178,7 +2182,7 @@ async function frameAction(
     if (review) activeTurn.value = await viewApi(`/turns/${review.id}`);
     resolve(null);
   } catch (e: any) {
-    if (!(e instanceof StaleView)) error.value = e.message;
+    if (viewScope.owns(token) && !(e instanceof StaleView)) error.value = e.message;
     reject(e.message);
   }
 }

@@ -27,8 +27,9 @@ def _has_chat_content(delta: dict) -> bool:
 
 
 class StreamState:
-    def __init__(self, api):
+    def __init__(self, api, *, secret=""):
         self.api, self.done = api, False
+        self.secret = secret
         self.result, self.calls, self.blocks = {}, {}, {}
         self.text, self.reasoning, self.parts = "", "", []
         self.response_output = ResponsesOutput() if api == "responses" else None
@@ -38,7 +39,7 @@ class StreamState:
         if not isinstance(event, dict):
             raise ValueError("模型流事件格式无效，本回合未提交")
         if "error" in event or event.get("type") == "error":
-            raise ValueError(stream_error("模型流返回错误", event))
+            raise ValueError(stream_error("模型流返回错误", event, secret=self.secret))
         if api == "chat_completions":
             choices = event.get("choices") or []
             if any(

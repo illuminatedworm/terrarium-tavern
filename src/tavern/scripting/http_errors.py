@@ -7,6 +7,12 @@ import httpx
 DETAIL_LIMIT = 4000
 
 
+def redact_detail(detail: str, secret: str) -> str:
+    if secret:
+        detail = detail.replace(secret, "[REDACTED]")
+    return re.sub(r"(?i)Bearer\s+[^\s\"<>]+", "Bearer [REDACTED]", detail).strip()
+
+
 def response_error(response: httpx.Response, secret: str) -> httpx.HTTPStatusError:
     try:
         payload = response.json()
@@ -25,9 +31,7 @@ def response_error(response: httpx.Response, secret: str) -> httpx.HTTPStatusErr
         detail = source
     else:
         detail = response.text
-    if secret:
-        detail = detail.replace(secret, "[REDACTED]")
-    detail = re.sub(r"(?i)Bearer\s+[^\s\"<>]+", "Bearer [REDACTED]", detail).strip()
+    detail = redact_detail(detail, secret)
     if len(detail) > DETAIL_LIMIT:
         detail = detail[:DETAIL_LIMIT] + "…（仅显示错误片段）"
     label = f"模型请求失败（HTTP {response.status_code} {response.reason_phrase}）"

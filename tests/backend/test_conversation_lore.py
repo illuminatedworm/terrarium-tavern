@@ -438,17 +438,7 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
     narrative = ScriptedLLM(["正文"])
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: narrative
-    archive_calls = []
-
-    class ArchiveProvider(MemoryModel):
-        def __init__(self):
-            super().__init__([{"operations": [], "questions": []}])
-
-        async def chat_complete(self, messages, **kwargs):
-            archive_calls.append(messages)
-            return await super().chat_complete(messages, **kwargs)
-
-    service.memory_provider_factory = ArchiveProvider
+    service.memory_provider_factory = lambda: MemoryModel([{"operations": [], "questions": []}])
     try:
         for i in range(4):
             turn = service.submit(
@@ -474,7 +464,6 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
         assert current["snapshot"]["lore"] == {"e": {"present": False, "removed_at": 4}}
         assert current["snapshot"]["context_window"]["covered_count"] == 3
         original_snapshot = current["snapshot"]
-        count = len(archive_calls)
         turn = service.submit(
             current["id"],
             TurnRequest(mode="regenerate", operation_id="regen", expected_revision=current["revision"]),
@@ -483,10 +472,10 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
         assert store.turn(turn["id"])["status"] == "committed"
         regenerated = store.session(current["id"])["snapshot"]
         # Regeneration restores the pre-turn archive, never the discarded
-        # candidate's post-story coverage, and does not run a new cycle.
+        # candidate's post-story coverage; recomputing the same exchange must
+        # not advance its window or lore recovery a second time.
         for key in ("context_window", "lore", "lore_injections", "state"):
             assert regenerated.get(key) == original_snapshot.get(key)
-        assert len(archive_calls) == count
     finally:
         await service.close()
 

@@ -25,6 +25,8 @@ Chat Completions 完成后按实际内容判断中转追加的尾帧：允许 `d
 
 请求使用提供商的密钥；缺少密钥时可从 `TAVERN_API_KEY` 读取。本地免密端点也需要非空占位值，例如 `local`。HTTP 客户端使用应用内 API 代理配置，不继承 shell 的代理环境变量。
 
+Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`；HTTP 200 但结束原因缺失、为空或不受支持时，整轮失败，不把部分正文或工具调用当成完整回复提交。HTTP 200 流中的错误说明也会先脱敏实际请求密钥和 Bearer 凭据，再限量显示及记录，不依赖开启调试。
+
 ## ChatGPT 订阅模式
 
 `auth_mode=chatgpt_subscription` 通过独立账号服务取得访问令牌，固定使用 `https://api.openai.com/v1/responses`。不使用 `TAVERN_API_KEY`、自定义域名或 Codex backend-api。OAuth discovery、令牌交换、刷新和撤销均限制在已验证的 OpenAI 身份端点；HTTP 客户端不跟随携带凭据的重定向。

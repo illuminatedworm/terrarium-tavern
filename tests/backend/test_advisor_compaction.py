@@ -68,3 +68,31 @@ async def test_official_checkpoint_is_independent_and_requires_valid_state(tmp_p
     preview = advisor.preview(session["id"])
     assert not preview["opaque"]
     assert "云端咨询0" in dump(preview["messages"])
+
+
+async def test_truncated_summary_keeps_the_original_consultation_window(tmp_path):
+    _, store, session, advisor = setup(tmp_path)
+    settings = store.settings_document()
+    settings.shared.advisor.keep_recent = 1
+    store.save_settings(settings)
+    for index in range(3):
+        result = await ask(advisor, session["id"], ToolLLM([]), f"完整咨询{index}")
+        assert result["status"] == "completed", result
+    before = advisor.data.get(session["id"])
+
+    class IncompleteSummary(ScriptedLLM):
+        async def chat_complete(self, messages, **kwargs):
+            return ChatResponse(content="只有半段的摘要", finish_reason="length", usage={}, model="fixture")
+
+    advisor.provider_factory = lambda: IncompleteSummary([])
+    run = advisor.submit(
+        session["id"], ConsultationRequest(expected_revision=3, operation_id=uid(), compact=True)
+    )
+    await advisor.tasks[run["id"]]
+    result = advisor.data.run(run["id"], private=True)
+    assert result["status"] == "error", result
+    assert result["progress"]["context"] == before["context"]
+    current = advisor.data.get(session["id"])
+    assert current["context"] == before["context"]
+    assert current["exchanges"] == before["exchanges"]
+    assert "完整咨询0" in dump(advisor.preview(session["id"])["messages"])

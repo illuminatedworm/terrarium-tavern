@@ -2,6 +2,8 @@
 
 import json
 
+from tavern.scripting.http_errors import redact_detail
+
 
 async def stream_events(response):
     data, name = [], ""
@@ -50,7 +52,7 @@ async def stream_events(response):
             yield event
 
 
-def stream_error(label, event):
+def stream_error(label, event, *, secret=""):
     """Describe a mid-stream provider error without dropping its explanation.
 
     Official APIs and relays nest the detail differently (`error` object,
@@ -64,5 +66,8 @@ def stream_error(label, event):
         str(error[key]) for key in ("code", "status", "type") if error.get(key) not in (None, "", "error")
     ]
     message = str(error.get("message") or "").strip()
-    detail = (f"（{' '.join(codes)}）" if codes else "") + (f"：{message[:500]}" if message else "")
+    detail = (f"（{' '.join(codes)}）" if codes else "") + (f"：{message}" if message else "")
+    # HTTP 200 SSE errors can echo credentials just like HTTP failures. Redact
+    # before bounding the explanation, so a cut cannot expose a key prefix.
+    detail = redact_detail(detail, secret)[:500]
     return f"{label}{detail}；本回合未提交"

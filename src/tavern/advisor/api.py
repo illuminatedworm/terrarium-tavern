@@ -52,14 +52,16 @@ def register_routes(app, advisor):
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
-                batch = advisor.data.events(rid, cursor)
-                for event in batch:
-                    cursor = event["seq"]
-                    yield f"id: {cursor}\ndata: {dump(event)}\n\n"
+                # A terminal state read before the batch includes its final
+                # event even when the producer finishes during a previous yield.
                 try:
                     active = advisor.data.run(rid)["status"] in ("queued", "running")
                 except NotFound:
                     active = False  # Another tab may have cleared the consultation.
+                batch = advisor.data.events(rid, cursor)
+                for event in batch:
+                    cursor = event["seq"]
+                    yield f"id: {cursor}\ndata: {dump(event)}\n\n"
                 if len(batch) < 200 and not active:
                     yield "event: end\ndata: {}\n\n"
                     return

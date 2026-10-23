@@ -665,6 +665,11 @@ class ModelTransport(BaseLLMProvider):
             choice = (payload.get("choices") or [{}])[0]
             message = choice.get("message") or {}
             text, finish = message.get("content") or "", choice.get("finish_reason")
+            # A successful HTTP response can still contain an unfinished relay
+            # reply. Apply the streaming completion boundary before exposing
+            # prose or tool calls to any agent.
+            if finish not in ("stop", "tool_calls", "length", "content_filter"):
+                raise ValueError("Chat Completions 响应未完整结束，本回合未提交")
             self._last_tool_calls = [
                 NativeToolCall(id=c["id"], name=c["function"]["name"], arguments=c["function"]["arguments"])
                 for c in message.get("tool_calls") or []
@@ -839,7 +844,7 @@ class ModelTransport(BaseLLMProvider):
         tools = self._begin_kemini(tools, kwargs)
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
-        state = StreamState(self.settings.api_mode)
+        state = StreamState(self.settings.api_mode, secret=self.key)
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, True, kwargs)) as events:
                 async for event in events:

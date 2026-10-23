@@ -9,6 +9,7 @@ import sqlite3
 import time
 import zipfile
 import zlib
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -642,6 +643,26 @@ def preview(package):
     }
 
 
+@contextmanager
+def import_transaction(store):
+    with store.connection() as db:
+        db.execute("BEGIN IMMEDIATE")
+        written = []
+        try:
+            yield db, written
+            # Handle commit failures here too, before the connection releases
+            # any write lock that SQLite still holds.
+            db.commit()
+        except BaseException:
+            # SQLITE_FULL/IOERR can roll back and release the lock before raising.
+            # Once unlocked, another writer may already own these blobs: retain
+            # possible orphans rather than deleting a successful import's data.
+            if db.in_transaction:
+                for path in reversed(written):
+                    path.unlink(missing_ok=True)
+            raise
+
+
 def import_package(store, package, blobs, restore_settings=False, expected_revisions=None):
     validate_package(store, package, blobs)
     ids = {row["id"]: uid() for key in ("personas", "worldbooks", "cards") for row in package[key]}
@@ -656,10 +677,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
         "settings_restored": False,
         "browser_preferences": {},
     }
-    written = []
     try:
-        with store.connection() as db:
-            db.execute("BEGIN IMMEDIATE")
+        with import_transaction(store) as (db, written):
             if restore_settings:
                 if not package.get("settings"):
                     raise ValueError("数据包未包含个人设置")
@@ -669,6 +688,12 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     ).fetchone()
                     or db.execute(
                         "SELECT 1 FROM card_edit_runs WHERE status IN ('queued','running')"
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM advisor_runs WHERE status IN ('queued','running')"
+                    ).fetchone()
+                    or db.execute(
+                        "SELECT 1 FROM context_operations WHERE status IN ('queued','running')"
                     ).fetchone()
                 ):
                     raise Conflict("请先完成或取消运行中的任务，再恢复个人设置")
@@ -734,8 +759,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     )
                 path = store.card_manifest_path(row)
                 path.parent.mkdir(exist_ok=True)
-                path.write_text(dump(dependencies), encoding="utf-8")
                 written.append(path)
+                path.write_text(dump(dependencies), encoding="utf-8")
                 result["cards"].append(row["id"])
             for bundle in package["sessions"]:
                 source = bundle["session"]
@@ -800,10 +825,6 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 else:
                     store.create_message_adapter(db, "story", row["id"], row["agent_mode"])
                 result["sessions"].append(row["id"])
-    except BaseException as error:
-        for path in reversed(written):
-            path.unlink(missing_ok=True)
-        if isinstance(error, sqlite3.IntegrityError):
-            raise ValueError("数据包记录不完整或存在冲突，未导入任何数据") from None
-        raise
+    except sqlite3.IntegrityError:
+        raise ValueError("数据包记录不完整或存在冲突，未导入任何数据") from None
     return result

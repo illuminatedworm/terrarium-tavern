@@ -24,6 +24,7 @@ from tavern.full_agent.protocol import ToolError, TurnError, failed
 from tavern.full_agent.state import full_state
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 from tavern.full_agent.visibility import context_messages
+from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 
@@ -43,6 +44,8 @@ class FullAgent:
         user_message,
         retrieval,
         progress=None,
+        *,
+        script_mirror=None,
     ):
         self.store, self.tid, self.document = store, tid, document
         self.session = {**session, "messages": history}
@@ -51,6 +54,12 @@ class FullAgent:
         self.settings, self.user_message, self.lane = settings, user_message, retrieval
         self.source_history = history + [user_message]
         self.state = full_state(snapshot)
+        self.exiting = set()
+        if not progress and script_mirror and script_mirror.get("loreModified"):
+            # Initialization callbacks precede the model. Merge their authored
+            # changes before freezing rules and constructing the model view.
+            self.apply_script_lore(script_mirror["lore"], script_mirror, include_existing=True)
+            document = self.document
         self.trace = load_trace(store, session["id"], history)
         self.continuation, self.new_trace = [], []
         self.definitions = tool_definitions(
@@ -68,7 +77,6 @@ class FullAgent:
         self.model_view.seed(initial_view)
         self.rolled, self.retrieval_query = False, ""
         self.must_rollover = False
-        self.exiting = set()
         self.recall_ids = []
         self.patch_state_done = False
         # Keep macro values and rule edits stable across tools, rollovers and
@@ -136,6 +144,31 @@ class FullAgent:
 
     def event(self, kind, payload):
         self.store.event(self.tid, kind, {"purpose": "full_agent", **payload})
+
+    def apply_script_lore(self, initial_lore, processed, *, include_existing=False):
+        if not self.request.allow_content_edit:
+            raise TurnError("CONTENT_EDIT_NOT_ALLOWED", "卡片脚本尝试修改设定，但本轮未授权；草稿未提交")
+        try:
+            revised = merge_script_lore(
+                self.document, initial_lore, processed, include_existing=include_existing
+            )
+            if revised == self.document:
+                return
+            old = {entry["id"]: entry for entry in lore_entries(self.document)}
+            current = {entry["id"]: entry for entry in lore_entries(revised)}
+        except (ValueError, KeyError, TypeError) as error:
+            # A successful callback has already changed its realms. Do not let
+            # the tool loop continue with a worldbook that failed to merge.
+            raise TurnError("SCRIPT_LORE_INVALID", "角色脚本修改世界书失败，停止回合；草稿未提交") from error
+        changed = {key for key in old if old[key] != current.get(key)}
+        self.snapshot["lore_injections"] = [
+            row for row in self.snapshot.get("lore_injections", []) if row["id"] not in changed
+        ]
+        for key in changed:
+            self.snapshot.get("lore", {}).pop(key, None)
+        self.exiting.difference_update(changed)
+        self.document = revised
+        self.snapshot["content"] = {"document": revised, "reason": "角色脚本修改世界书", "turn": self.tid}
 
     def expand(self, text):
         return macros(
@@ -541,6 +574,7 @@ class FullAgent:
             }
             self.event("full_agent_tool_started", activity)
             tool_started = time.perf_counter()
+            previous_document = self.document
             try:
                 if mixed_rollover:
                     raise ToolError("MIXED_CONTEXT_CALLS", "new_context 必须单独调用；当前批次未执行任何工具")
@@ -577,6 +611,12 @@ class FullAgent:
             if failed(result) and name == "patch_state":
                 result["error"]["patch_state_completed"] = self.patch_state_done
             tool_error = failed(result)
+            if name == "revise_content" and not tool_error:
+                # Later callbacks must read the same authored worldbook the
+                # model just saved, without reinstalling scripts or rules.
+                mirror = await self.script.call("snapshot")
+                sync_runtime_lore(mirror, self.document, previous_document)
+                await self.script.call("update", mirror)
             result = self.model_view.expose(result)
             message = {"role": "tool", "tool_call_id": call["id"], "content": encoded(result)}
             if self.recall_ids and not tool_error:

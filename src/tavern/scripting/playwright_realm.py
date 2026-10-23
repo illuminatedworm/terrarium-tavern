@@ -2,6 +2,15 @@
 
 import asyncio
 
+NETWORK_GUARD = """(() => {
+    // CSP and Playwright request routing do not intercept WebRTC's ICE traffic.
+    for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection'])
+        Object.defineProperty(globalThis, name, {
+            value: class { constructor() { throw Error('卡片不能直接访问网络'); } },
+            writable: false, configurable: false,
+        });
+})();"""
+
 
 class PlaywrightPage:
     def __init__(self, page):
@@ -65,6 +74,9 @@ class PlaywrightBackend:
 
         context = await self.browser.new_context(service_workers="block")
         try:
+            # Run before scripts in every document, including newly attached about:blank
+            # frames; otherwise a card can recover the native constructor from a child.
+            await context.add_init_script(NETWORK_GUARD)
             await context.route("**/*", route)
         except BaseException:
             await context.close()

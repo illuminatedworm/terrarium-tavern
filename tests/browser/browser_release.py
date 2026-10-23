@@ -81,20 +81,20 @@ async def main():
     errors, checked = [], []
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        for width, height, zoom in [(1440, 900, 1), (1280, 720, 1), (390, 844, 1), (1440, 900, 2)]:
-            # Browser zoom reduces the CSS viewport; a scale factor preserves the
-            # physical size of the screenshot while exercising identical reflow.
+        for width, height, scale in [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]:
+            # CSS viewport plus DPR covers 1080x2376 mobile pixels and the layout
+            # of a 1920x1080 desktop at 200%; this is not native browser zoom.
             context = await browser.new_context(
-                viewport={"width": width // zoom, "height": height // zoom}, device_scale_factor=zoom
+                viewport={"width": width, "height": height}, device_scale_factor=scale
             )
             page = await context.new_page()
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(BASE)
-            label = f"{width}x{height}-zoom{zoom}"
+            label = f"{width}x{height}-dpr{scale}"
             await assert_viewport(page, label + ":home")
-            if width // zoom < 760:
+            if width < 760:
                 await page.get_by_role(
-                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                    "button", name="切换左侧栏" if width <= 620 else "展开左侧栏", exact=True
                 ).click()
             await page.get_by_role("button", name="设置", exact=True).click()
             dialog = page.get_by_role("dialog", name="设置")
@@ -107,7 +107,7 @@ async def main():
                 group = {"full_agent": "full agent", "half_agent": "half agent", "shared": "通用"}[
                     item["scope"]
                 ]
-                if width // zoom <= 760:
+                if width <= 760:
                     await (
                         dialog.locator(".settings-mode-buttons")
                         .get_by_role("button", name=group, exact=True)
@@ -148,9 +148,9 @@ async def main():
             for tab in await page.locator(".editor-tabs button").all():
                 await tab.click()
                 await assert_viewport(page, label + ":card-author")
-            if width // zoom < 760:
+            if width < 760:
                 await page.get_by_role(
-                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                    "button", name="切换左侧栏" if width <= 620 else "展开左侧栏", exact=True
                 ).click()
             await page.get_by_role("tab", name="会话", exact=True).click()
             await page.locator(".session-open").first.click()
@@ -201,7 +201,7 @@ async def main():
                 modal = page.get_by_role("dialog")
                 await modal.get_by_role("heading", name=title, exact=True).wait_for()
                 if title == "上下文预览":
-                    await modal.get_by_text("预计输入（tokens）", exact=True).wait_for()
+                    await modal.get_by_text(re.compile(r"^本次预计输入 [\d,]+ tokens$")).wait_for()
                     await modal.get_by_text("参考分词器 o200k_base", exact=False).wait_for()
                     assert "UTF-8 字节" not in await modal.inner_text()
                 await assert_viewport(page, label + ":" + title)
@@ -214,13 +214,14 @@ async def main():
                 == "true"
             )
             assert (
-                await page.locator('section[aria-label="MVU 变量"] > details').get_attribute("open") is None
+                await page.locator('section[aria-label="MVU 变量"] > details').get_attribute("open")
+                is not None
             )
             await assert_viewport(page, label + ":mvu")
-            if width // zoom < 760:
+            if width <= 1200:
                 await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
                 await page.get_by_role(
-                    "button", name="切换左侧栏" if width // zoom < 620 else "展开左侧栏", exact=True
+                    "button", name="切换左侧栏" if width <= 620 else "展开左侧栏", exact=True
                 ).click()
             await page.get_by_role("button", name="用户角色", exact=False).click()
             await assert_viewport(page, label + ":persona")

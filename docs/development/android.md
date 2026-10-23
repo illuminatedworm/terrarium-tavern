@@ -35,6 +35,8 @@ uv pip install --python .cache/android/build-env/Scripts/python.exe --index-url 
 
 构建工具读取当前终端的 `HTTP_PROXY`、`HTTPS_PROXY`，不改全局 pip、uv 或系统代理配置。
 
+Android 合并后的桌面开发环境也统一使用 Python 3.13。已有 Windows/Linux 环境须按[升级说明](../guides/maintenance.md#备份升级与回退)重新运行相应 `setup`；uv 会重建不兼容的 `.venv`。启用本地检索时保留安装开关，torch 等可选依赖需重新安装；Android 专用 `build-env` 与桌面 `.venv` 分别管理。
+
 ## 准备依赖
 
 ```powershell

@@ -401,6 +401,8 @@ class AdvisorRun:
             response = await provider.chat_complete(
                 self.view.messages(messages), extra_body={"tool_choice": "none"}
             )
+            if getattr(response, "finish_reason", None) in ("length", "content_filter"):
+                raise ValueError("咨询整理响应被截断或过滤，本批摘要未保存；原咨询保留。")
             if getattr(provider, "last_tool_calls", []):
                 raise ValueError("咨询整理返回工具调用，未执行")
             text = getattr(response, "text", None) or getattr(response, "content", "")

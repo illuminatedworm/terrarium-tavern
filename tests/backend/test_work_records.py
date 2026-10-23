@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.conversation.work_records import background_records
 from tavern.core.models import SessionCreate, TurnRequest
+from tavern.storage.store import uid
 
 
 def story(tmp_path):
@@ -102,3 +105,37 @@ async def test_work_record_endpoints_reject_foreign_turns_and_bound_page_sizes(t
         foreign = f"/api/sessions/{other['id']}/work-records/{tid}/events"
         assert (await client.get(foreign)).status_code == 404
         assert (await client.get(f"{foreign}/{seq}")).status_code == 404
+
+
+async def test_event_stream_delivers_commit_that_arrives_while_sending_a_batch(tmp_path, monkeypatch):
+    app, session = story(tmp_path)
+    store = app.state.store
+    tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="stream", expected_revision=0))
+    store.set_turn(tid, status="running")
+    store.write_turn_draft(tid, "reply")
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/turns/{tid}/events")
+    request = SimpleNamespace(headers={}, is_disconnected=AsyncMock(return_value=False))
+    monkeypatch.setattr("tavern.application.api.asyncio.sleep", AsyncMock())
+    response = await endpoint(tid, request, after=0)
+    first = await anext(response.body_iterator)
+    assert '"kind": "text"' in first
+
+    # Sending a frame yields to the producer. Its atomic commit may become
+    # visible after this batch was read but before the observer checks status.
+    messages, parent = [], session["head"]
+    for role, text in (("user", "continue"), ("assistant", "reply")):
+        message = {
+            "id": uid(),
+            "parent": parent,
+            "role": role,
+            "raw": text,
+            "model": text,
+            "display": text,
+            "snapshot": session["snapshot"],
+        }
+        messages.append(message)
+        parent = message["id"]
+    store.commit_turn(tid, {"before": session["snapshot"], "messages": messages})
+    tail = [frame async for frame in response.body_iterator]
+    assert any('"kind": "committed"' in frame for frame in tail)
+    assert tail[-1].startswith("event: end")

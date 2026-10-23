@@ -222,7 +222,7 @@ class ChatGPTProvider(ModelTransport):
         event_sink = kwargs.get("_web_event") or (lambda kind, payload: None)
         try:
             response = await self._send(messages, tools, True, kwargs)
-            state = StreamState("responses")
+            state = StreamState("responses", secret=self.key)
             async for event in stream_events(response):
                 self.accounts.require_account(self.account_id, self.generation)
                 if not isinstance(event, dict):

@@ -76,7 +76,7 @@ async def test_nonempty_patch_requires_current_complete_variables_read(owner):
     owner.snapshot["state"]["stat_data"]["hp"] = 6
     await denied()
     await call(owner, "read_state")
-    rollover(owner.state, [], "Continue", 0)
+    rollover(owner.state, [], None, 0)
     await denied()
     await call(owner, "read_state")
     assert (await call(owner, "patch_state", operations=operations, comment="Injury"))["saved_to_draft"]

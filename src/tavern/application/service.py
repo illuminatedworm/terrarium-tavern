@@ -692,7 +692,7 @@ class RoleplayRuntime:
             )
             # Pre-story card edits must reach scripts too, without reinstalling
             # scripts or replaying initialization callbacks.
-            from tavern.tracker.workflow import sync_runtime_lore
+            from tavern.scripting.lore import sync_runtime_lore
 
             mirror = await runtime.call("snapshot")
             sync_runtime_lore(mirror, document, original_document)
@@ -755,7 +755,8 @@ class RoleplayRuntime:
                     host,
                 )
             try:
-                from tavern.tracker.workflow import after_story, merge_script_lore
+                from tavern.scripting.lore import merge_script_lore
+                from tavern.tracker.workflow import after_story
 
                 mirror = await runtime.call("snapshot")
                 snapshot["state"], snapshot["scopes"] = mirror["state"], mirror["scopes"]

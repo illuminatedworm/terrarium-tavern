@@ -1465,8 +1465,6 @@ def test_full_window_places_current_input_before_dynamic_context(story):
         "post",
         "turn_instruction",
         "regenerate_instruction",
-        "plot",
-        "handoff",
         "context_status",
     ]
 
@@ -1526,7 +1524,7 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
     warning = compile_current()
     assert not warning["rollover_required"]
     sources = [m["source"] for m in warning["trace"]]
-    assert sources.index("context_budget") == sources.index("handoff") + 2
+    assert sources.index("context_budget") == sources.index("context_status") + 1
     assert "当前仍可正常调用工具和回复" in warning["trace"][sources.index("context_budget")]["content"]
     warning_text = warning["trace"][sources.index("context_budget")]["content"]
     assert f"{warning['estimated_tokens']} / {settings.context_tokens} tokens" in warning_text

@@ -32,6 +32,8 @@ FILES = (
     "stop.sh",
     "run-dev.sh",
     "build.sh",
+    "clear-conversations.py",
+    "clear-conversations.cmd",
 )
 DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools")
 

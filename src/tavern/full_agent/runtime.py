@@ -208,6 +208,7 @@ class FullAgentRuntime:
                 user,
                 self.retrieval,
                 progress,
+                script_mirror=mirror,
             )
             self.agents[tid] = agent
             if not settings.debug_full_agent_prefix:
@@ -233,11 +234,9 @@ class FullAgentRuntime:
             processed = await script.call("process", text, [], "")
             snapshot.update(state=processed["state"], scopes=processed["scopes"])
             if processed.get("loreModified"):
-                if not request.allow_content_edit:
-                    raise ValueError("卡片脚本尝试修改设定，但本轮未授权")
-                revised = copy.deepcopy(agent.document)
-                revised.get("data", revised).setdefault("character_book", {})["entries"] = processed["lore"]
-                snapshot["content"] = {"document": revised, "reason": "角色脚本修改世界书", "turn": tid}
+                # The mirror can predate model edits and successful variable
+                # tools. Only this final callback's delta may replace them.
+                agent.apply_script_lore(mirror["lore"], processed)
             text = processed["text"]
             model = await script.call("transform", text, rules, 2, "model", 0)
             display = await script.call("transform", text, rules, 2, "display", 0)

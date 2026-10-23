@@ -94,6 +94,9 @@ def register_editor_routes(app, editor):
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
+                # Do not end on a status that changed while yielding this batch;
+                # its newly committed terminal event still needs to be read.
+                active = editor.edits.run(rid)["status"] in ("queued", "running")
                 batch = editor.edits.events(rid, cursor)
                 cache_usage = (
                     editor.edits.conversation_cache_usage(run["workspace"])
@@ -109,7 +112,7 @@ def register_editor_routes(app, editor):
                     if await request.is_disconnected():
                         return
                     continue
-                if editor.edits.run(rid)["status"] not in ("queued", "running"):
+                if not active:
                     yield "event: end\ndata: {}\n\n"
                     return
                 if await request.is_disconnected():

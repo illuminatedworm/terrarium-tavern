@@ -937,10 +937,13 @@ def create_app(data_dir=None):
         async def stream():
             cursor = max(after, int(request.headers.get("last-event-id", "0")))
             while True:
+                # Read terminal state before the batch: yielding its frames can
+                # let the producer commit a final event that needs another read.
+                active = store.turn(tid)["status"] in ("queued", "running")
                 for event in store.events(tid, cursor):
                     cursor = event["seq"]
                     yield f"id: {cursor}\ndata: {dump(event)}\n\n"
-                if store.turn(tid)["status"] not in ("queued", "running"):
+                if not active:
                     yield "event: end\ndata: {}\n\n"
                     return
                 if await request.is_disconnected():

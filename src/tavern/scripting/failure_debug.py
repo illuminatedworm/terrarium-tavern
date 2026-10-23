@@ -91,11 +91,20 @@ class Attempt:
         self.request_body.complete = True
 
     def save(self, log: RequestDebugLog, provider: "ModelTransport", error_type: str) -> None:
-        def redact(data):
+        def redact(body):
             # Only actual transport credentials are removed; model text and
             # opaque protocol fields remain usable for offline reproduction.
+            data = bytes(body.data)
             if self.secret:
-                data = data.replace(self.secret.encode(), REDACTED.encode())
+                secret = self.secret.encode()
+                data = data.replace(secret, REDACTED.encode())
+                if body.received > len(body.data) or not body.complete:
+                    # A limit or interrupted stream may bisect a credential.
+                    # Its saved prefix is secret even without a full match.
+                    for size in range(min(len(secret) - 1, len(data)), 0, -1):
+                        if data.endswith(secret[:size]):
+                            data = data[:-size] + REDACTED.encode()
+                            break
             return data
 
         request = {
@@ -113,8 +122,8 @@ class Attempt:
             if self.response is not None
             else None
         )
-        request_data = redact(bytes(self.request_body.data))
-        response_data = redact(bytes(self.response_body.data)) if response is not None else None
+        request_data = redact(self.request_body)
+        response_data = redact(self.response_body) if response is not None else None
         request["body"]["saved_bytes"] = len(request_data)
         if response is not None:
             response["body"]["saved_bytes"] = len(response_data)
@@ -185,6 +194,20 @@ class FailureDebug:
             attempt.response_representation = "decoded"
             attempt.response_body.feed(response.content)
             attempt.response_body.complete = True
+        elif response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+            # Raw compressed bytes cannot be credential-redacted. Observe the
+            # public decoded iterator before line/JSON parsing, without changing
+            # the response headers, decoder or bytes seen by the caller.
+            attempt.response_representation = "decoded"
+            iterate = response.aiter_bytes
+
+            async def observed_bytes(chunk_size=None):
+                async for chunk in iterate(chunk_size):
+                    attempt.response_body.feed(chunk)
+                    yield chunk
+                attempt.response_body.complete = True
+
+            response.aiter_bytes = observed_bytes
         else:
             response.stream = ObservedBody(response.stream, attempt.response_body)
         if not stream:

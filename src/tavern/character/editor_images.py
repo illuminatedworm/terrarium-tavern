@@ -117,7 +117,7 @@ def materialize_images(messages: list[dict], store, wid: str, files: list[dict])
     return result
 
 
-def portrait_png(store, wid: str, file: dict) -> str:
+def portrait_png(store, wid: str, file: dict, *, db=None) -> str:
     """Store an attached image as a card portrait blob.
 
     Portraits use the standard PNG card container, so JPEG/WebP pixels are re-encoded
@@ -139,7 +139,7 @@ def portrait_png(store, wid: str, file: dict) -> str:
                 buffer, "PNG"
             )
         data = buffer.getvalue()
-    return store.blob(data)
+    return store.blob(data, db=db)
 
 
 def portrait_digest(source: dict) -> str | None:

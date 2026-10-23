@@ -356,6 +356,122 @@ async def test_visible_character_and_additions_work_when_reads_are_disabled(stor
         await app.state.service.close()
 
 
+async def test_script_lore_deltas_preserve_agent_edits_across_variable_patch_and_resume(tmp_path):
+    from tavern.character.cards import lore_entries
+    from tavern.storage.store import Store
+    from tests.backend.test_full_agent import Script
+
+    original = {
+        "one": {"id": "one", "content": "Original A", "extensions": {"private": {"keep": True}}},
+        "two": {"id": "two", "content": "Original B"},
+        "three": {"id": "three", "content": "Original C"},
+    }
+    store = Store(tmp_path)
+    card = store.import_card(
+        json.dumps(
+            {"name": "Guide", "first_mes": "Opening", "character_book": {"entries": original}}
+        ).encode(),
+        "fixture.json",
+    )
+    settings = store.settings()
+    settings.full_agent_config.auto_retrieval = False
+    settings.retrieval.channels = ["keyword"]
+    store.save_settings(settings)
+    session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    calls = {"patch": 0, "final": 0}
+
+    class CallbackScript(Script):
+        def __init__(self, document, history, snapshot):
+            super().__init__(history, snapshot)
+            self.mirror["lore"] = lore_entries(document)
+            self.mirror["lore"][2]["comment"] = "Startup title"
+            self.mirror["loreModified"] = True
+
+        async def call(self, method, *args):
+            if method == "process":
+                assert self.mirror["lore"][0]["content"] == "Agent A"
+                if args[1]:
+                    calls["patch"] += 1
+                    self.mirror["state"]["stat_data"] = {"hp": 7}
+                    self.mirror["lore"][1]["content"] = "Patch callback B"
+                else:
+                    calls["final"] += 1
+                    self.mirror["lore"][2]["content"] = "Final callback C"
+            return await super().call(method, *args)
+
+    class CallbackHost:
+        async def open(self, document, history, snapshot, *args, **kwargs):
+            return CallbackScript(document, history, snapshot)
+
+        async def close(self):
+            pass
+
+    service = runtime(store)
+    service.full.runtime = CallbackHost()
+    model = Model(
+        ("read_lore_entry", {"ref": "L1"}),
+        (
+            "revise_content",
+            {
+                "operations": [{"op": "update_lore", "ref": "L1", "changes": {"content": "Agent A"}}],
+                "comment": "User requested setting",
+            },
+        ),
+        ("read_state", {}),
+        ("patch_state", {"operations": [{"op": "add", "path": "/hp", "value": 7}], "comment": "HP"}),
+        ("read_lore_entry", {"ref": "L2"}),
+        RuntimeError("Disconnected after accepted tools"),
+    )
+    try:
+        failed, unchanged = await turn(
+            service, session, model, update_variables=True, allow_content_edit=True
+        )
+        assert failed["status"] == "error"
+        assert unchanged["head"] == session["head"]
+        progress = store.full_agent_progress(failed["id"])
+        entries = card_data(progress["document"])["character_book"]["entries"]
+        assert entries["one"]["content"] == "Agent A"
+        assert entries["two"]["content"] == "Patch callback B"
+        assert entries["three"]["comment"] == "Startup title"
+        assert progress["patch_state_done"]
+        assert progress["script_mirror"]["lore"][0]["content"] == "Agent A"
+        read = next(m for m in reversed(model.requests[-1]["messages"]) if m["role"] == "tool")
+        assert json.loads(read["content"])["data"]["content"] == "Patch callback B"
+    finally:
+        await service.close()
+
+    store = Store(tmp_path)
+    service = runtime(store)
+    service.full.runtime = CallbackHost()
+    service.full.provider_factory = lambda: Model("Narrative after reconnect")
+    try:
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id="resume-lore",
+                expected_revision=session["revision"],
+                resume_turn_id=failed["id"],
+                update_variables=True,
+                allow_content_edit=True,
+            ),
+        )
+        await service.tasks[resumed["id"]]
+        result = store.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        current = store.session(session["id"])
+        entries = card_data(current["snapshot"]["content"]["document"])["character_book"]["entries"]
+        assert entries == {
+            "one": {**original["one"], "content": "Agent A"},
+            "two": {**original["two"], "content": "Patch callback B"},
+            "three": {**original["three"], "content": "Final callback C", "comment": "Startup title"},
+        }
+        assert current["snapshot"]["state"]["stat_data"] == {"hp": 7}
+        assert calls == {"patch": 1, "final": 1}
+    finally:
+        await service.close()
+
+
 async def test_five_hundred_entries_only_selected_source_reaches_model_and_other_data_is_preserved(story):
     store, _ = story
     entries = [

@@ -70,10 +70,9 @@ def test_existing_settings_and_dialogue_recipe_survive_new_global_default(tmp_pa
     source = store.new_session(SessionCreate(card_id=character["id"]))
     custom = recipe("旧对话编排")
     source = store.update_session(source["id"], 0, recipe=custom.model_dump_json())
-    saved = store.settings().model_dump()
-    saved.pop("context_recipe")
+    saved = store.settings_document().model_dump()
+    saved["half_agent"].pop("context_recipe")
     with store.connection() as db:
-        db.execute("UPDATE meta SET value='1' WHERE key='schema_version'")
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(saved),))
     reopened = Store(tmp_path)
     assert reopened.settings().context_recipe == ContextRecipe()

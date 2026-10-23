@@ -16,6 +16,46 @@ from tavern.tracker.task import TrackerTask
 from tests.support.tracker_model import TrackerModel
 
 
+async def test_script_realms_block_webrtc_in_main_and_new_child_documents():
+    from tavern.scripting.playwright_realm import PlaywrightBackend
+
+    backend = PlaywrightBackend()
+    try:
+        context = await backend.new_context(lambda url, method: None)
+        page = await context.open_page(
+            '<meta http-equiv="Content-Security-Policy" '
+            "content=\"default-src 'none'; script-src 'unsafe-inline'; connect-src 'none'\">",
+            lambda *args: None,
+        )
+        # The unguarded browser sends ICE packets even under this CSP and deny-all
+        # request routing. A fresh about:blank frame must not restore that capability.
+        blocked = await page.evaluate("""async () => {
+            const probe = target =>
+                ['RTCPeerConnection', 'webkitRTCPeerConnection'].map(name => {
+                    try {
+                        const peer = new target[name]();
+                        peer.close();
+                        return false;
+                    } catch { return true; }
+                });
+            const child = document.createElement('iframe');
+            document.body.append(child);
+            const results = [window, child.contentWindow].flatMap(probe);
+            const loaded = new Promise(resolve => {
+                addEventListener('message', event => resolve(event.data), {once:true});
+            });
+            child.srcdoc = '<script>parent.postMessage((' + probe.toString()
+                + ')(window),"*")</script>';
+            results.push(...await loaded);
+            child.remove();
+            return results;
+        }""")
+        assert blocked == [True] * 6
+        await context.close()
+    finally:
+        await backend.close()
+
+
 async def test_full_agent_patch_failure_restores_server_and_message_frame_mirrors():
     runtime = ScriptRuntime()
     document = {

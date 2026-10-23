@@ -1,5 +1,6 @@
 """Shared transport selection reaches the wire without changing response contracts."""
 
+import gzip
 import json
 import zipfile
 
@@ -58,6 +59,16 @@ async def test_http_failure_explanation_reaches_work_records_without_debug(tmp_p
             {"seq": 1, "kind": "error", "purpose": "runtime", "created": 0, "payload": {"message": wrapped}}
         )
         assert record["description"] == wrapped
+        async with provider(
+            cfg,
+            lambda _: sse(events=[{"error": {"message": "stream echoed test-key and Bearer private-token"}}]),
+        ) as transport:
+            with pytest.raises(ValueError, match="返回错误") as caught:
+                await transport.chat_complete(MESSAGES)
+        error = str(caught.value)
+        assert "stream echoed [REDACTED]" in error
+        assert "test-key" not in error and "private-token" not in error
+        assert not RequestDebugLog(tmp_path, cfg).records()
     cfg = config()
     async with provider(
         cfg, lambda _: httpx.Response(502, text="gateway rejected Bearer test-key " + "x" * 5000)
@@ -412,6 +423,23 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
         state.feed({"choices": [{"delta": {}, "finish_reason": "network_error"}]})
 
 
+async def test_non_stream_chat_rejects_unfinished_response():
+    calls = []
+
+    def route(request):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "尚未完成的剧情"}, "finish_reason": None}]},
+        )
+
+    async with provider(config(model_request_mode="non_stream"), route) as p:
+        with pytest.raises(ValueError, match="响应未完整结束"):
+            await p.chat_complete(MESSAGES)
+        assert not p.usage_history and not p.last_tool_calls and p.last_native_response is None
+    assert len(calls) == 1
+
+
 @pytest.mark.parametrize("entry", ["complete", "chat", "preview"])
 async def test_chatgpt_subscription_keeps_required_streaming(entry, tmp_path):
     service = IdentityFixture().service(tmp_path)
@@ -578,6 +606,38 @@ async def test_non_stream_mode_returns_complete_response_without_incremental_cal
         assert p.last_auxiliary == [{"kind": "disclaimer", "text": "声明"}]
 
 
+async def test_failed_request_debug_redacts_compressed_response_at_capture_boundary(tmp_path, monkeypatch):
+    cfg = config(debug_failed_requests=True, model_request_mode="non_stream")
+    cfg._data_root = tmp_path
+    prefix, secret = b"gateway failure ", cfg.api_key.encode()
+    body = prefix + secret[:-2]
+    limit = len(body) + 32
+    monkeypatch.setattr("tavern.scripting.failure_debug.BODY_LIMIT", limit)
+
+    class InterruptedGzip(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield gzip.compress(body)
+            raise httpx.ReadError("fixture disconnected")
+
+    def route(request):
+        return httpx.Response(
+            502,
+            headers={"content-encoding": "gzip"},
+            stream=InterruptedGzip(),
+        )
+
+    async with provider(cfg, route) as p:
+        with pytest.raises(httpx.ReadError):
+            await p.chat_complete(MESSAGES)
+    log = RequestDebugLog(tmp_path, cfg)
+    record = log.records()[0]
+    captured = record["response"]["body"]
+    assert captured["representation"] == "decoded" and not captured["complete"]
+    assert not captured["truncated"] and captured["received_bytes"] == captured["captured_bytes"] == len(body)
+    with zipfile.ZipFile(log.path(record["id"])) as archive:
+        assert archive.read("response.bin") == prefix + b"[REDACTED]"
+
+
 async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     store = app.state.store
@@ -638,8 +698,10 @@ async def test_failed_request_debug_settings_download_privacy_and_retention(tmp_
         assert cfg.api_key.encode() not in download.content and b"private-cookie" not in download.content
         with zipfile.ZipFile(log.path(record["id"])) as archive:
             assert archive.read("request.bin") == requests[0].content
-            assert archive.read("response.bin") == body[: 256 * 1024].replace(
-                cfg.api_key.encode(), b"[REDACTED]"
+            # This boundary lands inside the last key; its prefix must not leak.
+            assert archive.read("response.bin") == (
+                b"gateway failure [REDACTED]\n" * body[: 256 * 1024].count(b"\n")
+                + b"gateway failure [REDACTED]"
             )
         assert (await client.get("/api/debug/failed-requests/invalid")).status_code == 422
         undone = await client.post(

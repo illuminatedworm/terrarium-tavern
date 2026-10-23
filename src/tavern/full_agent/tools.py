@@ -631,6 +631,10 @@ class AgentTools:
                     raise ToolError(
                         "PATCH_VALIDATION_FAILED", "MVU 或脚本校验失败；本次变量补丁已回滚。"
                     ) from error
+                if result.get("loreModified"):
+                    # Include callback changes in the same tool checkpoint as
+                    # the variable patch, so a later resume never replays them.
+                    owner.apply_script_lore(before["lore"], result)
                 owner.snapshot["state"], owner.snapshot["scopes"] = result["state"], result["scopes"]
             owner.patch_state_done = True
             return {

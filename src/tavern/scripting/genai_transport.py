@@ -37,15 +37,15 @@ class _ObservedEvents(httpx.AsyncByteStream):
     payload, including opaque signatures and provider-specific usage fields.
     """
 
-    def __init__(self, response, operation):
-        self.response, self.operation = response, operation
+    def __init__(self, response, operation, secret):
+        self.response, self.operation, self.secret = response, operation, secret
 
     async def __aiter__(self):
         async for event in stream_events(self.response):
             if isinstance(event, dict) and ("error" in event or event.get("type") == "error"):
                 # Relay errors may omit Google's numeric code, which the SDK
                 # requires. Reject all error events before typed SDK parsing.
-                raise ValueError(stream_error("Gemini 流返回错误", event))
+                raise ValueError(stream_error("Gemini 流返回错误", event, secret=self.secret))
             self.operation.raw_event = event
             yield ("data: " + json.dumps(event, ensure_ascii=False) + "\n\n").encode()
 
@@ -54,9 +54,10 @@ class _ObservedEvents(httpx.AsyncByteStream):
 
 
 class _RuntimeHTTP(httpx.AsyncBaseTransport):
-    def __init__(self, http: httpx.AsyncClient, debug=None):
+    def __init__(self, http: httpx.AsyncClient, debug=None, *, secret=""):
         self.http = http
         self.debug = debug
+        self.secret = secret
         self.operation: ContextVar[_Operation | None] = ContextVar("genai_operation", default=None)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -82,7 +83,10 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
                     if k not in ("content-length", "content-encoding")
                 }
                 response = httpx.Response(
-                    200, headers=headers, request=request, stream=_ObservedEvents(response, operation)
+                    200,
+                    headers=headers,
+                    request=request,
+                    stream=_ObservedEvents(response, operation, self.secret),
                 )
                 operation.responses.append(response)
         return response
@@ -92,7 +96,7 @@ class GenAITransport:
     def __init__(self, base_url: str, api_path: str, key: str, http: httpx.AsyncClient, *, debug=None):
         self.key = key
         url = urlsplit(endpoint(base_url, "gemini", resource="models", api_path=api_path))
-        self.transport = _RuntimeHTTP(http, debug)
+        self.transport = _RuntimeHTTP(http, debug, secret=key)
         self.http = httpx.AsyncClient(transport=self.transport, trust_env=False)
         self.client = genai.Client(
             api_key=key,

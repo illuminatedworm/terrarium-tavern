@@ -72,6 +72,8 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 2. 将新版源码或发行包放入新程序目录，安装依赖。
 3. 用 `-Data` 或 `--data` 指向原数据目录并启动。
 
+当前开发版将 Python 基准升级为 3.13。此前使用其他 Python 版本的 Windows 和 Linux 安装都需要重新运行 `setup.ps1` 或 `setup.sh`；uv 会按 `.python-version` 准备 Python 3.13，并重建不兼容的 `.venv` 和锁定依赖。先停止旧服务，不能直接沿用旧环境启动。重新安装可能下载较大的依赖；使用本地向量检索或重排的用户仍须加 `-LocalRetrieval` 或 `--local-retrieval`，以重新安装 torch 等可选检索依赖。已下载的模型权重位于数据目录中，不属于 `.venv`，不需要因这次 Python 升级重新下载。
+
 当前数据库格式为 **schema 11**，设置文档版本为 **9**，个人数据包格式为 **4**。schema 1–8 若包含剧情对话，会在任何写入前明确拒绝，原文件保留，并提示使用根目录的 `clear-conversations.cmd` 清理脚本。需要继续旧剧情时，请使用兼容旧版打开原数据；也可用旧版导出非对话资料，在新的空数据目录中导入。旧版个人数据包只支持导入非对话资料。没有剧情的旧数据库仍先只读核对，并在升级前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 完整备份。当前格式的备份恢复和整轮版本保留照常工作，详见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
 
 需要清空剧情对话并保留现有资料时，先停止酒馆服务。Windows 默认数据目录可双击根目录的 `clear-conversations.cmd`，按提示输入 `y`；自定义目录必须传入与启动时一致的路径：

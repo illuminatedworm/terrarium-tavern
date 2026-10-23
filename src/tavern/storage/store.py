@@ -30,6 +30,17 @@ def dump(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def new_snapshot(agent_mode: str) -> dict:
+    snapshot = {"state": {}, "lore": {}, "scopes": {}, "content": None}
+    if agent_mode == "full_agent":
+        from tavern.full_agent.state import new_state
+
+        snapshot["full_agent"] = new_state()
+    else:
+        snapshot["memory_document"] = new_memory()
+    return snapshot
+
+
 def settle_message_archive(db, sid, parent, snapshot):
     """Reduce a snapshot's archive delta to its own entries against ``parent``'s chain."""
     from tavern.memories.memory_archive import ARCHIVE, RETIRING, settle_archive
@@ -73,8 +84,11 @@ def insert_row(db, table, row):
 def write_blob(path: Path, data: bytes):
     """Content-addressed files are trusted by name, so publish them only when complete."""
     temporary = path.with_name(f"{path.name}.{uid()}.tmp")
-    temporary.write_bytes(data)
-    temporary.replace(path)
+    try:
+        temporary.write_bytes(data)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class Conflict(ValueError):
@@ -321,7 +335,13 @@ class Store(MessageAdapters):
         for row in rows:
             self.event(row[0], "interrupted", {"message": "服务重启；草稿保留，未重放脚本"})
 
-    def blob(self, data):
+    def blob(self, data, *, db=None):
+        if db is None:
+            # Import rollback can remove newly published blobs. Standalone
+            # resource writers must wait for that transaction before reusing one.
+            with self.connection() as db:
+                db.execute("BEGIN IMMEDIATE")
+                return self.blob(data, db=db)
         digest = hashlib.sha256(data).hexdigest()
         path = self.root / "blobs" / digest
         if not path.exists():
@@ -336,8 +356,8 @@ class Store(MessageAdapters):
         card = uid()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
-            original = self.blob(data)
-            mapped = {k: self.blob(v) for k, v in resources.items()}
+            original = self.blob(data, db=db)
+            mapped = {k: self.blob(v, db=db) for k, v in resources.items()}
             db.execute(
                 "INSERT INTO cards(id,name,original,container,resources,permission,document,report) VALUES (?,?,?,?,?,0,?,?)",
                 (
@@ -680,18 +700,7 @@ class Store(MessageAdapters):
         if not 0 <= options.greeting < len(greetings):
             raise ValueError("开场白不存在")
         sid, mid = uid(), uid()
-        snapshot = {
-            "state": {},
-            "memory_document": new_memory(),
-            "lore": {},
-            "scopes": {},
-            "content": None,
-        }
-        if options.agent_mode == "full_agent":
-            from tavern.full_agent.state import new_state
-
-            snapshot.pop("memory_document")
-            snapshot["full_agent"] = new_state()
+        snapshot = new_snapshot(options.agent_mode)
         from tavern.character.card_workflow import validate_document
 
         validate_document(card["document"])
@@ -876,13 +885,7 @@ class Store(MessageAdapters):
         result["snapshot"] = (
             copy.deepcopy(result["messages"][-1]["snapshot"])
             if result["messages"]
-            else {
-                "state": {},
-                "memory_document": new_memory(),
-                "lore": {},
-                "scopes": {},
-                "content": None,
-            }
+            else new_snapshot(result["agent_mode"])
         )
         if result["agent_mode"] == "full_agent":
             from tavern.full_agent.state import read_full_state

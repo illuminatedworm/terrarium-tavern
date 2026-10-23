@@ -586,7 +586,7 @@ async def test_anthropic_tracker_marks_execution_and_recall_failures_only(story)
 
 def test_script_lore_merge_preserves_tracker_changes_and_containers():
     from tavern.character.cards import lore_entries
-    from tavern.tracker.workflow import merge_script_lore, sync_runtime_lore
+    from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
 
     original = {
         "spec": "card",
@@ -594,21 +594,24 @@ def test_script_lore_merge_preserves_tracker_changes_and_containers():
             "name": "A",
             "character_book": {
                 "entries": {
-                    "one": {"id": "one", "content": "old", "extensions": {"private": "keep"}},
+                    "added": {"id": "one", "content": "old", "extensions": {"private": "keep"}},
                     "two": {"id": "two", "content": "stable"},
+                    "removed": {"id": "removed", "content": "Remove at startup"},
                 }
             },
         },
     }
     changed = copy.deepcopy(original)
-    changed["data"]["character_book"]["entries"]["one"]["content"] = "tracker edit"
+    changed["data"]["character_book"]["entries"]["added"]["content"] = "tracker edit"
     mirror = {"lore": lore_entries(original)}
     mirror["lore"][0]["name"] = "earlier same-entry edit"
     mirror["lore"][1]["content"] = "earlier script edit"
+    mirror["lore"].pop()
+    mirror["lore"].append({"id": "added", "content": "Added at startup"})
     changed = merge_script_lore(
         changed, mirror["lore"], {"loreModified": True, "lore": mirror["lore"]}, include_existing=True
     )
-    changed["data"]["character_book"]["entries"]["one"]["content"] = "tracker edit"
+    changed["data"]["character_book"]["entries"]["added"]["content"] = "tracker edit"
     sync_runtime_lore(mirror, changed, original)
     assert mirror["lore"][0]["content"] == "tracker edit"
     assert mirror["lore"][1]["content"] == "earlier script edit"
@@ -617,11 +620,26 @@ def test_script_lore_merge_preserves_tracker_changes_and_containers():
     final = merge_script_lore(changed, initial, {"loreModified": True, "lore": mirror["lore"]})
     entries = final["data"]["character_book"]["entries"]
     assert isinstance(entries, dict)
-    assert entries["one"]["content"] == "tracker edit"
-    assert entries["one"]["comment"] == "callback title"
-    assert entries["one"]["extensions"] == {"private": "keep"}
-    assert entries["one"]["name"] == "earlier same-entry edit"
+    assert entries["added"]["content"] == "tracker edit"
+    assert entries["added"]["comment"] == "callback title"
+    assert entries["added"]["extensions"] == {"private": "keep"}
+    assert entries["added"]["name"] == "earlier same-entry edit"
     assert entries["two"]["content"] == "earlier script edit"
+    assert "removed" not in entries
+    assert (
+        next(entry for entry in entries.values() if entry["id"] == "added")["content"] == "Added at startup"
+    )
+    entries["two"]["extensions"] = {"content": "Effective source", "tag": "before"}
+    before = lore_entries(final)
+    callback = copy.deepcopy(before)
+    callback[1]["content"] = "Callback effective edit"
+    callback[1]["extensions"]["tag"] = "after"
+    updated = merge_script_lore(final, before, {"loreModified": True, "lore": callback})
+    assert updated["data"]["character_book"]["entries"]["two"]["extensions"] == {
+        "content": "Callback effective edit",
+        "tag": "after",
+    }
+    assert lore_entries(updated)[1]["content"] == "Callback effective edit"
 
 
 async def test_incomplete_required_tools_exhaust_budget(story):
