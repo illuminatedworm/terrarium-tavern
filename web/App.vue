@@ -16,6 +16,7 @@ import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import { saveDownload } from './lib/download';
 import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
@@ -1925,16 +1926,11 @@ async function exportNextMessages() {
         update_variables: updateVariables.value,
         allow_content_edit: allowEdit.value,
       });
-      const url = URL.createObjectURL(
+      const saved = await saveDownload(
         new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),
+        `messages-preview-${sid}.json`,
       );
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `messages-preview-${sid}.json`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (!saved) return;
       notify('已导出完整 messages 数组。只读预览未运行神经召回，实际发送时的世界书命中可能不同。');
     });
   } finally {

@@ -13,6 +13,8 @@ export interface WarmupJob {
 /** `GET /local-models`. */
 export interface LocalModelStatus {
   startup_id: string;
+  available: boolean;
+  reason: string;
   models: Record<
     LocalModelPurpose,
     { downloaded: boolean; ready: boolean; model: string; quantization: string }

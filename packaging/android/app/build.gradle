@@ -1,0 +1,62 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+layout.buildDirectory = file("../../../.cache/android/build/app")
+
+android {
+    namespace "com.terrarium.tavern"
+    compileSdk 35
+    ndkVersion "27.2.12479018"
+
+    defaultConfig {
+        applicationId "com.terrarium.tavern"
+        // Separate host/realm WebView storage requires setDataDirectorySuffix (API 28).
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName "0.7.0"
+        manifestPlaceholders = [appLabel: "Terrarium Tavern"]
+        ndk { abiFilters "arm64-v8a" }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        dev {
+            initWith debug
+            applicationIdSuffix ".dev"
+            manifestPlaceholders = [appLabel: "Terrarium Tavern 开发版"]
+            matchingFallbacks = ["debug"]
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+    sourceSets {
+        main { assets.srcDir "../../../.cache/android/distribution-assets" }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.13"
+        buildPython(System.getenv("TAVERN_BUILD_PYTHON") ?: file("../../../.cache/android/build-env/Scripts/python.exe").absolutePath)
+        extractPackages("tavern", "kohakuterrarium", "jieba", "sudachidict_core")
+        pip {
+            // The Android lock explicitly lists the complete dependency closure.
+            // Desktop extras must not be pulled back in through upstream metadata.
+            options "--no-deps", "--no-index", "--only-binary=:all:", "--find-links", file("../../../.cache/android/wheels").absolutePath
+            install "-r", (System.getenv("TAVERN_REQUIREMENTS") ?: file("../../../.cache/android/requirements.txt").absolutePath)
+        }
+    }
+    sourceSets {
+        main { srcDir "../../../src" }
+    }
+}
+
+dependencies {
+    implementation "androidx.webkit:webkit:1.14.0"
+}

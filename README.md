@@ -7,7 +7,7 @@
 在有限的上下文里，让设定与故事保持连续。
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Linux-0078D4?style=flat-square)](#快速开始)
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](package.json)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](web)
 [![FastAPI](https://img.shields.io/badge/FastAPI-SQLite-009688?style=flat-square&logo=fastapi&logoColor=white)](src/tavern)
@@ -96,11 +96,13 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 快速开始
 
+Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本地。首包面向 Android 9+、ARM64、4 KiB 内存页设备；Android 上暂不提供 CUDA 本地向量与重排。构建、安装及已知限制见 [Android APK](docs/development/android.md)。
+
 ### 环境要求
 
 | 依赖 | 版本 | 说明 |
 |:--|:--|:--|
-| Python | — | 安装脚本通过 uv 自动准备 Python 3.12 与锁定依赖 |
+| Python | — | 安装脚本通过 uv 自动准备 Python 3.13 与锁定依赖 |
 | Node.js | 22+ | 用于构建前端 |
 | Git | — | 克隆仓库；也可直接下载并解压源码 |
 | NVIDIA GPU | 可选 | 仅本地向量检索与重排需要，须支持 CUDA |

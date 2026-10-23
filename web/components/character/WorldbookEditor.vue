@@ -4,6 +4,7 @@ import LoreBookEditor from './LoreBookEditor.vue';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
+import { downloadLink } from '../../lib/download';
 import { emptyLoreFilter } from '../../lib/loreFilter';
 import type { Worldbook } from '../../lib/types';
 
@@ -114,7 +115,11 @@ useTimedError(error);
         </div>
       </div>
       <div class="toolbar character-editor-actions">
-        <a class="editor-export" :href="`/api/worldbooks/${saved.id}/export`" title="导出已保存的内容"
+        <a
+          class="editor-export"
+          :href="`/api/worldbooks/${saved.id}/export`"
+          title="导出已保存的内容"
+          @click="downloadLink"
           ><Icon name="import" :size="16" />导出世界书</a
         >
         <template v-if="confirmingRestore">

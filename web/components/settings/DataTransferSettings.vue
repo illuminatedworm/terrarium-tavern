@@ -102,13 +102,13 @@ async function download() {
   setBusy('export');
   try {
     await props.flush();
-    await downloadData({
+    const saved = await downloadData({
       settings: settings.value,
       include_api_keys: settings.value && includeKeys.value,
       browser_preferences: settings.value ? readBrowserPreferences() : {},
       ...Object.fromEntries(groups.map(({ key }) => [key, enabled.value[key] ? selected.value[key] : []])),
     });
-    notice.value = '数据包已下载，可在本页重新导入。';
+    notice.value = saved ? '数据包已下载，可在本页重新导入。' : '已取消保存。';
   } catch (e) {
     error.value = String(e).replace(/^Error: /, '');
   } finally {

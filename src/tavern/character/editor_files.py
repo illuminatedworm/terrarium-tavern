@@ -11,8 +11,10 @@ import subprocess
 import sys
 import zipfile
 from contextlib import contextmanager
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 from typing import BinaryIO, Iterator
+
+from tavern.android.platform import is_android
 
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_TEXT_CHARS = 20_000
@@ -35,7 +37,7 @@ def local_path(value: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("path 必须是后端电脑上的绝对文件路径。")
-    if os.name == "nt" and (PureWindowsPath(value).is_reserved() or ":" in str(path)[2:]):
+    if os.name == "nt" and (os.path.isreserved(value) or ":" in str(path)[2:]):
         raise ValueError("不支持设备路径或文件的备用数据流。")
     resolved = path.resolve(strict=True)
     if str(resolved).startswith(("\\\\", "//")):
@@ -189,20 +191,32 @@ def convert_document(path: str, offset: int, limit: int) -> dict:
         if len(blob) > MAX_FILE_BYTES:
             raise ValueError("源文件超过 32 MiB，请先拆分文件。")
     _check_archive(blob)
-    # Call only the selected converter: no format inference model, URL dispatch, plugins or model clients.
-    from markitdown import StreamInfo
-    from markitdown.converters import DocxConverter, XlsxConverter
+    android = is_android()
+    if android:
+        from tavern.android.documents import ConversionLimit, convert_office
+    else:
+        # Desktop keeps its selected converter: no format inference, URLs, plugins or model clients.
+        from markitdown import StreamInfo
+        from markitdown.converters import DocxConverter, XlsxConverter
 
-    converter = DocxConverter() if extension == ".docx" else XlsxConverter()
     try:
-        markdown = converter.convert(io.BytesIO(blob), stream_info=StreamInfo(extension=extension)).markdown
-    except Exception:
+        if android:
+            markdown = convert_office(blob, extension, MAX_DOCUMENT_CHARS)
+        else:
+            converter = DocxConverter() if extension == ".docx" else XlsxConverter()
+            markdown = converter.convert(
+                io.BytesIO(blob), stream_info=StreamInfo(extension=extension)
+            ).markdown
+    except Exception as error:
+        # Library errors, including their own ValueErrors, get one stable message on both platforms.
+        if android and isinstance(error, ConversionLimit):
+            raise
         raise ValueError("Office 文件转换失败，文件可能损坏、已加密或包含不支持的内容。") from None
     if len(markdown) > MAX_DOCUMENT_CHARS:
         raise ValueError("转换后 Markdown 超过 800 万字符，请先拆分文件。")
     page = markdown[offset : offset + limit]
     has_more = offset + len(page) < len(markdown)
-    return {
+    result = {
         "path": str(resolved),
         "format": extension[1:],
         "markdown": page,
@@ -213,9 +227,18 @@ def convert_document(path: str, offset: int, limit: int) -> dict:
         "next_offset": offset + len(page) if has_more else None,
         "limitations": DOCUMENT_LIMITATIONS,
     }
+    if android:
+        # Desktop tool results stay unchanged; Android names its different converter.
+        result["converter"] = "mammoth + markdownify" if extension == ".docx" else "openpyxl"
+        result["limitations"] += "Android 使用轻量离线转换器，复杂排版、嵌入对象和公式排版可能无法保留。"
+    return result
 
 
 async def read_document(path: str, offset: int = 0, limit: int = 12_000) -> dict:
+    if is_android():
+        from tavern.android.documents import read_document as android_read_document
+
+        return await android_read_document(path, offset, limit, CONVERSION_TIMEOUT)
     # Spawn is shielded so cancellation during process creation cannot orphan a worker.
     launch = asyncio.create_task(
         asyncio.create_subprocess_exec(

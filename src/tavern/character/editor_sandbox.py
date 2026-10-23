@@ -9,6 +9,7 @@ from tavern.character.card_workflow import validate_document
 from tavern.character.cards import normalize, regex_scripts
 from tavern.core.model_view import state_for_model
 from tavern.scripting.dependencies import IMPORTS, Dependencies
+from tavern.scripting.realm import default_backend
 from tavern.scripting.runtime import SDK, ScriptRuntime
 
 
@@ -99,7 +100,8 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
     dependencies = Dependencies(store)
     dependencies.read = lambda card: manifest
     checks, logs = [], []
-    runtime, session = ScriptRuntime(), None
+    # A validation timeout resets its realm; story scripts must not share that process.
+    runtime, session = ScriptRuntime(default_backend(tools=True)), None
 
     async def host(method, args):
         if method == "log":

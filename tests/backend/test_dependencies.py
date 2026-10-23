@@ -9,8 +9,10 @@ import pytest
 from PIL import Image
 
 from tavern.core.models import SessionCreate
+from tavern.scripting.bundler import DependencyBundler
 from tavern.scripting.dependencies import PRIVATE_NETWORK, Dependencies
 from tavern.scripting.image_resources import declared_image
+from tavern.scripting.realm import default_backend
 from tavern.storage.store import Store
 from tavern.web.transport import PublicNetworkBackend
 
@@ -182,7 +184,9 @@ async def test_public_network_connects_only_to_the_checked_address(monkeypatch):
 async def test_offline_dependency_graph_is_pinned(tmp_path, monkeypatch):
     store = Store(tmp_path)
     source = (
-        "import {answer} from 'https://cards.example/entry.js'; if(answer!==42)throw Error('bad module');"
+        "import {answer} from 'https://cards.example/entry.js';"
+        "import _ from 'lodash'; import $ from 'jquery'; import z from 'zod'; import YAML from 'yaml';"
+        "globalThis.moduleResult=[answer,_.tag,$.tag,z.tag,YAML.tag];"
     )
     card = store.import_card(
         json.dumps(
@@ -225,6 +229,26 @@ async def test_offline_dependency_graph_is_pinned(tmp_path, monkeypatch):
     assert "https://cards.example/entry.js" in json.dumps(manifest)
     await resolver.resolve(card)
     assert len(requested) == 2  # Cached resources never re-fetch mutable remote content.
+    backend = default_backend()
+    try:
+        context = await backend.new_context(lambda *_: None)
+
+        async def host(*_):
+            raise AssertionError("The bundled module has no host capabilities")
+
+        page = await context.open_page("<html><head></head><body></body></html>", host)
+        await page.add_script(
+            "globalThis._={tag:'lodash'};globalThis.$={tag:'jquery'};"
+            "globalThis.z={tag:'zod'};globalThis.YAML={tag:'yaml'};"
+        )
+        await page.add_script(resolver.scripts(card)[0]["content"])
+        assert await page.evaluate("moduleResult") == [42, "lodash", "jquery", "zod", "yaml"]
+    finally:
+        await backend.close()
+        await resolver.close()
+    async with DependencyBundler() as bundler:
+        with pytest.raises(ValueError, match="Unresolved dependency"):
+            await bundler.bundle("import 'https://cards.example/missing.js';", {})
 
 
 async def test_new_conversation_reuses_existing_session_dependencies(tmp_path, monkeypatch):

@@ -10,7 +10,9 @@ const props = defineProps<{ status: StartupModels; warmup: ModelWarmupState }>()
 defineEmits<{ close: []; settings: [] }>();
 const models = props.status.enabled;
 const { pending, error } = props.warmup;
-const available = models.filter((purpose) => props.status.models[purpose].downloaded);
+const available = models.filter(
+  (purpose) => props.status.available && props.status.models[purpose].downloaded,
+);
 const missing = models.filter((purpose) => !props.status.models[purpose].downloaded);
 // The shared observer also tracks warmups started from settings; this dialog shows its own models.
 const jobs = computed(() =>
@@ -24,21 +26,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <h2>{{ available.length ? '预热本地检索模型？' : '本地检索模型尚未下载' }}</h2>
-  <p v-if="available.length">
+  <h2>
+    {{
+      !status.available
+        ? '此平台的本地检索模型不可用'
+        : available.length
+          ? '预热本地检索模型？'
+          : '本地检索模型尚未下载'
+    }}
+  </h2>
+  <p v-if="!status.available" role="status">{{ status.reason }}</p>
+  <p v-else-if="available.length">
     你已启用 {{ models.map((purpose) => labels[purpose]).join('、') }}。服务刚启动，是否现在加载
     {{ available.map((purpose) => labels[purpose]).join('、') }}？预热会占用内存或显存。
   </p>
   <p v-else>你已启用 {{ models.map((purpose) => labels[purpose]).join('、') }}，但模型文件尚未下载。</p>
-  <p v-if="missing.length" class="muted">
+  <p v-if="status.available && missing.length" class="muted">
     {{
       available.length ? `${missing.map((purpose) => labels[purpose]).join('、')} 尚未下载，` : ''
     }}请到“设置 → 通用 → 本地模型”下载模型。
   </p>
-  <p class="muted">
+  <p v-if="status.available" class="muted">
     {{
       available.length ? '暂不预热' : '下载前'
     }}也可继续使用；不可用的检索或重排通道会降级。已保存的世界书向量缓存仍可复用。
+  </p>
+  <p v-else class="muted">
+    已启用的向量或重排通道会记录不可用原因，继续遵守原有检索准入规则；可在设置中调整通道。
   </p>
   <AppNotification v-for="job in jobs" :key="`error-${job.id}`" :message="job.error || ''" />
   <p v-for="job in jobs.filter((j) => j.status !== 'error')" :key="job.id" role="status">

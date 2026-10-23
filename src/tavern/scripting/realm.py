@@ -16,7 +16,25 @@ from typing import Any, Protocol
 
 Host = Callable[[str, Any], Awaitable[Any]]
 # (url, method) -> (body, mime type), or None to fail the request.
-Resource = Callable[[str, str], tuple[str, str] | None]
+Resource = Callable[[str, str], tuple[str | bytes, str] | None]
+
+
+def default_backend(*, tools: bool = False) -> "RealmBackend":
+    """Keep platform selection at the browser boundary, before importing a driver.
+
+    ``tools`` marks Card Author validation and dependency bundling. Desktop backends
+    each own a browser; Android shares one process per kind, so tools get their own.
+    """
+    import os
+    import sys
+
+    if sys.platform == "android" or os.environ.get("TAVERN_PLATFORM") == "android":
+        from tavern.scripting.android_realm import AndroidBackend
+
+        return AndroidBackend(tools=tools)
+    from tavern.scripting.playwright_realm import PlaywrightBackend
+
+    return PlaywrightBackend()
 
 
 class RealmPage(Protocol):

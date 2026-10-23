@@ -26,7 +26,7 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 
 Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定，或用 `--proxy ''` 选择直连。已有 uv 时直接使用，否则通过 Python 在 `.cache/uv/` 中准备 uv。Chromium 提示系统库缺失时，运行 `.venv/bin/python -m playwright install-deps chromium`，按系统提示提供 sudo 权限。
 
-安装脚本准备 Python 3.12 和锁定依赖，构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+安装脚本准备 Python 3.13 和锁定依赖，构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
 | 操作 | Windows | Linux |
 |---|---|---|

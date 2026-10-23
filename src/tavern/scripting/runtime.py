@@ -14,8 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from tavern.character.cards import card_scripts, is_initvar, lore_entries, normalize
-from tavern.scripting.playwright_realm import PlaywrightBackend
-from tavern.scripting.realm import RealmBackend
+from tavern.scripting.realm import RealmBackend, default_backend
 
 SDK = Path(__file__).parents[1] / "static" / "runtime.js"
 
@@ -35,7 +34,7 @@ class RuntimeRollbackError(RuntimeError):
 
 class ScriptRuntime:
     def __init__(self, backend: RealmBackend | None = None):
-        self.backend = backend or PlaywrightBackend()
+        self.backend = backend or default_backend()
         self.documents = OrderedDict()
         self.document_bytes = 0
 
@@ -284,8 +283,11 @@ class RuntimeSession:
         return args
 
     async def call(self, name, *args, install=False):
+        # install returns the live helper API (functions, schemas and BigInts).
+        # It stays inside the realm; callers only need installation to finish,
+        # and Android's JSON transport must not serialize that unused object.
         expression = (
-            "data => TavernRuntime.install(data, (m,a) => __tavernHost(m,a))"
+            "data => { TavernRuntime.install(data, (m,a) => __tavernHost(m,a)); }"
             if install
             else "({name,args}) => TavernRuntime[name](...args)"
         )

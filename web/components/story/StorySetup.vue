@@ -11,11 +11,13 @@ import { cardPortraitUrl } from '../../lib/portraits';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
 import type { CardDefaults, WorldbookSummary } from '../../lib/types';
+import type { LocalModelStatus } from '../../composables/useModelWarmup';
 
 const props = defineProps<{ card: any; settings?: any }>();
 const emit = defineEmits<{ started: [session: any]; back: []; settings: [channel: Channel, mode: string] }>();
 const channel = ref<Channel>('standard');
 const settings = ref<any>(null);
+const localModels = ref<LocalModelStatus | null>(null);
 const personas = ref<any[]>([]),
   personaId = ref(''),
   personaName = ref('用户');
@@ -89,12 +91,15 @@ async function start() {
 }
 onMounted(async () => {
   try {
-    [personas.value, settings.value, worldbooks.value, defaults.value] = await Promise.all([
-      api('/personas'),
-      api('/settings'),
-      api('/worldbooks'),
-      api(`/cards/${props.card.id}/defaults`),
-    ]);
+    [personas.value, settings.value, worldbooks.value, defaults.value, localModels.value] = await Promise.all(
+      [
+        api('/personas'),
+        api('/settings'),
+        api('/worldbooks'),
+        api(`/cards/${props.card.id}/defaults`),
+        api('/local-models'),
+      ],
+    );
     channel.value = settings.value?.[agentMode.value]?.default_channel || 'standard';
     // Card defaults only preselect; deleted targets were already dropped with them.
     personaId.value = defaults.value?.persona_id || '';
@@ -129,6 +134,7 @@ useTimedError(error);
     <div class="story-setup-grid">
       <div v-if="step === 3" class="story-setup-options">
         <h3>挂载世界书</h3>
+        <p v-if="localModels?.available === false" role="status">{{ localModels.reason }}</p>
         <p class="muted">
           所选世界书的条目复制进本对话的角色卡世界书，与角色卡自带条目一起参与检索。之后修改书库不会影响这个对话；可在“场景
           → 编辑对话世界书 → 挂载世界书”中重新载入或卸载。

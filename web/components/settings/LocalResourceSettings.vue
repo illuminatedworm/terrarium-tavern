@@ -30,6 +30,7 @@ const rebuilding = () =>
   !!pending.value.rebuild ||
   status.value.jobs.some((j: any) => active(j) && ['rebuild', 'index'].includes(j.kind));
 const modelState = (purpose: string) => {
+  if (status.value.available === false) return { label: '此平台不可用', tone: 'missing' };
   const model = status.value.models[purpose];
   return model?.ready
     ? { label: '已预热', tone: 'ready' }
@@ -147,7 +148,8 @@ useTimedError(error);
 </script>
 <template>
   <h4>检索模型</h4>
-  <p class="muted">
+  <p v-if="status.available === false" role="status">{{ status.reason }}</p>
+  <p v-else class="muted">
     配置自动保存，下载和预热会等待保存完成。默认两个 0.6B 模型适合 12 GB 显卡，4B
     需要更多空闲显存；推理不可用时记录降级，不转 CPU。
   </p>
@@ -203,9 +205,13 @@ useTimedError(error);
         INT8 复用原始模型文件，预热时量化；切换量化方式后需重新预热。4B 建议从批量大小 1 开始。
       </p>
       <div class="actions">
-        <button :disabled="busy(purpose.key)" @click="download(purpose.key)">下载已保存的模型</button>
+        <button :disabled="status.available === false || busy(purpose.key)" @click="download(purpose.key)">
+          下载已保存的模型
+        </button>
         <button
-          :disabled="busy(purpose.key) || !status.models[purpose.key]?.downloaded"
+          :disabled="
+            status.available === false || busy(purpose.key) || !status.models[purpose.key]?.downloaded
+          "
           @click="warm(purpose.key)"
         >
           预热

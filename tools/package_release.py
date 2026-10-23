@@ -41,6 +41,9 @@ def publishable(relative):
     name = relative.name.lower()
     if any(part.lower() == ".agents" for part in relative.parts):
         return False
+    # The desktop archive carries only desktop tooling; Android builds come from a checkout.
+    if relative.parts[:2] == ("tools", "android"):
+        return False
     if any(part.startswith(".") or part in {"__pycache__", "node_modules"} for part in relative.parts[1:]):
         return False
     if name.startswith(("credentials", "secrets")) or name == "settings.json" or ".local." in name:
@@ -48,6 +51,8 @@ def publishable(relative):
     if relative.suffix.lower() == ".txt" and (
         relative.parts[0] == "LICENSE" or relative.parts[:4] == ("src", "tavern", "static", "licenses")
     ):
+        return True
+    if relative.as_posix() == "src/tavern/static/esbuild/esbuild.wasm":
         return True
     return relative.suffix.lower() in {
         ".py",

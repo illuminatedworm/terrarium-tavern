@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api } from '../../lib/api';
+import { downloadLink } from '../../lib/download';
 import WorkData from '../records/WorkData.vue';
 import Icon from '../common/Icon.vue';
 
@@ -124,7 +125,11 @@ onMounted(refresh);
           <p v-if="record.response && !record.response.body.complete" class="muted">
             响应未读取至结束，仅保留失败前已收到的字节。
           </p>
-          <a class="failed-request-download" :href="`/api/debug/failed-requests/${record.id}`" download
+          <a
+            class="failed-request-download"
+            :href="`/api/debug/failed-requests/${record.id}`"
+            download
+            @click="downloadLink"
             ><Icon name="import" :size="15" />下载原始数据（ZIP，{{
               (record.bytes / 1024).toFixed(1)
             }}

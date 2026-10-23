@@ -54,6 +54,8 @@ Half Agent 的具体位置受会话注入方案和配方影响；Full Agent 固�
 
 ## 本地模型与索引
 
+首版 Android APK 不提供 CUDA 本地向量与重排模型；“本地模型”页、启动提示和开局页面会明确显示不可用。已有模型配置保留，可继续编辑与迁移，下载和预热入口禁用。关键词与 BM25 保持原有分词与准入规则；若已有配置启用了向量或重排通道，运行时记录平台不可用原因并按原有通道失败规则处理，不降低门槛或补入弱匹配。
+
 1. 使用 `setup.ps1 -LocalRetrieval`（Windows）或 `./setup.sh --local-retrieval`（Linux）安装 GPU 依赖；安装代理按[安装指南](maintenance.md#安装与启动)配置。
 2. 在“设置 → 通用 → 本地模型”分别选择 Qwen3 Embedding／Reranker 的 0.6B 或 4B 模型，以及 BF16 或 INT8，完成下载并预热。
 3. 在目标模式的检索设置中启用需要的通道和重排。
