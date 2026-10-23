@@ -1,6 +1,7 @@
 """Isolated card-script executor used by Roleplay Runtime, not the orchestrator.
 
-Browser-backed compatibility execution; network is denied at context level.
+Browser-backed compatibility execution through a realm backend; network is denied
+at context level.
 """
 
 import asyncio
@@ -13,6 +14,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from tavern.character.cards import card_scripts, is_initvar, lore_entries, normalize
+from tavern.scripting.playwright_realm import PlaywrightBackend
+from tavern.scripting.realm import RealmBackend
 
 SDK = Path(__file__).parents[1] / "static" / "runtime.js"
 
@@ -31,27 +34,13 @@ class RuntimeRollbackError(RuntimeError):
 
 
 class ScriptRuntime:
-    def __init__(self):
-        self.playwright = None
-        self.browser = None
-        self.lock = asyncio.Lock()
+    def __init__(self, backend: RealmBackend | None = None):
+        self.backend = backend or PlaywrightBackend()
         self.documents = OrderedDict()
         self.document_bytes = 0
 
-    async def start(self):
-        async with self.lock:
-            if self.browser is None:
-                from playwright.async_api import async_playwright
-
-                self.playwright = await async_playwright().start()
-                self.browser = await self.playwright.chromium.launch(headless=True)
-
     async def close(self):
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
-        self.browser = self.playwright = None
+        await self.backend.close()
         self.documents.clear()
         self.document_bytes = 0
 
@@ -67,42 +56,8 @@ class ScriptRuntime:
         persona="用户",
         opening=False,
     ):
-        await self.start()
         if not SDK.exists():
             raise ValueError("兼容 SDK 尚未构建，请先运行 npm run build")
-        context = await self.browser.new_context(service_workers="block")
-        try:
-            return await self._open_context(
-                context,
-                document,
-                history,
-                snapshot,
-                allowed,
-                host,
-                scripts_override,
-                prepare_markup,
-                persona,
-                opening,
-            )
-        except BaseException:
-            # Setup failures and cancellation before install have the same lifetime
-            # boundary as script failures. No orphan browser contexts may survive.
-            await context.close()
-            raise
-
-    async def _open_context(
-        self,
-        context,
-        document,
-        history,
-        snapshot,
-        allowed,
-        host,
-        scripts_override,
-        prepare_markup,
-        persona,
-        opening,
-    ):
         prefix = f"https://tavern.invalid/{secrets.token_urlsafe(24)}/"
         messages = [
             {
@@ -122,42 +77,70 @@ class ScriptRuntime:
             combined = {**combined, **message["variables"]}
             variables.append(combined)
 
-        async def resource(route):
-            url = route.request.url
-            if not url.startswith(prefix) or route.request.method != "GET":
-                return await route.abort()
+        def resource(url, method):
+            if not url.startswith(prefix) or method != "GET":
+                return None
             key = url[len(prefix) :]
             if key == "core.js":
-                body, mime = script_source(SDK.parent / "mvu-core.js"), "text/javascript"
-            else:
-                match = re.fullmatch(r"(messages|variables)/(\d+)", key)
-                if not match or int(match[2]) >= len(messages):
-                    return await route.abort()
-                body = json.dumps(
-                    (messages if match[1] == "messages" else variables)[int(match[2])], ensure_ascii=False
-                )
-                mime = "application/json"
-            await route.fulfill(
-                body=body,
-                content_type=mime,
-                headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"},
+                return script_source(SDK.parent / "mvu-core.js"), "text/javascript"
+            match = re.fullmatch(r"(messages|variables)/(\d+)", key)
+            if not match or int(match[2]) >= len(messages):
+                return None
+            body = json.dumps(
+                (messages if match[1] == "messages" else variables)[int(match[2])], ensure_ascii=False
             )
+            return body, "application/json"
 
-        await context.route("**/*", resource)
-        page = await context.new_page()
-        await page.set_content(
-            "<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline' data:; connect-src 'none'\"></head><body></body></html>"
-        )
-        runtime = RuntimeSession(context, page, prefix, len(messages), self)
+        context = await self.backend.new_context(resource)
+        try:
+            return await self._open_context(
+                context,
+                prefix,
+                messages,
+                document,
+                history,
+                snapshot,
+                allowed,
+                host,
+                scripts_override,
+                prepare_markup,
+                persona,
+                opening,
+            )
+        except BaseException:
+            # Setup failures and cancellation before install have the same lifetime
+            # boundary as script failures. No orphan browser contexts may survive.
+            await context.close()
+            raise
 
+    async def _open_context(
+        self,
+        context,
+        prefix,
+        messages,
+        document,
+        history,
+        snapshot,
+        allowed,
+        host,
+        scripts_override,
+        prepare_markup,
+        persona,
+        opening,
+    ):
+        # The page runs no script until runtime is bound below, so boundary never sees it unset.
         async def boundary(method, args):
             if method == "event":
                 return await runtime.dispatch(args["name"], args["args"])
             return await host(method, args)
 
-        await page.expose_function("__tavernHost", boundary)
-        await page.add_script_tag(content=script_source(SDK))
-        await page.add_script_tag(content=script_source(SDK.parent / "mvu-core.js"))
+        page = await context.open_page(
+            "<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline' data:; connect-src 'none'\"></head><body></body></html>",
+            boundary,
+        )
+        runtime = RuntimeSession(context, page, prefix, len(messages), self)
+        await page.add_script(script_source(SDK))
+        await page.add_script(script_source(SDK.parent / "mvu-core.js"))
         ext = normalize(document).get("extensions", {})
         scopes = copy.deepcopy(snapshot.get("scopes", {}))
         helper = ext.get("tavern_helper", {})
@@ -256,12 +239,11 @@ class RuntimeSession:
                 await self._add_message_frame(document, data, host)
 
     async def _add_message_frame(self, html, data, host):
-        frame = await self.context.new_page()
-        await frame.set_content(
-            f"<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' {self.prefix}; style-src 'unsafe-inline' data:; connect-src {self.prefix}\"></head><body></body></html>"
+        frame = await self.context.open_page(
+            f"<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' {self.prefix}; style-src 'unsafe-inline' data:; connect-src {self.prefix}\"></head><body></body></html>",
+            host,
         )
-        await frame.expose_function("__tavernHost", host)
-        await frame.add_script_tag(content=script_source(SDK))
+        await frame.add_script(script_source(SDK))
         await frame.evaluate(
             """({data,prefix,length})=>{
             const read=(kind,index)=>{

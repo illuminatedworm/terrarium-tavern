@@ -42,11 +42,7 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
             )
             if part["format"] == "markdown":
                 markup = await session.call("renderMarkdown", markup)
-            frame = await session.context.new_page()
-            frames.append(frame)
-            frame.on("pageerror", lambda error: errors.append(str(error)))
-            await frame.expose_function("__tavernHost", host)
-            await frame.set_content(
+            frame = await session.context.open_page(
                 '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" '
                 "content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; "
                 "style-src 'unsafe-inline' data:; img-src data: blob:; connect-src 'none'\">"
@@ -54,8 +50,10 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
                 + "</head><body>"
                 + markup
                 + "</body></html>",
-                wait_until="load",
+                host,
+                errors.append,
             )
+            frames.append(frame)
             await frame.evaluate(
                 "async () => { await new Promise(resolve => $(resolve)); await TavernRuntime.flush(); }"
             )
@@ -66,17 +64,15 @@ async def check_display(session, html, mirror, assertions, host, *, after=False)
             expected = assertion.get("after_text") if after else assertion["text"]
             if expected is None:
                 continue
-            locators = [frame.locator(assertion["selector"]) for frame in frames]
-            counts = [await locator.count() for locator in locators]
-            count = sum(counts)
-            actual = (await locators[counts.index(1)].text_content()).strip() if count == 1 else None
+            texts = [text for frame in frames for text in await frame.texts(assertion["selector"])]
+            actual = texts[0].strip() if len(texts) == 1 else None
             observed.append(
                 {
                     "selector": assertion["selector"],
                     "expected": expected,
                     "actual": actual,
-                    "matches": count,
-                    "status": "passed" if count == 1 and actual == expected else "failed",
+                    "matches": len(texts),
+                    "status": "passed" if len(texts) == 1 and actual == expected else "failed",
                 }
             )
         return observed

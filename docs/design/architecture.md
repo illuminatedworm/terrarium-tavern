@@ -71,6 +71,8 @@ Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 
 
 角色 HTML 运行于不含 `allow-same-origin` 的 sandbox iframe，桥接检查来源窗口和随机通道。服务端脚本 realm 阻止网络，不接触 API 密钥，每回合重新建立；持久数据必须通过变量 API 保存。
 
+`ScriptRuntime` 与制卡 agent 的本地验证只通过 [realm.py](../../src/tavern/scripting/realm.py) 定义的后端接口操作隔离页面，接口说明列出各后端必须保持的隔离与加载约定；桌面后端为 [playwright_realm.py](../../src/tavern/scripting/playwright_realm.py) 的 Playwright Chromium。
+
 外部依赖先下载、哈希缓存和离线打包。卡级缓存及已落盘的旧会话依赖可以复用，解析后回填卡级清单；每个故事仍有自己的依赖清单。运行阶段不任意联网，兼容范围见[矩阵](../guides/compatibility.md)。
 
 服务只监听 loopback，并校验 Host/Origin。API 密钥保存在后端配置，设置响应只提供配置状态；完整备份包含这些密钥，需按私有数据保存。ChatGPT 凭据单独绑定当前安装，迁移后重新连接。窗口、日志、索引和模型权重有不同生命周期。

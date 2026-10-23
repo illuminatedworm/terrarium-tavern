@@ -132,7 +132,7 @@ async def test_cancel_and_setup_failure_close_contexts(runtime, monkeypatch):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert runtime.browser.contexts == []
+    assert runtime.backend.browser.contexts == []
 
     def unavailable(path):
         raise OSError("fixture SDK unavailable")
@@ -140,7 +140,7 @@ async def test_cancel_and_setup_failure_close_contexts(runtime, monkeypatch):
     monkeypatch.setattr(runtime_module, "script_source", unavailable)
     with pytest.raises(OSError, match="unavailable"):
         await runtime.open({"name": "卡"}, [], {"state": {}, "scopes": {}}, False, host)
-    assert runtime.browser.contexts == []
+    assert runtime.backend.browser.contexts == []
 
 
 async def test_cached_templates_do_not_share_branch_variables(runtime):
