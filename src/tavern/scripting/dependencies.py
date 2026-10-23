@@ -9,7 +9,6 @@ import re
 from collections import OrderedDict
 from contextlib import aclosing
 from io import BytesIO
-from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 from xml.etree import ElementTree
 
@@ -17,6 +16,7 @@ import httpx
 from PIL import Image
 
 from tavern.character.cards import card_scripts, diagnose
+from tavern.scripting.bundler import DependencyBundler
 from tavern.scripting.image_resources import TEMPLATE, declared_image, rewrite_markup
 from tavern.web.transport import PublicHTTPTransport, public_addresses
 
@@ -78,8 +78,7 @@ async def download_resource(client, url, *, proxied=False):
 class Dependencies:
     def __init__(self, store):
         self.store = store
-        self.directory = store.root / "dependencies"
-        self.directory.mkdir(exist_ok=True)
+        (store.root / "dependencies").mkdir(exist_ok=True)
         self.lock = asyncio.Lock()
         # Dynamic galleries must not grow the pinned dependency manifest indefinitely.
         # These derived images expire with this runtime; story/card data is untouched.
@@ -259,7 +258,7 @@ class Dependencies:
             raise ValueError("请先启用此卡脚本权限")
         manifest = self.read(card)
         proxy = self.proxy()
-        async with self.client(proxy) as client:
+        async with self.client(proxy) as client, DependencyBundler() as bundler:
             visited = set()
 
             async def fetch(url, depth=0):
@@ -322,28 +321,12 @@ class Dependencies:
                     and (self.store.root / "blobs" / manifest["scripts"][digest]).exists()
                 ):
                     continue
-                build_manifest = self.directory / f"{digest}-build.json"
                 modules = {
-                    url: str((self.store.root / "blobs" / resource["hash"]).resolve())
+                    url: self.store.root / "blobs" / resource["hash"]
                     for url, resource in manifest["resources"].items()
                 }
-                build_manifest.write_text(
-                    json.dumps({"source": source, "modules": modules}), encoding="utf-8"
-                )
-                output = self.directory / f"{digest}.js"
-                script_path = Path(__file__).resolve().parents[3] / "tools" / "bundle-dependencies.mjs"
-                proc = await asyncio.create_subprocess_exec(
-                    "node",
-                    str(script_path),
-                    str(build_manifest.resolve()),
-                    str(output.resolve()),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await asyncio.wait_for(proc.communicate(), 45)
-                if proc.returncode:
-                    raise ValueError("卡片模块打包失败：" + stderr.decode(errors="replace")[:1000])
-                manifest["scripts"][digest] = self.store.blob(output.read_bytes())
+                output = await bundler.bundle(source, modules)
+                manifest["scripts"][digest] = self.store.blob(output.encode("utf-8"))
         self.manifest_path(card).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )

@@ -9,6 +9,8 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
+from tavern.android.platform import is_android, protect_credentials, unprotect_credentials
+
 
 def _dpapi(data: bytes, *, decrypt=False) -> bytes:
     """Current-user DPAPI, with UI disabled; never fall back to plaintext."""
@@ -85,7 +87,11 @@ class CredentialVault:
             return {"version": 1, "host_id": None, "accounts": {}, "welcomed": False}
         try:
             raw = self.path.read_bytes()
-            if os.name == "nt":
+            if is_android():
+                if not raw.startswith(b"AESGCM\0"):
+                    raise ValueError("凭据保护格式不匹配")
+                raw = unprotect_credentials(raw[7:])
+            elif os.name == "nt":
                 if not raw.startswith(b"DPAPI\0"):
                     raise ValueError("凭据保护格式不匹配")
                 raw = _dpapi(raw[6:], decrypt=True)
@@ -103,7 +109,10 @@ class CredentialVault:
     def save(self, value):
         self.prepare()
         raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
-        raw = b"DPAPI\0" + _dpapi(raw) if os.name == "nt" else b"JSON\0" + raw
+        if is_android():
+            raw = b"AESGCM\0" + protect_credentials(raw)
+        else:
+            raw = b"DPAPI\0" + _dpapi(raw) if os.name == "nt" else b"JSON\0" + raw
         descriptor, name = tempfile.mkstemp(prefix="accounts-", suffix=".tmp", dir=self.directory)
         try:
             with os.fdopen(descriptor, "wb") as stream:

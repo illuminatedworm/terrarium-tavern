@@ -396,10 +396,15 @@ async def test_script_failure_rolls_back(tmp_path):
         await service.close()
 
 
-async def test_api_local_boundary_and_secret_redaction(tmp_path):
+async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVERN_STARTUP_TOKEN", raising=False)
     app = create_app(tmp_path)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c,
+    ):
         assert (await c.get("/api/health")).status_code == 200
+        assert (await c.get("/api/health", headers={"origin": "http://localhost:5173"})).status_code == 200
         assert (
             await c.patch(
                 "/api/settings/shared",
@@ -414,6 +419,36 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path):
         assert "secret" not in response.text
         assert (await c.get("/api/settings", headers={"origin": "null"})).status_code == 403
         assert (await c.get("/api/settings", headers={"host": "evil.example"})).status_code == 403
+
+    token = "native-session-secret"
+    monkeypatch.setenv("TAVERN_STARTUP_TOKEN", token)
+    monkeypatch.setenv("TAVERN_PLATFORM", "android")
+    app = create_app(tmp_path)
+    monkeypatch.setenv("TAVERN_STARTUP_TOKEN", "changed-after-app-creation")
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1:45831") as c,
+    ):
+        assert (await c.get("/api/health")).status_code == 403
+        assert (await c.get("/runtime.js")).status_code == 403
+        assert (await c.get("/api/health", headers={"X-Tavern-Token": "wrong"})).status_code == 403
+        c.headers["X-Tavern-Token"] = token
+        response = await c.get("/api/health")
+        assert response.status_code == 200 and response.json()["platform"] == "android"
+        assert token not in response.text
+        assert not response.json()["capabilities"]["local_models"]
+        assert (await c.get("/api/health", headers={"host": "localhost:45831"})).status_code == 403
+        assert (await c.get("/api/health", headers={"origin": "http://127.0.0.1:5173"})).status_code == 403
+        assert (await c.get("/api/health", headers={"origin": "null"})).status_code == 403
+        assert (await c.get("/api/health", headers={"origin": "http://127.0.0.1:45831"})).status_code == 200
+        del c.headers["X-Tavern-Token"]
+        c.cookies.set("tavern_session", "wrong")
+        assert (await c.get("/api/settings")).status_code == 403
+        c.cookies.set("tavern_session", token)
+        assert (await c.get("/api/settings")).status_code == 200
+        # Extracted APK files share one mtime; unhashed entries must not survive an update.
+        for path in ("/", "/static/runtime.js"):
+            assert (await c.get(path)).headers["cache-control"] == "no-store"
 
 
 async def test_preview_and_cancel_are_atomic(tmp_path):

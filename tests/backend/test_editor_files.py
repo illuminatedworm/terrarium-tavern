@@ -183,33 +183,42 @@ def test_strict_arguments(model, args):
 
 
 @pytest.mark.parametrize("format", ["docx", "xlsx"])
-async def test_real_office_worker_and_lossless_character_pagination(tmp_path, format):
+async def test_real_office_worker_and_lossless_character_pagination(tmp_path, monkeypatch, format):
     path = (make_docx if format == "docx" else make_xlsx)(tmp_path / f"资料.{format.upper()}")
     original = path.read_bytes()
-    whole = await read_document(str(path))
-    markdown = whole["markdown"]
-    assert "林澈" in markdown and "文档完整尾部" in markdown
-    if format == "docx":
-        assert "# 世界设定" in markdown and "* 航海经历" in markdown and "|" in markdown
-    else:
-        assert markdown.index("## 人物") < markdown.index("## 空表") < markdown.index("## 世界")
-        assert "有缓存公式" in markdown and "3" in markdown and "无缓存公式" in markdown
-        assert "=1+2" not in markdown and "=2+3" not in markdown
-    # Exercise the production worker once above; repeat pure conversion for small-page coverage.
-    pages, offset = [], 0
-    while True:
-        result = convert_document(str(path), offset, 23)
-        pages.append(result["markdown"])
-        assert result["returned_chars"] == len(result["markdown"]) <= 23
-        assert result["total_chars"] == len(markdown)
-        if not result["has_more"]:
-            assert result["next_offset"] is None
-            break
-        offset = result["next_offset"]
-    assert "".join(pages) == markdown
-    for offset in (len(markdown), len(markdown) + 10):
-        empty = convert_document(str(path), offset, 23)
-        assert empty["markdown"] == "" and not empty["has_more"] and empty["next_offset"] is None
+    for platform in ("desktop", "android"):
+        monkeypatch.setenv("TAVERN_PLATFORM", platform)
+        # Exercise the real desktop subprocess once; Android's parser is the same
+        # pure function called by its native disposable service, requiring no JVM here.
+        whole = (
+            await read_document(str(path))
+            if platform == "desktop"
+            else convert_document(str(path), 0, 12_000)
+        )
+        markdown = whole["markdown"]
+        assert "林澈" in markdown and "文档完整尾部" in markdown
+        if format == "docx":
+            assert "# 世界设定" in markdown and "* 航海经历" in markdown and "|" in markdown
+        else:
+            assert markdown.index("## 人物") < markdown.index("## 空表") < markdown.index("## 世界")
+            assert "有缓存公式" in markdown and "3" in markdown and "无缓存公式" in markdown
+            assert "=1+2" not in markdown and "=2+3" not in markdown
+        if platform == "android":
+            assert "Android" in whole["limitations"] and whole["converter"] != "MarkItDown"
+        pages, offset = [], 0
+        while True:
+            result = convert_document(str(path), offset, 23)
+            pages.append(result["markdown"])
+            assert result["returned_chars"] == len(result["markdown"]) <= 23
+            assert result["total_chars"] == len(markdown)
+            if not result["has_more"]:
+                assert result["next_offset"] is None
+                break
+            offset = result["next_offset"]
+        assert "".join(pages) == markdown
+        for offset in (len(markdown), len(markdown) + 10):
+            empty = convert_document(str(path), offset, 23)
+            assert empty["markdown"] == "" and not empty["has_more"] and empty["next_offset"] is None
     assert path.read_bytes() == original
 
 

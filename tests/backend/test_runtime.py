@@ -70,7 +70,25 @@ async def test_full_agent_patch_failure_restores_server_and_message_frame_mirror
         await runtime.close()
 
 
-async def test_selected_opening_initializes_state_and_preserves_it_on_reopen():
+async def test_selected_opening_initializes_state_and_preserves_it_on_reopen(monkeypatch):
+    from tavern.scripting.playwright_realm import PlaywrightPage
+
+    evaluate = PlaywrightPage.evaluate
+
+    async def json_evaluate(page, script, arg=None):
+        # Android transports results as JSON. Playwright alone accepts the live
+        # helper API returned by install, hiding BigInt/function serialization bugs.
+        return await evaluate(
+            page,
+            r"""async ({script, arg}) => {
+                const expression = (0, eval)('(' + script + '\n)');
+                const value = await (typeof expression === 'function' ? expression(arg) : expression);
+                return JSON.parse(JSON.stringify(value === undefined ? null : value));
+            }""",
+            {"script": script, "arg": arg},
+        )
+
+    monkeypatch.setattr(PlaywrightPage, "evaluate", json_evaluate)
     runtime = ScriptRuntime()
     document = {
         "name": "fixture",

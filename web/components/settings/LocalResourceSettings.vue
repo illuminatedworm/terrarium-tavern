@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useTimedError } from '../../composables/useTimedError';
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../../lib/api';
 import type { LocalModelPurpose, ModelWarmupState } from '../../composables/useModelWarmup';
 const props = defineProps<{ settings: any; flush: () => Promise<unknown>; warmup: ModelWarmupState }>();
@@ -13,6 +13,11 @@ const sessions = ref<any[]>([]),
   indexes = ref<any>({ cached_entries: 0 });
 const status = ref<any>({ models: {}, jobs: [] }),
   error = ref('');
+const isAndroid = computed(() => status.value.platform === 'android');
+const modelFiles: Partial<Record<LocalModelPurpose, HTMLInputElement | null>> = {};
+function rememberInput(purpose: LocalModelPurpose, element: unknown) {
+  modelFiles[purpose] = element as HTMLInputElement | null;
+}
 const pending = ref<Record<string, boolean>>({}),
   feedback = ref(''),
   now = ref(Date.now());
@@ -30,12 +35,14 @@ const rebuilding = () =>
   !!pending.value.rebuild ||
   status.value.jobs.some((j: any) => active(j) && ['rebuild', 'index'].includes(j.kind));
 const modelState = (purpose: string) => {
+  if (status.value.available === false) return { label: '此平台不可用', tone: 'missing' };
   const model = status.value.models[purpose];
+  if (model?.configuration_supported === false) return { label: '需选择手机配置', tone: 'missing' };
   return model?.ready
     ? { label: '已预热', tone: 'ready' }
     : model?.downloaded
-      ? { label: '已下载，待预热', tone: 'idle' }
-      : { label: '尚未下载', tone: 'missing' };
+      ? { label: isAndroid.value ? '已导入，待预热' : '已下载，待预热', tone: 'idle' }
+      : { label: isAndroid.value ? '尚未导入' : '尚未下载', tone: 'missing' };
 };
 const statusLabels: Record<string, string> = {
   queued: '排队中',
@@ -84,6 +91,43 @@ async function download(purpose: LocalModelPurpose) {
     error.value = String(e);
     feedback.value = '';
   } finally {
+    pending.value[purpose] = false;
+  }
+}
+async function chooseMobileConfig(purpose: LocalModelPurpose) {
+  if (busy(purpose)) return;
+  pending.value[purpose] = true;
+  error.value = '';
+  try {
+    props.settings.local_models[purpose] = { ...status.value.models[purpose].suggested_config };
+    await props.flush();
+    await refresh();
+    feedback.value = '手机 CPU/Q8_0 配置已保存，请导入下方指定的 GGUF 文件。';
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    pending.value[purpose] = false;
+  }
+}
+async function importModel(purpose: LocalModelPurpose, event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file || busy(purpose)) return;
+  pending.value[purpose] = true;
+  error.value = '';
+  feedback.value = '正在传入并校验模型文件…';
+  try {
+    await props.flush();
+    const body = new FormData();
+    body.append('file', file);
+    await api(`/local-models/${purpose}/import`, body);
+    await refresh();
+    feedback.value = '模型已导入并通过 SHA-256 校验，可以预热。';
+  } catch (e) {
+    error.value = String(e);
+    feedback.value = '';
+  } finally {
+    input.value = '';
     pending.value[purpose] = false;
   }
 }
@@ -147,7 +191,12 @@ useTimedError(error);
 </script>
 <template>
   <h4>检索模型</h4>
-  <p class="muted">
+  <p v-if="status.available === false" role="status">{{ status.reason }}</p>
+  <p v-else-if="isAndroid" class="muted">
+    手机使用 CPU 与 Q8_0 GGUF，配置自动保存。先选择手机配置、导入对应文件，再预热。模型权重独立于 APK；
+    重排多条候选可能较慢，可在所用模式的检索设置中调整超时。不会自动改变已有 CUDA 配置。
+  </p>
+  <p v-else class="muted">
     配置自动保存，下载和预热会等待保存完成。默认两个 0.6B 模型适合 12 GB 显卡，4B
     需要更多空闲显存；推理不可用时记录降级，不转 CPU。
   </p>
@@ -174,15 +223,35 @@ useTimedError(error);
             >
               Qwen3 {{ size }}
             </option>
+            <!-- Desktop lists Android-only choices only when a saved value already uses them. -->
+            <option
+              v-if="
+                purpose.key === 'embedding' &&
+                (isAndroid || settings.local_models.embedding.model === 'Qwen/Qwen3-Embedding-0.6B-GGUF')
+              "
+              value="Qwen/Qwen3-Embedding-0.6B-GGUF"
+            >
+              Qwen3 0.6B 官方 GGUF（Android）
+            </option>
           </select></label
         >
         <label
           >量化<select v-model="settings.local_models[purpose.key].quantization">
             <option value="none">不量化（BF16）</option>
             <option value="int8">INT8（LLM.int8()）</option>
+            <option
+              v-if="isAndroid || settings.local_models[purpose.key].quantization === 'q8_0'"
+              value="q8_0"
+            >
+              Q8_0 GGUF（Android CPU）
+            </option>
           </select></label
         >
-        <label>设备<input v-model="settings.local_models[purpose.key].device" placeholder="cuda:0" /></label>
+        <label
+          >设备<input
+            v-model="settings.local_models[purpose.key].device"
+            :placeholder="isAndroid ? 'cpu' : 'cuda:0'"
+        /></label>
         <label
           >批量大小<input
             v-model.number="settings.local_models[purpose.key].batch_size"
@@ -202,10 +271,56 @@ useTimedError(error);
       <p v-if="settings.local_models[purpose.key].quantization === 'int8'" class="muted">
         INT8 复用原始模型文件，预热时量化；切换量化方式后需重新预热。4B 建议从批量大小 1 开始。
       </p>
-      <div class="actions">
-        <button :disabled="busy(purpose.key)" @click="download(purpose.key)">下载已保存的模型</button>
+      <template v-if="isAndroid">
+        <p v-if="status.models[purpose.key]?.configuration_error" role="status">
+          {{ status.models[purpose.key].configuration_error }}
+        </p>
+        <p class="muted">
+          权重来源：{{ status.models[purpose.key]?.source_label }}。文件：
+          {{ status.models[purpose.key]?.filename }}（约
+          {{ Math.round((status.models[purpose.key]?.bytes || 0) / 1048576) }} MiB）。 运行方式：{{
+            status.engine
+          }}，{{ status.cpu_threads }} 个 CPU 线程。
+        </p>
         <button
-          :disabled="busy(purpose.key) || !status.models[purpose.key]?.downloaded"
+          :disabled="status.available === false || busy(purpose.key)"
+          @click="chooseMobileConfig(purpose.key)"
+        >
+          使用手机 CPU/Q8_0 配置
+        </button>
+      </template>
+      <div class="actions">
+        <button
+          v-if="!isAndroid"
+          :disabled="status.available === false || busy(purpose.key)"
+          @click="download(purpose.key)"
+        >
+          下载已保存的模型
+        </button>
+        <template v-else>
+          <input
+            hidden
+            :ref="(element) => rememberInput(purpose.key, element)"
+            type="file"
+            accept=".gguf"
+            :aria-label="'导入' + purpose.label"
+            @change="importModel(purpose.key, $event)"
+          />
+          <button
+            :disabled="
+              status.available === false ||
+              busy(purpose.key) ||
+              !status.models[purpose.key]?.configuration_supported
+            "
+            @click="modelFiles[purpose.key]?.click()"
+          >
+            导入 GGUF
+          </button>
+        </template>
+        <button
+          :disabled="
+            status.available === false || busy(purpose.key) || !status.models[purpose.key]?.downloaded
+          "
           @click="warm(purpose.key)"
         >
           预热

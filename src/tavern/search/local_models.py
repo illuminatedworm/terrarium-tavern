@@ -12,13 +12,17 @@ import uuid
 from importlib.util import find_spec
 from pathlib import Path
 
+from tavern.android.platform import is_android
 from tavern.character.cards import lore_title
 from tavern.search.retrieval import digest
 
 PURPOSES = ("embedding", "reranker")
+GGUF_UNSUPPORTED = "此平台使用 CUDA 模型；Q8_0 GGUF 目前只在 Android CPU 上运行"
 
 
 def _load(torch, root, purpose, config):
+    if config["quantization"] == "q8_0":
+        raise ValueError(GGUF_UNSUPPORTED)
     from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer
 
     if not torch.cuda.is_available():
@@ -272,6 +276,9 @@ class LocalModelManager:
         manifest = self.path(settings.local_models.embedding) / "tavern-ready.json"
         return json.loads(manifest.read_text("utf-8"))["revision"] if manifest.exists() else "unavailable"
 
+    async def import_model(self, purpose, file, settings):
+        raise ValueError("此平台请通过下载功能准备 CUDA 模型")
+
     def status(self, settings):
         result = {}
         for purpose in PURPOSES:
@@ -289,6 +296,9 @@ class LocalModelManager:
             }
         return {
             "startup_id": self.startup_id,
+            "platform": "cuda",
+            "available": True,
+            "reason": "",
             "models": result,
             "jobs": list(self.jobs.values())[-30:],
             "metrics": self.metrics,
@@ -435,6 +445,10 @@ class LocalModelManager:
         return record
 
     def download(self, purpose, settings):
+        # An Android backup can carry a GGUF choice; its repository holds no CUDA weights.
+        if getattr(settings.local_models, purpose).quantization == "q8_0":
+            raise ValueError(GGUF_UNSUPPORTED)
+
         async def run(record):
             config = getattr(settings.local_models, purpose)
             manifest = self.path(config) / "tavern-ready.json"
@@ -546,3 +560,11 @@ class LocalModelManager:
             task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         self.stop_host(self.host)
+
+
+def create_local_model_manager(store):
+    if is_android():
+        from tavern.android.local_models import AndroidLocalModelManager
+
+        return AndroidLocalModelManager(store)
+    return LocalModelManager(store)

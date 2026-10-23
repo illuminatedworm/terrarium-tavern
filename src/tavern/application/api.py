@@ -2,6 +2,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -37,7 +38,26 @@ from tavern.storage.store import Conflict, Store, dump
 VERSION = "0.7.0"
 
 
+class AppFiles(StaticFiles):
+    """Only content-hashed build assets may be cached.
+
+    The Android host extracts these files with fixed 1980 zip timestamps, so
+    Last-Modified never changes and Starlette's mtime-plus-size ETag repeats for
+    a same-size index.html. Heuristic caching or revalidation would keep the
+    previous release's page and card runtime after an update.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        # Starlette normalises the path with os.sep, so compare parts.
+        if Path(path).parts[:1] != ("assets",):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 def create_app(data_dir=None):
+    # The native host generates this per launch. Never expose it through API state or logs.
+    startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8")
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
     service = ModeRuntime(store)
     from tavern.character.card_author import CardAuthorService
@@ -117,6 +137,18 @@ def create_app(data_dir=None):
 
     @app.middleware("http")
     async def local_boundary(request, call_next):
+        if startup_token:
+            # Loopback is shared with other Android apps. Pin Host to the listening socket,
+            # not a caller-supplied localhost alias, and authenticate static files as well as APIs.
+            server_host, server_port = request.scope["server"]
+            host = f"[{server_host}]" if ":" in server_host else server_host
+            default_port = 443 if request.url.scheme == "https" else 80
+            authority = host if server_port in (default_port, None) else f"{host}:{server_port}"
+            supplied = request.headers.get("X-Tavern-Token") or request.cookies.get("tavern_session", "")
+            if server_host not in {"127.0.0.1", "::1"} or request.headers.get("host") != authority:
+                return JSONResponse({"detail": "仅允许本地访问"}, status_code=403)
+            if not secrets.compare_digest(supplied.encode("utf-8"), startup_token):
+                return JSONResponse({"detail": "本地会话认证失败，请重新打开应用"}, status_code=403)
         # hostname parses the Host header, including bracketed IPv6 loopback.
         if request.url.hostname not in {"127.0.0.1", "localhost", "::1", "testserver"}:
             return JSONResponse({"detail": "仅允许本地访问"}, status_code=403)
@@ -124,12 +156,26 @@ def create_app(data_dir=None):
         if (
             origin
             and origin != f"{request.url.scheme}://{request.headers.get('host')}"
-            and origin not in {"http://127.0.0.1:5173", "http://localhost:5173"}
+            and (startup_token or origin not in {"http://127.0.0.1:5173", "http://localhost:5173"})
         ):
             return JSONResponse({"detail": "跨来源请求被拒绝"}, status_code=403)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        if startup_token:
+            # Android cookies are not port-isolated. CSP checks redirected targets and
+            # WebSockets as well as direct requests, preventing a different loopback app
+            # from receiving this installation's token. Opaque card frames keep their
+            # stricter own CSP; blob/data assets are their existing offline resource path.
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' data: blob:; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; "
+                "style-src 'self' 'unsafe-inline' data: blob:; connect-src 'self'; "
+                "img-src 'self' data: blob:; media-src 'self' data: blob:; "
+                "font-src 'self' data: blob:; frame-src 'self' data: blob:; "
+                "worker-src 'none'; object-src 'none'; form-action 'self'; base-uri 'none'"
+            )
+            response.headers["X-DNS-Prefetch-Control"] = "off"
         return response
 
     @app.exception_handler(ValueError)
@@ -143,7 +189,18 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "runtime": "KohakuTerrarium", "version": VERSION}
+        from tavern.android.platform import is_android
+
+        return {
+            "ok": True,
+            "runtime": "KohakuTerrarium",
+            "version": VERSION,
+            "platform": "android" if is_android() else "desktop",
+            "capabilities": {
+                "local_models": service.local_models.status(store.settings())["available"],
+                "office_documents": True,
+            },
+        }
 
     @app.get("/api/storage")
     async def storage():
@@ -185,6 +242,10 @@ def create_app(data_dir=None):
     @app.get("/api/local-models")
     async def local_model_status():
         return service.local_models.status(store.settings())
+
+    @app.post("/api/local-models/{purpose}/import")
+    async def import_local_model(purpose: Literal["embedding", "reranker"], file: UploadFile = File(...)):
+        return await service.local_models.import_model(purpose, file, store.settings())
 
     @app.post("/api/local-models/{purpose}/{action}")
     async def local_model_action(
@@ -897,10 +958,10 @@ def create_app(data_dir=None):
     async def favicon():
         return FileResponse(static / "favicon.ico", media_type="image/x-icon")
 
-    app.mount("/static", StaticFiles(directory=static), name="static")
+    app.mount("/static", AppFiles(directory=static), name="static")
     dist = Path(__file__).resolve().parents[3] / "dist"
     if not dist.exists():
         dist = static / "web"
     if dist.exists():
-        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+        app.mount("/", AppFiles(directory=dist, html=True), name="web")
     return app

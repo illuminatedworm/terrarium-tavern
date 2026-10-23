@@ -1,4 +1,5 @@
 import type { CardDefaults } from './types';
+import { saveDownload } from './download';
 
 export type TransferItem = {
   id: string;
@@ -77,13 +78,7 @@ export async function downloadData(selection: object) {
     const error = await response.json().catch(() => ({ detail: response.statusText }));
     throw Error(typeof error.detail === 'string' ? error.detail : '导出失败');
   }
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement('a');
-  link.href = url;
-  link.download =
+  const name =
     response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] || 'tavern-data.zip';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return saveDownload(await response.blob(), name);
 }

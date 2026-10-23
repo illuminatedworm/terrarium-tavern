@@ -83,7 +83,7 @@ class Conflict(ValueError):
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
 SCHEMA_VERSION = 11
-SETTINGS_VERSIONS = range(2, 9)
+SETTINGS_VERSIONS = range(2, 10)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {

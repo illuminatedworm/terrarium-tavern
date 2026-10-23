@@ -9,7 +9,6 @@ import re
 import secrets
 import time
 import uuid
-import webbrowser
 from contextlib import asynccontextmanager
 from datetime import datetime
 from urllib.parse import urlencode
@@ -17,6 +16,7 @@ from urllib.parse import urlencode
 import httpx
 from filelock import FileLock, Timeout
 
+from tavern.android.platform import open_browser
 from tavern.chatgpt import API_ROOT, ISSUER, PLAN_SCOPE, SCOPES, USAGE_URL
 from tavern.chatgpt.errors import TERMINAL_REFRESH, ChatGPTError, response_error
 from tavern.chatgpt.oauth import LoopbackCallback, metadata, validate_identity
@@ -75,7 +75,7 @@ class ChatGPTAccounts:
     def __init__(self, root, network, *, http_transport=None, browser_open=None):
         self.vault, self.network = CredentialVault(root), network
         self.http_transport = http_transport
-        self.browser_open = browser_open or webbrowser.open
+        self.browser_open = browser_open or open_browser
         self.attempt = None
         self._login_lock = asyncio.Lock()
         self._active = {}

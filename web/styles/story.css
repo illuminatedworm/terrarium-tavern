@@ -239,9 +239,11 @@
   color: var(--text-faint);
   font: italic var(--fs-md) / 1.4 var(--font-display);
   letter-spacing: 0.18em;
+  white-space: nowrap;
 }
+/* The rules give way before the label wraps on narrow columns. */
 .chapter span {
-  width: 80px;
+  flex: 0 1 80px;
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--border-control));
 }
@@ -315,6 +317,7 @@
 }
 .message-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-height: 30px;
@@ -369,6 +372,7 @@
   display: flex;
   gap: 8px;
   margin-left: auto;
+  white-space: nowrap;
   color: var(--text-faint);
   font: var(--fs-2xs) / 1.5 var(--font-ui);
   font-variant-numeric: tabular-nums;
@@ -381,6 +385,12 @@
     width: 40px;
     height: 40px;
   }
+}
+.panel-elsewhere {
+  min-height: 32px;
+  margin-top: 4px;
+  padding: 5px 12px;
+  font-size: var(--fs-sm);
 }
 .retrieval-clue {
   margin-top: 10px;
@@ -535,10 +545,11 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* The fade continues under the gesture bar instead of ending at the safe area. */
+  bottom: calc(-1 * var(--safe-bottom));
   z-index: 10;
   flex: none;
-  padding: 0 var(--dialogue-right-gutter) 14px var(--reading-side);
+  padding: 0 var(--dialogue-right-gutter) calc(14px + var(--safe-bottom)) var(--reading-side);
   pointer-events: none;
   /* Fade prose out in the strip beneath and beside the floating card. */
   background: linear-gradient(
@@ -1148,7 +1159,11 @@
     --dialogue-right-gutter: 64px;
   }
   .composer {
-    padding: 0 12px 10px;
+    padding: 0 12px calc(10px + var(--safe-bottom));
+  }
+  /* Same centring under the capsule, measured from the narrower composer padding. */
+  .jump-latest {
+    right: calc(max(39px, var(--dialogue-right-gutter) - 64px) + 3px - 12px);
   }
   .regeneration-panel {
     left: 12px;
@@ -1204,6 +1219,10 @@
   }
   .message.user > .message-body {
     padding: 10px 14px 8px;
+  }
+  /* The capsule sits at 20px here and its 36px buttons widen it to 44px. */
+  .jump-latest {
+    right: calc(20px + 4px - 12px);
   }
   .composer-meta {
     flex-wrap: nowrap;

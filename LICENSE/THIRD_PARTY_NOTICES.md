@@ -57,6 +57,8 @@ Gemini 原生接入使用 Google 官方 [python-genai](https://github.com/google
 
 Vue、lodash、jQuery、Zod、YAML、JSON5、fast-json-patch、Acorn、DOMPurify、marked、mathjs 和 klona 通过 npm 安装。各依赖附带的许可文件以及构建产物中保留的声明继续适用；准确版本见 [package-lock.json](../package-lock.json)。
 
+卡片离线模块打包使用 [esbuild](https://github.com/evanw/esbuild) 的 **MIT** 许可浏览器版本 `esbuild-wasm 0.25.10`。构建会将浏览器脚本、WebAssembly 二进制及其 `LICENSE.md` 原文复制至 `src/tavern/static/esbuild/`，随桌面和 Android 应用一同分发。
+
 ## 示例角色卡
 
 [samples/](../samples/) 中的两张示例角色卡是为本项目制作的原创测试样例，当前版本随附的样例适用 [Terrarium Tavern 非商业许可 1.1](PROJECT_LICENSE.md)。使用、修改和再分发须注明 Terrarium Tavern 来源，并遵守非商业限制。此前已合法取得的样例所附授权不被追溯变更。

@@ -65,6 +65,7 @@ htmlcov/
 /releases/
 /src/tavern/static/runtime.js
 /src/tavern/static/mvu-core.js
+/src/tavern/static/esbuild/
 /src/tavern/static/web/
 /src/tavern/static/licenses/
 

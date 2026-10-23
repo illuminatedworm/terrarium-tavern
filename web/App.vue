@@ -16,6 +16,7 @@ import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import { saveDownload } from './lib/download';
 import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
@@ -549,6 +550,9 @@ const inspectorPages = computed(() =>
 // Mirrors the left rail: clicking the open page collapses, any other page opens there.
 function openInspector(id: string) {
   if (inspectorTab.value === id && !layout.value.rightCollapsed) return void toggleRightSidebar();
+  showInspector(id);
+}
+function showInspector(id: string) {
   inspectorTab.value = id;
   if (layout.value.rightCollapsed) void toggleRightSidebar();
 }
@@ -1406,10 +1410,12 @@ function selectWorkspace(id: string) {
   selected.value = { ...card, _editorKey: card._editorKey || card._workspaceId || card.id, _workspaceId: id };
 }
 async function cardSaved(card: CardRecord) {
-  // Saving an Agent workspace, including Save As, must not remount its composer.
+  // The editor already holds the saved state. Keeping its mount key preserves the open
+  // tab, notice and, for an Agent workspace including Save As, the composer.
+  const current = selected.value;
   selected.value =
-    card?._workspaceId && selected.value
-      ? { ...card, _editorKey: selected.value._editorKey || selected.value._workspaceId || selected.value.id }
+    current && (card._workspaceId || card.id === current.id)
+      ? { ...card, _editorKey: current._editorKey || current._workspaceId || current.id }
       : card;
   await load();
 }
@@ -1925,16 +1931,11 @@ async function exportNextMessages() {
         update_variables: updateVariables.value,
         allow_content_edit: allowEdit.value,
       });
-      const url = URL.createObjectURL(
+      const saved = await saveDownload(
         new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json;charset=utf-8' }),
+        `messages-preview-${sid}.json`,
       );
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `messages-preview-${sid}.json`;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (!saved) return;
       notify('已导出完整 messages 数组。只读预览未运行神经召回，实际发送时的世界书命中可能不同。');
     });
   } finally {
@@ -2452,6 +2453,7 @@ useTimedError(error);
         :cards="cards"
         :settings="settings"
         @started="cardStarted"
+        @card-changed="(card) => (cards = cards.map((item) => (item.id === card.id ? card : item)))"
         @settings="
           (channel, mode) => {
             settingsChannel = channel;
@@ -2658,6 +2660,8 @@ useTimedError(error);
                   :cache-eligible="eligibleCacheReplies.has(message.id)"
                   :cache-breakpoint-id="cacheBreakpointId"
                   :cache-breakpoint-busy="cacheBreakpointBusy"
+                  :panel-hidden="inspectorTab !== 'mvu' || layout.rightCollapsed"
+                  @show-panel="showInspector('mvu')"
                   @toggle-cache-breakpoint="toggleCacheBreakpointFollow"
                   @set-cache-breakpoint="saveCacheBreakpoint(false, $event)"
                   :regenerating-id="regeneratingId"

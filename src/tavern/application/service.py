@@ -37,10 +37,10 @@ class RoleplayRuntime:
         self.variable_provider_factory = None
         self.tracker_provider_factory = None
         self.tracker = Tracker(store)
-        from tavern.search.local_models import LocalModelManager
+        from tavern.search.local_models import create_local_model_manager
         from tavern.search.retrieval import RetrievalEngine
 
-        self.local_models = LocalModelManager(store)
+        self.local_models = create_local_model_manager(store)
         self.retrieval = RetrievalEngine(store, self.local_models)
 
     def prepare_indexes(self, sid):

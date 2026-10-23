@@ -71,6 +71,12 @@ Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 
 
 角色 HTML 运行于不含 `allow-same-origin` 的 sandbox iframe，桥接检查来源窗口和随机通道。服务端脚本 realm 阻止网络，不接触 API 密钥，每回合重新建立；持久数据必须通过变量 API 保存。
 
+`ScriptRuntime` 与制卡 agent 的本地验证只通过 [realm.py](../../src/tavern/scripting/realm.py) 定义的后端接口操作隔离页面，接口说明列出各后端必须保持的隔离与加载约定；桌面后端为 [playwright_realm.py](../../src/tavern/scripting/playwright_realm.py) 的 Playwright Chromium。Android 使用 [android_realm.py](../../src/tavern/scripting/android_realm.py)，通过管道与独立的 WebView 进程通信：故事脚本使用 `:realm`，制卡验证与依赖打包使用 `:realm_tools`。页面拥有独立来源，网络请求只能由资源回调提供内容，不能访问主界面的 cookie、启动令牌或原生能力。脚本取消或超时时重置所在进程，该进程内的环境随之失效，新环境可重新启动；另一类进程不受影响。
+
+卡片的 ES 模块依赖先下载并固定内容，再由隔离页面中的 esbuild-wasm 打包。打包器只读取清单内的模块，并保留 lodash、jquery、zod、yaml 到兼容 SDK 全局对象的映射；缺失模块直接报错，不在打包期间联网。`npm run build:sdk` 同时打包脚本工具及其许可，应用运行时不需要 Node。
+
 外部依赖先下载、哈希缓存和离线打包。卡级缓存及已落盘的旧会话依赖可以复用，解析后回填卡级清单；每个故事仍有自己的依赖清单。运行阶段不任意联网，兼容范围见[矩阵](../guides/compatibility.md)。
 
 服务只监听 loopback，并校验 Host/Origin。API 密钥保存在后端配置，设置响应只提供配置状态；完整备份包含这些密钥，需按私有数据保存。ChatGPT 凭据单独绑定当前安装，迁移后重新连接。窗口、日志、索引和模型权重有不同生命周期。
+
+Android 宿主每次启动生成随机令牌，通过 `TAVERN_STARTUP_TOKEN` 传入后端；API 与静态资源都进行常量时间认证。主 WebView 使用 `tavern_session` 的 HttpOnly、SameSite=Strict cookie，原生请求可使用 `X-Tavern-Token` 请求头。令牌模式同时固定实际监听端口的 Host，并拒绝开发服务器的跨来源例外；健康接口只返回平台能力，不回传令牌。桌面未设置该环境变量时保持原本的本地访问边界。

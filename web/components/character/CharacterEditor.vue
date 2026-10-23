@@ -10,6 +10,7 @@ import { emptyLoreFilter } from '../../lib/loreFilter';
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { api } from '../../lib/api';
+import { downloadLink } from '../../lib/download';
 import { appendRegexScripts } from '../../lib/regexScripts';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
 import { positionPopover } from '../../lib/anchoredPopover';
@@ -415,6 +416,7 @@ useTimedError(error);
           v-if="!props.session && !props.draftMode && !card._draftOnly"
           class="editor-export"
           :href="`/api/cards/${card.id}/export`"
+          @click="downloadLink"
           ><Icon name="import" :size="16" />导出角色卡</a
         >
         <CardDefaults v-if="!props.session && !props.draftMode && !card._draftOnly" :card-id="card.id" />

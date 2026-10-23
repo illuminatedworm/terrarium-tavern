@@ -162,7 +162,7 @@ class LocalModel(BaseModel):
     model: str
     revision: str = "main"
     device: str = "cuda:0"
-    quantization: Literal["none", "int8"] = "none"
+    quantization: Literal["none", "int8", "q8_0"] = "none"
     batch_size: int = Field(8, ge=1, le=128)
     dimensions: int = Field(1024, ge=32, le=2560)
 
@@ -179,10 +179,15 @@ class LocalModels(BaseModel):
     def supported(self):
         for purpose, prefix in (("embedding", "Embedding"), ("reranker", "Reranker")):
             config = getattr(self, purpose)
+            if config.quantization == "q8_0":
+                model = f"Qwen/Qwen3-{prefix}-0.6B" + ("-GGUF" if purpose == "embedding" else "")
+                if config.model != model or config.device != "cpu":
+                    raise ValueError("Q8_0 需要对应的 Qwen3 0.6B GGUF 模型与 cpu 设备")
+                continue
             if config.model not in [f"Qwen/Qwen3-{prefix}-{size}" for size in ("0.6B", "4B")]:
                 raise ValueError("目前支持 Qwen3 的 0.6B 与 4B 检索模型")
             if not config.device.startswith("cuda:"):
                 raise ValueError("本地检索模型需要 CUDA GPU，不会自动回退到 CPU")
-        if self.embedding.dimensions > (1024 if self.embedding.model.endswith("0.6B") else 2560):
+        if self.embedding.dimensions > (1024 if "0.6B" in self.embedding.model else 2560):
             raise ValueError("向量维度超过模型原生维度")
         return self

@@ -106,7 +106,7 @@ async def test_manual_refresh_rebuilds_from_full_history_without_story_generatio
         assert ["".join(p["text"] for p in m["passages"]) for m in payload["messages"]] == [
             m["model"] for m in before["messages"]
         ]
-        assert app.state.service.runtime.browser is None
+        assert app.state.service.runtime.backend.browser is None
         assert not any(e["kind"] == "text" for e in app.state.store.events(turn["id"]))
     finally:
         await app.state.service.close()

@@ -26,7 +26,7 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 
 Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定，或用 `--proxy ''` 选择直连。已有 uv 时直接使用，否则通过 Python 在 `.cache/uv/` 中准备 uv。Chromium 提示系统库缺失时，运行 `.venv/bin/python -m playwright install-deps chromium`，按系统提示提供 sudo 权限。
 
-安装脚本准备 Python 3.12 和锁定依赖，构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+安装脚本准备 Python 3.13 和锁定依赖，构建前端并下载 Chromium。启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
 | 操作 | Windows | Linux |
 |---|---|---|
@@ -72,7 +72,7 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 2. 将新版源码或发行包放入新程序目录，安装依赖。
 3. 用 `-Data` 或 `--data` 指向原数据目录并启动。
 
-当前数据库格式为 **schema 11**，设置文档版本为 **8**，个人数据包格式为 **4**。schema 1–8 若包含剧情对话，会在任何写入前明确拒绝，原文件保留，并提示使用根目录的 `clear-conversations.cmd` 清理脚本。需要继续旧剧情时，请使用兼容旧版打开原数据；也可用旧版导出非对话资料，在新的空数据目录中导入。旧版个人数据包只支持导入非对话资料。没有剧情的旧数据库仍先只读核对，并在升级前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 完整备份。当前格式的备份恢复和整轮版本保留照常工作，详见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
+当前数据库格式为 **schema 11**，设置文档版本为 **9**，个人数据包格式为 **4**。schema 1–8 若包含剧情对话，会在任何写入前明确拒绝，原文件保留，并提示使用根目录的 `clear-conversations.cmd` 清理脚本。需要继续旧剧情时，请使用兼容旧版打开原数据；也可用旧版导出非对话资料，在新的空数据目录中导入。旧版个人数据包只支持导入非对话资料。没有剧情的旧数据库仍先只读核对，并在升级前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 完整备份。当前格式的备份恢复和整轮版本保留照常工作，详见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
 
 需要清空剧情对话并保留现有资料时，先停止酒馆服务。Windows 默认数据目录可双击根目录的 `clear-conversations.cmd`，按提示输入 `y`；自定义目录必须传入与启动时一致的路径：
 

@@ -488,9 +488,10 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-2xs);
 }
 @media (max-width: 620px) {
+  /* 20px + the 44px capsule fills the 64px gutter, clear of the history rail and the prose. */
   .message-jumps,
   .find-trigger {
-    right: 27px;
+    right: 20px;
   }
   .dialogue-tools button {
     width: 36px;
@@ -504,6 +505,12 @@ onBeforeUnmount(() => {
     gap: 2px;
   }
   .find-row > svg {
+    display: none;
+  }
+}
+/* An open phone keyboard leaves no room beside the prose; the jump-to-latest button stays. */
+@media (max-height: 520px) {
+  .message-jumps {
     display: none;
   }
 }

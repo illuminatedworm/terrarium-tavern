@@ -1,3 +1,6 @@
+import asyncio
+import hashlib
+import io
 import json
 import sys
 from types import SimpleNamespace
@@ -6,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from tavern.core.models import Settings
-from tavern.core.settings import SettingsDocument
+from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.search.local_models import LocalModelManager, _serve
 from tavern.search.retrieval import digest
 
@@ -33,6 +36,84 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
     assert manager.path(config) == path
     status = manager.status(settings)["models"]["embedding"]
     assert status["downloaded"] and not status["ready"]
+
+    # The format upgrade must preserve CUDA choices. CPU/Q8_0 is an explicit new choice.
+    legacy = document.model_dump()
+    legacy["version"] = 8
+    upgraded = migrate_settings(legacy)
+    assert upgraded.version == 9 and upgraded.shared.local_models == document.shared.local_models
+    from tavern.android.local_models import mobile_config
+    from tavern.search.retrieval_config import LocalModel
+
+    upgraded.shared.local_models.embedding = LocalModel(**mobile_config("embedding"))
+    assert (
+        SettingsDocument.model_validate_json(upgraded.model_dump_json()).shared.local_models.embedding
+        == upgraded.shared.local_models.embedding
+    )
+
+
+async def test_android_import_and_cancellation_preserve_weights_and_stop_only_owned_model(
+    tmp_path, monkeypatch
+):
+    from copy import deepcopy
+
+    from starlette.datastructures import UploadFile
+
+    from tavern.android import local_models as android
+    from tavern.android.local_model_server import EXECUTABLE
+    from tavern.search.retrieval_config import LocalModel
+
+    native = tmp_path / "native"
+    native.mkdir()
+    (native / EXECUTABLE).touch()
+    monkeypatch.setenv("TAVERN_NATIVE_LIB_DIR", str(native))
+    data = b"GGUF-fixture"
+    sources = deepcopy(android.SOURCES)
+    sources["embedding"].update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+    monkeypatch.setattr(android, "SOURCES", sources)
+    manager = android.AndroidLocalModelManager(SimpleNamespace(root=tmp_path))
+    settings = Settings()
+    settings.local_models.embedding = LocalModel(**android.mobile_config("embedding"))
+    config = settings.local_models.embedding
+    folder = manager.path(config)
+    folder.mkdir(parents=True)
+    model = folder / "model.gguf"
+    model.write_bytes(b"previous")
+    with pytest.raises(ValueError, match="SHA-256"):
+        await manager.import_model(
+            "embedding", UploadFile(io.BytesIO(b"x" * len(data)), size=len(data)), settings
+        )
+    assert model.read_bytes() == b"previous" and not (folder / "model.gguf.part").exists()
+    await manager.import_model("embedding", UploadFile(io.BytesIO(data), size=len(data)), settings)
+    assert model.read_bytes() == data
+    assert android.read_manifest(folder / "tavern-ready.json")["version"] == 1
+
+    started = asyncio.Event()
+
+    class Server:
+        alive = True
+
+        async def embeddings(self, texts, dimensions):
+            started.set()
+            await asyncio.Event().wait()
+
+        async def close(self):
+            self.alive = False
+
+    embedding, reranker = Server(), Server()
+    manager.servers.update(embedding=embedding, reranker=reranker)
+    manager.loaded["embedding"] = digest(config.model_dump())
+    manager.ready.update(("embedding", "reranker"))
+    saved = settings.model_dump()
+    request = asyncio.create_task(manager.infer("embedding", "embed", ["完整查询"], settings, timeout=10))
+    await started.wait()
+    request.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert not embedding.alive and reranker.alive
+    assert "embedding" not in manager.ready and "reranker" in manager.ready
+    assert settings.model_dump() == saved and model.read_bytes() == data
+    await manager.close()
 
 
 def test_int8_worker_stays_on_selected_gpu_and_batches_rerank_fragments(monkeypatch, tmp_path):

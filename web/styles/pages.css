@@ -910,6 +910,9 @@
 .story-setup > .character-heading {
   margin-top: 6px;
 }
+.story-setup > .edit-notice {
+  margin: 18px 0 0;
+}
 .story-setup .character-heading .portrait-detail {
   width: 92px;
   height: 120px;
@@ -1177,9 +1180,49 @@
   .editor-page {
     --page-pad-top: 60px;
   }
-  /* Keep the sticky tabs clear of the floating navigation button. */
+  /* Keep the sticky tabs clear of the floating navigation button; one scrolling row. */
   .editor-tabs {
     top: -4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .editor-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .editor-tabs button {
+    flex: none;
+  }
+  .character-editor-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .character-editor-actions > * {
+    justify-content: center;
+    min-width: 0;
+  }
+  .story-setup .character-heading .portrait-detail {
+    width: 72px;
+    height: 94px;
+  }
+  .story-setup .character-heading h1 {
+    font-size: var(--fs-2xl);
+  }
+  /* Three equal single-line steps across the page instead of wrapped labels. */
+  .story-steps {
+    width: auto;
+  }
+  .story-steps span,
+  .story-steps button {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    padding-inline: 6px;
+    font-size: var(--fs-xs);
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .card-dialog-grid {
     grid-template-columns: 1fr;

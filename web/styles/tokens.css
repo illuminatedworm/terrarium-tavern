@@ -144,6 +144,12 @@
   --control-h-sm: 28px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur: 0.18s;
+  /* System bar and cutout insets. The Android host draws the page under them and
+     sets these inline on <html>; browsers keep 0. */
+  --safe-top: 0px;
+  --safe-right: 0px;
+  --safe-bottom: 0px;
+  --safe-left: 0px;
 
   /* ---- Layers ----
      Page-level stacking for surfaces teleported to <body>. Small z-index values

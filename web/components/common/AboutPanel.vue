@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import Icon from './Icon.vue';
+const android = Boolean(window.TavernAndroid);
 </script>
 
 <template>
   <div class="about-mark" aria-hidden="true"><Icon name="brand" :size="30" :stroke="1.4" /></div>
   <div class="eyebrow">Terrarium Tavern · 0.1</div>
   <h2 class="about-title">给故事一处生长的地方。</h2>
-  <p>本地优先的 Roleplay Agent 应用。角色数据、剧情分支和记忆保存在你的电脑。</p>
+  <p>本地优先的 Roleplay Agent 应用。角色数据、剧情分支和记忆保存在你的{{ android ? '设备' : '电脑' }}。</p>
+  <p v-if="android">
+    Android
+    版在应用内加载本地与缓存资源。剧情图片通过图片服务读取；其他页面的远程直链图片不会直接加载，外链会在系统浏览器打开。
+  </p>
   <p>
     Powered by
     <a href="https://github.com/Kohaku-Lab/KohakuTerrarium" target="_blank" rel="noreferrer"

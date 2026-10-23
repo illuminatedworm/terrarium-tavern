@@ -1,6 +1,6 @@
 # 世界书检索与注入
 
-两种模式共享关键词、BM25 和可选的本地向量／重排能力，各自保存参数。默认关键词与 BM25 可在 CPU 上运行，神经检索需先手动下载、预热模型。
+两种模式共享关键词、BM25 和可选的本地向量／重排能力，各自保存参数。默认关键词与 BM25 可在 CPU 上运行，神经检索需先手动下载或导入并预热模型。
 
 ## 查询从哪里来
 
@@ -54,6 +54,17 @@ Half Agent 的具体位置受会话注入方案和配方影响；Full Agent 固�
 
 ## 本地模型与索引
 
+Android 在手机 CPU 上运行当前 APK 固定支持的两个 Qwen3 0.6B Q8_0 GGUF 文件，不依赖电脑后端；权重不打进 APK，也不支持其他 GGUF 或 4B 模型。已有 CUDA 配置会原样保留：
+
+1. 准备 `Qwen3-Embedding-0.6B-Q8_0.gguf` 和 `Qwen3-Reranker-0.6B-Q8_0.gguf`，放到手机可选择的目录，例如 `Download`。向量文件来自 Qwen 官方仓库；重排没有官方 GGUF，需用固定转换器生成，获取方式见 [Android 模型文件](../development/android.md#模型文件)。
+2. 在“设置 → 通用 → 本地模型”分别点击“使用手机 CPU/Q8_0 配置”。模型来源、版本、量化和设备均显示为实际保存值。
+3. 为每个模型点击“导入 GGUF”，选择相应文件；通过大小与 SHA-256 校验后，点击“预热”。来源或内容不符会报错，原已导入文件保留。
+4. 在目标模式的检索设置中启用向量通道或重排。默认超时仍是查询 1 秒、重排 1.5 秒；CPU 多候选重排可能需要更长时间，应按实测调整。
+
+Android 两个模型各有独立原生进程。超时或取消会结束对应模型的计算，需重新预热；不会停止另一个已加载的模型。单次输入上限为 4096 tokens，超限明确报错且模型保持已预热；不会静默截断查询或提示词。索引沿用 token 分片，选中的世界书条目仍完整注入。手机 GGUF 与桌面向量缓存分开，切换设备、量化或模型版本后会准备对应的新索引。
+
+Windows/Linux 的 CUDA 设置步骤：
+
 1. 使用 `setup.ps1 -LocalRetrieval`（Windows）或 `./setup.sh --local-retrieval`（Linux）安装 GPU 依赖；安装代理按[安装指南](maintenance.md#安装与启动)配置。
 2. 在“设置 → 通用 → 本地模型”分别选择 Qwen3 Embedding／Reranker 的 0.6B 或 4B 模型，以及 BF16 或 INT8，完成下载并预热。
 3. 在目标模式的检索设置中启用需要的通道和重排。
@@ -85,6 +96,7 @@ INT8 使用 bitsandbytes 的 LLM.int8()，异常值阈值为 6，异常特征与
 - [search/retrieval.py](../../src/tavern/search/retrieval.py)、[lore_admission.py](../../src/tavern/search/lore_admission.py)：召回、融合与准入。
 - [retrieval_config.py](../../src/tavern/search/retrieval_config.py)：默认值和配置校验。
 - `GET /api/local-models` 与 `POST /api/local-models/{embedding|reranker}/{download|warmup}`：资源状态与任务。
+- `POST /api/local-models/{embedding|reranker}/import`：Android 通过 multipart 的 `file` 字段导入固定 GGUF，先完整校验再发布。
 - `POST /api/sessions/{id}/retrieval/rebuild`：准备有效世界书索引，Half Agent 同时准备当前分支归档经历的向量索引；不执行查询。
 - `POST /api/sessions/{id}/preview`：只读上下文预览，不加载或推理神经模型。
 

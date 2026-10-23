@@ -18,6 +18,7 @@ from tools.package_release import publishable
         "src/tavern/private.key",
         ".agents/skills/example/SKILL.md",
         "src/tavern/static/.agents/notes.json",
+        "tools/android/prepare.py",
     ],
 )
 def test_archive_rejects_private_artifacts(name):
@@ -34,6 +35,8 @@ def test_archive_rejects_private_artifacts(name):
         "vendor/mvu/LICENSE",
         "samples/雾港来信.json",
         "tests/fixtures/retrieval_multilingual.json",
+        # Desktop modules import the platform switch.
+        "src/tavern/android/platform.py",
     ],
 )
 def test_archive_keeps_required_sources_and_resources(name):
