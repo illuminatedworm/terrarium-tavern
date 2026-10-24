@@ -251,7 +251,7 @@ class ChatGPTProvider(ModelTransport):
                             "status": "completed" if kind.endswith(".completed") else "started",
                         },
                     )
-                if kind in ("response.failed", "response.incomplete", "error"):
+                if kind in ("response.failed", "error"):
                     payload = event.get("response", event)
                     if kind == "error" and "error" not in payload:
                         payload = {"error": payload}
@@ -266,13 +266,19 @@ class ChatGPTProvider(ModelTransport):
                     delta = self._kemini.feed(event, delta, "responses")
                 if delta:
                     yield delta
-            if not state.response_complete:
+            if not state.completion_seen:
                 raise ChatGPTError(
                     "ChatGPT 连接在完成事件之前结束，本轮未提交",
                     code="stream_incomplete",
                     request_id=self._request_id(),
                 )
-            self._completed_response = self._finish(state.finish())
+            if state.result.get("status") != "completed":
+                raise response_error(state.result, request_id=self._request_id(), secrets=(self.key,))
+            try:
+                payload = state.finish()
+            except ValueError as error:
+                raise ChatGPTError(str(error), code="invalid_stream", request_id=self._request_id()) from None
+            self._completed_response = self._finish(payload)
             if self._last_assistant_extra_fields.get("web_sources"):
                 event_sink("web_sources", {"sources": self._last_assistant_extra_fields["web_sources"]})
         except ChatGPTError as error:

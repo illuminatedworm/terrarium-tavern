@@ -56,7 +56,11 @@ Runtime 预分配稳定的输出身份，完整响应接收成功后把正文写
 
 模型适配器单独提供原生完成状态，不改变其他 agent 使用的既有响应字段。Chat Completions 的 `tool_calls` 和 Anthropic 的 `tool_use` 要求返回工具结果；Chat Completions 的 `stop`、Anthropic 的 `end_turn`／`stop_sequence` 表示结束，若同响应含工具则先执行整批。Anthropic `pause_turn` 按原生协议续答。Responses 的 `completed`、Gemini 的 `STOP` 在有函数调用时仍须回传结果，无函数调用时才表示结束。未知或不完整状态不能成为成功结束。
 
-传输层仍区分模型输出完成与 HTTP 响应体读取结束。收到结束原因后继续读取合法尾部用量与错误；HTTP EOF 缺少完整输出信号、截断、过滤或错误均不能接收正文或执行该响应中的工具，不以底层 TCP 连接关闭作为条件。
+传输层将原生完成状态与 HTTP 响应体读取结束分开处理。`finish_reason`、`stop_reason`、`finishReason`、`response.completed` 和 `message_stop` 仅记录完成元数据，不封闭正文或工具的接收；同一响应仍可继续返回正文、推理、工具分片及用量，直到 HTTP 响应体读取结束，再统一解释最终完成状态。不能要求后续分片再次携带结束标记。同一响应中的正文分片合并为一次，跨模型响应的第二次正文仍由 Runtime 拒绝。HTTP EOF 缺少完整输出信号、截断、过滤或错误均不能接收正文或执行该响应中的工具，不以底层 TCP 连接关闭作为条件。
+
+Responses 的 `response.incomplete` 同样只记录状态；后续可继续接收内容及 `response.completed`，到 HTTP EOF 仍未完成时才报错，显式 `response.failed` 和错误事件仍立即失败。输出项与响应快照按到达顺序合并，后到的完整输出项可以替换早期非空快照，摘要中缺失或为空的正文、工具参数及加密推理不清除已接收内容。
+
+Chat Completions 同一响应多次报告结束原因时，`tool_calls` 优先于普通 `stop`，避免空结束尾包取消工具续答；截断、过滤及未知原因优先于这两种成功状态，不能被后续正常标记掩盖。仅报告 `stop`、未报告过 `tool_calls` 的响应仍按原生结束处理，包括执行同响应工具后收尾。
 
 模型自然结束后，Runtime 检查唯一正文、本轮要求的变量任务、启用时的初始大纲及当前换窗要求。缺少工作或结束响应中的工具失败时，以 `TURN_NOT_READY` 停止并保留进度，不自动追加付费请求。用户明确继续时，模型得到具体缺项和当前正文状态，自行安排剩余工作，已接收正文不可再次输出。普通工具调用中的可修正错误仍按原流程返回模型。
 

@@ -260,6 +260,7 @@ async def test_failed_and_interrupted_streams_do_not_complete_or_fallback(tmp_pa
             )
         elif failure == "incomplete":
             events.append({"type": "response.incomplete", "response": {"status": "incomplete"}})
+            events.append({"type": "response.output_text.delta", "delta": "尾部仍需读取"})
         elif failure == "error":
             events.append(
                 {"type": "error", "code": "subscription_sharing_usage_unavailable", "message": "fixture"}
@@ -269,10 +270,13 @@ async def test_failed_and_interrupted_streams_do_not_complete_or_fallback(tmp_pa
     service.http_transport = httpx.MockTransport(route)
     provider = await make_provider(configuration(service, account_id, account))
     errors = []
+    chunks = []
     provider.response_capture = errors.append
     try:
         with pytest.raises(ValueError):
-            await provider.chat_complete([{"role": "user", "content": "test"}])
+            await provider.chat_complete([{"role": "user", "content": "test"}], on_text=chunks.append)
+        if failure == "incomplete":
+            assert "".join(chunks) == "未完成草稿尾部仍需读取"
         assert len(calls) == 1
         assert provider.last_native_response is None and not provider.last_tool_calls
         assert ACCESS not in json.dumps(errors)

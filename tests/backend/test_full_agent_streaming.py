@@ -256,7 +256,7 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
     store, service, session = game(tmp_path, "chat_completions")
     gate = Gate()
     usage = {"usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}}
-    stream = WireStream(body_start("尚未完成的"), gate, body_delta("正文。"), *body_end(), usage)
+    stream = WireStream(body_start("尚未完成的"), terminal(), gate, body_delta("正文。"), usage)
     provider, bodies = connect(store, service, stream)
     try:
         tid = submit(service, session)
@@ -290,11 +290,10 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
         [],
         [httpx.ReadError("fixture disconnect")],
         [{"error": {"message": "fixture upstream error"}}],
-        [terminal(), delta("非法追加")],
         [b"data: {broken\n\n"],
         [terminal("length")],
     ],
-    ids=["eof", "read_error", "error_event", "late_content", "invalid_json", "length"],
+    ids=["eof", "read_error", "error_event", "invalid_json", "length"],
 )
 async def test_interface_failure_never_commits_partial_text_or_tools(tmp_path, tail):
     store, service, session = game(tmp_path, "chat_completions")

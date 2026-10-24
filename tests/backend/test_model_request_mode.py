@@ -1,5 +1,6 @@
 """Shared transport selection reaches the wire without changing response contracts."""
 
+import copy
 import gzip
 import json
 import zipfile
@@ -14,7 +15,6 @@ from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
 from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
 from tavern.scripting.kemini import AuxiliaryParser, KeminiReply
-from tavern.scripting.model_stream import StreamState
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
@@ -347,7 +347,8 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
                         "tool_calls": [
                             {"index": 0, "id": "call-1", "function": {"name": "lookup", "arguments": '{"q":'}}
                         ]
-                    }
+                    },
+                    "finish_reason": "tool_calls",
                 }
             ]
         },
@@ -355,72 +356,64 @@ async def test_streamed_complete_retains_fragmented_tool_calls_and_rejects_disco
             "choices": [
                 {
                     "delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"原文"}'}}]},
-                    "finish_reason": "tool_calls",
                 }
             ]
         },
-        {"choices": [{"index": 0, "delta": {"content": ""}, "finish_reason": None}]},
         {
             "choices": [
                 {
                     "delta": {
-                        "role": "assistant",
-                        "content": None,
-                        "refusal": "",
-                        "reasoning_content": "",
-                        "reasoning": None,
-                        "reasoning_text": "",
-                        "reasoning_details": [],
                         "tool_calls": [
-                            {
-                                "index": 0,
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": "", "arguments": None},
-                            }
-                        ],
+                            {"index": 1, "id": "call-2", "function": {"name": "lookup", "arguments": '{"q":'}}
+                        ]
                     },
-                    "index": 1,
-                    "finish_reason": "stop",
+                    "finish_reason": "tool_calls",
                 }
             ]
         },
-        {"choices": [{"delta": None, "finish_reason": "length"}]},
+        {
+            "choices": [
+                {
+                    "delta": {"tool_calls": [{"index": 1, "function": {"arguments": '"续答原文"}'}}]},
+                }
+            ]
+        },
+        {"choices": [{"delta": {"content": "完整"}, "finish_reason": "stop"}]},
+        {"choices": [{"delta": {"reasoning_content": "保留思考"}}]},
+        {"choices": [{"delta": {"content": "正文"}}]},
+        {"choices": [{"delta": None}]},
         {"choices": [{}]},
-        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
-        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
         {"usage": reply("chat_completions")["usage"]},
     ]
     cfg = config(model_request_mode="stream")
     async with provider(cfg, lambda _: sse(events=tool_events)) as p:
         result = await p.chat_complete(MESSAGES, tools=TOOLS)
-        assert result.finish_reason == "tool_calls"
+        assert result.content == "完整正文" and result.finish_reason == "tool_calls"
+        assert p.last_completion.action == "tools"
+        assert p.last_assistant_extra_fields["reasoning_content"] == "保留思考"
         assert p.last_tool_calls[0].name == "lookup"
         assert json.loads(p.last_tool_calls[0].arguments) == {"q": "原文"}
         assert result.usage["prompt_tokens"] == 10
-        assert len(p.last_tool_calls) == 1
-    async with provider(cfg, lambda _: sse(events=tool_events[:1])) as p:
+        assert len(p.last_tool_calls) == 2
+        assert p.last_tool_calls[1].id == "call-2"
+        assert json.loads(p.last_tool_calls[1].arguments) == {"q": "续答原文"}
+    unfinished = {"choices": [{"delta": tool_events[0]["choices"][0]["delta"]}]}
+    async with provider(cfg, lambda _: sse(events=[unfinished])) as p:
         with pytest.raises(ValueError, match="提前结束"):
             await p.chat_complete(MESSAGES, tools=TOOLS)
         assert not p.usage_history and not p.last_tool_calls
-
-    state = StreamState("chat_completions")
-    for event in tool_events:
-        state.feed(event)
-    with pytest.raises(ValueError, match="完成事件之后"):
-        state.feed({"choices": [{"delta": {"content": "非法追加"}, "finish_reason": "stop"}]})
-    with pytest.raises(ValueError, match="完成事件之后"):
-        state.feed(tool_events[1])
-    for delta in (
-        {"refusal": "后续拒绝"},
-        {"reasoning": "后续思考"},
-        {"reasoning_details": [{"type": "reasoning.text", "text": "后续思考"}]},
-        {"tool_calls": [{"index": 0, "id": "call-2", "function": {}}]},
-    ):
-        with pytest.raises(ValueError, match="完成事件之后"):
-            state.feed({"choices": [{"delta": delta}]})
-    with pytest.raises(ValueError, match="结束原因无效"):
-        state.feed({"choices": [{"delta": {}, "finish_reason": "network_error"}]})
+    async with provider(
+        cfg,
+        lambda _: sse(
+            events=[
+                *tool_events,
+                {"choices": [{"delta": {}, "finish_reason": "length"}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+            ]
+        ),
+    ) as p:
+        with pytest.raises(ValueError, match="未完整结束"):
+            await p.chat_complete(MESSAGES, tools=TOOLS)
 
 
 async def test_non_stream_chat_rejects_unfinished_response():
@@ -516,17 +509,38 @@ async def test_selection_persists_projects_to_all_roles_and_undo_restores_defaul
 async def test_complete_preview_keeps_full_response_and_usage(api):
     cfg = config(api, model_request_mode="stream")
     wire_events = events(api)
-    if api == "gemini":
+    if api == "chat_completions":
+        wire_events = [
+            {"choices": [{"delta": {"content": "O"}, "finish_reason": "stop"}]},
+            {"choices": [{"delta": {"content": "K"}}]},
+            {"usage": reply(api)["usage"]},
+        ]
+    elif api == "responses":
+        payload = reply(api)
+        early = copy.deepcopy(payload)
+        early["output"][0]["content"][0]["text"] = "早期正文"
+        wire_events = [
+            {"type": "response.incomplete", "response": {"status": "incomplete", "output": []}},
+            {"type": "response.completed", "response": early},
+            {"type": "response.output_text.delta", "delta": "OK"},
+            *[
+                {"type": "response.output_item.done", "output_index": index, "item": item}
+                for index, item in enumerate(payload["output"])
+            ],
+        ]
+    elif api == "anthropic":
+        wire_events[1]["content_block"]["text"] = "O"
+        wire_events.append({"type": "content_block_delta", "index": 0, "delta": {"text": "K"}})
+    else:
         cfg.kemini.enabled = True
 
-        def function_chunk(call, finish=None):
+        def function_chunk(call):
             candidate = {"content": {"role": "model", "parts": [{"functionCall": call}]}}
-            if finish:
-                candidate["finishReason"] = finish
             return {"candidates": [candidate]}
 
         wire_events = [
-            function_chunk({"name": TOOL_NAME, "args": {"content": "OK"}}, "STOP"),
+            {"candidates": [{"finishReason": "STOP"}]},
+            function_chunk({"name": TOOL_NAME, "args": {"content": "OK"}}),
             {"usageMetadata": reply(api)["usageMetadata"]},
         ]
     chunks = []
