@@ -532,7 +532,9 @@ class LocalModelManager:
                             "SELECT 1 FROM retrieval_vectors WHERE key=?", (cache_key,)
                         ).fetchone()
                     if not cached:
-                        value = await self.infer("embedding", "index", [entry], settings, timeout=60)
+                        value = await self.infer(
+                            "embedding", "index", [entry], settings, timeout=settings.retrieval.index_timeout
+                        )
                         with self.store.connection() as db:
                             db.execute(
                                 "INSERT OR REPLACE INTO retrieval_vectors VALUES (?,?)",

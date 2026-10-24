@@ -41,7 +41,7 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
     legacy = document.model_dump()
     legacy["version"] = 8
     upgraded = migrate_settings(legacy)
-    assert upgraded.version == 9 and upgraded.shared.local_models == document.shared.local_models
+    assert upgraded.version == 11 and upgraded.shared.local_models == document.shared.local_models
     from tavern.android.local_models import mobile_config
     from tavern.search.retrieval_config import LocalModel
 
@@ -113,6 +113,32 @@ async def test_android_import_and_cancellation_preserve_weights_and_stop_only_ow
     assert not embedding.alive and reranker.alive
     assert "embedding" not in manager.ready and "reranker" in manager.ready
     assert settings.model_dump() == saved and model.read_bytes() == data
+    from tavern.android.local_model_server import NativeModelServer
+
+    class Process:
+        fail = True
+
+        def close(self):
+            if self.fail:
+                self.fail = False
+                raise RuntimeError("fixture shutdown failed")
+
+    class Client:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    server = NativeModelServer(native, model, "embedding")
+    server.process, server.client = Process(), Client()
+    client = server.client
+    manager.servers["embedding"] = server
+    with pytest.raises(RuntimeError, match="fixture shutdown failed"):
+        await manager.unload("embedding")
+    assert manager.servers["embedding"] is server and server.process is not None
+    assert client.closed and server.client is None
+    await manager.unload("embedding")
+    assert "embedding" not in manager.servers and server.process is None
     await manager.close()
 
 

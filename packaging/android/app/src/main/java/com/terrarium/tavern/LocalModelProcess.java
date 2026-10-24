@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -15,6 +17,7 @@ import java.util.regex.Pattern;
 /** Public bridge: Chaquopy must not invoke hidden ProcessEnvironment/UNIXProcess implementations. */
 public final class LocalModelProcess {
     private final Process process;
+    private final int pid;
     private final BufferedReader output;
     private final ArrayDeque<String> logTail = new ArrayDeque<>();
     private PyObject readyCallback;
@@ -23,8 +26,20 @@ public final class LocalModelProcess {
     private LocalModelProcess(Process process, PyObject readyCallback) throws IOException {
         this.process = process;
         this.readyCallback = readyCallback;
-        process.getOutputStream().close();
         output = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+        // Android's public Process API has no pid(), and destroyForcibly() only
+        // repeats SIGTERM. The launcher reports its own PID before exec, then
+        // waits for our acknowledgement so failed setup cannot orphan the engine.
+        try {
+            pid = Integer.parseInt(output.readLine());
+        } catch (NumberFormatException failure) {
+            throw new IOException("Android model launcher did not report its process ID", failure);
+        }
+    }
+
+    private void launch() throws IOException {
+        process.getOutputStream().write('\n');
+        process.getOutputStream().close();
         // Do not hold a Python thread inside a blocking Java readLine call. Only the
         // one-shot readiness notification crosses back into Python.
         Thread reader = new Thread(this::readOutput, "tavern-model-output");
@@ -33,15 +48,22 @@ public final class LocalModelProcess {
     }
 
     public static LocalModelProcess start(String[] command, String nativeDirectory, PyObject readyCallback) throws IOException {
-        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        ArrayList<String> launch = new ArrayList<>(Arrays.asList(
+            "/system/bin/sh", "-c", "echo $$; read -r ready || exit; exec \"$@\"", "tavern-model"));
+        launch.addAll(Arrays.asList(command));
+        ProcessBuilder builder = new ProcessBuilder(launch).redirectErrorStream(true);
         Map<String, String> environment = builder.environment();
         environment.keySet().removeIf(key -> key.startsWith("LLAMA_"));
         environment.put("LD_LIBRARY_PATH", nativeDirectory);
         Process process = builder.start();
+        LocalModelProcess result = null;
         try {
-            return new LocalModelProcess(process, readyCallback);
+            result = new LocalModelProcess(process, readyCallback);
+            result.launch();
+            return result;
         } catch (IOException failure) {
-            process.destroyForcibly();
+            if (result != null) android.os.Process.killProcess(result.pid);
+            process.destroy(); // Before acknowledgement the child is still the waiting shell.
             throw failure;
         }
     }
@@ -79,8 +101,10 @@ public final class LocalModelProcess {
     public void close() throws IOException, InterruptedException {
         process.destroy();
         if (!process.waitFor(1, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            if (!process.waitFor(1, TimeUnit.SECONDS)) {
+            synchronized (process) {
+                if (process.isAlive()) android.os.Process.killProcess(pid);
+            }
+            if (!process.waitFor(2, TimeUnit.SECONDS)) {
                 throw new IOException("Android native model process did not exit");
             }
         }

@@ -115,12 +115,15 @@ class NativeModelServer:
             raise
 
     async def close(self):
-        if self.process is not None:
-            await asyncio.to_thread(self.process.close)
-            self.process = None
-        if self.client is not None:
-            await self.client.aclose()
-            self.client = None
+        try:
+            if self.process is not None:
+                await asyncio.to_thread(self.process.close)
+                self.process = None
+        finally:
+            # A failed native shutdown must not also leave its HTTP pool open.
+            if self.client is not None:
+                await self.client.aclose()
+                self.client = None
 
     async def post(self, route, payload):
         if not self.alive:

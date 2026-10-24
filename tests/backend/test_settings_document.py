@@ -93,6 +93,8 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     raw = store.settings_document().model_dump()
     raw["version"] = 9
     raw["full_agent"]["tools"].pop("max_duration_seconds")
+    raw["full_agent"]["retrieval"].pop("index_timeout")
+    raw["half_agent"]["retrieval"].pop("index_timeout")
     raw["revisions"] = {"full_agent": 3, "half_agent": 8, "shared": 7}
     for scope in ("full_agent", "half_agent"):
         raw[scope]["system_prompt"] = "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
@@ -102,10 +104,14 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 10 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.version == 11 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 7}
     assert migrate_settings(migrated.model_dump()) == migrated
+    custom_timeout = migrated.model_copy(deep=True)
+    custom_timeout.half_agent.retrieval.index_timeout = 180
+    assert migrate_settings(custom_timeout.model_dump()) == custom_timeout
     with store.connection() as db:
         db.execute("UPDATE meta SET value='11' WHERE key='schema_version'")
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))

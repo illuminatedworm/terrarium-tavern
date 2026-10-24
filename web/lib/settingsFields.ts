@@ -166,6 +166,10 @@ export const retrievalAdvanced: SettingField[] = [
   number('retrieval.chunk_tokens', '切片长度（分词单位）', 64, 4096),
   number('retrieval.chunk_overlap', '切片重叠（分词单位）', 0, 1024),
   number('retrieval.embedding_timeout', '向量查询超时（秒）', 0.1, 120, 0.1),
+  {
+    ...number('retrieval.index_timeout', '单条索引超时（秒）', 1, 3600),
+    help: '按单条世界书或归档经历计时，默认 60 秒。长条目可增大；失败时不保存该条的部分向量。',
+  },
   number('retrieval.rerank_timeout', '重排超时（秒）', 0.1, 120, 0.1),
 ];
 export const fullFields: SettingField[] = [

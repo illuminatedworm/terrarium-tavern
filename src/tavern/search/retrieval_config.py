@@ -141,6 +141,7 @@ class RetrievalSettings(BaseModel):
     # subject headings. Keys and content are always matched.
     title_in_retrieval: bool = True
     embedding_timeout: float = Field(1.0, gt=0, le=120)
+    index_timeout: int = Field(60, ge=1, le=3600, strict=True)
     rerank_timeout: float = Field(1.5, gt=0, le=120)
     query_prompt: str = Field(default=DEFAULT_QUERY_PROMPT, max_length=200000)
     protocol_prompt: str = Field(default=DEFAULT_RETRIEVAL_PROTOCOL, max_length=200000)

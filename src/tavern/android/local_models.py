@@ -238,9 +238,11 @@ class AndroidLocalModelManager(LocalModelManager):
     async def _stop(self, purpose):
         self.ready.discard(purpose)
         self.loaded.pop(purpose, None)
-        server = self.servers.pop(purpose, None)
+        server = self.servers.get(purpose)
         if server is not None:
             await server.close()
+            # Retain ownership if native shutdown fails, so close can retry it.
+            del self.servers[purpose]
 
     async def unload(self, purpose):
         async with self.locks[purpose]:

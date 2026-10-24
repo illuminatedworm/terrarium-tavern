@@ -53,6 +53,12 @@ function releaseAnchor() {
   lastBoundary = undefined;
   jumpVersion++;
 }
+function readingBounds(scroller: HTMLElement) {
+  const { top, bottom } = scroller.getBoundingClientRect();
+  // The scroll padding reserves the floating composer and its reading gap.
+  // End jumps must use that same visible boundary instead of the covered edge.
+  return { top, bottom: bottom - (parseFloat(getComputedStyle(scroller).paddingBottom) || 0) };
+}
 function alignPinned() {
   const scroller = props.scroller;
   if (!pinned || !scroller) return;
@@ -60,7 +66,7 @@ function alignPinned() {
   const node = row?.querySelector<HTMLElement>('.message') || row;
   if (!node) return;
   const rect = node.getBoundingClientRect();
-  const viewport = scroller.getBoundingClientRect();
+  const viewport = readingBounds(scroller);
   scroller.scrollTop +=
     pinned.edge === 'start' ? rect.top - viewport.top - 16 : rect.bottom - viewport.bottom + 16;
   if (lastBoundary?.id === pinned.id && lastBoundary.edge === pinned.edge)
@@ -180,7 +186,7 @@ async function jumpBoundary(edge: 'start' | 'end') {
   }
   const row = nodes.get(props.messages[index].id);
   const rect = (row?.querySelector('.message') || row)?.getBoundingClientRect();
-  const bounds = scroller.getBoundingClientRect();
+  const bounds = readingBounds(scroller);
   const atEdge =
     remembered?.edge === edge ||
     (rect && (edge === 'start' ? rect.top >= bounds.top + 13 : rect.bottom <= bounds.bottom - 13));

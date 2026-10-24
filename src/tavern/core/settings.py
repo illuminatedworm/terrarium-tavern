@@ -194,7 +194,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[10] = 10
+    version: Literal[11] = 11
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -460,6 +460,12 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 "max_duration_seconds", FullAgentConfig.model_fields["max_duration_seconds"].default
             )
             changed_scopes.add("full_agent")
+        if raw["version"] == 10:
+            # Expose the previous per-entry limit without changing saved query timeouts.
+            raw["version"] = 11
+            for scope in ("full_agent", "half_agent"):
+                raw.setdefault(scope, {}).setdefault("retrieval", {}).setdefault("index_timeout", 60)
+            changed_scopes.update(("full_agent", "half_agent"))
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

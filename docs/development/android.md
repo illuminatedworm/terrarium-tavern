@@ -133,6 +133,8 @@ Gradle 使用 `jniLibs.useLegacyPackaging=true`，安装器把原生代码提取
 
 运行参数固定为 CPU 四线程、单槽、4096-token 上下文、512-token 微批，沿用保存的批量大小、向量维度和项目提示词。超过上下文时报错，不截断查询或提示词；世界书索引与重排沿用现有 token 分片，已准入条目仍完整注入。
 
+Android 的 [`Process.destroyForcibly()` 继承实现](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/java/java/lang/Process.java)调用 `destroy()`，其[原生实现仅发送 SIGTERM](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/native/UNIXProcess_md.c)。应用通过系统 shell 在 `exec` 前取得自有子进程 PID；正常停止未退出时，明确发送 SIGKILL 并等待回收，避免超时后残留模型进程。此边界不依赖 root 或隐藏 Java API。
+
 ### 模型文件
 
 应用只接受 `src/tavern/android/model_sources.json` 中固定 SHA-256 的两个文件：
@@ -183,9 +185,11 @@ Android 11 及以上界面铺满状态栏、手势条和挖孔区域，宿主把
 
 故事脚本在 `:realm` 进程运行，制卡验证与依赖打包在 `:realm_tools` 进程运行，Office 在 `:documents` 进程解析；超时或取消只终止对应进程。脚本桥以 JSON 传递参数和结果，兼容层安装后返回的 API 对象留在脚本环境中。后端由可见的前台服务承载；停止服务会取消故事、制卡和参谋任务并让存储收尾。系统终止进程后依靠原子提交与重启恢复。
 
+前台服务仍受设备的后台冻结与省电策略约束。冻结期间模型请求和本地接口可能暂停，回到前台后恢复，也可能因连接超时而报错；失败回合不会部分提交。进程被结束后，重新打开应用会将未完成回合标记为中断，并保留已提交剧情；按界面的继续或重试入口恢复工作。应用不修改设备的冻结或省电规则。
+
 ## 维护约束
 
 - 桌面（Windows/Linux）行为保持不变。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及。
 - 不提供“手机作为客户端连接电脑后端”的远程模式，它与[架构](../design/architecture.md)中服务只监听 loopback 的约定冲突。
 - Chaquopy 中不能用 `sys.executable` 或 `multiprocessing` 启动 Python 子进程，Playwright 也无法启动 Chromium；需要隔离的工作放进独立 Android 进程的 Service。同一进程的 WebView 共用渲染进程，脚本死循环会拖住同进程页面，重置也会让该进程内所有脚本环境失效，因此故事脚本与制卡工具分属 `:realm` 和 `:realm_tools`。
-- 手机 CPU 上长世界书的索引耗时尚未实测，按条目 60 秒的索引超时可能不够。
+- 手机 CPU 上长世界书可能超过默认每条 60 秒的索引时限；在目标模式的“检索 → 高级参数”中显式调整“单条索引超时（秒）”，范围为 1–3600 秒。查询与重排分别使用各自的超时设置。

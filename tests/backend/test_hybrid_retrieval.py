@@ -387,6 +387,7 @@ async def test_index_job_publishes_incremental_counts(tmp_path, monkeypatch):
 
     async def infer(*args, **kwargs):
         nonlocal calls
+        assert kwargs["timeout"] == 180
         calls += 1
         if calls == 2:
             started_second.set()
@@ -396,7 +397,9 @@ async def test_index_job_publishes_incremental_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "status", lambda settings: {"models": {"embedding": {"ready": True}}})
     monkeypatch.setattr(manager, "infer", infer)
     try:
-        job = manager.schedule_index(engine, [("one", {"id": "a"}), ("two", {"id": "b"})], Settings())
+        settings = Settings()
+        settings.retrieval.index_timeout = 180
+        job = manager.schedule_index(engine, [("one", {"id": "a"}), ("two", {"id": "b"})], settings)
         await asyncio.wait_for(started_second.wait(), 2)
         assert job["completed_entries"] == 1
         assert job["total_entries"] == 2
