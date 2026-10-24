@@ -103,13 +103,15 @@ Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本�
 | 依赖 | 版本 | 说明 |
 |:--|:--|:--|
 | Python | — | 安装脚本通过 uv 自动准备 Python 3.13 与锁定依赖 |
-| Node.js | 22+ | 用于构建前端 |
+| Node.js | 22+ | 安装脚本默认下载固定版本二进制包（含 npm），也可使用系统 Node |
 | Git | — | 克隆仓库；也可直接下载并解压源码 |
 | NVIDIA GPU | 可选 | 仅本地向量检索与重排需要，须支持 CUDA |
 
 ### 安装并启动
 
-在项目根目录运行安装脚本。脚本会准备 Python 环境与依赖、构建前端并下载 Chromium。
+在项目根目录运行安装脚本。脚本会准备 Python 环境与依赖、内置 Node.js、构建前端并下载 Chromium。
+开发工具链长期保存在 `desktop-dev/`，开发仍使用标准 `.venv`；已有系统 Node 可选择跳过下载。
+Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携包](docs/development/desktop.md)。
 
 <details open>
 <summary><b>Windows（PowerShell）</b></summary>

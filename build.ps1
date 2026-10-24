@@ -1,5 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+. (Join-Path $PSScriptRoot 'tools/desktop-env.ps1')
 
 if (!(Test-Path -LiteralPath 'node_modules/vite/bin/vite.js')) { throw '请先运行 .\setup.ps1 安装前端依赖。' }
 

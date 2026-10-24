@@ -14,12 +14,13 @@ if (($#)); then
     fi
     desktop=true
 fi
-if [[ ! -x .venv/bin/python || ! -f node_modules/vite/bin/vite.js ]]; then
+source tools/desktop-env.sh
+if [[ ! -f node_modules/vite/bin/vite.js ]]; then
     printf '%s\n' '请先运行 ./setup.sh' >&2
     exit 1
 fi
 # Opt-in owned window: it starts and stops Vite and the backend itself.
-if $desktop; then exec .venv/bin/python -m tavern --dev; fi
+if $desktop; then exec "$tavern_python" -m tavern --dev; fi
 
 backend_pid=''
 frontend_pid=''
@@ -47,7 +48,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
-port_in_use=$(.venv/bin/python - <<'PY'
+port_in_use=$("$tavern_python" - <<'PY'
 import socket
 
 try:
@@ -60,7 +61,7 @@ else:
 PY
 )
 backend_healthy() {
-    .venv/bin/python - <<'PY'
+    "$tavern_python" - <<'PY'
 import json
 import sys
 import urllib.request
@@ -82,7 +83,7 @@ if [[ $port_in_use == true ]]; then
     fi
     printf '%s\n' '复用已运行的后端（端口 8000）。'
 else
-    .venv/bin/python -m tavern --port 8000 --data data &
+    "$tavern_python" -m tavern --port 8000 --data data &
     backend_pid=$!
     for ((attempt = 0; attempt < 120; attempt++)); do
         if ! kill -0 "$backend_pid" 2>/dev/null; then

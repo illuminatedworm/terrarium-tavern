@@ -24,6 +24,7 @@ FILES = (
     "vitest.config.ts",
     "setup.ps1",
     "start.ps1",
+    "start.cmd",
     "stop.ps1",
     "run-dev.ps1",
     "build.ps1",
@@ -34,6 +35,9 @@ FILES = (
     "build.sh",
     "clear-conversations.py",
     "clear-conversations.cmd",
+    "packaging/desktop/runtimes.json",
+    "packaging/desktop/README.md",
+    "desktop-dev/README.md",
 )
 DIRECTORIES = ("LICENSE", "src", "web", "compat", "vendor", "samples", "docs", "tests", "tools")
 
@@ -69,6 +73,9 @@ def publishable(relative):
         ".ttf",
         ".svg",
         ".ico",
+        ".ps1",
+        ".sh",
+        ".cmd",
     } or name in {"license", "copying", "notice", "cl100k_base.tiktoken.gz", "o200k_base.tiktoken.gz"}
 
 

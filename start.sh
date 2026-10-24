@@ -30,15 +30,12 @@ if [[ -z $data ]]; then
     printf '%s\n' '数据目录不能为空。' >&2
     exit 2
 fi
-if [[ ! -x .venv/bin/python ]]; then
-    printf '%s\n' '请先运行 ./setup.sh' >&2
-    exit 1
-fi
-if [[ ! -f dist/index.html && ! -f src/tavern/static/web/index.html ]]; then
+source tools/desktop-env.sh
+if ! $tavern_portable && [[ ! -f dist/index.html && ! -f src/tavern/static/web/index.html ]]; then
     printf '%s\n' '请先运行 ./build.sh' >&2
     exit 1
 fi
-.venv/bin/python - "$port" <<'PY'
+"$tavern_python" - "$port" <<'PY'
 import socket
 import sys
 
@@ -52,4 +49,5 @@ else:
     sys.exit(f"TAVERN_PORT_IN_USE: 端口 {port} 已被使用；请先运行 ./stop.sh，或使用 --port 选择另一端口。")
 PY
 # bash before 4.4 treats an empty "${window[@]}" as unbound under set -u.
-exec .venv/bin/python -m tavern --port "$port" --data "$data" ${window[@]+"${window[@]}"}
+printf 'Python: %s\n' "$tavern_python"
+exec "$tavern_python" -m tavern --port "$port" --data "$data" ${window[@]+"${window[@]}"}

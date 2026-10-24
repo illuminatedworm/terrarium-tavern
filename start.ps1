@@ -1,8 +1,8 @@
 ﻿param([int]$Port = 8000, [string]$Data = 'data', [switch]$Desktop)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-if (!(Test-Path -LiteralPath '.venv/Scripts/python.exe')) { throw '请先运行 .\setup.ps1' }
-if (!(Test-Path -LiteralPath 'dist/index.html') -and !(Test-Path -LiteralPath 'src/tavern/static/web/index.html')) { throw '请先运行 npm run build' }
+. (Join-Path $PSScriptRoot 'tools/desktop-env.ps1')
+if (!$tavernPortable -and !(Test-Path -LiteralPath 'dist/index.html') -and !(Test-Path -LiteralPath 'src/tavern/static/web/index.html')) { throw '请先运行 build.ps1' }
 $tavernClient = [System.Net.Sockets.TcpClient]::new()
 try {
     $tavernClient.Connect('127.0.0.1', $Port)
@@ -14,5 +14,6 @@ try {
 }
 # Keep the result as an array: splatting a scalar string passes one argument per character.
 $tavernOptions = @(if ($Desktop) { '--desktop' })
-& .venv/Scripts/python.exe -m tavern --port $Port --data $Data @tavernOptions
+Write-Host "Python: $tavernPython"
+& $tavernPython -m tavern --port $Port --data $Data @tavernOptions
 if ($LASTEXITCODE) { throw "启动失败（退出码 $LASTEXITCODE）" }

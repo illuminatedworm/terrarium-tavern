@@ -6,6 +6,9 @@ node_modules/
 # Persistent Android toolchains and build assets; keep the directory guide in Git.
 /android-dev/*
 !/android-dev/README.md
+/desktop-dev/*
+!/desktop-dev/README.md
+/runtime/
 
 # Private application data, restores and backups (never publish)
 /data/

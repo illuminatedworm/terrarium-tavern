@@ -2,10 +2,10 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 
-if (!(Test-Path -LiteralPath '.venv/Scripts/python.exe')) { throw '请先运行 .\setup.ps1' }
+. (Join-Path $PSScriptRoot 'tools/desktop-env.ps1')
 if ($Desktop) {
     # Opt-in owned window: it starts and stops Vite and the backend itself.
-    & .venv/Scripts/python.exe -m tavern --dev
+    & $tavernPython -m tavern --dev
     if ($LASTEXITCODE) { throw "开发窗口已退出（退出码 $LASTEXITCODE）" }
     return
 }
@@ -34,7 +34,7 @@ try {
         if ($health.runtime -ne 'KohakuTerrarium') { throw "端口 $port 上不是 Terrarium Tavern 后端。" }
         Write-Host "复用已运行的后端（端口 $port）。"
     } else {
-        $backend = Start-Process -FilePath (Join-Path $PSScriptRoot '.venv/Scripts/python.exe') `
+        $backend = Start-Process -FilePath $tavernPython `
             -ArgumentList '-m tavern --port 8000 --data data' -WorkingDirectory $PSScriptRoot `
             -WindowStyle Hidden -PassThru
         $backendStarted = $true

@@ -19,11 +19,8 @@ if [[ ! $port =~ ^[0-9]{1,5}$ ]] || ((10#$port < 1 || 10#$port > 65535)); then
     exit 2
 fi
 port=$((10#$port))
-if [[ ! -x .venv/bin/python ]]; then
-    printf '%s\n' '请先运行 ./setup.sh' >&2
-    exit 1
-fi
-.venv/bin/python - "$port" <<'PY'
+source tools/desktop-env.sh
+"$tavern_python" - "$port" <<'PY'
 import json
 import os
 import signal

@@ -3,13 +3,14 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 usage() {
-    printf '%s\n' '用法：./setup.sh [--proxy URL] [--local-retrieval]' \
+    printf '%s\n' '用法：./setup.sh [--proxy URL] [--local-retrieval] [--skip-node-download]' \
         '默认沿用环境中的代理；--proxy "" 禁用安装代理。'
 }
 
 proxy=''
 proxy_set=false
 local_retrieval=false
+skip_node_download=false
 while (($#)); do
     case "$1" in
         --proxy)
@@ -19,23 +20,18 @@ while (($#)); do
             shift 2
             ;;
         --local-retrieval) local_retrieval=true; shift ;;
+        --skip-node-download) skip_node_download=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf '未知参数：%s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
 done
 
-for tavern_command in npm node git; do
+for tavern_command in git; do
     if ! command -v "$tavern_command" >/dev/null 2>&1; then
-        printf '缺少 %s，请先安装 Node.js 22+ 和 Git。\n' "$tavern_command" >&2
+        printf '缺少 %s，请先安装 Git。\n' "$tavern_command" >&2
         exit 1
     fi
 done
-tavern_node_major=$(node -p 'process.versions.node.split(".")[0]')
-if ((tavern_node_major < 22)); then
-    printf '%s\n' '需要 Node.js 22 或更新版本。' >&2
-    exit 1
-fi
-
 if $proxy_set; then
     case "$proxy" in
         ''|http://?*|https://?*) ;;
@@ -44,7 +40,7 @@ if $proxy_set; then
     export HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" http_proxy="$proxy" https_proxy="$proxy"
     unset ALL_PROXY all_proxy
 fi
-export UV_PYTHON_INSTALL_DIR="$PWD/.cache/python"
+export UV_PYTHON_INSTALL_DIR="$PWD/desktop-dev/python"
 
 if command -v uv >/dev/null 2>&1; then
     tavern_uv=(uv)
@@ -70,6 +66,19 @@ fi
 tavern_sync=(sync --frozen)
 if $local_retrieval; then tavern_sync+=(--extra retrieval); fi
 "${tavern_uv[@]}" "${tavern_sync[@]}"
+if ! $skip_node_download; then .venv/bin/python tools/desktop_runtime.py node; fi
+source tools/desktop-env.sh
+for tavern_command in node npm; do
+    if ! command -v "$tavern_command" >/dev/null 2>&1; then
+        printf '缺少 %s；重新运行 ./setup.sh 下载内置 Node.js。\n' "$tavern_command" >&2
+        exit 1
+    fi
+done
+tavern_node_major=$(node -p 'process.versions.node.split(".")[0]')
+if ((tavern_node_major < 22)); then
+    printf '%s\n' '需要 Node.js 22 或更新版本。' >&2
+    exit 1
+fi
 tavern_npm=(ci --registry=https://registry.npmjs.org)
 if $proxy_set; then tavern_npm+=("--proxy=$proxy" "--https-proxy=$proxy"); fi
 npm "${tavern_npm[@]}"
