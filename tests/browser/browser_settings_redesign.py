@@ -18,7 +18,7 @@ from tavern.storage.request_debug import RequestDebugLog
 from tests.browser.select_menu import choose_menu, choose_model, menu_popup
 
 
-async def main(*, misc_only=False, connections_only=False):
+async def main(*, misc_only=False, connections_only=False, models_only=False):
     output = Path(".cache/settings-redesign")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tavern-settings-browser-") as root:
@@ -127,6 +127,24 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                 browser = await playwright.chromium.launch()
                 try:
                     page = await browser.new_page(viewport={"width": 1920, "height": 1080})
+                    if models_only:
+                        from tavern.android.local_models import EXECUTABLE, AndroidLocalModelManager
+                        from tavern.android.model_devices import DEVICES
+
+                        # Exercise the actual settings save API with mobile status,
+                        # without loading native libraries on the desktop runner.
+                        mobile = AndroidLocalModelManager(app.state.store)
+                        mobile.native_directory = Path(root)
+                        (Path(root) / EXECUTABLE).touch()
+                        mobile.devices = {
+                            key: {"device": key, "label": value[1], "available": True, "reason": ""}
+                            for key, value in DEVICES.items()
+                        }
+
+                        async def mobile_status(route):
+                            await route.fulfill(json=mobile.status(app.state.store.settings()))
+
+                        await page.route("**/api/local-models", mobile_status)
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(frontend)
@@ -146,6 +164,40 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         await expect(page.locator(".settings-save-status")).to_contain_text("已保存")
 
                     before = await read()
+                    if models_only:
+                        await select("通用 本地模型")
+                        for label in ("向量模型", "重排模型"):
+                            card = page.get_by_role("region", name=label, exact=True)
+                            await card.get_by_role("button", name="使用手机 Q8_0 配置", exact=True).click()
+                            await saved()
+                        baseline = (await read())["shared"]["local_models"]
+                        for label, device in (("向量模型", "opencl:0"), ("重排模型", "hexagon:0")):
+                            await (
+                                page.get_by_role("region", name=label, exact=True)
+                                .get_by_role("combobox", name="设备", exact=True)
+                                .select_option(device)
+                            )
+                            await saved()
+                        actual = (await read())["shared"]["local_models"]
+                        baseline["embedding"]["device"] = "opencl:0"
+                        baseline["reranker"]["device"] = "hexagon:0"
+                        assert actual == baseline
+                        await page.reload()
+                        await page.get_by_role("button", name="设置", exact=True).click()
+                        await select("通用 本地模型")
+                        await expect(
+                            page.get_by_role("region", name="向量模型", exact=True).get_by_role(
+                                "combobox", name="设备", exact=True
+                            )
+                        ).to_have_value("opencl:0")
+                        await expect(
+                            page.get_by_role("region", name="重排模型", exact=True).get_by_role(
+                                "combobox", name="设备", exact=True
+                            )
+                        ).to_have_value("hexagon:0")
+                        assert not errors, errors
+                        print("Android model device selections persisted independently across reload.")
+                        return
                     if connections_only:
                         for label, index, name in [
                             ("full agent 模型与生成", 0, "full"),

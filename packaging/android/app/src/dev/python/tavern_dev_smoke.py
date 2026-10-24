@@ -237,24 +237,58 @@ async def office_documents(root, checks):
     await timed(checks, "read_document_xlsx", sheet)
 
 
-async def local_models(root, cache_dir, checks):
+async def local_models(root, cache_dir, checks, selected="models"):
+    import math
+    import re
+
     from tavern.android.local_models import SOURCES, mobile_config
     from tavern.core.models import Settings
     from tavern.search.local_models import create_local_model_manager
     from tavern.search.retrieval_config import LocalModel
 
-    started = time.perf_counter()
     manager = create_local_model_manager(SimpleNamespace(root=root))
     settings = Settings()
     for purpose in ("embedding", "reranker"):
         setattr(settings.local_models, purpose, LocalModel(**mobile_config(purpose)))
-    settings.local_models.embedding.batch_size = 2
-    settings.local_models.reranker.batch_size = 2
-    documents = ["北岸港口的守卫阿舟住在灯塔二层，每晚巡视码头。", "南山茶园的采茶季从四月开始。"]
+    documents = [
+        "北岸港口的守卫阿舟住在灯塔二层，每晚巡视码头。",
+        "南山茶园的采茶季从四月开始，雨后需要及时晾晒茶叶。",
+        "北岸港口的铁匠铺靠近东门，铁匠白天修理船锚。",
+    ]
     query = "北岸港口的守卫住在哪里？"
+    reference_path = Path(cache_dir) / "model-fixtures/cpu-reference.json"
+    report_path = Path(cache_dir) / "model-fixtures/acceleration-report.json"
+    reference = None
+    if selected != "models":
+        reference = json.loads(reference_path.read_text("utf-8"))
+        assert reference["engine"] == SOURCES["engine"]["commit"]
+    devices = (
+        ("cpu", "opencl:0", "hexagon:0")
+        if selected == "models"
+        else ("opencl:0" if selected == "models-opencl" else "hexagon:0",)
+    )
+
+    def memory():
+        result = {}
+        for purpose, server in manager.servers.items():
+            status = Path(f"/proc/{server.process.getPid()}/status").read_text()
+            result[purpose] = {
+                key: int(re.search(r"^" + key + r":\s+(\d+)", status, re.MULTILINE)[1])
+                for key in ("VmRSS", "VmHWM")
+            }
+        return result
+
+    async def measure(row, name, operation):
+        start = time.perf_counter()
+        value = await operation
+        row[name + "_seconds"] = round(time.perf_counter() - start, 3)
+        print(f"MODEL: {row['device']} {name} {row[name + '_seconds']}s", flush=True)
+        return value
+
     try:
+        await manager.initialize()
+        checks.append({"name": "model_devices", "devices": manager.devices})
         for purpose in ("embedding", "reranker"):
-            print("IMPORT: " + purpose, flush=True)
             path = Path(cache_dir) / "model-fixtures" / SOURCES[purpose]["filename"]
             with path.open("rb") as source:
 
@@ -263,51 +297,177 @@ async def local_models(root, cache_dir, checks):
                         yield block
 
                 await manager.import_model(purpose, chunks(), settings, size=path.stat().st_size)
-            print("WARMUP: " + purpose, flush=True)
-            await manager.warmup(purpose, settings)
-        assert all(item["ready"] for item in manager.status(settings)["models"].values())
-        vectors = await manager.infer("embedding", "embed", documents, settings, timeout=45)
-        assert len(vectors) == 2 and all(len(row) == 1024 for row in vectors)
-        # Exercise native last-token pooling across the 512-token microbatch boundary.
-        long_text = documents[0] * 35
-        assert len(await manager.servers["embedding"].tokenize(long_text)) > 512
-        long_vector = await manager.infer("embedding", "embed", [long_text], settings, timeout=45)
-        assert len(long_vector[0]) == 1024
-        settings.retrieval.chunk_tokens = 128
-        settings.retrieval.chunk_overlap = 16
-        indexed = await manager.infer(
-            "embedding",
-            "index",
-            [{"id": "fixture", "keys": ["码头"], "content": documents[0] * 10}],
-            settings,
-            timeout=45,
-        )
-        assert len(indexed[0]["fragments"]) >= 2
-        assert len(indexed[0]["vectors"]) == len(indexed[0]["fragments"])
-        scores = await manager.infer(
-            "reranker", "rerank", [[query, [text]] for text in documents], settings, timeout=45
-        )
-        assert len(scores) == 2 and 0 <= scores[1] < scores[0] <= 1
+        for device in devices:
+            row = {"name": "local_models", "device": device, "ok": False}
+            checks.append(row)
+            try:
+                for purpose in ("embedding", "reranker"):
+                    getattr(settings.local_models, purpose).device = device
+                    await measure(row, purpose + "_load", manager.warmup(purpose, settings))
+                row["execution"] = dict(manager.metrics)
+                row["loaded_memory_kib"] = memory()
+                assert all(item["ready"] for item in manager.status(settings)["models"].values())
+                vectors = await measure(
+                    row, "embedding", manager.infer("embedding", "embed", documents, settings, timeout=120)
+                )
+                query_vector = await manager.infer(
+                    "embedding", "embed", [query], settings, timeout=120, query=True
+                )
+                long_text = documents[0] * 35
+                assert len(await manager.servers["embedding"].tokenize(long_text)) > 512
+                long_vector = await measure(
+                    row,
+                    "long_embedding",
+                    manager.infer("embedding", "embed", [long_text], settings, timeout=120),
+                )
+                scores = await measure(
+                    row,
+                    "rerank",
+                    manager.infer(
+                        "reranker", "rerank", [[query, [text]] for text in documents], settings, timeout=120
+                    ),
+                )
+                row["rerank_scores"] = scores
+                similarities = [
+                    sum(a * b for a, b in zip(query_vector[0], vector, strict=True)) for vector in vectors
+                ]
+                row["embedding_similarities"] = similarities
+                assert similarities.index(max(similarities)) == 0, "向量检索未选中已知相关文档"
+                if device != "cpu":
+                    prefix_vectors = [*vectors, *query_vector, *long_vector]
+                    row["short_cosines"] = [
+                        sum(a * b for a, b in zip(left, right, strict=True))
+                        / math.sqrt(sum(a * a for a in left) * sum(b * b for b in right))
+                        for left, right in zip(prefix_vectors, reference["vectors"][:5], strict=True)
+                    ]
+                    (Path(cache_dir) / "model-fixtures" / (device.split(":")[0] + "-short.json")).write_text(
+                        json.dumps({"vectors": prefix_vectors, "scores": scores}), "utf-8"
+                    )
+                assert all(0 <= score <= 1 for score in scores) and scores[0] > max(scores[1:]), (
+                    "重排顺序不符"
+                )
+                entry = {"id": "fixture", "keys": ["码头"], "content": documents[0] * 1000}
+                indexed = await measure(
+                    row, "long_index", manager.infer("embedding", "index", [entry], settings, timeout=360)
+                )
+                row["indexed_characters"] = len(entry["content"])
+                row["indexed_fragments"] = len(indexed[0]["fragments"])
+                assert len(indexed[0]["vectors"]) == row["indexed_fragments"] > 2
+                row["inferred_memory_kib"] = memory()
+                seen, repeated = {}, []
+                for fragment, vector in zip(indexed[0]["fragments"], indexed[0]["vectors"], strict=True):
+                    if fragment in seen:
+                        previous = seen[fragment]
+                        repeated.append(
+                            sum(a * b for a, b in zip(previous, vector, strict=True))
+                            / math.sqrt(sum(a * a for a in previous) * sum(b * b for b in vector))
+                        )
+                    else:
+                        seen[fragment] = vector
+                row["repeat_min_cosine"] = min(repeated)
+                assert min(repeated) >= 0.999999, "同一设备重复输入产生不稳定向量"
+                data = {
+                    "engine": SOURCES["engine"]["commit"],
+                    "vectors": [*vectors, *query_vector, *long_vector, *indexed[0]["vectors"]],
+                    "scores": scores,
+                    "fragments": indexed[0]["fragments"],
+                }
+                if device == "cpu":
+                    reference = data
+                    reference_path.write_text(json.dumps(data), "utf-8")
+                else:
+                    assert data["fragments"] == reference["fragments"]
+                    assert len(data["vectors"]) == len(reference["vectors"])
+                    cosines = [
+                        sum(a * b for a, b in zip(left, right, strict=True))
+                        / math.sqrt(sum(a * a for a in left) * sum(b * b for b in right))
+                        for left, right in zip(data["vectors"], reference["vectors"], strict=True)
+                    ]
+                    cosine = min(cosines)
+                    error = max(abs(a - b) for a, b in zip(scores, reference["scores"], strict=True))
+                    row.update(min_cosine=cosine, rerank_max_abs=error, cosines=cosines)
+                    (
+                        Path(cache_dir) / "model-fixtures" / (device.split(":")[0] + "-results.json")
+                    ).write_text(json.dumps(data), "utf-8")
+                # Cancel after httpcore reports the native request body sent. No
+                # timing sleeps; the other loaded model must remain usable.
+                sent = asyncio.Event()
+
+                async def trace(name, info):
+                    if name == "http11.send_request_body.complete":
+                        sent.set()
+
+                async def hook(request):
+                    request.extensions["trace"] = trace
+
+                server = manager.servers["embedding"]
+                server.client.event_hooks["request"].append(hook)
+                process = server.process
+                request = asyncio.create_task(
+                    manager.infer("embedding", "embed", [long_text] * 32, settings, timeout=120)
+                )
+                try:
+                    await asyncio.wait_for(sent.wait(), 10)
+                finally:
+                    request.cancel()
+                    try:
+                        await request
+                    except asyncio.CancelledError:
+                        pass
+                    else:
+                        raise AssertionError("推理未被取消")
+                assert not process.isAlive() and "embedding" not in manager.ready
+                assert manager.servers["reranker"].alive
+                after = await manager.infer(
+                    "reranker", "rerank", [[query, [documents[0]]]], settings, timeout=120
+                )
+                assert abs(after[0] - scores[0]) <= 0.001
+                row["cancel_released_owned_process"] = True
+                if device != "cpu":
+                    # Cross-hardware cosine is an observation, not a pass gate.
+                    assert error <= 0.001, "重排分数差异超过阈值"
+                row["ok"] = True
+            except Exception as error:
+                # Keep independent backend results for diagnosis; fail the matrix
+                # after all selected backends, never treat a skipped device as passed.
+                row["error"] = str(error)
+                print(f"FAIL: {device}: {error}", flush=True)
+            finally:
+                await manager.unload("embedding")
+                await manager.unload("reranker")
+                report_path.write_text(json.dumps(checks, ensure_ascii=False, indent=2), "utf-8")
+        assert all(row.get("ok", True) for row in checks), checks
     finally:
         await manager.close()
     assert not manager.servers and not manager.ready
-    checks.append(
-        {
-            "name": "local_models",
-            "seconds": round(time.perf_counter() - started, 3),
-            "indexed_fragments": len(indexed[0]["fragments"]),
-            "rerank_scores": scores,
-        }
-    )
     print("PASS: local_models", flush=True)
 
 
 def run(cache_dir, suite):
     # Native UI/restart probes run in DevSmokeInstrumentation.
-    if suite not in {"all", "native", "sessions", "scripts", "documents", "restart", "models", "ui"}:
+    if suite not in {
+        "all",
+        "native",
+        "sessions",
+        "scripts",
+        "documents",
+        "restart",
+        "models",
+        "ui",
+        "devices",
+        "models-opencl",
+        "models-hexagon",
+    }:
         raise ValueError("未知自检范围：" + suite)
     checks = []
     started = time.perf_counter()
+    if suite == "devices":
+        from tavern.android.local_models import AndroidLocalModelManager
+
+        with tempfile.TemporaryDirectory(prefix="tavern-devices-", dir=cache_dir) as temporary:
+            manager = AndroidLocalModelManager(SimpleNamespace(root=Path(temporary)))
+            asyncio.run(manager.initialize())
+            checks.append({"name": "model_devices", "devices": manager.devices})
     if suite in {"all", "native"}:
         start = time.perf_counter()
         native_dependencies()
@@ -323,8 +483,8 @@ def run(cache_dir, suite):
     if suite in {"all", "documents"}:
         with tempfile.TemporaryDirectory(prefix="tavern-document-smoke-", dir=cache_dir) as temporary:
             asyncio.run(office_documents(Path(temporary), checks))
-    if suite == "models":
+    if suite in {"models", "models-opencl", "models-hexagon"}:
         # Deliberately opt-in: normal daily checks do not require or load model weights.
         with tempfile.TemporaryDirectory(prefix="tavern-model-smoke-", dir=cache_dir) as temporary:
-            asyncio.run(local_models(Path(temporary), cache_dir, checks))
+            asyncio.run(local_models(Path(temporary), cache_dir, checks, suite))
     return json.dumps({"ok": True, "checks": checks, "seconds": round(time.perf_counter() - started, 3)})

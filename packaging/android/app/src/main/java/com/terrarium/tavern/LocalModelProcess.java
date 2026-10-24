@@ -20,6 +20,7 @@ public final class LocalModelProcess {
     private final int pid;
     private final BufferedReader output;
     private final ArrayDeque<String> logTail = new ArrayDeque<>();
+    private final ArrayDeque<String> diagnostics = new ArrayDeque<>();
     private PyObject readyCallback;
     private static final Pattern LISTENING = Pattern.compile("listening on (http://127\\.0\\.0\\.1:\\d+)");
 
@@ -53,8 +54,14 @@ public final class LocalModelProcess {
         launch.addAll(Arrays.asList(command));
         ProcessBuilder builder = new ProcessBuilder(launch).redirectErrorStream(true);
         Map<String, String> environment = builder.environment();
-        environment.keySet().removeIf(key -> key.startsWith("LLAMA_"));
-        environment.put("LD_LIBRARY_PATH", nativeDirectory);
+        environment.keySet().removeIf(key -> key.startsWith("LLAMA_") || key.startsWith("GGML_"));
+        // An exec child has no Java classloader namespace. Public vendor drivers
+        // declared in the manifest must also be on its linker search path.
+        environment.put("LD_LIBRARY_PATH", nativeDirectory + ":/vendor/lib64");
+        environment.put("ADSP_LIBRARY_PATH", nativeDirectory);
+        environment.put("CDSP_LIBRARY_PATH", nativeDirectory);
+        // No unbounded driver-kernel cache in the app's private home directory.
+        environment.put("GGML_OPENCL_KERNEL_CACHE_DIR", "off");
         Process process = builder.start();
         LocalModelProcess result = null;
         try {
@@ -73,8 +80,15 @@ public final class LocalModelProcess {
             String line;
             while ((line = output.readLine()) != null) {
                 synchronized (logTail) {
-                    if (logTail.size() == 40) logTail.removeFirst();
+                    if (logTail.size() == 80) logTail.removeFirst();
                     logTail.addLast(line);
+                }
+                if (line.contains("using device ") || line.contains("offloaded ")
+                        || line.contains("model buffer size") || line.contains("compute buffer size")) {
+                    synchronized (diagnostics) {
+                        if (diagnostics.size() == 24) diagnostics.removeFirst();
+                        diagnostics.addLast(line);
+                    }
                 }
                 Matcher match = LISTENING.matcher(line);
                 if (match.find()) ready(match.group(1));
@@ -97,6 +111,17 @@ public final class LocalModelProcess {
     }
 
     public boolean isAlive() { return process.isAlive(); }
+
+    public String getDiagnostics() {
+        synchronized (diagnostics) { return String.join("\n", diagnostics); }
+    }
+
+    public int waitForExit(int seconds) throws IOException, InterruptedException {
+        if (!process.waitFor(seconds, TimeUnit.SECONDS)) throw new IOException("Native device probe timed out");
+        return process.exitValue();
+    }
+
+    public int getPid() { return pid; }
 
     public void close() throws IOException, InterruptedException {
         process.destroy();

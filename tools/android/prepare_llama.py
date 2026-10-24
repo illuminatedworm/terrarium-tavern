@@ -1,4 +1,4 @@
-"""Package a pinned, stripped llama.cpp CPU helper; model weights never enter the APK."""
+"""Package isolated pinned CPU and Snapdragon helpers; weights never enter the APK."""
 
 import argparse
 import json
@@ -27,7 +27,7 @@ LIBRARIES = (
 )
 
 
-def prepare(cache: Path, offline: bool):
+def prepare_cpu(cache: Path, offline: bool):
     engine = sources()["engine"]
     source = engine["android"]
     archive = cache / "model-probe/downloads" / source["url"].rsplit("/", 1)[1]
@@ -83,6 +83,13 @@ def prepare(cache: Path, offline: bool):
             (assets / "LICENSE").write_bytes(stream.read())
     write_json(receipt_file, receipt)
     print("已准备 llama.cpp 原生库与许可记录（不含模型权重）", flush=True)
+
+
+def prepare(cache: Path, offline: bool):
+    from prepare_acceleration import prepare_acceleration
+
+    prepare_cpu(cache, offline)
+    prepare_acceleration(cache, sources()["engine"], offline)
 
 
 if __name__ == "__main__":

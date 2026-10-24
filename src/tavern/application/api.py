@@ -88,6 +88,7 @@ def create_app(data_dir=None):
 
         maintenance = asyncio.create_task(maintain())
         try:
+            await service.local_models.initialize()
             yield
         finally:
             maintenance.cancel()

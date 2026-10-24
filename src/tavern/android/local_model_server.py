@@ -8,9 +8,18 @@ from pathlib import Path
 
 import httpx
 
+from tavern.android.model_devices import (
+    ACCEL_EXECUTABLE,
+    CONTEXT_TOKENS,
+    CPU_THREADS,
+    DEVICES,
+    MICROBATCH_TOKENS,
+    execution_metrics,
+    launch,
+    native_failure,
+)
+
 LOGGER = logging.getLogger(__name__)
-CONTEXT_TOKENS = 4096
-CPU_THREADS = 4
 EXECUTABLE = "libtavern_llama_server.so"
 
 
@@ -19,10 +28,12 @@ class ModelRequestRejected(RuntimeError):
 
 
 class NativeModelServer:
-    def __init__(self, native_directory: Path, model: Path, purpose: str):
+    def __init__(self, native_directory: Path, model: Path, purpose: str, device="cpu"):
         self.native_directory = native_directory
         self.model = model
         self.purpose = purpose
+        self.device = device
+        self.metrics = {}
         self.process = None
         self.client = None
         self.url = None
@@ -34,10 +45,8 @@ class NativeModelServer:
         return self.process is not None and bool(self.process.isAlive())
 
     def _launch(self, on_ready):
-        from java import jarray, jclass
-
         command = [
-            str(self.native_directory / EXECUTABLE),
+            str(self.native_directory / (EXECUTABLE if self.device == "cpu" else ACCEL_EXECUTABLE)),
             "-m",
             str(self.model),
             "--host",
@@ -50,13 +59,13 @@ class NativeModelServer:
             "--pooling",
             "last" if self.purpose == "embedding" else "rank",
             "-ngl",
-            "0",
+            "0" if self.device == "cpu" else "99",
             "-c",
             str(CONTEXT_TOKENS),
             "-b",
             str(CONTEXT_TOKENS),
             "-ub",
-            "512",
+            str(MICROBATCH_TOKENS[self.device]),
             "-np",
             "1",
             "-t",
@@ -76,13 +85,15 @@ class NativeModelServer:
             "--poll",
             "0",
         ]
+        if self.device != "cpu":
+            # b11829 hides library INFO (including device/offload evidence) at
+            # the server's default level 3. Level 4 exposes it to the bounded reader.
+            command += ["--device", DEVICES[self.device][0], "--log-verbosity", "4"]
         if self.purpose == "reranker":
             # b11829's /embedding reader otherwise reads 1024 values from a two-value
             # rank buffer. This changes the declared output size, not the weights/prompt.
             command += ["--override-kv", "qwen3.embedding_length_out=int:2"]
-        self.process = jclass("com.terrarium.tavern.LocalModelProcess").start(
-            jarray(jclass("java.lang.String"))(command), str(self.native_directory), on_ready
-        )
+        self.process = launch(command, self.native_directory, on_ready)
 
     async def start(self):
         loop = asyncio.get_running_loop()
@@ -103,7 +114,10 @@ class NativeModelServer:
             self.url = await asyncio.wait_for(self.ready, 45)
             if not self.url or not self.alive:
                 LOGGER.error("Android %s load failed:\n%s", self.purpose, self.process.getLogTail())
-                raise RuntimeError("Android 本地模型加载失败，请查看运行日志")
+                raise RuntimeError(
+                    "Android 本地模型加载失败：" + native_failure(str(self.process.getLogTail()))
+                )
+            self.metrics = execution_metrics(self.device, str(self.process.getDiagnostics()))
             self.client = httpx.AsyncClient(
                 base_url=self.url,
                 headers={"Authorization": "Bearer " + self.key},
@@ -111,6 +125,13 @@ class NativeModelServer:
                 timeout=None,
             )
         except BaseException:
+            if self.process is not None:
+                LOGGER.error(
+                    "Android %s startup diagnostics:\n%s\n%s",
+                    self.device,
+                    self.process.getDiagnostics(),
+                    self.process.getLogTail(),
+                )
             await self.close()
             raise
 

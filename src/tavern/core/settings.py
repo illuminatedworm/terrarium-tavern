@@ -194,7 +194,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[11] = 11
+    version: Literal[12] = 12
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -466,6 +466,9 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             for scope in ("full_agent", "half_agent"):
                 raw.setdefault(scope, {}).setdefault("retrieval", {}).setdefault("index_timeout", 60)
             changed_scopes.update(("full_agent", "half_agent"))
+        if raw["version"] == 11:
+            # New explicit Android devices; preserve every saved CPU/CUDA choice.
+            raw["version"] = 12
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

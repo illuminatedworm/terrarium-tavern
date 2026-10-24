@@ -40,7 +40,7 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
     legacy = document.model_dump()
     legacy["version"] = 8
     upgraded = migrate_settings(legacy)
-    assert upgraded.version == 11 and upgraded.shared.local_models == document.shared.local_models
+    assert upgraded.version == 12 and upgraded.shared.local_models == document.shared.local_models
     from tavern.android.local_models import mobile_config
     from tavern.search.retrieval_config import LocalModel
 
@@ -49,6 +49,54 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
         SettingsDocument.model_validate_json(upgraded.model_dump_json()).shared.local_models.embedding
         == upgraded.shared.local_models.embedding
     )
+    upgraded.shared.local_models.embedding.device = "opencl:0"
+    upgraded.shared.local_models.reranker = LocalModel(**mobile_config("reranker", "hexagon:0"))
+    assert SettingsDocument.model_validate_json(upgraded.model_dump_json()) == upgraded
+
+
+async def test_android_device_change_reuses_weights_but_rejects_cpu_fallback(tmp_path, monkeypatch):
+    from tavern.android import local_models as android
+    from tavern.android.model_devices import execution_metrics
+    from tavern.search.retrieval_config import LocalModel
+
+    native = tmp_path / "native"
+    native.mkdir()
+    (native / android.EXECUTABLE).touch()
+    monkeypatch.setenv("TAVERN_NATIVE_LIB_DIR", str(native))
+    manager = android.AndroidLocalModelManager(SimpleNamespace(root=tmp_path))
+    settings = Settings()
+    settings.local_models.embedding = LocalModel(**android.mobile_config("embedding"))
+    config = settings.local_models.embedding
+    folder = manager.path(config)
+    folder.mkdir(parents=True)
+    (folder / "tavern-ready.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "sha256": android.SOURCES["embedding"]["sha256"],
+            }
+        )
+    )
+    old_revision = manager.revision(settings)
+    manager.ready.add("embedding")
+    manager.loaded["embedding"] = digest(config.model_dump())
+    config.device = "opencl:0"
+    assert manager.path(config) == folder and manager.revision(settings) != old_revision
+    accelerated_revision = manager.revision(settings)
+    # A changed native batching path must not reuse vectors from the previous
+    # engine profile, even when the model bytes and selected device are identical.
+    monkeypatch.setitem(android.MICROBATCH_TOKENS, "opencl:0", 512)
+    assert manager.revision(settings) != accelerated_revision
+    assert not manager.status(settings)["models"]["embedding"]["ready"]
+    manager.devices = {"opencl:0": {"available": False, "label": "GPU", "reason": "驱动缺失"}}
+    with pytest.raises(ValueError, match="驱动缺失"):
+        await manager.warmup("embedding", settings)
+    assert not manager.servers and config.device == "opencl:0"
+    log = "using device GPUOpenCL (Adreno(TM) 750) (unknown id) - 6400 MiB free\nOpenCL model buffer size = 609.60 MiB\noffloaded 29/29 layers"
+    assert execution_metrics(config.device, log)["offloaded_layers"] == 29
+    with pytest.raises(RuntimeError, match="不会改用 CPU"):
+        execution_metrics(config.device, log.replace("29/29", "0/29"))
+    await manager.close()
 
 
 async def test_android_import_and_cancellation_preserve_weights_and_stop_only_owned_model(

@@ -121,7 +121,11 @@ def proxy_options(environment):
 def build(cache, output, target, web, online, report):
     environment = build_environment(cache)
     run(
-        [sys.executable, ROOT / "tools/android/prepare_llama.py", *([] if online else ["--offline"])],
+        [
+            environment["TAVERN_BUILD_PYTHON"],
+            ROOT / "tools/android/prepare_llama.py",
+            *([] if online else ["--offline"]),
+        ],
         env=environment,
         log=output / "llama-prepare.log",
         timeout=120,
@@ -175,7 +179,7 @@ def smoke(device, output, suite):
             suite,
             INSTRUMENTATION,
             log=output / "smoke.log",
-            timeout=240,
+            timeout=900 if suite.startswith("models") else 240,
         )
         match = re.search(r"^INSTRUMENTATION_RESULT: report=(.+)$", result, re.MULTILINE)
         if not match or "INSTRUMENTATION_CODE: -1" not in result:
@@ -201,7 +205,19 @@ def main():
     parser.add_argument("--online", action="store_true", help="允许 Gradle 下载缺失依赖；默认离线")
     parser.add_argument(
         "--suite",
-        choices=("all", "native", "sessions", "scripts", "documents", "restart", "models", "ui"),
+        choices=(
+            "all",
+            "native",
+            "sessions",
+            "scripts",
+            "documents",
+            "restart",
+            "models",
+            "ui",
+            "devices",
+            "models-opencl",
+            "models-hexagon",
+        ),
         default="all",
     )
     args = parser.parse_args()

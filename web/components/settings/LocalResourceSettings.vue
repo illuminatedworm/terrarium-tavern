@@ -105,7 +105,7 @@ async function chooseMobileConfig(purpose: LocalModelPurpose) {
     props.settings.local_models[purpose] = { ...status.value.models[purpose].suggested_config };
     await props.flush();
     await refresh();
-    feedback.value = '手机 CPU/Q8_0 配置已保存，请导入下方指定的 GGUF 文件。';
+    feedback.value = '手机 Q8_0 配置已保存，可选择运行设备，再导入下方指定的 GGUF 文件。';
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -203,7 +203,8 @@ useTimedError(error);
   <h4>检索模型</h4>
   <p v-if="status.available === false" role="status">{{ status.reason }}</p>
   <p v-else-if="isAndroid" class="muted">
-    手机使用 CPU 与 Q8_0 GGUF，配置自动保存。先选择手机配置、导入对应文件，再预热。模型权重独立于 APK；
+    手机使用 Q8_0 GGUF，可分别选择 CPU、OpenCL GPU 或实验性 Hexagon
+    NPU，配置自动保存。先选择手机配置、导入对应文件，再预热。模型权重独立于 APK；
     重排多条候选可能较慢，可在所用模式的检索设置中调整超时。不会自动改变已有 CUDA 配置。
   </p>
   <p v-else class="muted">
@@ -253,12 +254,27 @@ useTimedError(error);
               v-if="isAndroid || settings.local_models[purpose.key].quantization === 'q8_0'"
               value="q8_0"
             >
-              Q8_0 GGUF（Android CPU）
+              Q8_0 GGUF（Android）
             </option>
           </select></label
         >
         <label
-          >设备<input
+          >设备<select v-if="isAndroid" v-model="settings.local_models[purpose.key].device">
+            <option
+              v-if="
+                !status.devices?.some(
+                  (item: any) => item.device === settings.local_models[purpose.key].device,
+                )
+              "
+              :value="settings.local_models[purpose.key].device"
+            >
+              {{ settings.local_models[purpose.key].device }}（已保存）
+            </option>
+            <option v-for="device in status.devices || []" :key="device.device" :value="device.device">
+              {{ device.label }}{{ device.available ? '' : '（不可用）' }}
+            </option></select
+          ><input
+            v-else
             v-model="settings.local_models[purpose.key].device"
             :placeholder="isAndroid ? 'cpu' : 'cuda:0'"
         /></label>
@@ -290,13 +306,26 @@ useTimedError(error);
           {{ status.models[purpose.key]?.filename }}（约
           {{ Math.round((status.models[purpose.key]?.bytes || 0) / 1048576) }} MiB）。 运行方式：{{
             status.engine
-          }}，{{ status.cpu_threads }} 个 CPU 线程。
+          }}，CPU 线程数 {{ status.cpu_threads }}。切换设备复用权重，需重新预热。
+        </p>
+        <p v-if="status.models[purpose.key]?.device_error" role="status">
+          {{ status.models[purpose.key].device_error }}
+        </p>
+        <p v-if="status.models[purpose.key]?.execution" class="muted">
+          实际运行：{{ status.models[purpose.key].execution.device }}。
+          <template v-if="status.models[purpose.key].execution.offloaded_layers">
+            已卸载 {{ status.models[purpose.key].execution.offloaded_layers }}/{{
+              status.models[purpose.key].execution.total_layers
+            }}
+            层。
+            {{ status.models[purpose.key].execution.execution_note }}
+          </template>
         </p>
         <button
           :disabled="status.available === false || busy(purpose.key)"
           @click="chooseMobileConfig(purpose.key)"
         >
-          使用手机 CPU/Q8_0 配置
+          使用手机 Q8_0 配置
         </button>
       </template>
       <div class="actions">
@@ -329,7 +358,10 @@ useTimedError(error);
         </template>
         <button
           :disabled="
-            status.available === false || busy(purpose.key) || !status.models[purpose.key]?.downloaded
+            status.available === false ||
+            busy(purpose.key) ||
+            !status.models[purpose.key]?.downloaded ||
+            (isAndroid && !status.models[purpose.key]?.device_available)
           "
           @click="warm(purpose.key)"
         >

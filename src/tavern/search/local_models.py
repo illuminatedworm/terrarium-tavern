@@ -17,7 +17,7 @@ from tavern.character.cards import lore_title
 from tavern.search.retrieval import digest
 
 PURPOSES = ("embedding", "reranker")
-GGUF_UNSUPPORTED = "此平台使用 CUDA 模型；Q8_0 GGUF 目前只在 Android CPU 上运行"
+GGUF_UNSUPPORTED = "此平台使用 CUDA 模型；Q8_0 GGUF 目前只在 Android 上运行"
 
 
 def _load(torch, root, purpose, config):
@@ -268,6 +268,9 @@ class LocalModelManager:
         self.indexing = set()
         self.ready = set()
         self.metrics = {}
+
+    async def initialize(self):
+        """Platform capability discovery; desktop CUDA remains lazy until warmup."""
 
     def path(self, config):
         return self.root / digest([config.model, config.revision])

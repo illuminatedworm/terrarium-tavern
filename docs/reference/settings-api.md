@@ -35,7 +35,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 10，由三个独立范围组成：
+数据库中的设置文档版本为 12，由三个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
@@ -180,7 +180,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 12**，设置文档为 **version 11**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 12**，设置文档为 **version 12**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
@@ -213,6 +213,8 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 
 设置 version 10 → 11 为两种模式的 `retrieval` 增加 `index_timeout`（单条向量索引超时，整数秒，范围 1–3600，默认 60）。升级前备份数据库，两个模式的修订号各加一；其他已保存设置与剧情原文保留。界面值、运行时使用值和导入导出值一致，重复迁移保留用户已经调整的时限。
 
+设置 version 11 → 12 扩展 `shared.local_models.{embedding,reranker}.device` 的 Android Q8_0 设备选择为 `cpu`、`opencl:0`、`hexagon:0`。升级前备份数据库，已有设备值与其他配置原样保留，不新增覆盖字段；导入导出使用相同格式。
+
 ## 实现与验证
 
 | 入口 | 职责 |
@@ -222,7 +224,6 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 | [storage/store.py](../../src/tavern/storage/store.py) | 数据库版本检查、备份与持久化 |
 | [useSettingsEditor.ts](../../web/composables/useSettingsEditor.ts) | 保存队列、草稿与响应合并 |
 | [test_settings_document.py](../../tests/backend/test_settings_document.py) | 模式隔离、迁移、密钥保护与并发行为 |
-
 
 schema 12 为 `full_agent_progress.payload` 引入 version 2：保存 Runtime 预分配的 `output_id`、已接收的唯一 `roleplay`（content 与 auxiliary）和 `finish_requested`，并为工具结果轨迹保存内部的正文接收依据。未标版本的旧进度按 version 1 读取，保留已有工具结果与草稿；未知版本拒绝读取。Full Agent 剧情快照本身仍为 version 4。升级前完整备份，旧程序不能打开 schema 12。
 

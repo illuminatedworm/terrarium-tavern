@@ -182,8 +182,8 @@ class LocalModels(BaseModel):
             config = getattr(self, purpose)
             if config.quantization == "q8_0":
                 model = f"Qwen/Qwen3-{prefix}-0.6B" + ("-GGUF" if purpose == "embedding" else "")
-                if config.model != model or config.device != "cpu":
-                    raise ValueError("Q8_0 需要对应的 Qwen3 0.6B GGUF 模型与 cpu 设备")
+                if config.model != model or config.device not in ("cpu", "opencl:0", "hexagon:0"):
+                    raise ValueError("Q8_0 需要对应的 Qwen3 0.6B GGUF 模型与 cpu、opencl:0 或 hexagon:0 设备")
                 continue
             if config.model not in [f"Qwen/Qwen3-{prefix}-{size}" for size in ("0.6B", "4B")]:
                 raise ValueError("目前支持 Qwen3 的 0.6B 与 4B 检索模型")

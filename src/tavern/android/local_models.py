@@ -1,4 +1,4 @@
-"""Explicit GGUF import and CPU inference; saved CUDA settings are never rewritten."""
+"""Explicit GGUF import and device selection; saved CUDA settings are never rewritten."""
 
 import asyncio
 import json
@@ -11,6 +11,7 @@ from tavern.android.local_model_server import (
     ModelRequestRejected,
     NativeModelServer,
 )
+from tavern.android.model_devices import DEVICES, MICROBATCH_TOKENS, probe
 from tavern.android.model_import import write_model
 from tavern.character.cards import lore_title
 from tavern.search.local_models import PURPOSES, LocalModelManager
@@ -26,12 +27,12 @@ def read_manifest(path):
     return manifest
 
 
-def mobile_config(purpose):
+def mobile_config(purpose, device="cpu"):
     source = SOURCES[purpose]
     return {
         "model": source["repository"],
         "revision": source["revision"],
-        "device": "cpu",
+        "device": device,
         "quantization": "q8_0",
         "batch_size": 1,
         "dimensions": 1024,
@@ -40,8 +41,8 @@ def mobile_config(purpose):
 
 def configuration_matches(purpose, config):
     expected = mobile_config(purpose)
-    return all(
-        getattr(config, key) == expected[key] for key in ("model", "revision", "device", "quantization")
+    return config.device in DEVICES and all(
+        getattr(config, key) == expected[key] for key in ("model", "revision", "quantization")
     )
 
 
@@ -109,6 +110,8 @@ class AndroidLocalModelManager(LocalModelManager):
         directory = os.environ.get("TAVERN_NATIVE_LIB_DIR")
         self.native_directory = Path(directory) if directory else None
         self.servers = {}
+        self.devices = {}
+        self.device_lock = asyncio.Lock()
         # No import can be active while this manager is being constructed. Only
         # incomplete model staging files are disposable; never remove weights.
         root = self.root.resolve()
@@ -119,6 +122,13 @@ class AndroidLocalModelManager(LocalModelManager):
                 (folder / "model.gguf.part").unlink(missing_ok=True)
                 (folder / "tavern-ready.json.part").unlink(missing_ok=True)
 
+    async def initialize(self):
+        async with self.device_lock:
+            if not self.devices and self.native_directory and (self.native_directory / EXECUTABLE).is_file():
+                self.devices = await probe(
+                    self.native_directory, SOURCES["engine"]["android_snapdragon"]["minimum_sdk"]
+                )
+
     def path(self, config):
         return self.root / "gguf" / digest([config.model, config.revision, config.quantization])
 
@@ -128,7 +138,18 @@ class AndroidLocalModelManager(LocalModelManager):
             return "unavailable"
         saved = read_manifest(manifest)
         # GGUF/engine identity separates derived vectors from desktop BF16/INT8 caches.
-        return digest([SOURCES["engine"]["commit"], saved["sha256"]])
+        config = settings.local_models.embedding
+        if config.device == "cpu":
+            # The unchanged CPU engine keeps its existing derived index identity.
+            return digest([SOURCES["engine"]["commit"], saved["sha256"]])
+        return digest(
+            [
+                SOURCES["engine"]["android_snapdragon"],
+                config.device,
+                MICROBATCH_TOKENS[config.device],
+                saved["sha256"],
+            ]
+        )
 
     def require_available(self):
         if not self.native_directory or not (self.native_directory / EXECUTABLE).is_file():
@@ -142,6 +163,7 @@ class AndroidLocalModelManager(LocalModelManager):
             matches = configuration_matches(purpose, config)
             server = self.servers.get(purpose)
             source = SOURCES[purpose]
+            device = self.devices.get(config.device)
             models[purpose] = {
                 "model": config.model,
                 "quantization": config.quantization,
@@ -157,7 +179,11 @@ class AndroidLocalModelManager(LocalModelManager):
                 "configuration_supported": matches,
                 "configuration_error": ""
                 if matches
-                else "当前保存的模型配置不适用于 Android，请显式选择手机 CPU/Q8_0 配置。",
+                else "当前保存的模型配置不适用于 Android，请显式选择手机 Q8_0 配置。",
+                "selected_device": config.device,
+                "device_available": bool(device and device["available"]),
+                "device_error": device["reason"] if device else "设备能力尚未探测或配置不适用",
+                "execution": self.metrics.get(purpose) if server and server.alive else None,
                 "suggested_config": mobile_config(purpose),
                 "filename": source["filename"],
                 "bytes": source["bytes"],
@@ -173,6 +199,7 @@ class AndroidLocalModelManager(LocalModelManager):
             "reason": "" if available else "APK 中缺少原生模型引擎。",
             "engine": "llama.cpp " + SOURCES["engine"]["tag"],
             "cpu_threads": CPU_THREADS,
+            "devices": list(self.devices.values()),
             "models": models,
             "jobs": list(self.jobs.values())[-30:],
             "metrics": self.metrics,
@@ -181,7 +208,7 @@ class AndroidLocalModelManager(LocalModelManager):
     def _config(self, purpose, settings):
         config = getattr(settings.local_models, purpose)
         if not configuration_matches(purpose, config):
-            raise ValueError("请在本地资源中显式选择手机 CPU/Q8_0 配置；原 CUDA 设置未改变")
+            raise ValueError("请在本地资源中显式选择手机 Q8_0 配置；原 CUDA 设置未改变")
         return config
 
     def download(self, purpose, settings):
@@ -223,6 +250,7 @@ class AndroidLocalModelManager(LocalModelManager):
     async def _stop(self, purpose):
         self.ready.discard(purpose)
         self.loaded.pop(purpose, None)
+        self.metrics.pop(purpose, None)
         server = self.servers.get(purpose)
         if server is not None:
             await server.close()
@@ -236,6 +264,10 @@ class AndroidLocalModelManager(LocalModelManager):
     async def warmup(self, purpose, settings):
         self.require_available()
         config = self._config(purpose, settings)
+        await self.initialize()
+        device = self.devices[config.device]
+        if not device["available"]:
+            raise ValueError(device["label"] + " 不可用：" + device["reason"])
         async with self.locks[purpose]:
             folder = self.path(config)
             if not (folder / "tavern-ready.json").is_file():
@@ -244,14 +276,14 @@ class AndroidLocalModelManager(LocalModelManager):
             if manifest["sha256"] != SOURCES[purpose]["sha256"]:
                 raise ValueError("GGUF 缓存与此版本支持的模型不同，请重新导入对应文件")
             await self._stop(purpose)
-            server = NativeModelServer(self.native_directory, folder / "model.gguf", purpose)
+            server = NativeModelServer(self.native_directory, folder / "model.gguf", purpose, config.device)
             self.servers[purpose] = server
             try:
                 await server.start()
             except BaseException:
                 await self._stop(purpose)
                 raise
-            self.metrics[purpose] = {"device": f"Android CPU（{CPU_THREADS} 线程）"}
+            self.metrics[purpose] = server.metrics
             self.loaded[purpose] = digest(config.model_dump())
             self.ready.add(purpose)
 

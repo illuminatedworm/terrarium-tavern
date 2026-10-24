@@ -7,7 +7,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 - Android 9（API 28）及以上，`arm64-v8a`，需要较新的 Android System WebView；缺少所需特性时应用会提示更新。
 - 主界面和后台脚本共用文档起始网络隔离，禁止顶层与嵌套文档恢复 WebRTC；主界面缺少这项 WebView 能力时暂停交互卡片并提示更新，静态内容仍可访问。`dev.py smoke --suite ui` 单独验证主界面使用的宿主策略，覆盖五类文档与回环 UDP 监听，不访问外网。
 - **仅支持 4 KiB 内存页设备。** libfreetype、libxml2、libexslt、libxslt、jiter、kohakuvault、rpds 仍是 4 KiB 的 ELF 加载段对齐；支持 16 KiB 设备需要重新构建这些依赖并验证完整 APK。
-- 本地向量与重排使用固定版本的 Qwen3 0.6B CPU/Q8_0 GGUF，权重单独导入，不打进 APK；已有 CUDA 配置保留，需在界面显式切换。关键词与 BM25 沿用桌面的 Jieba、Sudachi 和 core 词典。
+- 本地向量与重排使用固定版本的 Qwen3 0.6B Q8_0 GGUF，可分别选择 CPU、OpenCL GPU 或实验性 Hexagon NPU，权重单独导入，不打进 APK；已有 CUDA 配置保留，需在界面显式切换。关键词与 BM25 沿用桌面的 Jieba、Sudachi 和 core 词典。
 
 `dev.py doctor` 可查看已连接设备的 ABI 与内存页大小。
 
@@ -31,7 +31,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 
 ```powershell
 uv venv --python 3.13 .cache/android/build-env
-uv pip install --python .cache/android/build-env/Scripts/python.exe --index-url https://pypi.org/simple pip==26.2.2 maturin==1.15.0 setuptools-rust==1.13.0 setuptools==84.2.1 wheel==0.48.0 packaging==26.3
+uv pip install --python .cache/android/build-env/Scripts/python.exe --index-url https://pypi.org/simple pip==26.2.2 maturin==1.15.0 setuptools-rust==1.13.0 setuptools==84.2.1 wheel==0.48.0 packaging==26.3 lief==1.0.0
 ```
 
 构建工具读取当前终端的 `HTTP_PROXY`、`HTTPS_PROXY`，不改全局 pip、uv 或系统代理配置。
@@ -128,13 +128,25 @@ Gradle 不读取 `HTTP_PROXY`、`HTTPS_PROXY`。Maven 下载需要代理时在�
 
 ## 应用内本地模型
 
-`tools/android/prepare_llama.py` 校验固定的 llama.cpp `b11829` Android 原生包，按白名单提取所需库并 strip，入口改名为 `libtavern_llama_server.so`，同时把来源、哈希与第三方许可写入发行资产。`dev.py build/deploy/check` 会离线调用此步骤，缺少原生包时报错。
+`tools/android/prepare_llama.py` 校验固定的 llama.cpp `b11829` CPU 与 Snapdragon 原生包。CPU 库按白名单提取并 strip，入口为 `libtavern_llama_server.so`；Snapdragon 包使用构建依赖 LIEF 1.0.0，把 ARM64 库、`DT_SONAME` 和内部 `DT_NEEDED` 统一加上 `libtavern_accel_` 前缀，保留 Hexagon DSP skel 的固定名称。两套库互不覆盖，权重共用；来源、修改前后 SHA-256 与第三方许可写入发行资产，`snapdragon.json` 记录适配。加速库保留 16 KiB LOAD 对齐，但 APK 其他依赖仍只验收了 4 KiB 设备。`dev.py build/deploy/check` 会离线调用此步骤，缺少原生包时报错。
 
 Gradle 使用 `jniLibs.useLegacyPackaging=true`，安装器把原生代码提取到 `nativeLibraryDir`，应用只从这里启动入口，不执行可写目录中的程序（见 [Android 的可执行文件限制](https://developer.android.com/about/versions/10/behavior-changes-10#execute-permission)）。每个模型有独立进程、loopback 随机端口和临时认证密钥。取消、超时或停止服务会结束对应进程；引擎明确拒绝的请求（例如超过上下文）只报告错误，模型保持加载。
 
-运行参数固定为 CPU 四线程、单槽、4096-token 上下文、512-token 微批，沿用保存的批量大小、向量维度和项目提示词。超过上下文时报错，不截断查询或提示词；世界书索引与重排沿用现有 token 分片，已准入条目仍完整注入。
+CPU 参与计算时使用四线程，其他运行参数固定为单槽、4096-token 上下文；CPU/Hexagon 使用 512-token 微批，OpenCL 使用 4096-token 微批，沿用保存的批量大小、向量维度和项目提示词。超过上下文时报错，不截断查询或提示词；世界书索引与重排沿用现有 token 分片，已准入条目仍完整注入。
 
 Android 的 [`Process.destroyForcibly()` 继承实现](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/java/java/lang/Process.java)调用 `destroy()`，其[原生实现仅发送 SIGTERM](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/native/UNIXProcess_md.c)。应用通过系统 shell 在 `exec` 前取得自有子进程 PID；正常停止未退出时，明确发送 SIGKILL 并等待回收，避免超时后残留模型进程。此边界不依赖 root 或隐藏 Java API。
+
+b11829 的 Adreno Q8_0 路径在 512-token 分片附加 EOS 后，单 token 尾批曾产生不稳定向量。OpenCL 按整个 4096-token 有界上下文处理，避免此尾批；不会截断输入，设备与微批参数一并参与派生索引身份。
+
+### 运行设备
+
+两个模型分别保存 `cpu`、`opencl:0` 或 `hexagon:0`，设置格式 version 12 保留已有 CPU/CUDA 选择。设备变化不复制或重新导入权重，但需重新预热，派生向量按设备及引擎包身份隔离。界面同时显示已选设备、实际设备、模型层卸载数量与不可用原因；不支持的算子仍可能由 CPU 执行，不能把层卸载解释成所有运算都在加速器上。
+
+Android 的 `GET /api/local-models` 返回 `devices`（每项含 `device/label/available/reason`）；每个 `models` 项返回 `selected_device/device_available/device_error`。已加载模型的 `execution` 包含 `actual_device/offloaded_layers`，加速模型另有 `total_layers/model_buffer_mib/execution_note`；未加载时为 `null`。设备列表来自本次服务启动时的应用内探测，模型实际状态则随请求更新。
+
+加速引擎来自[固定官方 Snapdragon 包](https://github.com/ggml-org/llama.cpp/releases/tag/b11829)，要求 Android API 34+、该包所需的 ARM 指令扩展及兼容驱动；CPU 保持 Android 9+ 的原边界。清单把 `libOpenCL.so`、`libcdsprpc.so` 声明为可选，独立子进程的 `LD_LIBRARY_PATH` 包含安装库目录与 `/vendor/lib64`，`ADSP_LIBRARY_PATH`、`CDSP_LIBRARY_PATH` 指向安装库目录。能力探测在应用 UID 下运行 `--list-devices`，最多 20 秒且不加载权重；预热再核对实际设备、非零模型缓冲与层卸载日志。仅能枚举设备不代表每个模型都能成功推理，启动或推理失败会明确报错，不自动改用 CPU。OpenCL 编译内核的磁盘缓存关闭，避免没有容量边界的缓存增长。
+
+Hexagon 是[上游实验性后端](https://github.com/ggml-org/llama.cpp/blob/184f6536024668e8908ab8c86033d56708e62b40/docs/backend/snapdragon/README.md)。reranker 并非只能使用 NPU；它在三种设备上均采用 `rank` pooling、两维 `yes/no` 输出适配及 `P(yes)` 评分。
 
 ### 模型文件
 
@@ -143,11 +155,11 @@ Android 的 [`Process.destroyForcibly()` 继承实现](https://android.googlesou
 - 向量：Qwen 官方 [`Qwen3-Embedding-0.6B-Q8_0.gguf`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf)。
 - 重排：Qwen 没有发布官方 GGUF，`Qwen3-Reranker-0.6B-Q8_0.gguf` 需用固定 llama.cpp 转换器从官方权重生成；社区转换版哈希不同，会被拒绝。先在装有本地检索依赖的桌面版中下载 Qwen3-Reranker-0.6B（版本 `main`），再运行 `.venv/Scripts/python.exe tools/android/model_probe_prepare.py`。
 
-转换工具同时下载向量文件，两个产物都位于 `.cache/android/model-probe/models/`。导入时应用在后台复制并核对完整 SHA-256，成功后原子发布；失败或取消不替换已验证的旧文件。手机模型目录与派生向量独立于桌面缓存，不能混用。
+转换工具同时下载向量文件，两个产物都位于 `.cache/android/model-probe/models/`。导入时应用逐块写入唯一暂存文件并核对完整 SHA-256，成功后原子发布；失败或取消不替换已验证的旧文件。手机模型目录与派生向量独立于桌面缓存，不能混用。
 
 ### 模型自检
 
-`dev.py smoke --suite models` 验证真实 GGUF 流式导入、原生加载、批处理、跨微批输入、索引分片、重排及进程释放。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
+`dev.py smoke --suite devices` 仅探测应用内设备；`--suite models` 使用同一夹具比较 CPU/GPU/NPU 的真实 GGUF 导入、加载、跨微批输入、长条目索引、重排与双模型共存。取消发生在请求体发完后，确认目标进程退出且另一模型仍可推理。记录冷加载、推理耗时、进程 RSS 峰值和卸载证据；RSS 不等于加速器全部内存占用。记录加速结果相对 CPU 的向量余弦相似度，跨硬件数值差异不单独作为失败条件；已知相关文档的向量／重排排序须正确，同一设备重复输入的向量须稳定，重排最大绝对误差须 ≤ 0.001。失败后可用 `--suite models-opencl` 或 `--suite models-hexagon` 只重跑对应后端，复用开发缓存中的 CPU 对照；报告与对照均在开发版 `cache/model-fixtures/`，变更夹具或引擎后应重新生成 CPU 对照。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
 
 ```powershell
 adb push .cache/android/model-probe/models/Qwen3-Embedding-0.6B-Q8_0.gguf .cache/android/model-probe/models/Qwen3-Reranker-0.6B-Q8_0.gguf /data/local/tmp/
