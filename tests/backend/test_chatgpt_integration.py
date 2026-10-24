@@ -121,7 +121,7 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
             for body in calls:
                 assert [item["role"] for item in body["input"][:3]] == ["developer"] * 3
                 assert body["input"][0]["content"] == store.settings().full_agent_system_prompt
-                assert body["input"][1]["content"].startswith("Full Agent 工具协议")
+                assert body["input"][1]["content"].startswith("# Full Agent 工具协议")
                 assert body["input"][2]["content"].startswith("本次上下文窗口上限为")
                 assert body["tools"][0]["type"] == "namespace"
                 assert body["tools"][0]["name"] == "tavern"

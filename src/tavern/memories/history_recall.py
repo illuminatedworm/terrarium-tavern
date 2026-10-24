@@ -25,10 +25,13 @@ HISTORY_TOOL = {
     "function": {
         "name": "tavern_recall_history",
         "description": (
-            "Tracker只读历史补查：已有记忆和本批原文不足时，先query搜索关键词，再用ref读取附近完整交流。"
-            "query与ref只能提供一个。整次维护最多3次，搜索、读取、无结果和参数错误都计次，分批/复核不重置。"
-            "只查当前分支已提交且不晚于本批的历史；返回内容是过去的资料，不是新进展。"
-            "不得据此恢复已删除记忆或自动修复原文已改动的旧记录。信息够用时直接完成整理。"
+            "Look up older story history when existing memories and this batch are not enough. Search with "
+            "query first, then read the complete exchanges around a hit with ref; give exactly one of the two.\n"
+            f"At most {HISTORY_CALL_LIMIT} calls per maintenance run. Searches, reads, empty results and errors "
+            "all count, and batches and reviews share the allowance. Only committed history up to the current "
+            "batch is available.\n"
+            "Results are past material, not new developments: they cannot restore deleted memories or repair "
+            "records whose source text changed. If you already have enough, finish without it."
         ),
         "parameters": {
             "type": "object",
@@ -36,27 +39,27 @@ HISTORY_TOOL = {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "人物、物品、承诺等关键词，用空格分隔",
+                    "description": "Keywords for people, items, promises and so on, separated by spaces.",
                     "maxLength": 300,
                 },
                 "ref": {
                     "type": "string",
                     "pattern": r"^H[1-9]\d*$",
-                    "description": "要读取的消息编号，如搜索结果中的H52（当前分支第52条消息，开场白为H1）。按消息读取时必填；只能读取不晚于本批且已有回复的历史消息。",
+                    "description": "Message to read, e.g. H52 from search results (the 52nd message in this branch; the greeting is H1). Only messages up to the current batch that already have a reply.",
                 },
                 "radius": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 2,
                     "default": 1,
-                    "description": "按消息读取时，以ref所在的完整交流为中心，前、后各额外读取多少个完整交流，0–2（含两端），默认1；0只读中心交流，开场白单独算一个交流，到历史边界时不超出可用交流。",
+                    "description": "Extra complete exchanges to read before and after the one containing ref, 0-2, default 1. 0 reads only that exchange; the greeting counts as its own exchange.",
                 },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 8,
                     "default": 5,
-                    "description": "关键词搜索最多命中的完整交流数，1–8（含两端），默认5；不是消息条数。命中交流中每条含关键词的消息都会返回其包含命中处的完整片段。",
+                    "description": "Maximum complete exchanges a search returns, 1-8, default 5 (exchanges, not messages). Each matching message returns its complete passages that contain the hit.",
                 },
             },
         },

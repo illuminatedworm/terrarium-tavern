@@ -191,12 +191,11 @@ class TrackerTask:
         if self.current_ready:
             payload["current_turn"] = {"user": self.user_input, "assistant": self.narrative}
             payload["current_variables"] = self.view.expose(self.variables)
+        # Citation and numbering rules live once in TRACKER_PROTOCOL.
         payload["notice"] = (
-            "H 编号是分支位置、跨批次不变，但只能引用本次复核展示的片段；R、N、E 编号取代此前批次。"
-            "复核仅允许修订指定待确认条目，不能再次提出问题。"
+            "这是疑难复核：只修订指定的待确认条目，不能再提出问题；完成后调用 write_memory。"
             if phase == "memory_review"
-            else "H 编号是分支位置、跨批次不变，但只能引用本批展示的片段（含本批补查结果）；"
-            "R、N、E 编号取代此前批次。完成后调用 write_memory。"
+            else "R、N、E 编号已按本批重新分配。处理完本批后调用 write_memory。"
         )
         if not self.thread:
             self.thread = initial_messages(self)

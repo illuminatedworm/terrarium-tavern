@@ -322,7 +322,7 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
         assert any(m["role"] == "tool" and "H2" in m["content"] for m in model.requests[-1]["messages"])
         for request in model.requests:
             assert request["messages"][0]["content"] == store.settings().full_agent_system_prompt
-            assert request["messages"][1]["content"].startswith("Full Agent 工具协议")
+            assert request["messages"][1]["content"].startswith("# Full Agent 工具协议")
             assert request["messages"][2]["role"] == "system"
             assert request["messages"][2]["content"].startswith("本次上下文窗口上限为")
             assert (

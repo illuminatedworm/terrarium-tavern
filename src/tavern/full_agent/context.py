@@ -116,10 +116,9 @@ def compile_window(
     if not compact:
         add(
             "system",
-            f"本次上下文窗口上限为 {settings.context_tokens} tokens；"
-            f"占用达到 {settings.full_agent_config.pressure_ratio * 100:g}% 时预警，提示占用百分比和当前估算 tokens / 窗口上限；"
-            "达到上限须单独调用 new_context 换窗，随后继续本轮；handoff 可省略以沿用现有交接，"
-            "只检查 keep_recent 保留完整交流后实际退出的历史是否已有章节覆盖。",
+            f"本次上下文窗口上限为 {settings.context_tokens} tokens，占用由运行时估算，不需要你自己计算。"
+            f"占用达到 {settings.full_agent_config.pressure_ratio * 100:g}% 时会追加窗口预算提醒，"
+            "显示估算 tokens 与占用比例；达到上限时提醒会改为强制换窗。没有提醒就不必换窗。",
             "context_policy",
         )
     if session.get("turn_preference"):

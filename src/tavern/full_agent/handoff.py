@@ -54,7 +54,7 @@ class ChapterAdd(_Arguments):
     op: Literal["add"] = Field(description="Append the next chapter right after the last one.")
     through: str | None = Field(
         default=None,
-        description="Optional known H endpoint only when intentionally splitting chapters. Normally omit: Runtime covers the messages leaving the window, or all unarchived committed history for write_handoff. The start always follows the previous chapter.",
+        description="Leave empty: the chapter then covers the messages leaving the window (new_context) or all committed history not yet in a chapter (write_handoff). Set a known H endpoint only to split chapters deliberately. The start always follows the previous chapter.",
     )
     title: str = Field(min_length=1, max_length=80, description="Short chapter title.")
     points: list[Point] = Field(min_length=1, max_length=20)

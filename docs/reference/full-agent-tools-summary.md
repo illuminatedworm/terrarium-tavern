@@ -64,7 +64,8 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 ### `find_lore_for_edit`
 
 ```text
-Locate ordinary narrative worldbook entries for editing; use recall_lore for narrative recall. Search literal title, keywords or text, including disabled ordinary entries; query=* lists up to limit results. Returns L handles, titles and navigation previews. Previews help locate targets; use read_lore_entry when you need to inspect or refresh a target's complete contents.
+Find worldbook entries to edit. For background while writing, use recall_lore instead.
+Matches literal text in titles, keywords and content, including disabled entries; query=* lists entries. Returns L handles with short previews for locating targets; use read_lore_entry to see an entry in full. Script and variable-rule entries are not listed.
 ```
 
 请求：
@@ -82,7 +83,7 @@ Locate ordinary narrative worldbook entries for editing; use recall_lore for nar
 ### `read_lore_entry`
 
 ```text
-Inspect or refresh one complete ordinary narrative worldbook entry by L handle: title, content, keys, secondary_keys, enabled. Protected scripts, variable rules and initialization are unavailable.
+Read one worldbook entry in full by L handle: title, content, keys, secondary_keys and enabled. Script, variable-rule and initialization entries are protected and cannot be read.
 ```
 
 请求：
@@ -100,7 +101,8 @@ Inspect or refresh one complete ordinary narrative worldbook entry by L handle: 
 ### `recall_lore`
 
 ```text
-Recall complete worldbook sources for narrative writing; use find_lore_for_edit to locate editing targets. Use a concise, self-contained query in the worldbook's language. Entry conditions, cooldowns, relevance thresholds and limits may yield no matches. Returns complete selected entries in <lorebook>; text already injected or recalled in this context is omitted. Recalled entries share automatic injection's presence and cooldown rules. When enabled, results include titles and L handles. Reuse recalled content for later edits when you know it is still current; target protection still applies.
+Look up worldbook background for the story. To find entries to edit, use find_lore_for_edit.
+Write a short, self-contained query in the worldbook's language. Returns complete matching entries in <lorebook>. Entries already in this context are left out, and entry conditions, cooldowns or relevance limits may leave no matches. When titles and L handles are shown, recalled entries can serve as the current text for later edits.
 ```
 
 请求：
@@ -118,7 +120,7 @@ Recall complete worldbook sources for narrative writing; use find_lore_for_edit 
 ### `search_history`
 
 ```text
-Search dialogue in this branch by literal text terms; returns H references and optional previews. Use short text fragments; query=* lists recent records. Use read_history for complete sources. Old tool exchanges are not searchable.
+Search this branch's dialogue by literal text. Use short fragments; query=* lists recent messages. Returns H references with optional previews; use read_history for the full text. Earlier tool calls are not searchable.
 ```
 
 请求：
@@ -136,7 +138,7 @@ Search dialogue in this branch by literal text terms; returns H references and o
 ### `read_history`
 
 ```text
-Read complete original dialogue by a valid H reference or closed span, including the current user input; a span returns its messages complete and in branch order. H references are navigation handles, not story prose.
+Read original dialogue in full by H reference (H12) or closed span (H12-H18), including the current user input. A span returns every message in order.
 ```
 
 请求：
@@ -154,7 +156,13 @@ Read complete original dialogue by a valid H reference or closed span, including
 ### `write_handoff`
 
 ```text
-Update the handoff in the current window without switching: optional chapter operations plus the complete current handoff. Build on the latest <tavern_memory> or successful write, whichever is later; verify points marked as changed sources. Chapters are an append-only ledger of what still matters later (irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places). Normally omit through: Runtime appends a chapter over the unarchived committed history. Choose a known endpoint only for intentional chapter splits. Drop one-off actions, scenery and dialogue texture; chapter ranges remain readable with read_history. Point refs are optional: cite known history only when useful for precise follow-up, never invent a citation for instructions or character material. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline.
+Update the handoff without switching windows. Start from the latest <tavern_memory> or your later successful write, whichever is newer, and re-check points marked as having changed sources.
+- chapters are an append-only record of what will still matter later: irreversible events, relationship turns, promises and debts, secrets and who knows them, recurring people, items and places. Skip one-off actions, scenery and dialogue texture; the original text stays readable with read_history.
+- add: usually give only a title and points. Leave through empty and the chapter covers all committed history not yet in a chapter; set through only to split chapters deliberately.
+- Do not rewrite finished chapters. Use revise only to fix an error; merge the oldest adjacent chapters when nearing the total limit.
+- current fully replaces the current handoff: the scene, relationships, constraints, unresolved issues and tone. Do not retell chapter events.
+- refs are optional. Cite a known H reference only when precise lookup will help later; never invent one.
+- Do not copy whole notes or the plot outline into the handoff.
 ```
 
 请求：
@@ -172,7 +180,12 @@ Update the handoff in the current window without switching: optional chapter ope
 ### `new_context`
 
 ```text
-Switch windows, optionally updating the handoff. Omit handoff or pass null to reuse the latest saved or successfully written handoff unchanged. Choose keep_recent first: chapter coverage is required only for messages actually leaving after expanding the retained tail to complete exchanges. Retained messages and the current input need no new chapter; when all history stays, an empty handoff is allowed. If updating, add any missing chapters and give the complete current handoff. Normally omit through on add: Runtime assigns the remaining exiting range. Choose a known endpoint only for intentional chapter splits. Keep only lasting events, relationship changes, promises, secrets and recurring people, items and places; chapter ranges remain readable with read_history. Point refs are optional, including in current; use only known references when precise follow-up helps. Do not rewrite written chapters; revise only to correct one, merge the oldest adjacent chapters when the total limit is near. current fully replaces the current handoff: scene, relationships, constraints, unresolved issues and tone, without retelling chapter events. Do not copy complete notes or the future plot outline. Call alone: a mixed batch is rejected without executing any tools. keep_recent counts dialogue messages, expanded to complete exchanges; the current input stays separately. Old tool exchanges leave the window. Continue this turn after switching; the model-call budget does not reset.
+Switch to a fresh context window. Older messages and earlier tool calls leave the window; afterwards you continue the same turn, and the call budget does not reset.
+- When to switch: the runtime measures context usage for you, so do not estimate it yourself. Without a context notice, do not switch. A budget reminder means plan the switch, ideally at a natural break; a forced-rollover notice means switch now.
+- keep_recent sets how many recent messages stay. It is rounded up to whole user/assistant exchanges, and the current input always stays.
+- Every message that leaves must already be covered by a chapter. If it is, call with just keep_recent. Otherwise pass handoff with add operations for the missing part, leaving through empty. If all history stays, an empty handoff is fine.
+- Omitting handoff keeps the current one unchanged. When you pass it, chapters keep lasting events, relationship changes, promises, secrets and recurring people, items and places; current holds the scene, relationships, constraints, unresolved issues and tone. Do not copy whole notes or the plot outline.
+Call alone: a batch containing new_context is rejected and none of its tools run.
 ```
 
 请求：
@@ -190,7 +203,7 @@ Switch windows, optionally updating the handoff. Omit handoff or pass null to re
 ### `search_notes`
 
 ```text
-Search active notes in this branch by literal terms in content or keys; query=* lists notes. Returns navigation previews when enabled. Note contents are not automatically injected; use read_note for complete text.
+Search active notes by literal text in keys or content; query=* lists notes. Returns keys with optional previews. Note contents are not automatically injected; use read_note for the full text.
 ```
 
 请求：
@@ -208,7 +221,7 @@ Search active notes in this branch by literal terms in content or keys; query=* 
 ### `read_note`
 
 ```text
-Read a complete active or archived note by key, with optional kind and H sources.
+Read a note in full by key, including archived notes. Metadata may include kind and H sources.
 ```
 
 请求：
@@ -226,7 +239,9 @@ Read a complete active or archived note by key, with optional kind and H sources
 ### `write_note`
 
 ```text
-Create or fully replace a note by key; preserve still-valid information. Build on the current contents you already know, including text you wrote in earlier tool calls. Use read_note when you do not know the note's current contents or are unsure whether your version is still current. New keys need no read. kind=fact requires supporting H sources valid in this branch; hypothesis marks uncertainty and plan marks characters' in-story intentions, not an author-level future outline. Preserve valid experiences and changes, not just a current-state snapshot. Attribute character claims, preserve uncertainty and respect revoked information. Replacing an archived key reactivates it.
+Create a note or fully replace one by key. Keep information that is still valid, and record how things happened and changed, not just the current state. Attribute claims to whoever made them, keep uncertainty visible, and treat retracted information as no longer valid.
+kind: fact needs H sources from this branch; hypothesis marks uncertainty; plan records a character's own intentions inside the story. Author-level outlines belong in write_plot.
+Writing to an archived key reactivates it.
 ```
 
 请求：
@@ -244,7 +259,8 @@ Create or fully replace a note by key; preserve still-valid information. Build o
 ### `write_plot`
 
 ```text
-Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. The current complete outline is supplied automatically; no prior read, source references or version argument is required. When empty, save an initial outline before ending the turn. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline.
+Create or fully replace this branch's author-level stage outline. The current outline is in <tavern_plot>; no read is needed.
+Keep near stages concrete and distant stages broad: possible events, turning points, foreshadowing and the conditions that trigger them. These are revisable possibilities, not established facts, things characters know, or actions decided for the user.
 ```
 
 请求：
@@ -262,7 +278,7 @@ Create or fully replace this branch's rolling author-level stage outline. Availa
 ### `archive_note`
 
 ```text
-Archive a note so normal searches exclude it; it remains readable by key. Use what you already know about the note to decide whether to archive it. Use read_note if you do not know its current contents or need to check them. This does not delete the note or older history. write_note with the same key reactivates it.
+Archive a note that is no longer relevant. It drops out of normal searches but stays readable by key; nothing is deleted. Writing to the same key reactivates it.
 ```
 
 请求：
@@ -280,7 +296,11 @@ Archive a note so normal searches exclude it; it remains readable by key. Use wh
 ### `read_state`
 
 ```text
-Inspect or refresh runtime state using JSON Pointer relative to the selected scope. Default scope=mvu reads stat_data with the same relative paths as patch_state, e.g. /hp. scope=full reads all model-visible runtime state, including stat_data; scope=other reads that state excluding the top-level stat_data field. Empty path reads the complete selected scope. Internal ledgers remain hidden in every scope. To refresh all MVU variables for patching, use path="", scope="mvu".
+Read runtime variables by JSON Pointer.
+- scope=mvu (default): the MVU variables (stat_data), with the same paths as patch_state, e.g. /hp.
+- scope=full: all visible runtime state, including stat_data.
+- scope=other: everything except stat_data.
+An empty path reads the whole scope. To refresh all MVU variables before patching, use path="" and scope="mvu".
 ```
 
 请求：
@@ -298,7 +318,8 @@ Inspect or refresh runtime state using JSON Pointer relative to the selected sco
 ### `patch_state`
 
 ```text
-When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. Work from the current MVU values you already know, including your earlier tool calls and their successful results. If you do not know the current values or are unsure whether they are still current, use read_state(path="", scope="mvu") to refresh them. Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. Submit operations=[] to confirm no changes; this needs no read and changes no variables. Use this tool instead of MVU blocks in prose.
+Update MVU variables with JSON Patch. When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. If nothing changed, submit operations=[]; this needs no read and changes nothing.
+Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_rules>, keep values consistent with the final story text, and cite the story evidence in comment. Use this tool instead of writing MVU blocks in the story text.
 ```
 
 请求：
@@ -316,7 +337,8 @@ When variable updates are authorized, submit at least one successful patch this 
 ### `revise_content`
 
 ```text
-Edit narrative settings with set_character, add_lore, update_lore or remove_lore; use these semantic actions, not JSON Patch or storage IDs. Work from the current contents you already know, including supplied settings, tool results and text you wrote in earlier tool calls. Use read_character or read_lore_entry when you do not know the target's current contents or are unsure whether your version is still current. Adding a new entry needs no read. Success returns complete final contents of changed targets, which you can reuse for later edits. Omitted properties remain intact. Script-bearing targets and execution settings are protected; failed batches change nothing.
+Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore and remove_lore. Use these actions, not JSON Patch or storage IDs.
+Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of each changed target, which count as current for later edits. Script-bearing targets and execution settings are protected.
 ```
 
 请求：
@@ -334,7 +356,7 @@ Edit narrative settings with set_character, add_lore, update_lore or remove_lore
 ### `read_character`
 
 ```text
-Inspect or refresh one complete setting: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. Missing fields return null. Script-bearing fields are protected.
+Read one character setting in full: name, description, personality, scenario, mes_example, system_prompt or post_history_instructions. Missing fields return null; script-bearing fields are protected.
 ```
 
 请求：
@@ -352,7 +374,7 @@ Inspect or refresh one complete setting: name, description, personality, scenari
 ### `set_retrieval_query`
 
 ```text
-Replace this turn's clues for next-turn automatic worldbook retrieval; the last successful call wins. query="" clears these clues without erasing clues saved by earlier turns. Describe relevant scenes, entities or unresolved issues, distinguishing anticipated events from facts. Clues stay outside narrative prose.
+Set clues for next turn's automatic worldbook lookup: the scenes, people, places or unresolved issues likely to matter, with anticipated events marked as anticipated. The last successful call this turn wins; query="" clears this turn's clues without touching earlier turns. Clues never appear in the story.
 ```
 
 请求：
@@ -375,8 +397,8 @@ Replace this turn's clues for next-turn automatic worldbook retrieval; the last 
 |---|---|---|
 | `write_handoff` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 当前交接、单章与章节总量上限。 |
 | `new_context` | `Limits: current {handoff_tokens} tokens, each chapter {chapter_tokens}, all chapters {chapters_total_tokens}.` | 同上，适用于换窗时提交的交接。 |
-| `write_note` | `content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |
-| `write_plot` | `content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |
+| `write_note` | `Content limit: {note_tokens} tokens.` | 当前单条笔记上限。 |
+| `write_plot` | `Content limit: {plot_tokens} tokens.` | 当前剧情规划上限。 |
 | `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |
 | `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |
 
