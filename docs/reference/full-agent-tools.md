@@ -4,9 +4,17 @@
 
 全部 17 个工具的目录、参数及源码示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。工具调用使用当前目录和 JSON Pointer 路径，存档迁移由存储层处理。
 
+## 正文与收尾
+
+普通 assistant 文本直接作为本轮唯一正文，一次完整模型响应中的流式分片和文本块合并计入一次。工具可以在正文之前、与正文同次响应或在正文之后使用；接收正文不关闭工具，也不触发提交。后续必要请求提供正文的 H 引用，供 `read_history` 完整读取和 `write_note` 引用。第二次非空正文以 `STORY_ALREADY_RECEIVED` 停止，保留第一份正文及此前进度，不执行违规响应中的工具，不自动请求纠正。
+
+模型按原生协议自然结束，无需交付或结束工具。已有正文时允许无新文本的正常结束；同响应包含工具时，按原生协议决定执行后继续或收尾。自然结束后检查正文、授权变量任务及启用时的初始大纲，缺项以 `TURN_NOT_READY` 停止并保存进度，用户明确继续后才再次请求模型。上述错误是回合终止错误，不作为工具纠错结果循环发送。
+
+正文变换、消息回调和必要审核仍在原子提交前完成。回调失败以 `STORY_FINALIZATION_FAILED` 停止；继续只本地重试收尾，不请求模型、不自动撤回正文，需要新正文时由用户重新生成。非空 `patch_state` 只触发 MVU 变量事件，`MESSAGE_RECEIVED` 在收尾时触发一次并等待异步处理。Kemini 实验对话保留可见的 `kemini_emit_story` 传输，与普通文本共用唯一正文约束，不需要结束工具。
+
 ## 参数与数据边界
 
-剧情规划 `plot` 独立于 note，使用 `write_plot({"content":"完整阶段大纲"})` 写入。其唯一开关为会话的 `plot_enabled`，默认关闭；工具页不能独立禁用它。正文为 1–64000 字符且非空白，另受 `plot_tokens` 限制，默认 4096 tokens。当前完整版本通过 `<tavern_plot>` 提供，无需预读或来源引用；成功只返回 `saved_to_draft:true`。开启且大纲为空时，运行时拒绝提前输出的正文，要求先成功建纲；后续不要求每轮写入。
+剧情规划 `plot` 独立于 note，使用 `write_plot({"content":"完整阶段大纲"})` 写入。其唯一开关为会话的 `plot_enabled`，默认关闭；工具页不能独立禁用它。正文为 1–64000 字符且非空白，另受 `plot_tokens` 限制，默认 4096 tokens。当前完整版本通过 `<tavern_plot>` 提供，无需预读或来源引用；成功只返回 `saved_to_draft:true`。开启且大纲为空时，运行时拒绝收尾，要求先成功建纲；后续不要求每轮写入。
 
 玩家接口 `PUT /api/sessions/{sid}/full-agent/plot` 接收 `expected_revision` 和可选 `enabled`／`content`，至少提供一项；空字符串清空大纲。开关可在空白故事修改，正文须已有剧情节点。关闭保留内容并暂停使用；修改与运行、待审核和上下文整理互斥。手动编辑后的大纲仍可由模型调整。
 
@@ -26,7 +34,7 @@ find_lore_for_edit 按标题、关键词和正文做字面定位，包括停用�
 
 set_retrieval_query 覆盖本轮准备保存的下一轮自动检索线索；最后一次成功调用生效，query="" 清空本轮线索。它随最终正文提交，不清除旧回合线索，不进入正文。成功结果只返回 saved_to_draft 确认，不回传刚写入的 query 文本。
 
-## 变量路径与唯一成功提交
+## 变量路径与授权更新
 
 read_state 默认 scope="mvu"，根对象为投影后的 stat_data；scope="full" 读取全部模型可见运行时状态，包含 stat_data；scope="other" 读取同一状态中除顶层 stat_data 之外的字段。path 相对于所选范围，使用 JSON Pointer，空串读取整个范围，缺失路径返回 text:"null"，没有 stat_data 时 mvu 返回 {}。所有范围都过滤内部账本与 MVU 元数据，full 不开放内部数据。只有完整 mvu 或 full 中的完整 stat_data 可作为非空变量补丁的上下文依据，other 供读取其他运行时字段。
 
@@ -42,7 +50,7 @@ read_state 默认 scope="mvu"，根对象为投影后的 stat_data；scope="full
 
 patch_state.operations 为 0–100 项带类型的 JSON Patch：每项 op/path 必填，add/replace/test 需要 value（包括 null），move/copy 需要 from，remove 无其他字段。path/from 相对 stat_data；数组从 0 起，add 可用末尾 /-，空指针指根。既有目标、父节点和根值限制由补丁及 MVU 校验共同检查。
 
-授权回合必须且只能成功一次。非空补丁需要上下文中的完整当前变量；完整 mvu／stat_data 读取、工具参数中的完整根值，或完整读取加成功补丁可准确还原当前值时均有效。完整 full 读取含 stat_data 时也有效，局部变量、过期值及无法还原的脚本变化不算。缺少当前版本时先 read_state(path="",scope="mvu")。operations=[] 可直接确认无变化，不调用补丁阶段的脚本，仍消耗一次成功提交。失败不计成功，补丁失败恢复脚本镜像后允许修正重试；恢复失败则终止回合。错误路径给出纠正建议，不自动改写路径；真实存在的 stat_data 同名嵌套键仍合法。
+授权回合在收尾前至少成功一次，可基于最新状态继续修正草稿。非空补丁需要上下文中的完整当前变量；完整 mvu／stat_data 读取、工具参数中的完整根值，或完整读取加成功补丁可准确还原当前值时均有效。完整 full 读取含 stat_data 时也有效，局部变量、过期值及无法还原的脚本变化不算。缺少当前版本时先 read_state(path="",scope="mvu")。operations=[] 可直接确认无变化，不调用补丁阶段的脚本，满足本轮变量任务要求。失败不计成功，补丁失败恢复脚本镜像后允许修正重试；恢复失败则终止回合。错误路径给出纠正建议，不自动改写路径；真实存在的 stat_data 同名嵌套键仍合法。
 
 变量规则以本轮固定的完整 mvu_rules 快照提供，规则不扩大权限。patch_state 定义不随本轮授权变化，以保持请求前缀稳定；关闭 patch_state 不允许发起变量更新。关闭 read_state 不连带禁用 patch_state，已有完整当前版本或提交空补丁时仍可执行。
 
@@ -67,9 +75,11 @@ revise_content 接受 1–100 项受限动作及 comment：
 
 ## 记忆与换窗
 
-write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入；最多 20 个，无需预先搜索或读取。程序校验来源属于当前分支，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。来源存储不可变消息身份，修改输入后的整轮重试与版本切换采用各自的笔记快照。
+write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入及已交付的正文草稿；最多 20 个，无需预先搜索或读取。程序校验来源属于当前分支，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。来源存储不可变消息身份，修改输入后的整轮重试与版本切换采用各自的笔记快照。
 
 write_note 完整替换内容；覆盖已有键或 archive_note 归档前，当前完整正文须已在上下文，否则先 read_note。工具参数中的完整当前正文也算，成功写入后不必重复读取。新 key 无需读取，覆盖归档键重新激活。目录和搜索摘要不算完整正文。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
+
+兼容旧版已撤回正文的恢复进度时，search_notes 和 read_note 仍可查询引用该正文的笔记，保留其 H 引用并返回正文已撤回、需重新核对的 notice；read_note 关闭 include_metadata 时也保留此提示。重新交付前，该 H 位置不能通过 read_history 读取，也不能作为 write_note 的新来源；重新交付沿用同一 H 位置和身份。
 
 handoff 使用最新运行时记忆或最近成功写入中较新的内容，失败提案不构成当前记忆。它由章节和当前交接组成，结构见[handoff 章节](../design/full-agent.md#handoff-章节)。new_context 的 `handoff` 可省略或为 `null`（默认），表示沿用当前交接，不改内容、版本及来源指纹；只有需要更新时才传入。传入时的结构与 write_handoff 参数相同：
 
@@ -87,7 +97,7 @@ handoff 使用最新运行时记忆或最近成功写入中较新的内容，失
 
 new_context 必须单独调用。任何包含它的多工具批次都在执行前整体拒绝，包括普通状态；强制换窗时其他工具和正文也被拒绝。普通工具批次按顺序逐项执行，单项失败不会回滚此前成功项；revise_content 的内部动作批次仍是原子的。
 
-全局设置 `full_agent.tools.parallel_tool_calls` 默认 true，允许单次最多 8 个工具调用。关闭时，多调用批次中的未执行工具全部返回 PARALLEL_TOOL_CALLS_DISABLED，不产生新的草稿写入；模型应逐次调用。此限制由运行时统一校验，不依赖服务商是否支持或遵守原生参数。工具批次和内部动作批次不同，关闭此设置不限制 patch_state 或 revise_content 中合法的多项 operations。
+全局设置 `full_agent.tools.parallel_tool_calls` 默认 true，允许单次最多 32 个工具调用；超过时整次响应按 TOOL_PROTOCOL_INVALID 停止，不执行其中任何工具，总运行时限与请求额度仍生效。续接时移除已失败调用及结果，保留同响应的正文与成功调用；成功工具不重跑。关闭时，多业务工具批次中的未执行工具全部返回 PARALLEL_TOOL_CALLS_DISABLED，不产生新的草稿写入；模型应逐次调用。此限制由运行时统一校验，不依赖服务商是否支持或遵守原生参数。工具批次和内部动作批次不同，关闭此设置不限制 patch_state 或 revise_content 中合法的多项 operations。
 
 ## 返回格式与错误恢复
 
@@ -105,11 +115,11 @@ new_context 必须单独调用。任何包含它的多工具批次都在执行�
 
 参数错误在顶层额外返回 expected_parameters；patch_state 的错误在 error 内额外返回 patch_state_completed，明确失败是否发生在已有一次成功提交之后。错误与结果都先做模型数据投影，不暴露真实身份和指纹；分类来自显式异常，不解析报错文案。
 
-非法 JSON 或非法工具序列是 TOOL_PROTOCOL_INVALID，额度耗尽是 BUDGET_EXHAUSTED，提供商异常为 PROVIDER_ERROR，不完整回复为 PROVIDER_INCOMPLETE，脚本恢复失败为 SCRIPT_RESTORE_FAILED。它们是终止回合的诊断事件，不返回可重试工具结果；其他运行异常记录为 RUNTIME_FAILURE。
+非法 JSON、非法工具序列或单次超过 32 个调用是 TOOL_PROTOCOL_INVALID，正文回调或最终校验失败是 STORY_FINALIZATION_FAILED，调用额度耗尽是 BUDGET_EXHAUSTED，总时限耗尽是 TIME_BUDGET_EXHAUSTED，提供商异常为 PROVIDER_ERROR，不完整回复为 PROVIDER_INCOMPLETE，脚本恢复失败为 SCRIPT_RESTORE_FAILED。它们是终止回合的诊断事件，不返回可重试工具结果；其他运行异常记录为 RUNTIME_FAILURE。
 
 ## 请求预算与草稿生命周期
 
-`max_steps` 默认 24，范围 2–100，按工具循环的模型请求计数，包含工具续答和本地换窗；云端整理使用独立请求并另行记录用量。额度耗尽时返回 `BUDGET_EXHAUSTED` 并保留进度，显式继续获得新额度，保留成功工具及 `patch_state_completed` 的后端标记。
+`max_steps` 默认 24，含边界范围 1–100，按工具循环的模型请求计数，包含工具续答和本地换窗；普通正文不占工具名额，不再推算交付／收尾的最低请求次数。云端整理独立记录用量。额度耗尽返回 `BUDGET_EXHAUSTED` 并保留进度，用户明确继续取得新额度，保留成功工具、正文和变量任务状态。`max_duration_seconds` 默认 900 秒、含边界范围 30–7200 秒，覆盖整次运行；继续取得新时限，换窗不会重置。正文和模型结束状态分别保存，已满足业务要求的自然结束可直接本地重试收尾。
 
 | 情况 | 正式剧情 | 草稿与恢复 |
 |---|---|---|
@@ -138,7 +148,6 @@ new_context 必须单独调用。任何包含它的多工具批次都在执行�
 | `PATCH_VALIDATION_FAILED` | 是 | 核对最新变量与 MVU 规则，修正补丁后重试。 |
 | `CONTENT_LIMIT` | 是 | 精简本次写入内容后重试；不能截断读取的原文。 |
 | `PROTECTED_TARGET` | 否 | 仅修改工具公开的业务字段；程序内部字段与执行配置不可修改。 |
-| `STATE_ALREADY_SUBMITTED` | 否 | 本轮变量已成功提交，不要重复调用 patch_state。 |
 | `MIXED_CONTEXT_CALLS` | 是 | 本批次未执行任何工具；单独调用 new_context。 |
 | `PARALLEL_TOOL_CALLS_DISABLED` | 是 | 每次回复只提出一个工具调用，等待结果后再继续。 |
 | `CONTEXT_ROLLOVER_REQUIRED` | 是 | 单独调用 new_context 后继续本轮。 |

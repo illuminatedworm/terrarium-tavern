@@ -51,9 +51,9 @@ watch(
   { immediate: true },
 );
 async function toggle(name: string, enabled: boolean) {
-  if (name === 'write_plot') return;
-  const sid = props.session.id;
   const tool = tools.value.find((item) => item.name === name);
+  if (tool?.controlled_by) return;
+  const sid = props.session.id;
   if (tool) tool.enabled = enabled;
   const disabled = new Set<string>(props.session.disabled_tools || []);
   if (enabled) disabled.delete(name);
@@ -138,7 +138,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
         由记忆面板中的“剧情规划”开关统一控制。
       </p>
       <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available" class="inspector-note">
-        工具定义保持稳定；勾选本轮“更新变量”后才允许执行，且本轮须成功调用一次。
+        工具定义保持稳定；勾选本轮“更新变量”后才允许执行，收尾前须至少成功调用一次。
       </p>
       <p v-else-if="tool.name === 'revise_content' && tool.enabled && !tool.available" class="inspector-note">
         本轮允许修改设定后可用。

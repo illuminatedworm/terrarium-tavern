@@ -1,4 +1,4 @@
-"""A provisional view of one model response, never a story or tool checkpoint."""
+"""A provisional story view; later model responses do not reset accepted prose."""
 
 
 class TurnPreview:

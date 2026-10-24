@@ -91,6 +91,8 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     )
     session = store.new_session(SessionCreate(card_id=card["id"], persona="玩家甲"))
     raw = store.settings_document().model_dump()
+    raw["version"] = 9
+    raw["full_agent"]["tools"].pop("max_duration_seconds")
     raw["revisions"] = {"full_agent": 3, "half_agent": 8, "shared": 7}
     for scope in ("full_agent", "half_agent"):
         raw[scope]["system_prompt"] = "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
@@ -100,14 +102,17 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
+    assert migrated.version == 10 and migrated.full_agent.tools.max_duration_seconds == 900
     assert raw == original
     assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 7}
     assert migrate_settings(migrated.model_dump()) == migrated
     with store.connection() as db:
+        db.execute("UPDATE meta SET value='11' WHERE key='schema_version'")
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     reopened = Store(tmp_path)
     assert reopened.settings_document() == migrated
     assert Store(tmp_path).settings_document() == migrated
+    assert len(list(tmp_path.glob("before-upgrade-schema11-settings9-*.sqlite3"))) == 1
     for mode in ("full_agent", "half_agent"):
         settings = reopened.settings(mode)
         assert settings.system_prompt == "自定义开头：用户扮演人类角色；user 的选择由 {{user}} 决定。"

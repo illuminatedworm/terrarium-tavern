@@ -100,6 +100,8 @@ TYPES = {
                 ("turn_instruction", "本轮额外要求"),
                 ("regenerate_instruction", "重生成要求"),
                 ("turn_variable_instruction", "本轮变量要求"),
+                ("roleplay_draft", "本轮正文草稿"),
+                ("turn_commit", "剧情回合提交结果"),
                 ("context_status", "上下文状态"),
                 ("context_budget", "窗口预算提醒"),
                 ("reply_correction", "回复纠正要求"),
@@ -159,6 +161,8 @@ SCOPES = {
             "mvu_rules",
             "regenerate_instruction",
             "turn_variable_instruction",
+            "roleplay_draft",
+            "turn_commit",
             "context_status",
             "context_budget",
         )

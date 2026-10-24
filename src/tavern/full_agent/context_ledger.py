@@ -9,14 +9,15 @@ from tavern.full_agent.protocol import saved
 from tavern.scripting.native_response import REASONING_FIELDS, portable, prepare_messages
 from tavern.scripting.request_context import response_origin
 
-# v9 removes obsolete edit/source-change frames from the request contract.
-VERSION = 9
+# v12 replaces delivery tools with ordinary prose and native completion.
+VERSION = 12
 CLEAR_TEXT = {
     "post": "<card_post_history_instructions>\n此前的角色后置要求已撤销。\n</card_post_history_instructions>",
     "turn_instruction": "此前的额外回合要求已撤销；遵守当前工具权限。",
     "regenerate_instruction": "此前的重生成要求已撤销。",
     "regenerate_reference": "此前的待重写回复参考已失效；不再作为本轮重写依据，也不作为已发生剧情或当前状态。",
     "turn_variable_instruction": "本轮未要求额外更新 MVU 变量。",
+    "roleplay_draft": "本轮尚未输出正文。",
     "context_budget": "此前的窗口压力提醒已解除。",
 }
 
@@ -24,6 +25,7 @@ CLEAR_TEXT = {
 class ContextLedger:
     def __init__(self, settings, fixed, tools, document, snapshot, records, input_id, history):
         self.origin = response_origin(settings)
+        self.input_id = input_id
         window = snapshot["full_agent"]["window"]
         signature = fingerprint(
             {
@@ -87,6 +89,16 @@ class ContextLedger:
 
     def replay(self, message, source="agent_tools"):
         if message.get("_context_baseline") or message.get("_full_agent_final"):
+            return None
+        if (
+            message.get("role") == "assistant"
+            and not message.get("content")
+            and not message.get("tool_calls")
+            and not message.get("_native_response", {}).get("items")
+            and not any(message.get(key) for key in REASONING_FIELDS)
+        ):
+            # An empty native end is runtime evidence, not a fabricated blank
+            # assistant message for the next provider request.
             return None
         frame = message.get("_runtime_context")
         if frame:

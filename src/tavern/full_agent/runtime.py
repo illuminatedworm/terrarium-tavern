@@ -12,6 +12,7 @@ from tavern.core.provider import require_model_connection
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.prefix_debug import PrefixDebug
+from tavern.full_agent.protocol import TurnError
 from tavern.scripting.runtime import ScriptRuntime
 from tavern.storage.store import dump, uid
 
@@ -34,7 +35,10 @@ class FullAgentRuntime:
         if request.update_variables and "patch_state" in session["disabled_tools"]:
             raise ValueError("本轮要求更新 MVU 变量，请先在 Full Agent 工具页启用 patch_state")
         settings = self.store.session_settings(session).for_role("full_agent")
-        if self.provider_factory is None:
+        resumed = self.store.full_agent_progress(request.resume_turn_id) if request.resume_turn_id else None
+        # A saved natural end replays only local finalization; every other
+        # run, including a resume, needs a usable model connection up front.
+        if self.provider_factory is None and not (resumed or {}).get("model_completed"):
             require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
         if created:
@@ -109,156 +113,181 @@ class FullAgentRuntime:
 
     async def run(self, tid):
         script = None
+        deadline = asyncio.timeout(None)
         try:
-            turn = self.store.turn(tid)
-            request = TurnRequest.model_validate(turn["request"])
-            session = self.store.session(turn["session"])
-            from tavern.core.message_adapter import bind_adapter
+            async with deadline:
+                turn = self.store.turn(tid)
+                request = TurnRequest.model_validate(turn["request"])
+                session = self.store.session(turn["session"])
+                from tavern.core.message_adapter import bind_adapter
 
-            settings = bind_adapter(
-                self.store.session_settings(session).for_role("full_agent").model_copy(deep=True),
-                self.store,
-                "story",
-                session["id"],
-            )
-            if request.reasoning_effort is not None:
-                settings.reasoning_effort = request.reasoning_effort
-            start = turn_start(session, request)
-            history, reused, before = start.history, start.reused_user, start.snapshot
-            request.text = start.text
-            progress = self.store.full_agent_progress(tid)
-            snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
-            card = self.store.session_card(session["id"])
-            document = copy.deepcopy(
-                progress["document"]
-                if progress
-                else (snapshot.get("content") or {}).get("document", card["document"])
-            )
-            self.store.set_turn(tid, status="running")
-            self.store.event(tid, "started", {"purpose": "full_agent"})
-            if card["permission"]:
-                await self.dependencies.resolve({**card, "document": document})
-
-            async def host(method, args):
-                if method == "log":
-                    self.store.event(tid, "script_log", args)
-                    return None
-                if method == "cancel":
-                    return False
-                raise ValueError("Full Agent 的角色脚本不允许发起额外模型请求；请使用当前 Agent 的工具")
-
-            script = await self.runtime.open(
-                document,
-                history,
-                snapshot,
-                bool(card["permission"]),
-                host,
-                self.dependencies.scripts({**card, "document": document}),
-                lambda html: self.dependencies.markup({**card, "document": document}, html),
-                persona=session["persona"],
-            )
-            mirror = copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
-            snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
-            rules, input_raw = regex_scripts(document), request.text
-            request.text = (
-                progress["user"]["model"]
-                if progress
-                else await script.call("transform", input_raw, rules, 1, "model", 0)
-            )
-            input_id, output_id = (
-                (progress["user"]["id"] if progress else reused["id"] if reused else uid()),
-                (mirror["messages"][-1]["id"] if progress else uid()),
-            )
-            user = (
-                copy.deepcopy(progress["user"])
-                if progress
-                else reused
-                or {
-                    "id": input_id,
-                    "parent": history[-1]["id"] if history else None,
-                    "role": "user",
-                    "raw": input_raw,
-                    "model": request.text,
-                    "display": await script.call("transform", input_raw, rules, 1, "display", 0),
-                    "snapshot": copy.deepcopy(before),
-                }
-            )
-            if not progress:
-                for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
-                    mirror["messages"].append(
-                        {
-                            "message_id": len(mirror["messages"]),
-                            "id": mid,
-                            "role": role,
-                            "message": text,
-                            "variables": copy.deepcopy(snapshot["state"]),
-                        }
-                    )
-            await script.call("update", mirror)
-            agent = FullAgent(
-                self.store,
-                tid,
-                document,
-                session,
-                history,
-                snapshot,
-                request,
-                script,
-                settings,
-                user,
-                self.retrieval,
-                progress,
-                script_mirror=mirror,
-            )
-            self.agents[tid] = agent
-            if not settings.debug_full_agent_prefix:
-                self.prefix_debug.clear()
-
-            def observe_request(request):
-                agent.event("full_agent_prefix_debug", self.prefix_debug.record(request))
-
-            text = await agent.run(
-                self.provider_factory() if self.provider_factory else None,
-                request_observer=observe_request if settings.debug_full_agent_prefix else None,
-            )
-            mirror = await script.call("snapshot")
-            mirror["messages"][-1]["message"] = text
-            await script.call("update", mirror)
-            candidate = await script.call("transform", text, rules, 2, "display", 0)
-            if card["permission"] and "<script" in candidate.lower():
-                await script.add_message_frame(
-                    self.dependencies.markup({**card, "document": document}, candidate),
-                    {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1},
-                    host,
+                settings = bind_adapter(
+                    self.store.session_settings(session).for_role("full_agent").model_copy(deep=True),
+                    self.store,
+                    "story",
+                    session["id"],
                 )
-            processed = await script.call("process", text, [], "")
-            snapshot.update(state=processed["state"], scopes=processed["scopes"])
-            if processed.get("loreModified"):
-                # The mirror can predate model edits and successful variable
-                # tools. Only this final callback's delta may replace them.
-                agent.apply_script_lore(mirror["lore"], processed)
-            text = processed["text"]
-            model = await script.call("transform", text, rules, 2, "model", 0)
-            display = await script.call("transform", text, rules, 2, "display", 0)
-            if card["permission"] and "<" in display:
-                display = self.dependencies.markup({**card, "document": document}, display)
-            output = {
-                "id": output_id,
-                "parent": input_id,
-                "role": "assistant",
-                "raw": text,
-                "model": model,
-                "display": display,
-                "snapshot": snapshot,
-                "retrieval_query": agent.retrieval_query,
-                "auxiliary": agent.auxiliary,
-            }
-            if agent.final_response:
+                deadline.reschedule(
+                    asyncio.get_running_loop().time() + settings.full_agent_config.max_duration_seconds
+                )
+                if request.reasoning_effort is not None:
+                    settings.reasoning_effort = request.reasoning_effort
+                start = turn_start(session, request)
+                history, reused, before = start.history, start.reused_user, start.snapshot
+                request.text = start.text
+                progress = self.store.full_agent_progress(tid)
+                snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
+                card = self.store.session_card(session["id"])
+                document = copy.deepcopy(
+                    progress["document"]
+                    if progress
+                    else (snapshot.get("content") or {}).get("document", card["document"])
+                )
+                self.store.set_turn(tid, status="running")
+                self.store.event(tid, "started", {"purpose": "full_agent"})
+                if card["permission"]:
+                    await self.dependencies.resolve({**card, "document": document})
+
+                async def host(method, args):
+                    if method == "log":
+                        self.store.event(tid, "script_log", args)
+                        return None
+                    if method == "cancel":
+                        return False
+                    raise ValueError("Full Agent 的角色脚本不允许发起额外模型请求；请使用当前 Agent 的工具")
+
+                script = await self.runtime.open(
+                    document,
+                    history,
+                    snapshot,
+                    bool(card["permission"]),
+                    host,
+                    self.dependencies.scripts({**card, "document": document}),
+                    lambda html: self.dependencies.markup({**card, "document": document}, html),
+                    persona=session["persona"],
+                )
+                mirror = (
+                    copy.deepcopy(progress["script_mirror"]) if progress else await script.call("snapshot")
+                )
+                snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
+                rules, input_raw = regex_scripts(document), request.text
+                request.text = (
+                    progress["user"]["model"]
+                    if progress
+                    else await script.call("transform", input_raw, rules, 1, "model", 0)
+                )
+                input_id, output_id = (
+                    (progress["user"]["id"] if progress else reused["id"] if reused else uid()),
+                    progress["output_id"] if progress else uid(),
+                )
+                user = (
+                    copy.deepcopy(progress["user"])
+                    if progress
+                    else reused
+                    or {
+                        "id": input_id,
+                        "parent": history[-1]["id"] if history else None,
+                        "role": "user",
+                        "raw": input_raw,
+                        "model": request.text,
+                        "display": await script.call("transform", input_raw, rules, 1, "display", 0),
+                        "snapshot": copy.deepcopy(before),
+                    }
+                )
+                if not progress:
+                    for mid, role, text in ((input_id, "user", input_raw), (output_id, "assistant", "")):
+                        mirror["messages"].append(
+                            {
+                                "message_id": len(mirror["messages"]),
+                                "id": mid,
+                                "role": role,
+                                "message": text,
+                                "variables": copy.deepcopy(snapshot["state"]),
+                            }
+                        )
+                # New progress owns this identity independently of mutable
+                # script mirrors; legacy progress used the reserved mirror ID.
+                mirror["messages"][-1]["id"] = output_id
+                await script.call("update", mirror)
+                agent = FullAgent(
+                    self.store,
+                    tid,
+                    document,
+                    session,
+                    history,
+                    snapshot,
+                    request,
+                    script,
+                    settings,
+                    user,
+                    self.retrieval,
+                    progress,
+                    script_mirror=mirror,
+                    output_id=output_id,
+                )
+                self.agents[tid] = agent
+                if not settings.debug_full_agent_prefix:
+                    self.prefix_debug.clear()
+
+                def observe_request(request):
+                    agent.event("full_agent_prefix_debug", self.prefix_debug.record(request))
+
+                text = await agent.run(
+                    provider_factory=self.provider_factory,
+                    request_observer=observe_request if settings.debug_full_agent_prefix else None,
+                )
+                try:
+                    mirror = await script.call("snapshot")
+                    mirror["messages"][-1]["message"] = text
+                    await script.call("update", mirror)
+                    candidate = await script.call("transform", text, rules, 2, "display", 0)
+                    if card["permission"] and "<script" in candidate.lower():
+                        await script.add_message_frame(
+                            self.dependencies.markup({**card, "document": document}, candidate),
+                            {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1},
+                            host,
+                        )
+                    processed = await script.call("process", text, [], "")
+                    snapshot.update(state=processed["state"], scopes=processed["scopes"])
+                    if processed.get("loreModified"):
+                        # The mirror can predate model edits and successful variable
+                        # tools. Only this final callback's delta may replace them.
+                        agent.apply_script_lore(mirror["lore"], processed)
+                    text = processed["text"]
+                    if not text.strip():
+                        raise ValueError("正文回调返回了空白内容，本回合未提交")
+                    model = await script.call("transform", text, rules, 2, "model", 0)
+                    display = await script.call("transform", text, rules, 2, "display", 0)
+                    if card["permission"] and "<" in display:
+                        display = self.dependencies.markup({**card, "document": document}, display)
+                except Exception as error:
+                    # Progress was saved before callbacks. A user continuation
+                    # retries only this local phase, without accumulating partial
+                    # script effects or paying the model to rewrite the story.
+                    detail = str(error) or type(error).__name__
+                    raise TurnError(
+                        "STORY_FINALIZATION_FAILED",
+                        f"正文回调或最终校验失败：{detail}；正文已保留，继续时仅重试本地收尾；需要新正文请重新生成。",
+                    ) from error
+                output = {
+                    "id": output_id,
+                    "parent": input_id,
+                    "role": "assistant",
+                    "raw": text,
+                    "model": model,
+                    "display": display,
+                    "snapshot": snapshot,
+                    "retrieval_query": agent.retrieval_query,
+                    "auxiliary": agent.story["auxiliary"],
+                }
+                # The story and native replies already live in the trace. This
+                # marker records observations without replaying another body.
                 agent.new_trace.append(
                     {
                         "window_id": agent.state["window"]["id"],
                         "message": {
-                            **agent.final_response,
+                            "role": "assistant",
+                            "content": "",
                             "_full_agent_final": True,
                             "_history_observations": {
                                 user["id"]: fingerprint(user["model"]),
@@ -267,18 +296,23 @@ class FullAgentRuntime:
                         },
                     }
                 )
-            pending = {
-                "messages": [output] if reused else [user, output],
-                "before": before,
-                "reason": "Full Agent 回合提交",
-                "full_agent_trace": agent.new_trace,
-            }
-            agent.preview.replace(text)
-            finish_turn(self.store, tid, session, pending, snapshot)
+                pending = {
+                    "messages": [output] if reused else [user, output],
+                    "before": before,
+                    "reason": "Full Agent 回合提交",
+                    "full_agent_trace": agent.new_trace,
+                }
+                agent.preview.replace(text)
+                finish_turn(self.store, tid, session, pending, snapshot)
         except asyncio.CancelledError:
             self.store.set_turn(tid, status="cancelled", error="用户取消，草稿未提交")
             self.store.event(tid, "cancelled", {})
         except Exception as error:
+            if isinstance(error, TimeoutError) and deadline.expired():
+                error = TurnError(
+                    "TIME_BUDGET_EXHAUSTED",
+                    f"本次运行达到 {settings.full_agent_config.max_duration_seconds} 秒总时限；草稿未提交，可显式继续。",
+                )
             message = str(error) or type(error).__name__
             self.store.set_turn(tid, status="error", error=message)
             self.store.event(
@@ -293,4 +327,10 @@ class FullAgentRuntime:
         finally:
             self.agents.pop(tid, None)
             if script:
-                await script.close()
+                try:
+                    await asyncio.wait_for(script.close(), timeout=10)
+                except TimeoutError:
+                    # A card script stuck in a busy loop can block browser-context
+                    # shutdown. The turn outcome is already recorded above;
+                    # cleanup only reports the leak instead of rewriting it.
+                    self.store.event(tid, "runtime_warning", {"message": "卡片脚本上下文关闭超时"})

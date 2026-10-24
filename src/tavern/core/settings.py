@@ -194,7 +194,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[9] = 9
+    version: Literal[10] = 10
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -454,6 +454,12 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             # v9 permits an explicit Android CPU/Q8_0 model configuration. Preserve
             # every saved CUDA setting; selecting the mobile preset is a UI action.
             raw["version"] = 9
+        if raw["version"] == 9:
+            raw["version"] = 10
+            raw.setdefault("full_agent", {}).setdefault("tools", {}).setdefault(
+                "max_duration_seconds", FullAgentConfig.model_fields["max_duration_seconds"].default
+            )
+            changed_scopes.add("full_agent")
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

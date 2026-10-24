@@ -16,7 +16,7 @@ from tavern.core.history_refs import message_ref
 from tavern.core.models import ContextRecipe, TurnRequest
 from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 from tavern.core.usage import aggregate_cache_usage
-from tavern.full_agent.recovery import resume_progress
+from tavern.full_agent.recovery import load_progress, resume_progress
 from tavern.memories.memory_records import new_memory
 from tavern.storage.message_adapters import MessageAdapters, recipe_types
 from tavern.storage.turn_retry import retry_head
@@ -96,8 +96,8 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 11
-SETTINGS_VERSIONS = range(2, 10)
+SCHEMA_VERSION = 13
+SETTINGS_VERSIONS = range(2, 11)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -1355,7 +1355,7 @@ class Store(MessageAdapters):
                         ):
                             continue
                         assistant_seq = index + 1
-                        if message.get("content"):
+                        if message.get("content") and not message.get("_story_call_id"):
                             db.execute(
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                                 (
@@ -1366,6 +1366,7 @@ class Store(MessageAdapters):
                                             "activity_id": f"text-{assistant_seq}",
                                             "order": assistant_seq * 10,
                                             "content": message["content"],
+                                            "is_story": bool(message.get("_story_received")),
                                         }
                                     ),
                                     time.time(),
@@ -1406,7 +1407,7 @@ class Store(MessageAdapters):
     def full_agent_progress(self, tid):
         with self.connection() as db:
             row = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
-        return json.loads(row["payload"]) if row else None
+        return load_progress(json.loads(row["payload"])) if row else None
 
     def reject_review(self, tid):
         """Explicit rejection retires executable work but preserves its audit trail."""

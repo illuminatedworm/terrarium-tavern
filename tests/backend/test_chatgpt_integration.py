@@ -92,8 +92,10 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
                     },
                 ]
             )
-        if mode == "full_agent" and len(calls) == 1:
-            return sse(completed("", [("read_history", {"ref": "H1"})]))
+        if mode == "full_agent":
+            if len(calls) == 1:
+                return sse(completed("", [("read_history", {"ref": "H1"})]))
+            return sse(completed("她推开门，完整的故事继续。"))
         return sse(completed("她推开门，完整的故事继续。"))
 
     store.chatgpt.http_transport = httpx.MockTransport(model)

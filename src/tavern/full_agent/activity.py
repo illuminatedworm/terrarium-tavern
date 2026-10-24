@@ -33,6 +33,10 @@ def tool_item(key, order, name, arguments):
     )
     if name == "write_plot":
         summary = "包含未来剧情，展开查看"
+    elif name in ("roleplay", "kemini_emit_story"):
+        summary = "正文交付；展开查看原始参数"
+    elif name == "finish_turn":
+        summary = "申请正文回调与统一校验"
     write = args.get("handoff") if name == "new_context" and isinstance(args, dict) else args
     if name in ("write_handoff", "new_context") and isinstance(write, dict):
         # Activity also reads rejected raw model arguments, before schema validation.
@@ -65,11 +69,12 @@ def finish_tool(item, result):
     item["status"] = "error" if failed(result) else "returned"
 
 
-def text_item(key, order, content):
+def text_item(key, order, content, *, is_story=False):
     return {
         "id": key,
         "order": order,
         "kind": "assistant",
+        "is_story": is_story,
         "summary": str(content)[:180],
         "status": "returned",
         "details": {"content": str(content)},
@@ -83,8 +88,15 @@ def from_trace(rows):
         if message.get("_full_agent_final") or message.get("_full_agent_rejected"):
             continue
         if message.get("role") == "assistant":
-            if message.get("content"):
-                items.append(text_item(f"text-{seq}", seq * 10, message["content"]))
+            if message.get("content") and not message.get("_story_call_id"):
+                items.append(
+                    text_item(
+                        f"text-{seq}",
+                        seq * 10,
+                        message["content"],
+                        is_story=bool(message.get("_story_received")),
+                    )
+                )
             for index, call in enumerate(message.get("tool_calls", [])):
                 function = call.get("function", {})
                 item = tool_item(
@@ -134,7 +146,7 @@ def turn_items(store, sid, tid):
         key = payload.get("activity_id", f"event-{event['seq']}")
         order = payload.get("order", event["seq"] * 10)
         if kind == "full_agent_assistant":
-            items[key] = text_item(key, order, payload["content"])
+            items[key] = text_item(key, order, payload["content"], is_story=payload.get("is_story", False))
         else:
             if key not in items:
                 items[key] = tool_item(key, order, payload["name"], payload.get("arguments", ""))

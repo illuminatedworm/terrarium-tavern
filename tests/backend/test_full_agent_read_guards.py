@@ -39,6 +39,8 @@ def owner():
         request=req,
         session={},
         tid="guards",
+        output_id="pending-reply",
+        story=None,
         model_view=ModelView(doc),
         patch_state_done=False,
         script=Script([], snapshot),
@@ -80,8 +82,6 @@ async def test_nonempty_patch_requires_current_complete_variables_read(owner):
     await denied()
     await call(owner, "read_state")
     assert (await call(owner, "patch_state", operations=operations, comment="Injury"))["saved_to_draft"]
-    with pytest.raises(ValueError, match="不允许重复"):
-        await call(owner, "patch_state", operations=operations, comment="Repeat")
 
 
 async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
@@ -94,8 +94,6 @@ async def test_empty_patch_needs_no_read_and_has_no_script_side_effects(owner):
     result = await call(owner, "patch_state", operations=[], comment="No changes")
     assert result["patch_state_completed"] and owner.patch_state_done
     assert owner.snapshot == before and owner.tools.reads.records["state"] is None
-    with pytest.raises(ValueError, match="不允许重复"):
-        await call(owner, "patch_state", operations=[], comment="Repeat")
 
 
 async def test_note_sources_resolve_immutable_references_without_reads(owner):
@@ -155,7 +153,7 @@ async def test_reads_and_writes_in_one_tool_batch_follow_execution_order(story):
         events = [
             e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"
         ]
-        assert len(events) == 4 and all("error" not in e for e in events)
+        assert len(events) == 6 and all("error" not in e for e in events)
     finally:
         await service.close()
 
@@ -217,7 +215,7 @@ async def test_visibility_rebuilds_from_context_after_failure_even_with_legacy_p
             model = Model(patch, ("read_state", {}), patch, "Next narrative")
             result, current = await turn(service, current, model, update_variables=True, mode=mode)
             assert result["status"] == "committed", result["error"]
-            assert any(
+            assert not any(
                 e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"]
                 for e in store.events(result["id"])
             )

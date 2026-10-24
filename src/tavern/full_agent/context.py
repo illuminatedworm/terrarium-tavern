@@ -23,6 +23,7 @@ from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.handoff import render_chapters, render_current
 from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
+from tavern.full_agent.story import committed_story, story_history
 
 
 def load_trace(store, sid, history):
@@ -60,6 +61,7 @@ def compile_window(
     variable_rules=None,
     allow_content_edit=False,
     regenerate_reply="",
+    story=None,
     replay_all=False,
 ):
     state = full_state(snapshot)
@@ -175,6 +177,14 @@ def compile_window(
         for message in by_owner.get(owner["id"], [])
     ]
     records.extend({**message, "_content_owner": None} for message in continuation)
+    records, _ = story_history(records)
+    if story is not None:
+        records = [
+            committed_story(message, story["content"])
+            if message.get("_story_received", {}).get("input_id") == input_id
+            else message
+            for message in records
+        ]
     if complete_source:
         from tavern.scripting.native_response import portable
 
@@ -221,6 +231,7 @@ def compile_window(
         item = ledger.replay(message)
         if item is not None:
             items.append(item)
+        return item
 
     def update(source, content, **kwargs):
         frame = ledger.update(source, content, **kwargs)
@@ -247,20 +258,36 @@ def compile_window(
         if message["role"] == "user" and len(items) > fixed_count:
             replay_starts.append({"offset": len(items) - fixed_count, "history_start": history_index})
         anchored(message["id"])
-        # Native tool calls/results belong before the final narrative that ended that turn.
+        # Keep every exchange in its original order, including tools after the
+        # story. Its accepted response carries the final saved text exactly once.
         records = by_owner.get(message["id"], [])
+        story_in_trace = False
         for record in records:
-            replay(record)
-        add(
-            message["role"],
-            # User labels help navigation; assistant prose and native replay
-            # must not acquire a format the model could imitate in its reply.
-            labeled(history_index + 1, history_text[message["id"]])
-            if message["role"] == "user"
-            else history_text[message["id"]],
-            "history",
-            message_id=message["id"],
-        )
+            if record.get("source") == "roleplay_draft" and record["_runtime_context"]["value"]:
+                # A delivered-draft frame is current-turn guidance, resent only
+                # after a rollover or Kemini cleanup. Once committed it holds a
+                # stale instruction and a pre-callback copy; the native response
+                # or the reply message carries the committed story instead.
+                # Only the cached prefix after that point changes.
+                continue
+            if record.get("_story_received"):
+                record = committed_story(record, history_text[message["id"]])
+            if replay(record) is not None and record.get("_story_received"):
+                story_in_trace = True
+        if not story_in_trace:
+            add(
+                message["role"],
+                # User labels help navigation; assistant prose stays unlabelled.
+                labeled(history_index + 1, history_text[message["id"]])
+                if message["role"] == "user"
+                else history_text[message["id"]],
+                "history",
+                message_id=message["id"],
+            )
+        else:
+            # A text boundary can carry every provider's cache marker without
+            # inventing a field on function_call arguments or repeating prose.
+            add("system", "本轮正文与全部草稿已提交。", "turn_commit", message_id=message["id"])
         final = next((m for m in records if m.get("_full_agent_final")), None)
         if not complete_source and final and items and items[-1].get("message_id") == message["id"]:
             items[-1].update(
@@ -292,11 +319,26 @@ def compile_window(
     )
     for message in continuation:
         replay(message)
+    story_in_context = any(
+        message.get("_story_received", {}).get("input_id") == input_id for message in continuation
+    )
+    update(
+        "roleplay_draft",
+        f"本轮已输出正文 {message_ref(len(history) + 2)}。"
+        + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
+        if story is not None
+        else "",
+        value={
+            "input_id": input_id,
+            "content_hash": fingerprint(story["content"]),
+            "in_response": story_in_context,
+        }
+        if story is not None
+        else False,
+    )
     update(
         "turn_variable_instruction",
-        "本轮须调用 patch_state 更新 MVU 变量一次，无变化提交 []，再回复正文；已调用成功则不要重复。"
-        if require_state_patch
-        else "",
+        "本轮须至少成功调用一次 patch_state 更新 MVU 变量，无变化提交 []。" if require_state_patch else "",
         value={"required": True, "input_id": input_id} if require_state_patch else False,
     )
     if require_state_patch:

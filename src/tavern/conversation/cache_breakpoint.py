@@ -106,8 +106,8 @@ def context_breakpoint_index(trace, message_id):
             if (
                 entry.get("source") == "history"
                 and entry.get("role") == "assistant"
-                and entry.get("message_id") == message_id
-            ):
+                or entry.get("source") == "turn_commit"
+            ) and entry.get("message_id") == message_id:
                 return index
     first_history = next(
         (index for index, entry in enumerate(trace) if entry.get("source") == "history"), len(trace)

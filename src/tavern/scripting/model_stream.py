@@ -28,7 +28,7 @@ def _has_chat_content(delta: dict) -> bool:
 
 class StreamState:
     def __init__(self, api, *, secret=""):
-        self.api, self.done = api, False
+        self.api, self.response_complete = api, False
         self.secret = secret
         self.result, self.calls, self.blocks = {}, {}, {}
         self.text, self.reasoning, self.parts = "", "", []
@@ -48,7 +48,7 @@ class StreamState:
                 for choice in choices
             ):
                 raise ValueError("模型流结束原因无效，本回合未提交")
-        if self.done:
+        if self.response_complete:
             # Chat Completions/Gemini can report usage after the terminal chunk.
             # Compatible Chat endpoints also send empty fields and tool placeholders.
             # Reject substantive late data, but retain the first finish reason so
@@ -70,7 +70,7 @@ class StreamState:
             if kind == "response.output_text.delta":
                 return event.get("delta", "")
             if kind == "response.completed":
-                self.result, self.done = self.response_output.finish(event["response"]), True
+                self.result, self.response_complete = self.response_output.finish(event["response"]), True
             elif kind in ("response.failed", "response.incomplete", "error"):
                 raise ValueError("Responses 流未完整结束")
             return ""
@@ -78,7 +78,7 @@ class StreamState:
             if event.get("usage"):
                 self.result["usage"] = event["usage"]
             self.result["model"] = event.get("model", self.result.get("model"))
-            if self.done or not choices:
+            if self.response_complete or not choices:
                 return ""
             choice = choices[0]
             delta = choice.get("delta") or {}
@@ -95,7 +95,7 @@ class StreamState:
                 for field in ("name", "arguments"):
                     item["function"][field] += call.get("function", {}).get(field) or ""
             if choice.get("finish_reason"):
-                self.done = True
+                self.response_complete = True
                 self.result["finish_reason"] = choice["finish_reason"]
             return delta.get("content") or ""
         if api == "anthropic":
@@ -118,7 +118,7 @@ class StreamState:
                 self.result.update(event.get("delta", {}))
                 self.result.setdefault("usage", {}).update(event.get("usage", {}))
             elif kind == "message_stop":
-                self.done = True
+                self.response_complete = True
             elif kind == "error":
                 raise ValueError(stream_error("Anthropic 流返回错误", event))
             return ""
@@ -138,12 +138,17 @@ class StreamState:
             else:
                 self.parts.append(piece)
         if candidate.get("finishReason"):
-            self.done = True
+            self.response_complete = True
             self.result["finishReason"] = candidate["finishReason"]
         return "".join(p.get("text", "") for p in pieces if not p.get("thought"))
 
     def finish(self):
-        if not self.done:
+        """Called only after the HTTP body iterator ends without an error.
+
+        Native stop reasons close an output, not its network reader or the
+        application turn. Usage/error tails are consumed before this boundary.
+        """
+        if not self.response_complete:
             raise ValueError("模型流连接提前结束，本回合未提交")
         if self.api == "chat_completions":
             message = {"content": self.text, "tool_calls": [self.calls[i] for i in sorted(self.calls)]}

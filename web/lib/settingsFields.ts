@@ -176,7 +176,8 @@ export const fullFields: SettingField[] = [
     type: 'checkbox',
     help: '合并独立操作，减少等待。关闭后每次只调用一个工具。',
   },
-  number('tools.max_steps', '每回合模型调用上限', 2, 100),
+  number('tools.max_steps', '每次发送或继续的模型调用上限', 1, 100),
+  number('tools.max_duration_seconds', '每次发送或继续的总时限（秒，默认 900）', 30, 7200),
   {
     ...number('tools.pressure_ratio', '上下文占用提醒阈值（比例）', 0.25, 0.9, 0.05),
     help: '上下文估算 token 数达到窗口容量的此比例时，提醒模型准备换窗。0.7 表示 70%；提醒本身不强制换窗。',

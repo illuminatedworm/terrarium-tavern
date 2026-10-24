@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 9、数据库 schema 为 11、个人数据包格式为 4。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 10、数据库 schema 为 12、个人数据包格式为 4。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -8,11 +8,11 @@
 
 `thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加自拟包装。默认值来自原预设对应条目，移除 SillyTavern 宏，并将独立边界标签与 Interleaving 包装改为 Markdown 分隔。新增的 roleplay_prompt 位于助手确认前，content_prompt 位于自检后，output_prompt 位于传输指令后；均可显式保存。请求只读取已保存文本；设置升级仅在旧值完全匹配旧默认值时更新明确列出的默认提示，自定义文本不变。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档为版本 9。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`，设置文档为版本 10。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 9；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 10；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -35,7 +35,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 9，由三个独立范围组成：
+数据库中的设置文档版本为 10，由三个独立范围组成：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
@@ -67,7 +67,7 @@ Chat Completions 流式响应兼容在结束后追加 `delta: {}` 的重复收�
 
 `shared.debug_full_agent_prefix` 为严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次 Full Agent 操作生效。仅在运行时内存保留最近两次 SDK 序列化后的生成请求正文。`full_agent_prefix_debug` 回合事件的 `payload.message` 用于现有通知：消息参数（`messages`／`input`／`contents`）一致或数组正常追加时显示“公共前缀与首个差异未错位”，不一致时显示“公共前缀或首个差异发生错位”；其他参数只显示“一致”或“不一致”，不展示具体字节信息。`payload.parameters` 保留诊断数据，按实际顶层 JSON 参数分别返回 `parameter`、`previous_bytes`、`current_bytes`、`status`；同时存在的参数还返回 `common_prefix_bytes` 和 `first_difference_byte`（从 0 开始，完全相同时为 `null`）。`status` 为 `identical`、`array_extended`、`changed`、`added` 或 `removed`；不存在一侧的字节数为 `null`。首次请求只通知已建立基线，参数结果为空。结果不包含参数原文。比较边界与暂存清理见[杂项设置](../guides/settings.md#杂项)。
 
-Full Agent 流式接收时通过 `text` 事件追加未保存预览，通过 `text_reset` 事件以 `payload.text` 替换预览（包括清空被否决或转为工具过程的文本）；客户端必须按事件序号去重，完整重放时从空文本开始。预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
+Full Agent 流式接收时，只把正文工具的 content 参数通过 `text` 事件追加到未保存预览；普通过程说明不进入预览。`text_reset` 以 `payload.text` 替换预览，用于清空被拒绝的正文提案、按完整结果校正或显示脚本处理后的正文。已接收的正文在后续工具请求期间保留。客户端必须按事件序号去重，完整重放时从空文本开始；预览快照与对应事件原子写入，正式剧情仍经全部校验后提交。
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商仅返回 `has_api_key`，不返回密钥原文。
 
@@ -180,11 +180,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 11**，设置文档为 **version 9**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 12**，设置文档为 **version 10**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
-存储层接受 schema 1–11，先只读核对版本与设置。数据库版本低于 11、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 11；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
+存储层接受 schema 1–12，先只读核对版本与设置。数据库版本低于 12、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 12；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
 
 schema 10 新增 `worldbooks`、`card_defaults`、`card_default_worldbooks` 三张表和剧情快照的可选字段 `worldbooks`（见[世界书库与挂载](#世界书库与挂载)）。schema 9 的剧情对话照常升级，升级前同样先备份；已有快照缺少该字段即没有挂载，无需改写。
 
@@ -220,3 +220,8 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 | [storage/store.py](../../src/tavern/storage/store.py) | 数据库版本检查、备份与持久化 |
 | [useSettingsEditor.ts](../../web/composables/useSettingsEditor.ts) | 保存队列、草稿与响应合并 |
 | [test_settings_document.py](../../tests/backend/test_settings_document.py) | 模式隔离、迁移、密钥保护与并发行为 |
+
+
+schema 12 为 `full_agent_progress.payload` 引入 version 2：保存 Runtime 预分配的 `output_id`、已接收的唯一 `roleplay`（content 与 auxiliary）和 `finish_requested`，并为工具结果轨迹保存内部的正文接收依据。未标版本的旧进度按 version 1 读取，保留已有工具结果与草稿；未知版本拒绝读取。Full Agent 剧情快照本身仍为 version 4。升级前完整备份，旧程序不能打开 schema 12。
+
+设置 version 9 → 10 增加 `full_agent.tools.max_duration_seconds`，整数秒、含边界 30–7200，默认 900。Full Agent 范围修订号增加，其他设置与用户保存的提示词原样保留。字段在“工具与记忆”页可编辑，参与范围保存、撤回和个人设置导入导出；运行中的回合继续使用开始时的快照。总时限覆盖模型、工具、自动整理和正文回调，等待用户审核不计入；显式继续取得新时限。

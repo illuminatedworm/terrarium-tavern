@@ -12,6 +12,7 @@ from tavern.core.models import Settings, TurnRequest
 from tavern.full_agent.protocol import success
 from tavern.full_agent.state import new_state
 from tavern.full_agent.tools import SPECS, AgentTools, tool_definitions
+from tests.backend.test_full_agent import Script
 from tools.export_full_agent_tools import ENTRY, EXAMPLES, NOTE_KEY, generated_documents
 
 
@@ -63,7 +64,10 @@ async def test_documented_minimal_results_match_execution(name):
         request=request,
         model_view=ModelView(document),
         tid="docs",
+        output_id="draft-body",
         patch_state_done=False,
+        story=None,
+        preview=SimpleNamespace(replace=lambda text: None),
         definitions=tool_definitions(request, {"policy_effective": "directed", "plot_enabled": True}),
     )
 
@@ -72,6 +76,7 @@ async def test_documented_minimal_results_match_execution(name):
         return {"matches": [{"text": "<lorebook>\n" + ENTRY["content"] + "\n</lorebook>"}]}
 
     owner.retrieve = retrieve
+    owner.script = Script([{"id": "draft-body", "role": "assistant", "raw": ""}], owner.snapshot)
     tools = AgentTools(owner)
     if name == "revise_content":
         await tools.execute("read_character", '{"ref":"description"}')

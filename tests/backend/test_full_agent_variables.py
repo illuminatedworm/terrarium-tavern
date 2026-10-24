@@ -110,7 +110,7 @@ async def test_delayed_injection_deduplicates_across_tools_and_turns_without_gra
         for first, second in zip(requests, requests[1:]):
             assert first == second[: len(first)]
         returns = [json.loads(m["content"]) for m in requests[-1] if m["role"] == "tool"]
-        assert returns[-2]["data"]["saved_to_draft"] and "error" in returns[-1]
+        assert all(item["data"]["saved_to_draft"] for item in returns[-2:])
 
         unrequested = Model(empty_patch(), "Third narrative")
         result, session = await turn(service, session, unrequested)

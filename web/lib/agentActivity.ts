@@ -3,6 +3,7 @@ export interface AgentActivity {
   order: number;
   event_seq?: number;
   kind: 'tool' | 'assistant';
+  is_story?: boolean;
   name?: string;
   summary: string;
   status: 'running' | 'returned' | 'error' | 'interrupted';
@@ -46,6 +47,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
         event_seq: event.seq,
         order,
         kind: 'assistant',
+        is_story: !!p.is_story,
         summary: String(p.content).slice(0, 180),
         status: 'returned',
         details: { content: String(p.content) },
@@ -60,7 +62,11 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
       const summary =
         p.name === 'write_plot'
           ? '包含未来剧情，展开查看'
-          : ['query', 'key', 'ref', 'path', 'reason', 'content'].map((key) => args?.[key]).find(Boolean);
+          : ['roleplay', 'kemini_emit_story'].includes(p.name)
+            ? '正文交付；展开查看原始参数'
+            : p.name === 'finish_turn'
+              ? '申请正文回调与统一校验'
+              : ['query', 'key', 'ref', 'path', 'reason', 'content'].map((key) => args?.[key]).find(Boolean);
       const finished = event.kind === 'full_agent_tool';
       items.set(id, {
         id,
@@ -105,6 +111,9 @@ export const toolLabels: Record<string, string> = {
   archive_note: '归档笔记',
   read_state: '读取状态',
   patch_state: '修改状态',
+  roleplay: '交付正文',
+  finish_turn: '申请收尾',
+  kemini_emit_story: '交付实验正文',
   read_character: '读取角色资料',
   revise_content: '修改设定',
   set_retrieval_query: '设置检索线索',

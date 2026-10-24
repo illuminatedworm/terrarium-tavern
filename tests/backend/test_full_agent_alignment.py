@@ -16,7 +16,7 @@ from tavern.full_agent.tools import AgentTools
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.request_context import ProviderRequestContext
 from tavern.storage.store import Store
-from tests.backend.test_full_agent import Model, current_text, handoff, runtime, turn, written
+from tests.backend.test_full_agent import Model, current_text, handoff, runtime, story_reply, turn, written
 
 
 def config(api="anthropic", mode="runtime", **kwargs):
@@ -716,6 +716,8 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
 
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
+            from tavern.scripting.native_response import ResponseCompletion
+
             self.requests.append(copy.deepcopy(messages))
             self.last_tool_calls = [
                 SimpleNamespace(
@@ -725,13 +727,16 @@ async def test_interrupted_tool_batch_resumes_only_unfinished_call(tmp_path, mon
                 )
                 for index, value in enumerate(("MEMORY_A", "MEMORY_B"))
             ]
-            return SimpleNamespace(content="", usage={}, finish_comment="stop")
+            self.last_completion = ResponseCompletion("tools", "tool_calls")
+            return SimpleNamespace(content="", usage={}, finish_reason="tool_calls")
 
     original = AgentTools.execute
     interrupted, executed = False, []
 
     async def execute(tools, name, arguments):
         nonlocal interrupted
+        if name != "write_handoff":
+            return await original(tools, name, arguments)
         value = json.loads(arguments)["current"][0]["text"]
         if value == "MEMORY_B" and not interrupted:
             interrupted = True
@@ -786,7 +791,7 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
                 {"type": "tool_use", "id": "good", "name": "read_state", "input": {}},
             ]
             if len(requests) == 1
-            else [{"type": "text", "text": "继续故事"}]
+            else story_reply("anthropic", "继续故事")["content"]
         )
         return httpx.Response(200, json=reply("anthropic", items))
 
@@ -814,7 +819,11 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
                 for b in m.get("content", [])
                 if isinstance(b, dict) and b.get("type") == "tool_result"
             ]
-            assert [(b["tool_use_id"], b.get("is_error", False)) for b in results] == [
+            assert [
+                (b["tool_use_id"], b.get("is_error", False))
+                for b in results
+                if b["tool_use_id"] in ("bad", "good")
+            ] == [
                 ("bad", True),
                 ("good", False),
             ]
@@ -834,17 +843,12 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
     final_items = (
         [
             {"type": "thinking", "thinking": "final thought", "signature": "final-signature"},
-            {"type": "text", "text": "FINAL_NARRATIVE"},
+            *story_reply("anthropic", "FINAL_NARRATIVE")["content"],
         ]
         if api == "anthropic"
         else [
             {"type": "reasoning", "id": "rs_final", "summary": [], "encrypted_content": "final-encrypted"},
-            {
-                "type": "message",
-                "id": "msg_final",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": "FINAL_NARRATIVE", "annotations": []}],
-            },
+            *story_reply("responses", "FINAL_NARRATIVE")["output"],
         ]
     )
 
@@ -881,16 +885,27 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
             final = next(
                 m["content"]
                 for m in bodies[2]["messages"]
-                if any(p.get("text") == "FINAL_NARRATIVE" for p in m["content"])
+                if any(p.get("input", {}).get("content") == "FINAL_NARRATIVE" for p in m["content"])
             )
             assert final[0] == final_items[0]
-            assert final[-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-            assert json.dumps(bodies[2]).count('"text": "FINAL_NARRATIVE"') == 1
+            boundary = next(
+                part
+                for message in bodies[2]["messages"]
+                for part in message["content"]
+                if "本轮正文与全部草稿已提交。" in part.get("text", "")
+            )
+            assert boundary["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+            assert json.dumps(bodies[2]).count("FINAL_NARRATIVE") == 1
         else:
             at = next(i for i, m in enumerate(bodies[1]["input"]) if m.get("id") == "rs_1")
             assert bodies[1]["input"][at : at + len(tool_items)] == tool_items
-            final = next(m for m in bodies[2]["input"] if m.get("id") == "msg_final")
-            assert final["content"][-1]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+            boundary = next(
+                part
+                for message in bodies[2]["input"]
+                for part in message.get("content", [])
+                if isinstance(part, dict) and part.get("text") == "本轮正文与全部草稿已提交。"
+            )
+            assert boundary["prompt_cache_breakpoint"] == {"mode": "explicit"}
             assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[2]["input"])
             assert requests[1].headers["x-codex-turn-state"] == "route-state"
             assert "x-codex-turn-state" not in requests[2].headers
@@ -966,7 +981,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             items = (
                 [
                     {"type": "thinking", "thinking": "hidden", "signature": "MODEL_PRIVATE_SIGNATURE"},
-                    {"type": "text", "text": "portable narrative"},
+                    *story_reply("anthropic", "portable narrative")["content"],
                 ]
                 if api == "anthropic"
                 else [
@@ -976,11 +991,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
                         "summary": [],
                         "encrypted_content": "MODEL_PRIVATE_SIGNATURE",
                     },
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": "portable narrative"}],
-                    },
+                    *story_reply("responses", "portable narrative")["output"],
                 ]
             )
             return httpx.Response(200, json=reply(api, items), headers={"x-codex-turn-state": "old-route"})
@@ -1105,7 +1116,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
                 },
             ]
             if len(requests) == 1
-            else None
+            else story_reply("responses", "done")["output"]
         )
         return httpx.Response(
             200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"}
@@ -1283,6 +1294,46 @@ def test_history_macro_change_rebuilds_once_and_records_why():
     assert third["messages"] == second["messages"]
 
 
+def test_committed_story_replays_only_final_model_text_without_draft_revocation():
+    from tavern.full_agent.state import new_state
+
+    session = {"id": uuid4().hex, "persona": "user", "agent_mode": "full_agent"}
+    snapshot = {"state": {}, "full_agent": new_state()}
+    # Callbacks or a model-placement regex removed hidden text from the draft.
+    history = [
+        {"id": "u1", "parent": None, "role": "user", "raw": "开门"},
+        {"id": "a1", "parent": "u1", "role": "assistant", "raw": "门开了。[隐藏]", "model": "门开了。"},
+    ]
+    draft = json.dumps({"content": "门开了。[隐藏]"}, ensure_ascii=False)
+    exchange = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "roleplay", "arguments": draft}}
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "c1",
+            "content": "{}",
+            "_roleplay_received": {"input_id": "u1", "content_hash": "draft"},
+        },
+    ]
+    trace = [
+        {"message_id": "a1", "window_id": snapshot["full_agent"]["window"]["id"], "message": message}
+        for message in exchange
+    ]
+    compiled = compile_window(
+        {"name": "fixture"}, session, history, snapshot, "继续", config(), [], trace=trace
+    )
+    sent = json.dumps(compiled["messages"], ensure_ascii=False)
+    assert "[隐藏]" not in sent and sent.count("门开了。") == 1
+    assert "本轮正文与全部草稿已提交。" in sent
+    # A previous turn's delivery is history, not a draft this turn revokes.
+    assert not any(m.get("source") == "roleplay_draft" for m in compiled["context_additions"])
+
+
 @pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency"])
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
@@ -1328,7 +1379,15 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
 
     def route(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json=reply(api, original if len(requests) == 1 else None))
+        return httpx.Response(
+            200,
+            json=reply(
+                api,
+                original
+                if len(requests) == 1
+                else story_reply(api, "done")["content" if api == "anthropic" else "output"],
+            ),
+        )
 
     async def factory(settings, capture=None, *, request_context=None):
         return transport(settings, route, request_context, capture)
@@ -1364,20 +1423,54 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
         await service.close()
 
 
-async def test_rejected_last_response_and_correction_survive_step_limit(tmp_path):
+async def test_duplicate_story_stops_without_replacing_body_or_running_its_tools(tmp_path):
     store, service, session = game(tmp_path)
     doc = store.settings_document()
     doc.full_agent.tools.max_steps = 2
     store.save_settings(doc)
     try:
-        result, current = await turn(
-            service, session, Model("rejected one", "rejected two"), update_variables=True
+        model = Model(
+            {"content": "accepted one", "calls": [("read_history", {"ref": "H2"})]},
+            {"content": "rejected two", "calls": [("write_handoff", handoff("must not run", through=None))]},
         )
+        result, current = await turn(service, session, model)
         assert result["status"] == "error" and current["revision"] == 0
+        assert "第二次正文" in result["error"] and len(model.requests) == 2
         progress = store.full_agent_progress(result["id"])
-        rejected = [i["message"] for i in progress["new_trace"] if i["message"].get("_full_agent_rejected")]
-        assert [m["content"] for m in rejected] == ["rejected one", "rejected two"]
-        assert "未提交" in progress["continuation"][-1]["content"]
+        assert progress["story"]["content"] == "accepted one"
+        assert not current_text(progress["snapshot"]["full_agent"])
+        assert not progress["model_completed"]
+    finally:
+        await service.close()
+
+
+async def test_native_pause_then_empty_end_preserves_the_one_story(tmp_path):
+    store, service, session = game(tmp_path, "anthropic")
+    requests = []
+
+    def route(request):
+        requests.append(json.loads(request.content))
+        payload = reply("anthropic", [{"type": "text", "text": "唯一正文"}] if len(requests) == 1 else [])
+        if len(requests) == 1:
+            payload["stop_reason"] = "pause_turn"
+        return httpx.Response(200, json=payload)
+
+    provider = transport(store.settings("full_agent"), route)
+    try:
+        result, current = await turn(service, session, provider)
+        assert result["status"] == "committed", result["error"]
+        assert len(requests) == 2 and current["messages"][-1]["raw"] == "唯一正文"
+        assert provider.last_completion.reason == "end_turn"
+        responses = [
+            e["payload"]["completion"]
+            for e in store.events(result["id"])
+            if e["kind"] == "full_agent_response"
+        ]
+        assert responses == [
+            {"action": "continue", "reason": "pause_turn"},
+            {"action": "end", "reason": "end_turn"},
+        ]
+        assert json.dumps(requests[1], ensure_ascii=False).count("唯一正文") == 1
     finally:
         await service.close()
 

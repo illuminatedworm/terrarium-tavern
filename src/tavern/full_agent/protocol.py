@@ -13,7 +13,6 @@ RECOVERY = {
     "PATCH_VALIDATION_FAILED": (True, "核对最新变量与 MVU 规则，修正补丁后重试。"),
     "CONTENT_LIMIT": (True, "精简本次写入内容后重试；不能截断读取的原文。"),
     "PROTECTED_TARGET": (False, "仅修改工具公开的业务字段；程序内部字段与执行配置不可修改。"),
-    "STATE_ALREADY_SUBMITTED": (False, "本轮变量已成功提交，不要重复调用 patch_state。"),
     "MIXED_CONTEXT_CALLS": (True, "本批次未执行任何工具；单独调用 new_context。"),
     "PARALLEL_TOOL_CALLS_DISABLED": (True, "每次回复只提出一个工具调用，等待结果后再继续。"),
     "CONTEXT_ROLLOVER_REQUIRED": (True, "单独调用 new_context 后继续本轮。"),

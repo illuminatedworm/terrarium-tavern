@@ -1,10 +1,45 @@
 """Lossless provider attachments beside the portable conversation, not instead of it."""
 
 import copy
+from dataclasses import dataclass
+from typing import Literal
 
 from tavern.core.cache_policy import fingerprint
 
 REASONING_FIELDS = ("reasoning", "reasoning_details", "reasoning_content")
+
+
+@dataclass(frozen=True)
+class ResponseCompletion:
+    action: Literal["tools", "continue", "end", "incomplete"]
+    reason: str
+
+
+def response_completion(api, payload, calls):
+    """Interpret an entire provider response, independently of transport EOF.
+
+    Keep ChatResponse.finish_reason compatible with the other agents. Full
+    Agent needs the original distinction between yielding for tools and ending
+    its turn; a Responses completion or Gemini STOP alone does not supply it.
+    """
+    if api == "chat_completions":
+        reason = payload["choices"][0]["finish_reason"]
+        action = {"stop": "end", "tool_calls": "tools"}.get(reason, "incomplete")
+    elif api == "anthropic":
+        reason = payload["stop_reason"]
+        action = {
+            "end_turn": "end",
+            "stop_sequence": "end",
+            "tool_use": "tools",
+            "pause_turn": "continue",
+        }.get(reason, "incomplete")
+    else:
+        reason = payload["status"] if api == "responses" else payload["candidates"][0]["finishReason"]
+        complete = reason == ("completed" if api == "responses" else "STOP")
+        action = ("tools" if calls else "end") if complete else "incomplete"
+    if action == "tools" and not calls:
+        action = "incomplete"
+    return ResponseCompletion(action, reason)
 
 
 def message_digest(message):

@@ -115,66 +115,111 @@ class ArgumentText:
         return "".join(output)
 
 
-class KeminiReply:
-    def __init__(self, config: KeminiConfig, transport: bool):
-        self.config, self.transport = config, transport
-        self.parser = AuxiliaryParser(config)
-        self.names, self.decoders = {}, {}
-        self.emitted = ""
-        self.parts = []
-        self.transported = False
+class ToolArguments:
+    """Stream the content string of the first call to one of ``names``.
+
+    Shared by Kemini transport and the Full Agent story preview. Only the first
+    choice/candidate is read, as StreamState does; fragments are held while a
+    split name can still match, so no argument prefix is lost.
+    """
+
+    def __init__(self, names):
+        self.names = frozenset(names)
+        self.call_names, self.pending = {}, {}
+        self.selected = None
+        self.decoder = ArgumentText()
 
     def _arguments(self, key, name, fragment):
         if name:
-            self.names[key] = name
-        if self.names.get(key) != TOOL_NAME:
+            self.call_names[key] = name
+        name = self.call_names.get(key, "")
+        if self.selected is not None and key != self.selected:
             return ""
-        return self.decoders.setdefault(key, ArgumentText()).feed(fragment)
+        if name not in self.names:
+            if any(target.startswith(name) for target in self.names):
+                self.pending.setdefault(key, []).append(fragment)
+            else:
+                self.pending.pop(key, None)
+            return ""
+        self.selected = key
+        return self.decoder.feed("".join(self.pending.pop(key, [])) + fragment)
+
+    def feed(self, event: dict, api: str) -> str:
+        chunks = []
+        if api == "chat_completions":
+            for choice in (event.get("choices") or [])[:1]:
+                for call in (choice.get("delta") or {}).get("tool_calls") or []:
+                    key, function = call.get("index", 0), call.get("function") or {}
+                    name = self.call_names.get(key, "") + (function.get("name") or "")
+                    chunks.append(self._arguments(key, name, function.get("arguments") or ""))
+        elif api == "responses":
+            kind, item = event.get("type"), event.get("item") or {}
+            if kind == "response.output_item.added" and item.get("type") == "function_call":
+                chunks.append(self._arguments(item["id"], item["name"], item.get("arguments") or ""))
+            elif kind == "response.function_call_arguments.delta":
+                chunks.append(self._arguments(event["item_id"], "", event.get("delta") or ""))
+            elif (
+                kind == "response.output_item.done"
+                and item.get("type") == "function_call"
+                and self.selected is None
+            ):
+                # Some relays send only completed items, without argument deltas.
+                chunks.append(self._arguments(item["id"], item["name"], item.get("arguments") or ""))
+        elif api == "anthropic":
+            kind, block = event.get("type"), event.get("content_block") or {}
+            if kind == "content_block_start" and block.get("type") == "tool_use":
+                # Streamed input starts empty; StreamState rebuilds it from deltas.
+                self._arguments(event["index"], block["name"], "")
+            elif kind == "content_block_delta" and "partial_json" in (event.get("delta") or {}):
+                chunks.append(self._arguments(event["index"], "", event["delta"]["partial_json"]))
+        else:
+            # Requests never enable Vertex streamFunctionCallArguments, so
+            # Gemini delivers each functionCall with its complete args once.
+            for candidate in (event.get("candidates") or [])[:1]:
+                for index, part in enumerate(candidate.get("content", {}).get("parts", [])):
+                    call = part.get("functionCall")
+                    if call:
+                        arguments = json.dumps(call.get("args", {}), ensure_ascii=False)
+                        chunks.append(
+                            self._arguments(call.get("id") or index, call.get("name", ""), arguments)
+                        )
+        return "".join(chunks)
+
+
+class KeminiReply:
+    def __init__(self, config: KeminiConfig, transport: bool, *, provisional=False):
+        self.config, self.transport = config, transport
+        self.parser = AuxiliaryParser(config)
+        self.story = ToolArguments({TOOL_NAME})
+        self.emitted = ""
+        self.parts = []
+        self.transported = False
+        self.provisional, self.preview_stopped = provisional, False
 
     def feed(self, event: dict, plain: str, api: str) -> str:
-        if not self.transport:
-            delta = self.parser.feed(plain)
-        else:
-            carried = ""
-            if api == "chat_completions":
-                for choice in event.get("choices") or []:
-                    for call in (choice.get("delta") or {}).get("tool_calls") or []:
-                        key = call.get("index", 0)
-                        fn = call.get("function") or {}
-                        name = self.names.get(key, "") + (fn.get("name") or "")
-                        carried += self._arguments(key, name, fn.get("arguments") or "")
-            elif api == "responses":
-                item = event.get("item") or {}
-                if event.get("type") == "response.output_item.added" and item.get("type") == "function_call":
-                    carried += self._arguments(item["id"], item["name"], item.get("arguments") or "")
-                elif event.get("type") == "response.function_call_arguments.delta":
-                    carried += self._arguments(event["item_id"], "", event.get("delta") or "")
-            elif api == "anthropic":
-                block = event.get("content_block") or {}
-                if event.get("type") == "content_block_start" and block.get("type") == "tool_use":
-                    self.names[event["index"]] = block["name"]
-                elif event.get("type") == "content_block_delta":
-                    carried += self._arguments(
-                        event["index"], "", (event.get("delta") or {}).get("partial_json") or ""
-                    )
-            else:
-                # Requests never enable Vertex streamFunctionCallArguments, so
-                # Gemini delivers each functionCall with its complete args once.
-                for candidate in event.get("candidates") or []:
-                    for part in candidate.get("content", {}).get("parts", []):
-                        call = part.get("functionCall") or {}
-                        args = call.get("args")
-                        if (
-                            call.get("name") == TOOL_NAME
-                            and isinstance(args, dict)
-                            and isinstance(args.get("content"), str)
-                        ):
-                            carried += args["content"]
-            delta = self.parser.feed(carried)
+        if self.preview_stopped:
+            return ""
+        try:
+            delta = self.parser.feed(self.story.feed(event, api) if self.transport else plain)
+        except ValueError:
+            if not self.provisional:
+                raise
+            # Full Agent validates the complete response. A partially decoded
+            # escape can invalidate only its preview, not interrupt the reader
+            # before authoritative arguments and any error tail arrive.
+            self.preview_stopped = True
+            return ""
         self.emitted += delta
         return delta
 
-    def finish(self, text: str, calls: list[NativeToolCall]) -> tuple[str, list[NativeToolCall]]:
+    def finish(
+        self, text: str, calls: list[NativeToolCall], *, preserve_story_tool=False
+    ) -> tuple[str, list[NativeToolCall]]:
+        if preserve_story_tool:
+            # Full Agent counts ordinary prose and the visible experimental
+            # transport together. Keep native calls/signatures until it accepts
+            # the one story; tool results still belong to the model's loop.
+            return text, calls
         synthetic = [call for call in calls if call.name == TOOL_NAME] if self.transport else []
         if synthetic:
             if len(synthetic) != 1 or len(calls) != 1:

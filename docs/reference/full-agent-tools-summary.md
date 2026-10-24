@@ -4,7 +4,7 @@
 
 ## 如何工作、为何这样设计
 
-Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型，循环至输出最终正文。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。
+Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型，普通文本输出一次完整正文，并按模型原生协议自然结束。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。
 
 设计目的是让模型按需取得完整资料，用交接笔记和长期笔记延续故事，并在授权下维护变量与设定。模型负责语义判断，程序负责身份定位、来源校验和一致性：H 引用定位剧情，L 引用定位世界书，真实 ID、版本和指纹留在后端。换窗降低上下文占用，原始剧情仍可查询；长期笔记按需读取，不自动全文注入。
 
@@ -16,7 +16,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `find_lore_for_edit` | 定位可编辑的普通条目 | `query: string`；`limit: integer=5` | 字面匹配标题、关键词和正文，包含停用条目；`*` 列出条目；返回 L 引用、标题与定位摘要。 |
 | `read_lore_entry` | 完整读取一个普通条目 | `ref: string`（如 `L1`） | 返回标题、正文、主／辅助关键词及启用状态，登记当前读取记录；保护目标不可读写。 |
 | `search_history` | 搜索当前分支剧情原文 | `query: string`；`limit: integer=5` | 字面检索，返回 H 引用及可选摘要；`*` 列最近记录，不搜索旧工具过程。 |
-| `read_history` | 完整读取剧情原文 | `ref: string`（如 `H1` 或 `H52-H58`） | 可读取当前用户输入；区间最多 8 条，按分支顺序逐条返回完整原文，H 与角色随“返回编号和角色”设置附带。 |
+| `read_history` | 完整读取剧情原文 | `ref: string`（如 `H1` 或 `H52-H58`） | 可读取当前用户输入和已接收的正文草稿；区间最多 8 条，按分支顺序逐条返回完整原文，H 与角色随“返回编号和角色”设置附带。 |
 | `write_handoff` | 更新交接笔记，不换窗 | `chapters: array=[]`；`current: array` | 章节默认范围由程序记录，可 revise／merge；current 整体替换；要点的 H 引用可省略。 |
 | `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
@@ -25,14 +25,14 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `archive_note` | 归档笔记 | `key: string` | 当前全文须已在上下文，否则先 read_note；归档项从普通搜索中退出，仍可按键读取或重新激活。 |
 | `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后按需更新。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "mvu"或"full"或"other"="mvu"` | mvu 读 stat_data；full 读全部模型可见状态；other 排除顶层 stat_data。路径相对所选范围，空串读完整范围；所有范围都隐藏内部数据，other 不提供变量补丁依据。 |
-| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时必须且只能成功一次，失败可修正重试；非空须有完整当前变量的上下文依据，否则读取；空数组免读取且不触发补丁脚本回调。 |
+| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时收尾前至少成功一次，可据最新状态继续修正；非空须有完整当前变量的上下文依据，否则读取；空数组免读取且不触发补丁脚本回调。 |
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
 | `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
 | `set_retrieval_query` | 覆盖本轮准备保存的下轮检索线索 | `query: string` | 最后一次成功调用生效；空串清空本轮线索，历史线索保留；随正文提交且不进入正文。 |
 
 ## 编辑参数补充
 
-`patch_state.operations` 每项必填 `op`、`path`：`add`／`replace`／`test` 另需任意 JSON `value`，`move`／`copy` 另需字符串 `from`，`remove` 无其他字段。路径相对 stat_data，使用 `/hp`；键内 `~`、`/` 转义为 `~0`、`~1`，点号无需转义，数组从 0 起，`add` 可用 `/-` 追加。非空补丁需要完整当前变量的上下文依据，没有时先 `read_state({"path":"","scope":"mvu"})`；空补丁免读取但仍消耗唯一成功提交。
+`patch_state.operations` 每项必填 `op`、`path`：`add`／`replace`／`test` 另需任意 JSON `value`，`move`／`copy` 另需字符串 `from`，`remove` 无其他字段。路径相对 stat_data，使用 `/hp`；键内 `~`、`/` 转义为 `~0`、`~1`，点号无需转义，数组从 0 起，`add` 可用 `/-` 追加。非空补丁需要完整当前变量的上下文依据，没有时先 `read_state({"path":"","scope":"mvu"})`；空补丁免读取并满足本轮变量任务要求。
 
 `revise_content` 的 `op` 和其余参数如下。`read_character.ref` 与 `set_character.field` 只允许：`name`、`description`、`personality`、`scenario`、`mes_example`、`system_prompt`、`post_history_instructions`。
 
@@ -48,9 +48,9 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 - 成功为 `{"ok":true,"data":{...}}`；失败为 `{"ok":false,"error":{"code":"...","message":"...","retryable":true,"next_action":"..."}}`。参数错误另附 expected_parameters；变量补丁错误附 patch_state_completed。错误恢复及终止原因见[完整协议](full-agent-tools.md)。
 - query 最长 1000 字符，除 set_retrieval_query 外不能空；limit 为 1–10。历史 ref、笔记 key 为 1–80 字符，世界书引用为 L 加正整数，状态 path 最长 200 字符。新笔记键支持字母、数字、下划线、中文、斜线、连字符、空格和点。
 - 交接／笔记／剧情规划的工具写入正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；comment 为必填的简短操作备注，1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。玩家界面允许清空剧情规划。
-- 关闭工具会移除其定义和执行资格；读取工具关闭不连带禁用已有充分上下文依据的写入。write_plot 统一由剧情规划开关控制。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。
+- 正文与收尾协议始终启用；其他工具关闭会移除其定义和执行资格；读取工具关闭不连带禁用已有充分上下文依据的写入。write_plot 统一由剧情规划开关控制。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。
 - 当前版本可见性由后端核对，自动资料、完整工具结果及模型自己写在工具参数中的完整当前文本均算；跨回合可沿用，退出上下文或版本不符时才需重读。失败／取消／预算耗尽保留可恢复草稿；明确拒绝审核会清除可恢复进度，正式剧情不变。
-- 工具循环默认最多 24 次模型请求，范围 2–100，包含工具续答和本地换窗；云端整理请求另计。额度耗尽时返回 BUDGET_EXHAUSTED 并保留进度，显式继续取得新额度，沿用已成功工具和变量提交标记。
+- 工具循环默认最多 24 次模型请求，范围 1–100，包含工具续答和本地换窗；云端整理请求另计。额度耗尽时返回 BUDGET_EXHAUSTED 并保留进度，显式继续取得新额度，沿用已成功工具、唯一正文和变量任务标记。整次运行另受 max_duration_seconds 限制，默认 900 秒、范围 30–7200 秒；持续接收数据不会延长总时限，等待审核不计入。
 
 依据：[工具定义](../../src/tavern/full_agent/tools.py)、[设定动作](../../src/tavern/full_agent/content.py)、[执行循环](../../src/tavern/full_agent/agent.py)。附录由 `tools/export_full_agent_tools.py` 更新，`--check` 核对是否与源码一致。
 
@@ -244,7 +244,7 @@ Create or fully replace a note by key; preserve still-valid information. Build o
 ### `write_plot`
 
 ```text
-Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. The current complete outline is supplied automatically; no prior read, source references or version argument is required. When empty, save an initial outline before the final story reply. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline.
+Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. The current complete outline is supplied automatically; no prior read, source references or version argument is required. When empty, save an initial outline before ending the turn. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline.
 ```
 
 请求：
@@ -298,7 +298,7 @@ Inspect or refresh runtime state using JSON Pointer relative to the selected sco
 ### `patch_state`
 
 ```text
-When variable updates are authorized, submit exactly one successful patch this turn; validation failures may be corrected and retried and do not count as success. Work from the current MVU values you already know, including your earlier tool calls and their successful results. If you do not know the current values or are unsure whether they are still current, use read_state(path="", scope="mvu") to refresh them. Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose.
+When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. Work from the current MVU values you already know, including your earlier tool calls and their successful results. If you do not know the current values or are unsure whether they are still current, use read_state(path="", scope="mvu") to refresh them. Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. Submit operations=[] to confirm no changes; this needs no read and changes no variables. Use this tool instead of MVU blocks in prose.
 ```
 
 请求：

@@ -222,14 +222,16 @@ export async function initMvu(greeting = '') {
   if (mirror.messages.length) mirror.messages.at(-1).variables = _.cloneDeep(mirror.state);
   return snapshot();
 }
-export async function process(text: string, extra: any[] = [], variableText?: string) {
+export async function process(text: string, extra: any[] = [], variableText?: string, receiveMessage = true) {
   // Separate background updates from narrative; omitted argument retains legacy SDK behavior.
   const result = variableText === '' && !extra.length
     ? {text, data: _.cloneDeep(mirror.state)}
     : await applyMvu(variableText ?? text,mirror.state,extra);
   mirror.state = result.data;
   if (mirror.messages.length) mirror.messages.at(-1).variables = _.cloneDeep(result.data);
-  await emit('MESSAGE_RECEIVED', mirror.messages.length-1);
+  // Variable tools run MVU events without pretending a story message arrived.
+  // The turn host dispatches MESSAGE_RECEIVED once, after all draft work is ready.
+  if (receiveMessage) await emit('MESSAGE_RECEIVED', mirror.messages.length-1);
   await flush();
   return {text: variableText === undefined ? result.text : text, ...snapshot()};
 }

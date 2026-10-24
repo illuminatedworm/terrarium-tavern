@@ -52,6 +52,10 @@ def copy_traces(db, session, ids, *, new_story):
             "SELECT seq,window_id,payload FROM full_agent_trace WHERE message_id=?", (original,)
         ).fetchall():
             payload = json.loads(row["payload"])
+            for key in ("_story_received", "_roleplay_received"):
+                receipt = payload.get(key)
+                if receipt:
+                    receipt["input_id"] = ids.get(receipt["input_id"], receipt["input_id"])
             value = payload.get("_runtime_context", {}).get("value")
             if isinstance(value, dict) and "input_id" in value:
                 value["input_id"] = ids.get(value["input_id"], value["input_id"])

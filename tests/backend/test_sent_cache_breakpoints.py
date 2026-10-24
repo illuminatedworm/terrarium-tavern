@@ -304,7 +304,7 @@ async def test_durable_history_survives_restart_backup_and_fork_without_cross_se
 @pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
 async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_path, monkeypatch, api, mode):
     from tavern.application.modes import ModeRuntime
-    from tests.backend.test_full_agent import ScriptHost
+    from tests.backend.test_full_agent import ScriptHost, story_reply
     from tests.backend.test_half_agent_alignment import sse
 
     store = Store(tmp_path)
@@ -330,14 +330,21 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
     def route(request):
         body = json.loads(request.content)
         seen.append(body)
-        payload = reply(api)
+        payload = story_reply(api, "OK") if mode == "full_agent" else reply(api)
         if not body.get("stream"):
             return httpx.Response(200, json=payload)
         if api == "responses":
             return sse(api, payload)
+        choice = payload["choices"][0]
+        delta = {key: value for key, value in choice["message"].items() if key != "role"}
+        if delta.get("tool_calls"):
+            delta["tool_calls"] = [{"index": index, **call} for index, call in enumerate(delta["tool_calls"])]
         events = [
-            {"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]},
-            {"choices": [{"delta": {}, "finish_reason": "stop"}], "usage": payload["usage"]},
+            {"choices": [{"delta": delta, "finish_reason": None}]},
+            {
+                "choices": [{"delta": {}, "finish_reason": choice["finish_reason"]}],
+                "usage": payload.get("usage", {}),
+            },
         ]
         return httpx.Response(
             200,

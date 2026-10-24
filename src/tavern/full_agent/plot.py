@@ -24,6 +24,6 @@ def plan_message(value):
         )
     else:
         text = (
-            "剧情规划已开启，当前大纲为空；此前大纲不再生效。先成功调用 write_plot 建立初始大纲，再回复正文。"
+            "剧情规划已开启，当前大纲为空；此前大纲不再生效。须在本轮结束前成功调用 write_plot 建立初始大纲。"
         )
     return "<tavern_plot>\n" + text + "\n</tavern_plot>"

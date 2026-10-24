@@ -89,19 +89,21 @@ async def test_optional_plot_initial_gate_success_observation_and_no_per_turn_wr
 
         session = enable(store, session)
         model = Model(
-            "提前正文不得提交",
-            ("write_plot", {"content": "近期港口交锋；远期依选择揭露旧信。"}),
+            {
+                "content": "先交付正文，等待大纲完成",
+                "calls": [("write_plot", {"content": "近期港口交锋；远期依选择揭露旧信。"})],
+            },
             ("read_state", {}),
-            "有效正文",
+            "",
         )
         result, session = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        assert session["messages"][-1]["raw"] == "有效正文"
+        assert session["messages"][-1]["raw"] == "先交付正文，等待大纲完成"
         assert session["snapshot"]["full_agent"]["plot"] == {
             "text": "近期港口交锋；远期依选择揭露旧信。",
             "revision": 1,
         }
-        assert len(model.requests) == 4
+        assert len(model.requests) == 3
         assert (
             len(outlines(model.requests[-1]["messages"])) == 1
         )  # initial empty frame; accepted tool carries the update
@@ -130,7 +132,7 @@ async def test_failed_empty_and_oversized_plot_leave_current_draft_intact(story)
         errors = [
             e["payload"]["result"]["error"]["code"]
             for e in store.events(result["id"])
-            if e["kind"] == "full_agent_tool"
+            if e["kind"] == "full_agent_tool" and "error" in e["payload"]["result"]
         ]
         assert errors == ["CONTENT_LIMIT", "CONTENT_LIMIT"]
         assert current["snapshot"]["full_agent"]["plot"] == session["snapshot"]["full_agent"]["plot"]
@@ -423,7 +425,7 @@ def test_plot_frames_follow_edits_disable_clear_and_do_not_expose_metadata():
         assert len(additions) == 1
         assert text in additions[0]["content"]
         ctx.records.extend(current["context_additions"])
-    assert "先成功调用 write_plot" in outlines(current["messages"])[-1]
+    assert "本轮结束前成功调用 write_plot" in outlines(current["messages"])[-1]
     ctx.snapshot["full_agent"]["plot"]["text"] = "暂停后重开大纲"
     ctx.session["plot_enabled"] = False
     paused = ctx.compile()

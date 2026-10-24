@@ -696,7 +696,7 @@ async def test_owner_api_allows_running_turn_and_preserves_story_revision(tmp_pa
 
 async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_without_revision_conflict(tmp_path):
     from tavern.core.models import TurnRequest
-    from tests.backend.test_full_agent import runtime
+    from tests.backend.test_full_agent import runtime, story_reply
 
     store, session = story(tmp_path, "full_agent")
     document = store.settings_document()
@@ -724,7 +724,7 @@ async def test_full_agent_tool_continuation_refreshes_adapter_and_commits_withou
                 ],
             }
         else:
-            message = {"role": "assistant", "content": "Narrative"}
+            message = story_reply("chat_completions", "Narrative")["choices"][0]["message"]
         return httpx.Response(
             200,
             json={

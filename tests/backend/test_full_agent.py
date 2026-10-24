@@ -80,30 +80,125 @@ class Model:
         self.responses = list(responses)
         self.requests = []
         self.last_tool_calls = []
+        self.last_completion = None
         self.closed = False
 
     async def chat_complete(self, messages, **kwargs):
+        from tavern.scripting.native_response import ResponseCompletion
+
         self.requests.append(copy.deepcopy({"messages": messages, **kwargs}))
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
         self.last_tool_calls = []
+        if isinstance(response, dict):
+            self.last_tool_calls = [
+                SimpleNamespace(id=f"call{len(self.requests)}-{i}", name=name, arguments=json.dumps(args))
+                for i, (name, args) in enumerate(response.get("calls", []))
+            ]
+            finish = response.get("finish_reason", "tool_calls" if self.last_tool_calls else "stop")
+            self.last_completion = ResponseCompletion("end" if finish == "stop" else "tools", finish)
+            return SimpleNamespace(content=response.get("content", ""), usage={}, finish_reason=finish)
         if isinstance(response, tuple):
             name, args = response
             arguments = json.dumps(args, ensure_ascii=False).replace(LAST, last_committed(messages))
             self.last_tool_calls = [
                 SimpleNamespace(id=f"call{len(self.requests)}", name=name, arguments=arguments)
             ]
-            return SimpleNamespace(content="工作过程不会混入正文", usage={}, finish_comment="tool_calls")
-        return SimpleNamespace(content=response, usage={}, finish_comment="stop")
+            self.last_completion = ResponseCompletion("tools", "tool_calls")
+            return SimpleNamespace(content="", usage={}, finish_reason="tool_calls")
+        self.last_completion = ResponseCompletion("end", "stop")
+        return SimpleNamespace(content=response, usage={}, finish_reason="stop")
 
     async def close(self):
         self.closed = True
 
 
+def native_reply(api, calls=(), text="", marker=""):
+    if api == "chat_completions":
+        return {
+            "model": "fixture",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls" if calls else "stop",
+                    "message": {
+                        "content": text,
+                        "reasoning_content": marker,
+                        "tool_calls": [
+                            {
+                                "id": cid,
+                                "type": "function",
+                                "function": {"name": name, "arguments": json.dumps(args)},
+                            }
+                            for cid, name, args in calls
+                        ],
+                    },
+                }
+            ],
+        }
+    if api == "gemini":
+        parts = [{"text": marker, "thought": True}] if marker else []
+        parts += [{"functionCall": {"id": cid, "name": name, "args": args}} for cid, name, args in calls]
+        if text:
+            parts.append({"text": text})
+        return {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
+    if api == "anthropic":
+        content = [{"type": "thinking", "thinking": marker, "signature": marker}] if marker else []
+        content += [{"type": "tool_use", "id": cid, "name": name, "input": args} for cid, name, args in calls]
+        if text:
+            content.append({"type": "text", "text": text})
+        return {
+            "id": "msg_fixture",
+            "model": "fixture",
+            "content": content,
+            "stop_reason": "tool_use" if calls else "end_turn",
+            "usage": {},
+        }
+    output = (
+        [{"type": "reasoning", "id": "rs_" + marker, "summary": [], "encrypted_content": marker}]
+        if marker
+        else []
+    )
+    output += [
+        {
+            "type": "function_call",
+            "id": "fc_" + cid,
+            "call_id": cid,
+            "name": name,
+            "arguments": json.dumps(args),
+        }
+        for cid, name, args in calls
+    ]
+    if text:
+        output.append(
+            {
+                "type": "message",
+                "id": "msg_fixture",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+        )
+    return {"id": "resp_fixture", "model": "fixture", "output": output, "status": "completed", "usage": {}}
+
+
+def story_reply(api, text="正文", *, calls=()):
+    return native_reply(api, calls, text=text)
+
+
 def tool_exchanges(trace):
-    # Durable traces also carry runtime frames and final-response attachments.
-    return [item for item in trace if item["message"].get("tool_calls") or item["message"]["role"] == "tool"]
+    # The opt-in experimental text transport is not a business operation.
+    protocol_ids = {
+        call["id"]
+        for item in trace
+        for call in item["message"].get("tool_calls", [])
+        if call["function"]["name"] == "kemini_emit_story"
+    }
+    return [
+        item
+        for item in trace
+        if any(call["id"] not in protocol_ids for call in item["message"].get("tool_calls", []))
+        or (item["message"]["role"] == "tool" and item["message"].get("tool_call_id") not in protocol_ids)
+    ]
 
 
 def test_tool_result_field_options(story):
@@ -186,7 +281,7 @@ def runtime(store):
 
 
 async def turn(service, session, model, **kwargs):
-    service.full.provider_factory = lambda: model
+    service.full.provider_factory = (lambda: model) if model is not None else None
     request = TurnRequest(
         text="我答应明天在钟楼见面。",
         operation_id=f"test-{session['revision']}",
@@ -238,7 +333,7 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
                 db.execute(
                     "SELECT count(*) FROM full_agent_trace WHERE json_extract(payload,'$.role')='tool'"
                 ).fetchone()[0]
-                == 4
+                == 4  # Four maintenance results; ordinary prose is not a tool.
             )
         follow = Model("第二天如约而至。")
         result2, _ = await turn(service, current, follow)
@@ -302,30 +397,28 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
         result_text = next(m["content"] for m in model.requests[1]["messages"] if m["role"] == "tool")
         assert "本轮未要求更新" in result_text
         assert not any(
-            m["content"].startswith("本轮须调用 patch_state")
+            m["content"].startswith("本轮须至少成功调用一次 patch_state")
             for m in model.requests[0]["messages"]
             if isinstance(m.get("content"), str)
         )
 
         required = Model(
-            "过早的正文",
-            ("read_state", {}),
+            {"content": "先交付的正文", "calls": [("read_state", {})]},
             ("patch_state", {"operations": operations, "comment": "能量变化"}),
-            "最终正文",
+            "",
         )
         result, current = await turn(service, current, required, update_variables=True)
         assert result["status"] == "committed", result["error"]
-        assert len(required.requests) == 4
+        assert len(required.requests) == 3
         assert {tool["function"]["name"] for tool in required.requests[0]["extra_body"]["tools"]} == names
         messages = required.requests[0]["messages"]
         input_index = max(
             i for i, m in enumerate(messages) if m["role"] == "user" and "我答应明天" in m["content"]
         )
-        assert messages[input_index - 1]["role"] == "assistant"
-        assert messages[input_index + 1]["role"] == "system"
-        assert messages[input_index + 1]["content"].startswith("本轮须调用 patch_state")
-        assert any(e["kind"] == "full_agent_reply_rejected" for e in store.events(result["id"]))
-        assert current["messages"][-1]["raw"] == "最终正文"
+        assert any(
+            m["content"].startswith("本轮须至少成功调用一次 patch_state") for m in messages[input_index + 1 :]
+        )
+        assert current["messages"][-1]["raw"] == "先交付的正文"
 
         repeated = Model(
             ("read_state", {}),
@@ -339,7 +432,7 @@ async def test_mvu_tool_schema_stays_stable_and_runtime_rejects_unrequested_call
             json.loads(m["content"]) for m in repeated.requests[-1]["messages"] if m["role"] == "tool"
         ][-2:]
         assert returns[0]["data"]["saved_to_draft"] is True
-        assert "不允许重复更新" in returns[1]["error"]["message"]
+        assert returns[1]["data"]["saved_to_draft"] is True
     finally:
         await service.close()
 
@@ -610,15 +703,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
                     }
                 ]
             else:
-                output = [
-                    {
-                        "type": "message",
-                        "id": "msg_x",
-                        "role": "assistant",
-                        "status": "completed",
-                        "content": [{"type": "output_text", "text": "正文", "annotations": []}],
-                    }
-                ]
+                output = story_reply("responses")["output"]
             return sdk_httpx.Response(
                 200,
                 json={
@@ -648,7 +733,7 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
             }
             finish = "tool_calls"
         else:
-            message, finish = {"role": "assistant", "content": "正文"}, "stop"
+            message, finish = story_reply("chat_completions")["choices"][0]["message"], "stop"
         return sdk_httpx.Response(
             200,
             json={
@@ -1002,7 +1087,23 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
 
 async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    document = json.loads(Path("samples/星航状态卡.json").read_bytes())
+    document["data"]["extensions"]["tavern_helper"]["scripts"].append(
+        {
+            "id": "message-counter",
+            "enabled": True,
+            "content": """
+        eventOn('MESSAGE_RECEIVED', async () => {
+            await Promise.resolve();
+            const data = getVariables({type:'chat'});
+            data.message_callbacks = (data.message_callbacks || 0) + 1;
+            data.energy_at_message = data.stat_data.能量;
+            replaceVariables(data, {type:'chat'});
+        });
+        """,
+        }
+    )
+    card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     settings = store.settings()
@@ -1032,6 +1133,8 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         service.review(result["id"], True)
         current = store.session(session["id"])
         assert current["snapshot"]["state"]["stat_data"]["能量"] == 4
+        assert current["snapshot"]["state"]["message_callbacks"] == 1
+        assert current["snapshot"]["state"]["energy_at_message"] == 4
         assert "能量" in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert "initialized_lorebooks" not in json.dumps(model.requests[1]["messages"], ensure_ascii=False)
         assert len(current["messages"]) == 3
@@ -1055,11 +1158,22 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
             service,
             session,
             Model(
+                {"content": "洛伊带你来到观测窗。", "calls": [("read_history", {"ref": "H3"})]},
                 ("read_state", {}),
                 (
                     "patch_state",
                     {"operations": [{"op": "replace", "path": "/能量", "value": 4}], "comment": "本轮变化"},
                 ),
+                (
+                    "write_note",
+                    {
+                        "key": "本轮场景",
+                        "content": "洛伊带用户来到观测窗。",
+                        "kind": "fact",
+                        "sources": ["H3"],
+                    },
+                ),
+                ("new_context", {"handoff": handoff("目前能量为4"), "keep_recent": 0}),
                 RuntimeError("model disconnected"),
             ),
             update_variables=True,
@@ -1067,7 +1181,21 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         assert failed["status"] == "error"
         assert unchanged["snapshot"]["state"]["stat_data"]["能量"] != 4
         assert store.full_agent_progress(failed["id"])["patch_state_done"] is True
-        model = Model("洛伊带你来到观测窗。")
+        progress = store.full_agent_progress(failed["id"])
+        delivered = next(
+            row["message"]["_story_received"]
+            for row in progress["new_trace"]
+            if row["message"].get("_story_received")
+        )
+        assert delivered["input_id"] == progress["user"]["id"]
+        assert progress["snapshot"]["full_agent"]["notes"]["本轮场景"]["sources"] == [
+            {"message_id": progress["output_id"]}
+        ]
+        assert store.full_agent_progress(failed["id"])["story"]["content"] == "洛伊带你来到观测窗。"
+        model = Model(
+            ("read_note", {"key": "本轮场景"}),
+            "",
+        )
         service.full.provider_factory = lambda: model
         resumed = service.submit(
             session["id"],
@@ -1081,9 +1209,49 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         )
         await service.tasks[resumed["id"]]
         assert store.turn(resumed["id"])["status"] == "awaiting_review"
-        assert any(m["role"] == "tool" and "MVU" in m["content"] for m in model.requests[0]["messages"])
+        assert any(
+            "<roleplay_draft>\n洛伊带你来到观测窗。" in m.get("content", "")
+            for m in model.requests[0]["messages"]
+        )
         service.review(resumed["id"], True)
-        assert store.session(session["id"])["snapshot"]["state"]["stat_data"]["能量"] == 4
+        current = store.session(session["id"])
+        assert current["snapshot"]["state"]["stat_data"]["能量"] == 4
+        assert current["messages"][-1]["raw"] == "洛伊带你来到观测窗。"
+        assert current["snapshot"]["full_agent"]["notes"]["本轮场景"]["sources"] == [
+            {"message_id": current["head"]}
+        ]
+        assert any('"sources":["H3"]' in m.get("content", "") for m in model.requests[-1]["messages"])
+        from tavern.full_agent.tools import tool_definitions
+
+        document = store.session_card(current["id"])["document"]
+        settings = store.session_settings(current).for_role("full_agent")
+        definitions = tool_definitions(
+            TurnRequest(operation_id="preview", expected_revision=current["revision"]),
+            current,
+            settings.full_agent_config,
+            settings=settings,
+            document=document,
+        )
+        replayed = compile_window(
+            document,
+            current,
+            current["messages"],
+            current["snapshot"],
+            "继续",
+            settings,
+            definitions,
+            trace=load_trace(store, current["id"], current["messages"]),
+        )
+        assert replayed["context_ledger"]["rebuild_reason"] is None
+        # The retained draft frame already carries the complete story after
+        # rollover; the committed history must not add a second prose copy.
+        assert (
+            "\n".join(m.get("content", "") for m in replayed["messages"]).count("洛伊带你来到观测窗。") == 1
+        )
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        assert fork["snapshot"]["full_agent"]["notes"]["本轮场景"]["sources"] == [
+            {"message_id": fork["head"]}
+        ]
     finally:
         await service.close()
 
@@ -1139,6 +1307,7 @@ async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(stor
         settings,
         user,
         None,
+        output_id="pending-output",
     )
     text = "精确原文不可丢失。" * 300
     owner.source_history[0]["raw"] = text
@@ -1237,6 +1406,7 @@ async def test_note_update_and_reactivation_require_visible_version_after_rollov
         store.settings().for_role("full_agent"),
         {"id": "input", "role": "user", "raw": "继续"},
         None,
+        output_id="pending-output",
     )
     old = {
         "key": "线索",
@@ -1344,6 +1514,7 @@ def test_tool_references_stay_stable_when_documents_are_reordered(story):
             store.settings().for_role("full_agent"),
             {"id": "input", "role": "user", "raw": "输入"},
             None,
+            output_id="pending-output",
         )
 
     first = agent(document)
@@ -1392,14 +1563,16 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"}
         assert (
-            "When variable updates are authorized, submit exactly one successful patch this turn"
+            "When variable updates are authorized, submit at least one successful patch this turn"
             in definitions["patch_state"]["description"]
         )
         assert (
             "validation failures may be corrected and retried and do not count as success"
             in definitions["patch_state"]["description"]
         )
-        assert not any(m.get("content", "").startswith("本轮须调用 patch_state") for m in wire["messages"])
+        assert not any(
+            m.get("content", "").startswith("本轮须至少成功调用一次 patch_state") for m in wire["messages"]
+        )
         assert "1536 tokens" in definitions["new_context"]["description"]
         assert "3072 tokens" in definitions["write_note"]["description"]
         assert "Call alone" in definitions["new_context"]["description"]
@@ -1635,19 +1808,33 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
     session = store.session(session["id"])
     service = runtime(store)
     model = Model(
-        "这条正文必须被否决",
         ("write_handoff", handoff("这个操作也必须被否决", through=None)),
         ("new_context", {"handoff": handoff("换窗参数错误"), "keep_recent": 99}),
         ("new_context", {"handoff": handoff("新交接保留必要经历"), "keep_recent": 0}),
         "换窗后继续回应玩家。",
     )
     try:
-        result, current = await turn(service, session, model)
+        premature = Model("这条正文必须被否决")
+        failed, _ = await turn(service, session, premature)
+        assert failed["status"] == "error" and len(premature.requests) == 1
+        assert store.full_agent_progress(failed["id"])["story"] is None
+        service.full.provider_factory = lambda: model
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id="rollover-resume",
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
+        await service.tasks[resumed["id"]]
+        result, current = store.turn(resumed["id"]), store.session(session["id"])
         assert result["status"] == "committed", result["error"]
         assert current["messages"][-1]["raw"] == "换窗后继续回应玩家。"
         assert current_text(current["snapshot"]["full_agent"]) == "新交接保留必要经历"
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
-        for request in model.requests[:4]:
+        for request in [premature.requests[0], *model.requests[:3]]:
             assert request["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
             assert request["extra_body"]["parallel_tool_calls"] is False
         assert model.requests[-1]["extra_body"]["tool_choice"] == "auto"
@@ -1655,9 +1842,9 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
         assert large in str(model.requests[0]["messages"])
         assert large not in str(model.requests[-1]["messages"])
         assert "我答应明天在钟楼见面" in str(model.requests[-1]["messages"])
-        assert "已否决且未执行" in str(model.requests[2]["messages"])
+        assert "已否决且未执行" in str(model.requests[1]["messages"])
         assert "这个操作也必须被否决" not in str(
-            [m for m in model.requests[2]["messages"] if m["role"] == "system"]
+            [m for m in model.requests[1]["messages"] if m["role"] == "system"]
         )
         assert not any(
             e["kind"] == "text" and e["payload"].get("text") == "这条正文必须被否决"

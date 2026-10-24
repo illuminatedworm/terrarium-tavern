@@ -187,7 +187,9 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
             if body.get("instructions"):
                 assert body["tool_choice"] == "none"
                 return sse(compact_response(number=len(wire)))
-            return sse(compact_response("The next scene.", len(wire)))
+            response = compact_response("", len(wire))
+            response["output"].extend(completed("The next scene.")["output"])
+            return sse(response)
 
         store.chatgpt.http_transport = httpx.MockTransport(route)
         result, session = await operate(service, session, "enable_compact")

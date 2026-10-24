@@ -48,7 +48,7 @@ def content_history(messages):
         if index in calls:
             changed = True
             item["tool_calls"] = [call for call in item["tool_calls"] if call["id"] not in calls[index]]
-            if not item["tool_calls"]:
+            if not item["tool_calls"] and not item.get("_story_received"):
                 continue
         if index in results:
             continue

@@ -255,7 +255,7 @@ SPECS = {
         Plot,
         "Create or fully replace this branch's rolling author-level stage outline. Available only when plot planning is enabled. "
         "The current complete outline is supplied automatically; no prior read, source references or version argument is required. "
-        "When empty, save an initial outline before the final story reply. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. "
+        "When empty, save an initial outline before ending the turn. Otherwise revise when stages finish, turning points occur, the player diverges or premises change; no per-turn rewrite is required. "
         "Keep near stages concrete and distant stages broad, with possible events, turns, foreshadowing and conditions. These are revisable possibilities, not established facts, character knowledge or predetermined player actions. "
         "Player edits remain an editable draft. Success saves to the turn draft; failure preserves the old outline.",
     ),
@@ -272,11 +272,11 @@ SPECS = {
     ),
     "patch_state": (
         StatePatch,
-        "When variable updates are authorized, submit exactly one successful patch this turn; validation failures may be corrected and retried and do not count as success. "
+        "When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. "
         'Work from the current MVU values you already know, including your earlier tool calls and their successful results. If you do not know the current values or are unsure whether they are still current, use read_state(path="", scope="mvu") to refresh them. '
         "Apply MVU-validated JSON Patch relative to stat_data, e.g. /hp, not /stat_data/hp. "
         "Follow the latest <mvu_rules> and align with the final narrative. Include relevant story evidence in a brief user-facing comment. "
-        "Submit operations=[] to confirm no changes; this needs no read, changes no variables and consumes the one successful submission. Use this tool instead of MVU blocks in prose.",
+        "Submit operations=[] to confirm no changes; this needs no read and changes no variables. Use this tool instead of MVU blocks in prose.",
     ),
     "revise_content": (
         ContentRevision,
@@ -402,8 +402,6 @@ class AgentTools:
         if name == "patch_state":
             if not owner.request.update_variables:
                 raise ToolError("PERMISSION_DENIED", "本轮未要求更新 MVU 变量，不允许调用 patch_state")
-            if owner.patch_state_done:
-                raise ToolError("STATE_ALREADY_SUBMITTED", "本轮已完成一次 patch_state，不允许重复更新")
         model = SPECS[name][0]
         try:
             args = model.model_validate_json(arguments)
@@ -497,7 +495,14 @@ class AgentTools:
             return {"saved_to_draft": True}
         if name == "search_notes":
             rows = [
-                {**note_view(n, owner.source_history), "text": n["content"]}
+                {
+                    **note_view(
+                        n,
+                        owner.source_history,
+                        pending_reply_id=owner.output_id if owner.story is None else None,
+                    ),
+                    "text": n["content"],
+                }
                 for n in state["notes"].values()
                 if n["status"] == "active"
             ]
@@ -514,11 +519,20 @@ class AgentTools:
             note = state["notes"].get(args.key)
             if note is None:
                 raise ToolError("INVALID_REFERENCE", "笔记 key 不存在")
-            meta = note_view(note, owner.source_history)
+            meta = note_view(
+                note,
+                owner.source_history,
+                pending_reply_id=owner.output_id if owner.story is None else None,
+            )
             meta.pop("revision")
+            notice = meta.pop("notice", None)
             self.reads.read_note(args.key)
             return self.read(
-                meta.pop("content"), **(meta if result_field(owner.session, name, "include_metadata") else {})
+                meta.pop("content"),
+                **(meta if result_field(owner.session, name, "include_metadata") else {}),
+                # A withdrawn source affects interpretation even when optional
+                # note metadata is hidden.
+                **({"notice": notice} if notice else {}),
             )
         if name == "write_note":
             self.cap_text(args.content, owner.settings.full_agent_config.note_tokens, "笔记")
@@ -614,7 +628,7 @@ class AgentTools:
                     raise ToolError("PATCH_VALIDATION_FAILED", str(error)) from None
                 before = await owner.script.call("snapshot")
                 try:
-                    result = await owner.script.call("process", "", operations, "")
+                    result = await owner.script.call("process", "", operations, "", False)
                 except RuntimeRollbackError as error:
                     raise TurnError(
                         "SCRIPT_RESTORE_FAILED", "变量工具失败且运行时恢复失败，停止回合；草稿未提交"

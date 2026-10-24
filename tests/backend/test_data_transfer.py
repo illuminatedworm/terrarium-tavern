@@ -69,7 +69,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 4
+        assert payload["version"] == 5
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
             from tavern.full_agent.state import note_view

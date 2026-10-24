@@ -52,10 +52,10 @@ async def test_dialogue_uses_durable_trace_and_pages_results_without_reasoning(t
             response = await client.post(prefix + "/activity", json={"message_ids": [message_id]})
             assert response.status_code == 200
             items = response.json()["messages"][message_id]
-            assert [item["kind"] for item in items] == ["assistant", "tool"]
-            assert items[1]["status"] == "returned"
+            assert [item["kind"] for item in items] == ["tool", "assistant"]
+            assert items[0]["status"] == "returned" and items[1]["is_story"]
             assert "PRIVATE_REASONING" not in response.text and large_result[:500] not in response.text
-            endpoint = f"{prefix}/messages/{message_id}/activity/{items[1]['id']}"
+            endpoint = f"{prefix}/messages/{message_id}/activity/{items[0]['id']}"
             arguments = await client.get(endpoint, params={"part": "arguments"})
             assert json.loads(arguments.json()["text"]) == {"ref": "H2"}
             offset, chunks = 0, []
@@ -90,9 +90,13 @@ async def test_dialogue_activity_follows_selected_versions_and_fork_identity(tmp
 
             assert (await fetch(first["id"], first["head"])).status_code == 404
             current = (await fetch(second["id"], second["head"])).json()["messages"][second["head"]]
-            assert [item["name"] for item in current if item["kind"] == "tool"] == ["write_handoff"]
+            assert [item["name"] for item in current if item["kind"] == "tool"] == [
+                "write_handoff",
+            ]
             inherited = (await fetch(fork["id"], fork["head"])).json()["messages"][fork["head"]]
-            assert [item["name"] for item in inherited if item["kind"] == "tool"] == ["read_history"]
+            assert [item["name"] for item in inherited if item["kind"] == "tool"] == [
+                "read_history",
+            ]
             assert (await fetch(fork["id"], first["head"])).status_code == 404
             switched = store.switch_message_version(
                 second["id"], second["head"], first["head"], second["revision"]

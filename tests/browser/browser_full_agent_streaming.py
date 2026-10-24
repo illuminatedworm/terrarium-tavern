@@ -1,5 +1,6 @@
 """Production Full Agent transport + real browser: previews, replay, isolation and retry."""
 
+import argparse
 import asyncio
 import json
 import socket
@@ -14,7 +15,14 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.scripting.model_transport import ModelTransport
-from tests.backend.test_full_agent_streaming import delta, terminal, tool_events
+from tests.backend.test_full_agent_streaming import (
+    body_delta,
+    body_end,
+    body_start,
+    delta,
+    story_events,
+    tool_events,
+)
 
 
 class BrowserStream(httpx.AsyncByteStream):
@@ -24,8 +32,7 @@ class BrowserStream(httpx.AsyncByteStream):
     async def __aiter__(self):
         for piece in self.pieces:
             if isinstance(piece, Event):
-                while not piece.is_set():
-                    await asyncio.sleep(0.02)
+                await asyncio.to_thread(piece.wait)
             elif isinstance(piece, Exception):
                 raise piece
             else:
@@ -35,7 +42,7 @@ class BrowserStream(httpx.AsyncByteStream):
         self.closed = True
 
 
-async def main():
+async def main(single_viewport=False):
     output = Path(".cache/full-agent-streaming")
     output.mkdir(parents=True, exist_ok=True)
     gates = [Event() for _ in range(4)]
@@ -57,9 +64,13 @@ async def main():
         store.update_session(other["id"], 0, title="另一个故事")
         streams = [
             BrowserStream(delta("先整理过程资料"), gates[0], *tool_events()),
-            BrowserStream(gates[1], delta("第一段正在生成。"), gates[2], delta("这是第二段。"), terminal()),
-            BrowserStream(delta("失败后保留的未提交片段"), gates[3], httpx.ReadError("fixture disconnected")),
-            BrowserStream(delta("重试后的完整正文"), terminal()),
+            BrowserStream(
+                gates[1], body_start("第一段正在生成。"), gates[2], body_delta("这是第二段。"), *body_end()
+            ),
+            BrowserStream(
+                body_start("失败后保留的未提交片段"), gates[3], httpx.ReadError("fixture disconnected")
+            ),
+            BrowserStream(*story_events("重试后的完整正文")),
         ]
         bodies = []
 
@@ -80,14 +91,18 @@ async def main():
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         address = f"http://127.0.0.1:{sock.getsockname()[1]}"
-        server = uvicorn.Server(uvicorn.Config(app, log_level="error"))
+        ready = Event()
+
+        class ReadyServer(uvicorn.Server):
+            async def startup(self, sockets=None):
+                await super().startup(sockets)
+                ready.set()
+
+        server = ReadyServer(uvicorn.Config(app, log_level="error"))
         thread = Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
         thread.start()
         try:
-            for _ in range(100):
-                if server.started:
-                    break
-                await asyncio.sleep(0.05)
+            assert await asyncio.to_thread(ready.wait, 5), "Acceptance server did not start"
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch()
                 page = await browser.new_page(viewport={"width": 1920, "height": 1080})
@@ -101,25 +116,30 @@ async def main():
                     await expect(send).to_be_visible()
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("继续故事")
                     await send.click()
-                    await expect(page.locator(".draft")).to_contain_text("先整理过程资料")
-                    await expect(page.locator(".message .badge").last).to_have_text("正文预览 · 未保存")
+                    await expect(page.locator(".draft")).to_have_count(0)
                     assert store.session(session["id"])["head"] == session["head"]
                     gates[0].set()
                     await expect(page.locator(".activity-name")).to_contain_text(["write_handoff"])
                     await expect(page.locator(".draft")).to_have_count(0)
                     gates[1].set()
                     await expect(page.locator(".draft")).to_contain_text("第一段正在生成。")
+                    await expect(page.locator(".message .badge").last).to_have_text("正文预览 · 未保存")
                     await page.reload()
                     await expect(page.locator(".draft .prose")).to_have_text("第一段正在生成。")
                     assert store.session(session["id"])["head"] == session["head"]
                     await page.get_by_role("button", name="折叠左侧栏", exact=True).click()
                     await page.get_by_role("button", name="折叠右侧栏", exact=True).click()
-                    for width, height, name in [
-                        (2560, 1440, "large"),
-                        (1920, 1080, "desktop"),
-                        (360, 792, "mobile-dpr3-equivalent"),
-                        (960, 540, "zoom-equivalent"),
-                    ]:
+                    viewports = (
+                        [(1920, 1080, "desktop")]
+                        if single_viewport
+                        else [
+                            (2560, 1440, "large"),
+                            (1920, 1080, "desktop"),
+                            (360, 792, "mobile-dpr3-equivalent"),
+                            (960, 540, "zoom-equivalent"),
+                        ]
+                    )
+                    for width, height, name in viewports:
                         await page.set_viewport_size({"width": width, "height": height})
                         await expect(page.locator(".draft")).to_be_visible()
                         assert await page.evaluate(
@@ -132,11 +152,13 @@ async def main():
                     await page.locator(".session-open").filter(has_text="另一个故事").click()
                     await expect(page.locator(".session-row.active")).to_contain_text("另一个故事")
                     await expect(page.locator(".draft")).to_have_count(0)
+                    completed = Event()
+                    pending = next(task for task in app.state.service.full.tasks.values() if not task.done())
+                    pending.get_loop().call_soon_threadsafe(
+                        pending.add_done_callback, lambda task: completed.set()
+                    )
                     gates[2].set()
-                    for _ in range(100):
-                        if store.session(session["id"])["head"] != session["head"]:
-                            break
-                        await asyncio.sleep(0.05)
+                    assert await asyncio.to_thread(completed.wait, 5), "Story finalization did not finish"
                     await expect(page.locator(".session-row.active")).to_contain_text("另一个故事")
                     await expect(page.locator(".message.assistant")).to_have_count(1)
                     await page.locator(".session-open").filter(has_text="流式正文测试").click()
@@ -167,7 +189,7 @@ async def main():
                     assert all(stream.closed for stream in streams)
                     assert not errors, errors
                     print(
-                        "Full Agent live previews, tool reset, reload, session isolation, failure/retry and four viewports passed."
+                        f"Full Agent explicit story previews, reload, session isolation, failure/retry and {len(viewports)} viewport(s) passed."
                     )
                 except Exception:
                     await page.screenshot(path=str(output / "failure.png"), full_page=True)
@@ -185,4 +207,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--single-viewport", action="store_true", help="Check only desktop when no layout changed."
+    )
+    asyncio.run(main(parser.parse_args().single_viewport))

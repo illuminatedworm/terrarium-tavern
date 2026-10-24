@@ -11,7 +11,7 @@ from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store
 from tests.backend import test_full_agent
-from tests.backend.test_full_agent import current_text, handoff, runtime, turn
+from tests.backend.test_full_agent import current_text, handoff, native_reply, runtime, turn
 
 story = test_full_agent.story
 
@@ -24,11 +24,12 @@ async def test_batch_setting_defaults_migrates_and_persists_both_values(tmp_path
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         before = (await client.get("/api/settings")).json()
         assert before["full_agent"]["tools"]["parallel_tool_calls"] is True
+        assert before["full_agent"]["tools"]["max_duration_seconds"] == 900
         changed = await client.patch(
             "/api/settings/full_agent",
             json={
                 "expected_revision": before["revisions"]["full_agent"],
-                "changes": {"tools.parallel_tool_calls": False},
+                "changes": {"tools.parallel_tool_calls": False, "tools.max_duration_seconds": 600},
             },
         )
         assert changed.status_code == 200, changed.text
@@ -39,6 +40,7 @@ async def test_batch_setting_defaults_migrates_and_persists_both_values(tmp_path
         reopened = Store(tmp_path)
         assert reopened.settings_document().full_agent.tools.parallel_tool_calls is False
         assert reopened.settings("full_agent").full_agent_config.parallel_tool_calls is False
+        assert reopened.settings("full_agent").full_agent_config.max_duration_seconds == 600
         invalid = await client.patch(
             "/api/settings/full_agent",
             json={
@@ -83,61 +85,17 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
         payload = json.loads(request.content)
         requests.append(payload)
         first = len(requests) == 1
-        if api_mode == "chat_completions":
-            message = {"role": "assistant", "content": "" if first else "Narrative"}
-            if first:
-                message["tool_calls"] = [
-                    {
-                        "id": f"call_{i}",
-                        "type": "function",
-                        "function": {"name": name, "arguments": json.dumps(args)},
-                    }
-                    for i, (name, args) in enumerate(actions)
-                ]
-            result = {"choices": [{"message": message, "finish_reason": "tool_calls" if first else "stop"}]}
-        elif api_mode == "responses":
-            output = (
-                [
-                    {
-                        "type": "function_call",
-                        "call_id": f"call_{i}",
-                        "name": name,
-                        "arguments": json.dumps(args),
-                    }
-                    for i, (name, args) in enumerate(actions)
-                ]
-                if first
-                else [
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": "Narrative"}],
-                    }
-                ]
-            )
-            result = {"status": "completed", "output": output}
-        elif api_mode == "anthropic":
-            content = (
-                [
-                    {"type": "tool_use", "id": f"call_{i}", "name": name, "input": args}
-                    for i, (name, args) in enumerate(actions)
-                ]
-                if first
-                else [{"type": "text", "text": "Narrative"}]
-            )
-            result = {"content": content, "stop_reason": "tool_use" if first else "end_turn"}
-        else:
-            parts = (
-                [
-                    {"functionCall": {"id": f"call_{i}", "name": name, "args": args}}
-                    for i, (name, args) in enumerate(actions)
-                ]
-                if first
-                else [{"text": "Narrative"}]
-            )
-            if first:
-                parts[0]["thoughtSignature"] = "Zml4dHVyZS1zaWduYXR1cmU="
-            result = {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
+        batch = actions if first else []
+        result = native_reply(
+            api_mode,
+            [
+                (f"call_{i}" if first else f"turn_{len(requests)}_{i}", name, args)
+                for i, (name, args) in enumerate(batch)
+            ],
+            text="" if first else "Narrative",
+        )
+        if api_mode == "gemini" and first:
+            result["candidates"][0]["content"]["parts"][0]["thoughtSignature"] = "Zml4dHVyZS1zaWduYXR1cmU="
         return httpx.Response(200, json=result)
 
     provider = ModelTransport(

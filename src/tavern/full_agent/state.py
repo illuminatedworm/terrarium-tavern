@@ -35,11 +35,24 @@ def read_full_state(snapshot):
     return full_state({"full_agent": copy.deepcopy(state)}) if state is not None else {}
 
 
-def note_view(note, history):
+def note_view(note, history, *, pending_reply_id=None):
     positions = message_positions(history)
-    return {k: copy.deepcopy(note[k]) for k in ("key", "content", "kind", "status", "revision")} | {
+    pending_source = pending_reply_id is not None and any(
+        source["message_id"] == pending_reply_id for source in note.get("sources", [])
+    )
+    if pending_source:
+        # A rejected draft keeps its reserved identity for existing note refs,
+        # but must not become readable history or authorize new citations.
+        positions[pending_reply_id] = len(history) + 1
+    result = {k: copy.deepcopy(note[k]) for k in ("key", "content", "kind", "status", "revision")} | {
         "sources": [message_ref(positions[source["message_id"]]) for source in note.get("sources", [])],
     }
+    if pending_source:
+        result["notice"] = (
+            f"来源 {message_ref(positions[pending_reply_id])} 的正文已撤回，暂不可读取或用于新的笔记引用；"
+            "笔记原文与来源引用保留，请在重新交付正文后核对。"
+        )
+    return result
 
 
 def rollover_start(state, history, keep_recent):

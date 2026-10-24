@@ -260,6 +260,7 @@ async def test_mixed_rollover_batch_has_no_side_effects(story, rollover_first):
             event["payload"]["result"]
             for event in store.events(result["id"])
             if event["kind"] == "full_agent_tool"
+            and event["payload"]["name"] in ("new_context", "write_note")
         ]
         assert len(results) == 2 and all(r["error"]["code"] == "MIXED_CONTEXT_CALLS" for r in results)
         for key in ("handoff", "notes", "window"):

@@ -21,7 +21,11 @@ const parts = computed<Part[]>(() => (props.item.kind === 'tool' ? ['arguments',
 const title = computed(
   () =>
     props.title ||
-    (props.item.kind === 'assistant' ? 'Agent 回复' : toolLabels[props.item.name || ''] || props.item.name),
+    (props.item.kind === 'assistant'
+      ? props.item.is_story
+        ? '正文输出'
+        : 'Agent 回复'
+      : toolLabels[props.item.name || ''] || props.item.name),
 );
 const labels = { arguments: '调用参数', result: '工具返回', content: '回复内容' };
 const status = computed(

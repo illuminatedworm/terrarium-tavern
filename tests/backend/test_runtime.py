@@ -67,7 +67,7 @@ async def test_full_agent_patch_failure_restores_server_and_message_frame_mirror
                         "id": "failure",
                         "enabled": True,
                         "content": """
-            globalThis.patchRollbackListener = eventOn('MESSAGE_RECEIVED', () => {
+            globalThis.patchRollbackListener = eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {
                 replaceVariables({dirty: true}, {type: 'character'});
                 throw Error('rollback-test');
             });
@@ -96,7 +96,7 @@ async def test_full_agent_patch_failure_restores_server_and_message_frame_mirror
         frame_before = await frame.evaluate("() => TavernRuntime.snapshot()")
         operations = [{"op": "replace", "path": "/hp", "value": 7}]
         with pytest.raises(PlaywrightError, match="rollback-test"):
-            await session.call("process", "", operations, "")
+            await session.call("process", "", operations, "", False)
         assert await session.call("snapshot") == before
         assert await frame.evaluate("() => TavernRuntime.snapshot()") == frame_before
         await session.page.evaluate("() => patchRollbackListener.stop()")

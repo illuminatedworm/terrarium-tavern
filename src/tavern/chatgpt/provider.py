@@ -217,8 +217,16 @@ class ChatGPTProvider(ModelTransport):
     async def _consume(self, messages, tools, kwargs):
         self._last_tool_calls, self._last_assistant_extra_fields, self._last_usage = [], {}, {}
         self.last_native_response, self.last_response_record, self._response_headers = None, {}, {}
+        self.last_completion = None
         self._completed_response = None
         response = None
+        if kwargs.get("_full_agent_story"):
+            # Only Full Agent accepts the visible Kemini transport here.
+            tools = self._begin_kemini(tools, kwargs)
+        else:
+            # Other ChatGPT requests keep plain transport; never inherit the
+            # previous story request's Kemini state on a reused provider.
+            self._reset_kemini()
         event_sink = kwargs.get("_web_event") or (lambda kind, payload: None)
         try:
             response = await self._send(messages, tools, True, kwargs)
@@ -248,12 +256,17 @@ class ChatGPTProvider(ModelTransport):
                     if kind == "error" and "error" not in payload:
                         payload = {"error": payload}
                     raise response_error(payload, request_id=self._request_id(), secrets=(self.key,))
-                if state.done:
-                    raise ChatGPTError("ChatGPT 完成事件之后仍有响应内容，本轮未提交", code="invalid_stream")
-                delta = state.feed(event)
+                try:
+                    delta = state.feed(event)
+                except ValueError as error:
+                    raise ChatGPTError(
+                        str(error), code="invalid_stream", request_id=self._request_id()
+                    ) from None
+                if self._kemini:
+                    delta = self._kemini.feed(event, delta, "responses")
                 if delta:
                     yield delta
-            if not state.done:
+            if not state.response_complete:
                 raise ChatGPTError(
                     "ChatGPT 连接在完成事件之前结束，本轮未提交",
                     code="stream_incomplete",

@@ -13,75 +13,17 @@ from tavern.full_agent.activity import turn_items
 from tavern.full_agent.context import load_trace
 from tavern.full_agent.tools import AgentTools
 from tavern.storage.store import Store
-from tests.backend.test_full_agent import Model, current_text, handoff, runtime, tool_exchanges, turn
+from tests.backend.test_full_agent import (
+    Model,
+    current_text,
+    handoff,
+    native_reply,
+    runtime,
+    story_reply,
+    tool_exchanges,
+    turn,
+)
 from tests.backend.test_full_agent_alignment import game, transport
-
-
-def native_reply(api, calls=(), text="", marker=""):
-    if api == "chat_completions":
-        return {
-            "model": "fixture",
-            "choices": [
-                {
-                    "finish_reason": "tool_calls" if calls else "stop",
-                    "message": {
-                        "content": text,
-                        "reasoning_content": marker,
-                        "tool_calls": [
-                            {
-                                "id": cid,
-                                "type": "function",
-                                "function": {"name": name, "arguments": json.dumps(args)},
-                            }
-                            for cid, name, args in calls
-                        ],
-                    },
-                }
-            ],
-        }
-    if api == "gemini":
-        parts = [{"text": marker, "thought": True}] if marker else []
-        parts += [{"functionCall": {"id": cid, "name": name, "args": args}} for cid, name, args in calls]
-        if text:
-            parts.append({"text": text})
-        return {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": "STOP"}]}
-    if api == "anthropic":
-        content = [{"type": "thinking", "thinking": marker, "signature": marker}] if marker else []
-        content += [{"type": "tool_use", "id": cid, "name": name, "input": args} for cid, name, args in calls]
-        if text:
-            content.append({"type": "text", "text": text})
-        return {
-            "id": "msg_fixture",
-            "model": "fixture",
-            "content": content,
-            "stop_reason": "tool_use" if calls else "end_turn",
-            "usage": {},
-        }
-    output = (
-        [{"type": "reasoning", "id": "rs_" + marker, "summary": [], "encrypted_content": marker}]
-        if marker
-        else []
-    )
-    output += [
-        {
-            "type": "function_call",
-            "id": "fc_" + cid,
-            "call_id": cid,
-            "name": name,
-            "arguments": json.dumps(args),
-        }
-        for cid, name, args in calls
-    ]
-    if text:
-        output.append(
-            {
-                "type": "message",
-                "id": "msg_fixture",
-                "role": "assistant",
-                "content": [{"type": "output_text", "text": text, "annotations": []}],
-            }
-        )
-    return {"id": "resp_fixture", "model": "fixture", "output": output, "status": "completed", "usage": {}}
 
 
 @pytest.mark.parametrize("api", ["chat_completions", "responses", "anthropic", "gemini"])
@@ -114,7 +56,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         elif len(requests) == 2:
             payload = native_reply(api, [("read", "read_state", {})], marker="DEPENDENT_NATIVE")
         else:
-            payload = native_reply(api, text="完成正文")
+            payload = story_reply(api, "完成正文")
         return httpx.Response(200, json=payload, headers={"x-codex-turn-state": "source-route"})
 
     async def factory(settings, capture=None, *, request_context=None):
@@ -207,7 +149,10 @@ async def test_retry_of_only_failures_starts_without_tools_and_survives_another_
             service,
             session,
             Model(
-                ("write_handoff", {"content": "FAILED_PROPOSAL", "reason": "extra"}),
+                {
+                    "content": "应保留的唯一正文",
+                    "calls": [("write_handoff", {"content": "FAILED_PROPOSAL", "reason": "extra"})],
+                },
                 ("read_history", {"reason": "missing ref"}),
                 RuntimeError("disconnected"),
             ),
@@ -231,8 +176,9 @@ async def test_retry_of_only_failures_starts_without_tools_and_survives_another_
             m.get("tool_calls") or m["role"] == "tool" for m in retry_model.requests[0]["messages"]
         )
         assert "FAILED_PROPOSAL" not in json.dumps(retry_model.requests)
+        assert json.dumps(retry_model.requests, ensure_ascii=False).count("应保留的唯一正文") == 1
         assert store.full_agent_progress(failed["id"]) == saved
-        final_model = Model("新的正文")
+        final_model = Model("")
         service.full.provider_factory = lambda: final_model
         final = service.submit(
             session["id"],
@@ -245,6 +191,7 @@ async def test_retry_of_only_failures_starts_without_tools_and_survives_another_
         )
         await service.tasks[final["id"]]
         assert store.turn(final["id"])["status"] == "committed"
+        assert store.session(session["id"])["messages"][-1]["raw"] == "应保留的唯一正文"
         assert not any(
             m.get("tool_calls") or m["role"] == "tool" for m in final_model.requests[0]["messages"]
         )
@@ -257,16 +204,29 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
 
     class Batch(Model):
         async def chat_complete(self, messages, **kwargs):
+            from tavern.scripting.native_response import ResponseCompletion
+
             self.requests.append(copy.deepcopy(messages))
-            self.last_tool_calls = [
-                SimpleNamespace(id=cid, name=name, arguments=json.dumps(args))
-                for cid, name, args in [
+            calls = (
+                [("reused", "read_history", {"ref": "H2"})]
+                if len(self.requests) == 1
+                else [
                     ("bad", "read_history", {"reason": "missing ref"}),
                     ("accepted", "write_handoff", handoff("MEMORY_A", through=None)),
-                    ("unfinished", "write_handoff", handoff("MEMORY_B", through=None)),
+                    # A result in the previous response cannot complete this
+                    # unfinished call merely because its provider ID is reused.
+                    ("reused", "write_handoff", handoff("MEMORY_B", through=None)),
                 ]
+            )
+            self.last_tool_calls = [
+                SimpleNamespace(id=cid, name=name, arguments=json.dumps(args)) for cid, name, args in calls
             ]
-            return SimpleNamespace(content="", usage={}, finish_reason="stop")
+            self.last_completion = ResponseCompletion(
+                "tools" if len(self.requests) == 1 else "end", "fixture"
+            )
+            return SimpleNamespace(
+                content="续接正文" if len(self.requests) == 1 else "", usage={}, finish_reason="stop"
+            )
 
     original = AgentTools.execute
     interrupted, executed = False, []
@@ -286,7 +246,7 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         failed, _ = await turn(service, session, Batch())
         assert failed["status"] == "error"
         assert executed == ["MEMORY_A"]
-        model = Model("续接正文")
+        model = Model("")
         service.full.provider_factory = lambda: model
         resumed = service.submit(
             session["id"],
@@ -303,8 +263,98 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         assert executed == ["MEMORY_A", "MEMORY_B"]
         assert len(model.requests) == 1
         sent = model.requests[0]["messages"]
-        assert [c["id"] for m in sent for c in m.get("tool_calls", [])] == ["accepted", "unfinished"]
-        assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == ["accepted", "unfinished"]
+        assert [(c["id"], c["function"]["name"]) for m in sent for c in m.get("tool_calls", [])] == [
+            ("reused", "read_history"),
+            ("accepted", "write_handoff"),
+            ("reused", "write_handoff"),
+        ]
+        assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == [
+            "reused",
+            "accepted",
+            "reused",
+        ]
+        assert store.session(session["id"])["messages"][-1]["raw"] == "续接正文"
         assert current_text(store.session(session["id"])["snapshot"]["full_agent"]) == "MEMORY_B"
+    finally:
+        await service.close()
+
+
+async def test_schema12_pending_delivery_resumes_without_repeating_saved_work(tmp_path):
+    store, service, session = game(tmp_path)
+    try:
+        failed, _ = await turn(
+            service,
+            session,
+            Model(("write_handoff", handoff("已完成的记忆", through=None)), RuntimeError("offline")),
+        )
+        legacy = store.full_agent_progress(failed["id"])
+        legacy["version"] = 2
+        legacy["roleplay"] = legacy.pop("story")
+        legacy["finish_requested"] = legacy.pop("model_completed")
+        legacy.pop("legacy_protocol")
+        message = {
+            "role": "assistant",
+            "content": "旧协议的过程说明",
+            "tool_calls": [
+                {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+                for cid, name, args in (
+                    ("body", "roleplay", {"content": "旧进度中的唯一正文"}),
+                    (
+                        "note",
+                        "write_note",
+                        {"key": "本轮", "content": "人物推门进入", "kind": "fact", "sources": ["H3"]},
+                    ),
+                    ("end", "finish_turn", {}),
+                )
+            ],
+        }
+        legacy["continuation"].append(copy.deepcopy(message))
+        legacy["new_trace"].append(
+            {"window_id": legacy["snapshot"]["full_agent"]["window"]["id"], "message": message}
+        )
+        store.save_full_agent_progress(failed["id"], legacy)
+        with store.connection() as db:
+            db.execute("UPDATE meta SET value='12' WHERE key='schema_version'")
+    finally:
+        await service.close()
+
+    reopened = Store(store.root)
+    service = runtime(reopened)
+
+    def unexpected_model_request():
+        raise AssertionError("Saved legacy delivery and finish require no model request")
+
+    service.full.provider_factory = unexpected_model_request
+    try:
+        assert list(reopened.root.glob("before-upgrade-schema12-*.sqlite3"))
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
+        await service.tasks[resumed["id"]]
+        result = reopened.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        current = reopened.session(session["id"])
+        assert current["messages"][-1]["raw"] == "旧进度中的唯一正文"
+        assert current["messages"][-1]["id"] == legacy["output_id"]
+        state = current["snapshot"]["full_agent"]
+        assert state["handoff"]["revision"] == 1
+        assert state["notes"]["本轮"]["sources"] == [{"message_id": legacy["output_id"]}]
+        assert "roleplay" in json.dumps(load_trace(reopened, session["id"], current["messages"]))
+        follow = Model("下一轮正文")
+        next_turn, _ = await turn(service, current, follow)
+        assert next_turn["status"] == "committed", next_turn["error"]
+        sent = follow.requests[0]["messages"]
+        assert not any(
+            c["function"]["name"] in ("roleplay", "finish_turn")
+            for m in sent
+            for c in m.get("tool_calls", [])
+        )
+        assert json.dumps(sent, ensure_ascii=False).count("旧进度中的唯一正文") == 1
     finally:
         await service.close()

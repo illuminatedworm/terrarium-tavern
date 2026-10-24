@@ -300,7 +300,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             no_tools = Model("不使用工具的正文")
             result, session = await turn(service, session, no_tools)
             assert result["status"] == "committed", result["error"]
-            assert no_tools.requests[0]["extra_body"] == {}
+            assert "tools" not in no_tools.requests[0]["extra_body"]
             response = await client.put(
                 url, json={"expected_revision": session["revision"], "disabled_tools": []}
             )
