@@ -310,3 +310,49 @@ def test_int8_worker_stays_on_selected_gpu_and_batches_rerank_fragments(monkeypa
     assert list(map(len, batches)) == [1, 1, 1]
     assert all(call == {"use_cache": False, "logits_to_keep": 1} for call in forwarded)
     assert messages[-1]["result"] == pytest.approx([0.880797], abs=1e-6)
+
+
+async def test_parallel_warmups_queue_loads_without_blocking_warm_sibling(monkeypatch, tmp_path):
+    manager = LocalModelManager(SimpleNamespace(root=tmp_path))
+    settings = Settings()
+    for purpose in ("embedding", "reranker"):
+        folder = manager.path(getattr(settings.local_models, purpose))
+        folder.mkdir(parents=True)
+        (folder / "tavern-ready.json").write_text("{}", encoding="utf-8")
+    manager.ready.add("reranker")
+    manager.loaded["reranker"] = digest(settings.local_models.reranker.model_dump())
+    loading, release = asyncio.Event(), asyncio.Event()
+    loads = []
+
+    async def request(purpose, payload, timeout):
+        if payload["action"] == "load":
+            loads.append(purpose)
+            if purpose == "embedding":
+                loading.set()
+                await release.wait()
+            return {"ready": True}
+        return {"result": [0.9]}
+
+    monkeypatch.setattr(manager, "start_host", lambda: None)
+    monkeypatch.setattr(manager, "request", request)
+    embedding = asyncio.create_task(manager.warmup("embedding", settings))
+    await loading.wait()
+    reranker = asyncio.create_task(manager.warmup("reranker", settings))
+    try:
+        # Let the second task attempt its load while the first is still in Transformers initialization.
+        await asyncio.sleep(0)
+        assert loads == ["embedding"] and not reranker.done()
+        assert await asyncio.wait_for(
+            manager.infer("reranker", "rerank", [["query", "document"]], settings, timeout=1), timeout=1
+        ) == [0.9]
+        release.set()
+        await asyncio.gather(embedding, reranker)
+        assert loads == ["embedding", "reranker"]
+        assert manager.ready == {"embedding", "reranker"}
+        assert manager.loaded == {
+            purpose: digest(getattr(settings.local_models, purpose).model_dump())
+            for purpose in ("embedding", "reranker")
+        }
+    finally:
+        release.set()
+        await asyncio.gather(embedding, reranker, return_exceptions=True)

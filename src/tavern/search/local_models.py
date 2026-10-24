@@ -263,6 +263,7 @@ class LocalModelManager:
         self.host = None
         self.loaded = {}
         self.locks = {name: asyncio.Lock() for name in PURPOSES}
+        self.warmup_lock = asyncio.Lock()
         self.jobs = {}
         self.tasks = {}
         self.indexing = set()
@@ -377,7 +378,10 @@ class LocalModelManager:
             await self.request(purpose, {"action": "unload"}, 10)
 
     async def warmup(self, purpose, settings):
-        async with self.locks[purpose]:
+        # Transformers temporarily patches process-wide parameter registration and dtype.
+        # Queue loads before sending them to the host, so waiting does not consume its timeout
+        # or block inference on the other purpose while that purpose's warmup is still queued.
+        async with self.warmup_lock, self.locks[purpose]:
             if any(
                 job["kind"] == "download:" + purpose and job["status"] in ("queued", "running")
                 for job in self.jobs.values()
