@@ -51,4 +51,5 @@ except OSError:
 else:
     sys.exit(f"TAVERN_PORT_IN_USE: 端口 {port} 已被使用；请先运行 ./stop.sh，或使用 --port 选择另一端口。")
 PY
-exec .venv/bin/python -m tavern --port "$port" --data "$data" "${window[@]}"
+# bash before 4.4 treats an empty "${window[@]}" as unbound under set -u.
+exec .venv/bin/python -m tavern --port "$port" --data "$data" ${window[@]+"${window[@]}"}

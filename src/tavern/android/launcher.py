@@ -14,11 +14,9 @@ _app = None
 
 
 def _shutdown(server, app):
-    # SSE requests otherwise keep uvicorn waiting before lifespan can close these services.
-    for service in (app.state.service, app.state.editor, app.state.advisor):
-        for task in service.tasks.values():
-            if not task.done():
-                task.cancel()
+    from tavern.application.api import cancel_producers
+
+    cancel_producers(app)
     server.should_exit = True
 
 

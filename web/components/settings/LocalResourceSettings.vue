@@ -361,7 +361,9 @@ useTimedError(error);
             status.available === false ||
             busy(purpose.key) ||
             !status.models[purpose.key]?.downloaded ||
-            (isAndroid && !status.models[purpose.key]?.device_available)
+            (isAndroid &&
+              !status.models[purpose.key]?.device_available &&
+              !status.models[purpose.key]?.device_retryable)
           "
           @click="warm(purpose.key)"
         >

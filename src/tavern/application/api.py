@@ -55,6 +55,25 @@ class AppFiles(StaticFiles):
         return response
 
 
+def cancel_producers(app):
+    """Cancel producers before uvicorn drains their SSE observers.
+
+    Lifespan then waits for rollback and releases each owned runtime/model process.
+    Desktop and Android hosts share this list so a new task owner reaches both.
+    """
+    service = app.state.service
+    for owner in (
+        service,
+        app.state.editor,
+        app.state.advisor,
+        service.local_models,
+        service.context_operations,
+    ):
+        for task in owner.tasks.values():
+            if not task.done():
+                task.cancel()
+
+
 def create_app(data_dir=None):
     # The native host generates this per launch. Never expose it through API state or logs.
     startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8")

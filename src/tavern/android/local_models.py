@@ -11,7 +11,7 @@ from tavern.android.local_model_server import (
     ModelRequestRejected,
     NativeModelServer,
 )
-from tavern.android.model_devices import DEVICES, MICROBATCH_TOKENS, probe
+from tavern.android.model_devices import DEVICES, MICROBATCH_TOKENS, device_table, probe
 from tavern.android.model_import import write_model
 from tavern.character.cards import lore_title
 from tavern.search.local_models import PURPOSES, LocalModelManager
@@ -110,7 +110,9 @@ class AndroidLocalModelManager(LocalModelManager):
         directory = os.environ.get("TAVERN_NATIVE_LIB_DIR")
         self.native_directory = Path(directory) if directory else None
         self.servers = {}
+        self.importing = set()
         self.devices = {}
+        self.probing = None
         self.device_lock = asyncio.Lock()
         # No import can be active while this manager is being constructed. Only
         # incomplete model staging files are disposable; never remove weights.
@@ -123,11 +125,31 @@ class AndroidLocalModelManager(LocalModelManager):
                 (folder / "tavern-ready.json.part").unlink(missing_ok=True)
 
     async def initialize(self):
+        # The probe launches the native engine and may wait 20 s for vendor
+        # drivers. Run it beside API startup; CPU stays usable meanwhile.
+        if self.probing is None and self.native_directory and (self.native_directory / EXECUTABLE).is_file():
+            self.devices = device_table("正在探测加速设备…", retry=True)
+            self.probing = asyncio.create_task(self._probe())
+
+    async def _probe(self):
+        self.devices = await probe(
+            self.native_directory, SOURCES["engine"]["android_snapdragon"]["minimum_sdk"]
+        )
+
+    async def probed_devices(self):
+        await self.initialize()
+        if self.probing is not None:
+            # Shield the shared probe: cancelling one caller must not cancel it for others.
+            await asyncio.shield(self.probing)
+        return self.devices
+
+    async def _device(self, key):
         async with self.device_lock:
-            if not self.devices and self.native_directory and (self.native_directory / EXECUTABLE).is_file():
-                self.devices = await probe(
-                    self.native_directory, SOURCES["engine"]["android_snapdragon"]["minimum_sdk"]
-                )
+            await self.probed_devices()
+            if not self.devices[key]["available"] and self.devices[key]["retry"]:
+                self.probing = asyncio.create_task(self._probe())
+                await asyncio.shield(self.probing)
+        return self.devices[key]
 
     def path(self, config):
         return self.root / "gguf" / digest([config.model, config.revision, config.quantization])
@@ -142,9 +164,11 @@ class AndroidLocalModelManager(LocalModelManager):
         if config.device == "cpu":
             # The unchanged CPU engine keeps its existing derived index identity.
             return digest([SOURCES["engine"]["commit"], saved["sha256"]])
+        # Only the pinned archive hash names the engine; packaging metadata such
+        # as the ELF rewriter or minimum SDK does not change produced vectors.
         return digest(
             [
-                SOURCES["engine"]["android_snapdragon"],
+                SOURCES["engine"]["android_snapdragon"]["sha256"],
                 config.device,
                 MICROBATCH_TOKENS[config.device],
                 saved["sha256"],
@@ -182,6 +206,7 @@ class AndroidLocalModelManager(LocalModelManager):
                 else "当前保存的模型配置不适用于 Android，请显式选择手机 Q8_0 配置。",
                 "selected_device": config.device,
                 "device_available": bool(device and device["available"]),
+                "device_retryable": bool(device and device["retry"]),
                 "device_error": device["reason"] if device else "设备能力尚未探测或配置不适用",
                 "execution": self.metrics.get(purpose) if server and server.alive else None,
                 "suggested_config": mobile_config(purpose),
@@ -221,30 +246,34 @@ class AndroidLocalModelManager(LocalModelManager):
         source = SOURCES[purpose]
         if size is not None and size != source["bytes"]:
             raise ValueError("模型大小不符，请选择 " + source["filename"])
-        if self.locks[purpose].locked():
-            raise ValueError("模型正在运行，请稍后导入")
-        async with self.locks[purpose]:
-            folder = self.path(config)
+        if purpose in self.importing:
+            raise ValueError("模型正在导入，请等待完成或取消后再试")
+        self.importing.add(purpose)
+        folder = self.path(config)
+        pending = folder / "model.gguf.part"
+        manifest = folder / "tavern-ready.json.part"
+        try:
             folder.mkdir(parents=True, exist_ok=True)
-            pending = folder / "model.gguf.part"
-            manifest = folder / "tavern-ready.json.part"
-            try:
-                total = await write_model(stream, pending, source)
-                # Prepare metadata before touching the old model. The pinned hash
-                # identifies identical weight bytes even if shutdown interrupts
-                # the pair of final renames after model.gguf has been replaced.
-                manifest.write_text(
-                    json.dumps({"version": 1, "revision": source["revision"], "sha256": source["sha256"]}),
-                    "utf-8",
-                )
+            # The upload can take minutes or stall in a suspended WebView. Stage it
+            # without the model lock so inference keeps serving the old weights.
+            total = await write_model(stream, pending, source)
+            # Prepare metadata before touching the old model. The pinned hash
+            # identifies identical weight bytes even if shutdown interrupts
+            # the pair of final renames after model.gguf has been replaced.
+            with manifest.open("w", encoding="utf-8") as output:
+                json.dump({"version": 1, "revision": source["revision"], "sha256": source["sha256"]}, output)
+                output.flush()
+                os.fsync(output.fileno())
+            async with self.locks[purpose]:
                 await self._stop(purpose)
                 pending.replace(folder / "model.gguf")
                 manifest.replace(folder / "tavern-ready.json")
-            except OSError as error:
-                raise ValueError("模型文件写入失败，请检查可用空间与存储权限：" + str(error)) from error
-            finally:
-                pending.unlink(missing_ok=True)
-                manifest.unlink(missing_ok=True)
+        except OSError as error:
+            raise ValueError("模型文件写入失败，请检查可用空间与存储权限：" + str(error)) from error
+        finally:
+            pending.unlink(missing_ok=True)
+            manifest.unlink(missing_ok=True)
+            self.importing.discard(purpose)
         return {"imported": True, "filename": source["filename"], "bytes": total}
 
     async def _stop(self, purpose):
@@ -264,8 +293,7 @@ class AndroidLocalModelManager(LocalModelManager):
     async def warmup(self, purpose, settings):
         self.require_available()
         config = self._config(purpose, settings)
-        await self.initialize()
-        device = self.devices[config.device]
+        device = await self._device(config.device)
         if not device["available"]:
             raise ValueError(device["label"] + " 不可用：" + device["reason"])
         async with self.locks[purpose]:
@@ -323,5 +351,9 @@ class AndroidLocalModelManager(LocalModelManager):
                 raise
 
     async def close(self):
+        if self.probing is not None:
+            # Cancellation reaches probe()'s finally, which releases the native child.
+            self.probing.cancel()
+            await asyncio.gather(self.probing, return_exceptions=True)
         await super().close()
         await asyncio.gather(*(self.unload(purpose) for purpose in PURPOSES))

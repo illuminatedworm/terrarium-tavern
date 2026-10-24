@@ -1,8 +1,12 @@
 import { responseData } from './storyPresentation';
 
+function detailError(detail: unknown) {
+  return Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+}
+
 async function failure(response: Response) {
   const error = await response.json().catch(() => ({ detail: response.statusText }));
-  return Error(typeof error.detail === 'string' ? error.detail : JSON.stringify(error.detail));
+  return detailError(error.detail);
 }
 
 /** Debug views need the exact persisted payload, including removed lore records. */
@@ -43,7 +47,7 @@ export function uploadModel(
       if (request.status >= 200 && request.status < 300) finish();
       else {
         const detail = request.response?.detail;
-        finish(Error(typeof detail === 'string' ? detail : `模型导入失败（HTTP ${request.status}）`));
+        finish(detail === undefined ? Error(`模型导入失败（HTTP ${request.status}）`) : detailError(detail));
       }
     };
     request.onerror = () => finish(Error('模型上传连接中断，请重试。'));

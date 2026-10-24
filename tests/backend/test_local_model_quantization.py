@@ -56,7 +56,7 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
 
 async def test_android_device_change_reuses_weights_but_rejects_cpu_fallback(tmp_path, monkeypatch):
     from tavern.android import local_models as android
-    from tavern.android.model_devices import execution_metrics
+    from tavern.android.model_devices import device_table, execution_metrics
     from tavern.search.retrieval_config import LocalModel
 
     native = tmp_path / "native"
@@ -88,9 +88,17 @@ async def test_android_device_change_reuses_weights_but_rejects_cpu_fallback(tmp
     monkeypatch.setitem(android.MICROBATCH_TOKENS, "opencl:0", 512)
     assert manager.revision(settings) != accelerated_revision
     assert not manager.status(settings)["models"]["embedding"]["ready"]
-    manager.devices = {"opencl:0": {"available": False, "label": "GPU", "reason": "驱动缺失"}}
+    probes = []
+
+    async def probe(*_):
+        # A startup timeout is transient; it must not disable the GPU until restart.
+        probes.append(None)
+        return device_table("驱动缺失", retry=len(probes) == 1)
+
+    monkeypatch.setattr(android, "probe", probe)
     with pytest.raises(ValueError, match="驱动缺失"):
         await manager.warmup("embedding", settings)
+    assert len(probes) == 2 and not manager.status(settings)["models"]["embedding"]["device_retryable"]
     assert not manager.servers and config.device == "opencl:0"
     log = "using device GPUOpenCL (Adreno(TM) 750) (unknown id) - 6400 MiB free\nOpenCL model buffer size = 609.60 MiB\noffloaded 29/29 layers"
     assert execution_metrics(config.device, log)["offloaded_layers"] == 29
@@ -146,7 +154,8 @@ async def test_android_import_and_cancellation_preserve_weights_and_stop_only_ow
 
     upload = asyncio.create_task(manager.import_model("embedding", interrupted(), settings))
     await receiving.wait()
-    assert (folder / "model.gguf.part").exists()
+    # Inference keeps serving the old weights while the upload is still arriving.
+    assert (folder / "model.gguf.part").exists() and not manager.locks["embedding"].locked()
     upload.cancel()
     with pytest.raises(asyncio.CancelledError):
         await upload

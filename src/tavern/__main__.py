@@ -32,7 +32,7 @@ def main():
     os.environ["TAVERN_DATA"] = args.data
     import uvicorn
 
-    from tavern.application.api import create_app
+    from tavern.application.api import cancel_producers, create_app
 
     app = create_app(args.data)
     ready = asyncio.Event()
@@ -46,18 +46,7 @@ def main():
     server = WindowServer(uvicorn.Config(app, host="127.0.0.1", port=args.port, timeout_graceful_shutdown=5))
 
     def shutdown():
-        # Cancel producers before uvicorn drains their SSE observers. Lifespan
-        # then waits for rollback and releases each owned runtime/model process.
-        for owner in (
-            app.state.service,
-            app.state.editor,
-            app.state.advisor,
-            app.state.service.local_models,
-            app.state.service.context_operations,
-        ):
-            for task in owner.tasks.values():
-                if not task.done():
-                    task.cancel()
+        cancel_producers(app)
         server.should_exit = True
 
     app.state.shutdown_callback = shutdown

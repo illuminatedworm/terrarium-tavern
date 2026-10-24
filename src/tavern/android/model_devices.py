@@ -42,13 +42,24 @@ def launch(command, native_directory, callback):
     )
 
 
+def device_table(reason="", *, retry=False):
+    """CPU is always available; `retry` marks accelerator failures a later warmup may re-probe."""
+    return {
+        key: {
+            "device": key,
+            "label": label,
+            "available": key == "cpu",
+            "reason": "" if key == "cpu" else reason,
+            "retry": retry and key != "cpu",
+        }
+        for key, (_, label) in DEVICES.items()
+    }
+
+
 async def probe(native_directory, minimum_sdk):
     from java import jclass
 
-    result = {
-        key: {"device": key, "label": label, "available": key == "cpu", "reason": ""}
-        for key, (_, label) in DEVICES.items()
-    }
+    result = device_table()
     reason = ""
     if int(jclass("android.os.Build$VERSION").SDK_INT) < minimum_sdk:
         reason = f"固定加速引擎需要 Android API {minimum_sdk} 或更高版本"
@@ -94,6 +105,7 @@ async def probe(native_directory, minimum_sdk):
             match = re.search(r"^\s+" + re.escape(name) + r": (.+)$", log, re.MULTILINE)
             result[key].update(
                 available=code == 0 and match is not None,
+                retry=code != 0,
                 description=match[1] if match else "",
                 reason=""
                 if code == 0 and match
@@ -104,14 +116,13 @@ async def probe(native_directory, minimum_sdk):
                 ),
             )
     except TimeoutError:
-        for key in ("opencl:0", "hexagon:0"):
-            result[key]["reason"] = "应用内加速设备探测超过 20 秒"
+        # Cold vendor drivers can exceed the bound while the phone is busy.
+        result = device_table("应用内加速设备探测超过 20 秒，预热时将重新探测", retry=True)
     except Exception as error:
         # Optional native libraries can raise Java loader/ProcessBuilder exceptions.
         # Surface that boundary failure as unavailable; never disable the CPU engine.
         LOGGER.error("Android device probe failed: %s", error)
-        for key in ("opencl:0", "hexagon:0"):
-            result[key]["reason"] = "应用内设备探测失败：" + native_failure(str(error))
+        result = device_table("应用内设备探测失败：" + native_failure(str(error)), retry=True)
     finally:
         if process is not None:
             await asyncio.to_thread(process.close)

@@ -26,6 +26,7 @@ class DesktopWindow:
         self.page = None
 
     async def open(self):
+        from playwright.async_api import Error as PlaywrightError
         from playwright.async_api import async_playwright
 
         self.playwright = await async_playwright().start()
@@ -56,17 +57,24 @@ class DesktopWindow:
             if target[:2] == origin:
                 await request_route.continue_()
                 return
-            await request_route.abort()
+            # ERR_FAILED would commit Chromium's error page over the app window,
+            # which has no address bar or back button; ERR_ABORTED keeps the UI.
+            await request_route.abort("aborted")
+            if not request.is_navigation_request() or target.scheme not in {"http", "https"}:
+                return
+            try:
+                frame = request.frame
+            except PlaywrightError:
+                # The UI's target=_blank links issue the popup's first navigation
+                # before Playwright creates its frame; only a new page lacks one.
+                frame = None
             # A card's subframe navigation is denied without opening another app.
             # Only top-level UI navigation may open the system browser.
-            if (
-                request.is_navigation_request()
-                and request.frame.parent_frame is None
-                and target.scheme in {"http", "https"}
-            ):
-                await asyncio.to_thread(webbrowser.open, request.url)
-                if request.frame.page is not self.page:
-                    await request.frame.page.close()
+            if frame is not None and frame.parent_frame is not None:
+                return
+            await asyncio.to_thread(webbrowser.open, request.url)
+            if frame is None:
+                await self._close_blank_popups()
 
         await self.context.route("**/*", route)
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
@@ -77,6 +85,22 @@ class DesktopWindow:
         await cdp.send("Browser.setDownloadBehavior", {"behavior": "default"})
         await cdp.detach()
         await self.page.goto(self.url, wait_until="domcontentloaded")
+
+    async def _close_blank_popups(self):
+        # An aborted first navigation leaves Chromium's blank popup window open,
+        # and Playwright never reports it as a Page. Close it through its opener.
+        cdp = await self.context.new_cdp_session(self.page)
+        try:
+            opener = (await cdp.send("Target.getTargetInfo"))["targetInfo"]["targetId"]
+            for info in (await cdp.send("Target.getTargets"))["targetInfos"]:
+                if (
+                    info["type"] == "page"
+                    and info.get("openerId") == opener
+                    and info["url"] in {"", "about:blank"}
+                ):
+                    await cdp.send("Target.closeTarget", {"targetId": info["targetId"]})
+        finally:
+            await cdp.detach()
 
     async def close(self):
         try:
@@ -146,8 +170,9 @@ async def with_dev_frontend(run: Callable[[], Awaitable[None]]):
                         response = await client.get("http://127.0.0.1:5173/")
                         response.raise_for_status()
                         break
-                    except httpx.ConnectError:
-                        # The owned child is starting, but has not bound its port yet.
+                    except httpx.TransportError:
+                        # The owned child is starting: its port may be unbound or its
+                        # first response slow on a busy machine. The 20 s bound decides.
                         await asyncio.sleep(0.1)
         application = asyncio.create_task(run())
         finished, _ = await asyncio.wait((application, exited), return_when=asyncio.FIRST_COMPLETED)

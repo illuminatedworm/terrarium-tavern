@@ -286,8 +286,7 @@ async def local_models(root, cache_dir, checks, selected="models"):
         return value
 
     try:
-        await manager.initialize()
-        checks.append({"name": "model_devices", "devices": manager.devices})
+        checks.append({"name": "model_devices", "devices": await manager.probed_devices()})
         for purpose in ("embedding", "reranker"):
             path = Path(cache_dir) / "model-fixtures" / SOURCES[purpose]["filename"]
             with path.open("rb") as source:
@@ -466,8 +465,7 @@ def run(cache_dir, suite):
 
         with tempfile.TemporaryDirectory(prefix="tavern-devices-", dir=cache_dir) as temporary:
             manager = AndroidLocalModelManager(SimpleNamespace(root=Path(temporary)))
-            asyncio.run(manager.initialize())
-            checks.append({"name": "model_devices", "devices": manager.devices})
+            checks.append({"name": "model_devices", "devices": asyncio.run(manager.probed_devices())})
     if suite in {"all", "native"}:
         start = time.perf_counter()
         native_dependencies()

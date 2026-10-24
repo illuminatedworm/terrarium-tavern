@@ -142,7 +142,7 @@ b11829 的 Adreno Q8_0 路径在 512-token 分片附加 EOS 后，单 token 尾�
 
 两个模型分别保存 `cpu`、`opencl:0` 或 `hexagon:0`，设置格式 version 12 保留已有 CPU/CUDA 选择。设备变化不复制或重新导入权重，但需重新预热，派生向量按设备及引擎包身份隔离。界面同时显示已选设备、实际设备、模型层卸载数量与不可用原因；不支持的算子仍可能由 CPU 执行，不能把层卸载解释成所有运算都在加速器上。
 
-Android 的 `GET /api/local-models` 返回 `devices`（每项含 `device/label/available/reason`）；每个 `models` 项返回 `selected_device/device_available/device_error`。已加载模型的 `execution` 包含 `actual_device/offloaded_layers`，加速模型另有 `total_layers/model_buffer_mib/execution_note`；未加载时为 `null`。设备列表来自本次服务启动时的应用内探测，模型实际状态则随请求更新。
+Android 的 `GET /api/local-models` 返回 `devices`（每项含 `device/label/available/reason/retry`）；每个 `models` 项返回 `selected_device/device_available/device_retryable/device_error`。已加载模型的 `execution` 包含 `actual_device/offloaded_layers`，加速模型另有 `total_layers/model_buffer_mib/execution_note`；未加载时为 `null`。设备列表来自服务启动后在后台进行的应用内探测，不阻塞界面启动；探测完成前 CPU 可直接使用，加速设备显示“正在探测”。探测超时、子进程失败或异常属于可重试状态，预热该设备时会等待当前探测并重新探测一次；API 版本、指令扩展或设备列表不含该设备等确定结果不重试。模型实际状态则随请求更新。
 
 加速引擎来自[固定官方 Snapdragon 包](https://github.com/ggml-org/llama.cpp/releases/tag/b11829)，要求 Android API 34+、该包所需的 ARM 指令扩展及兼容驱动；CPU 保持 Android 9+ 的原边界。清单把 `libOpenCL.so`、`libcdsprpc.so` 声明为可选，独立子进程的 `LD_LIBRARY_PATH` 包含安装库目录与 `/vendor/lib64`，`ADSP_LIBRARY_PATH`、`CDSP_LIBRARY_PATH` 指向安装库目录。能力探测在应用 UID 下运行 `--list-devices`，最多 20 秒且不加载权重；预热再核对实际设备、非零模型缓冲与层卸载日志。仅能枚举设备不代表每个模型都能成功推理，启动或推理失败会明确报错，不自动改用 CPU。OpenCL 编译内核的磁盘缓存关闭，避免没有容量边界的缓存增长。
 
@@ -159,7 +159,7 @@ Hexagon 是[上游实验性后端](https://github.com/ggml-org/llama.cpp/blob/18
 
 ### 模型自检
 
-`dev.py smoke --suite devices` 仅探测应用内设备；`--suite models` 使用同一夹具比较 CPU/GPU/NPU 的真实 GGUF 导入、加载、跨微批输入、长条目索引、重排与双模型共存。取消发生在请求体发完后，确认目标进程退出且另一模型仍可推理。记录冷加载、推理耗时、进程 RSS 峰值和卸载证据；RSS 不等于加速器全部内存占用。记录加速结果相对 CPU 的向量余弦相似度，跨硬件数值差异不单独作为失败条件；已知相关文档的向量／重排排序须正确，同一设备重复输入的向量须稳定，重排最大绝对误差须 ≤ 0.001。失败后可用 `--suite models-opencl` 或 `--suite models-hexagon` 只重跑对应后端，复用开发缓存中的 CPU 对照；报告与对照均在开发版 `cache/model-fixtures/`，变更夹具或引擎后应重新生成 CPU 对照。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
+`dev.py smoke --suite devices` 仅探测应用内设备；`--suite models` 使用同一夹具比较 CPU/GPU/NPU 的真实 GGUF 导入、加载、跨微批输入、长条目索引、重排与双模型共存。取消发生在请求体发完后，确认目标进程退出且另一模型仍可推理。记录冷加载、推理耗时、进程 RSS 峰值和卸载证据；RSS 不等于加速器全部内存占用。记录加速结果相对 CPU 的向量余弦相似度，跨硬件数值差异不单独作为失败条件；已知相关文档的向量／重排排序须正确，同一设备重复输入的向量须稳定，重排最大绝对误差须 ≤ 0.001。失败后可用 `--suite models-opencl` 或 `--suite models-hexagon` 只重跑对应后端，复用开发缓存中的 CPU 对照；报告与对照均在开发版 `cache/model-fixtures/`，变更夹具或引擎后应重新生成 CPU 对照。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。接收与校验期间不占用模型锁，旧模型可继续推理；同一模型同时只允许一个导入，只有停止旧进程和替换文件时才短暂持锁。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
 
 ```powershell
 adb push .cache/android/model-probe/models/Qwen3-Embedding-0.6B-Q8_0.gguf .cache/android/model-probe/models/Qwen3-Reranker-0.6B-Q8_0.gguf /data/local/tmp/
