@@ -1,10 +1,8 @@
 """Explicit GGUF import and CPU inference; saved CUDA settings are never rewritten."""
 
 import asyncio
-import hashlib
 import json
 import os
-import threading
 from pathlib import Path
 
 from tavern.android.local_model_server import (
@@ -13,6 +11,7 @@ from tavern.android.local_model_server import (
     ModelRequestRejected,
     NativeModelServer,
 )
+from tavern.android.model_import import write_model
 from tavern.character.cards import lore_title
 from tavern.search.local_models import PURPOSES, LocalModelManager
 from tavern.search.retrieval import digest, grams
@@ -110,6 +109,15 @@ class AndroidLocalModelManager(LocalModelManager):
         directory = os.environ.get("TAVERN_NATIVE_LIB_DIR")
         self.native_directory = Path(directory) if directory else None
         self.servers = {}
+        # No import can be active while this manager is being constructed. Only
+        # incomplete model staging files are disposable; never remove weights.
+        root = self.root.resolve()
+        for folder in (root / "gguf").glob("*"):
+            if folder.is_dir():
+                if not folder.resolve().is_relative_to(root):
+                    raise ValueError("GGUF 缓存目录指向模型目录以外的位置，不能清理临时文件")
+                (folder / "model.gguf.part").unlink(missing_ok=True)
+                (folder / "tavern-ready.json.part").unlink(missing_ok=True)
 
     def path(self, config):
         return self.root / "gguf" / digest([config.model, config.revision, config.quantization])
@@ -180,11 +188,11 @@ class AndroidLocalModelManager(LocalModelManager):
         self.require_available()
         raise ValueError("Android 请使用本地资源页的“导入 GGUF”选择对应模型文件")
 
-    async def import_model(self, purpose, file, settings):
+    async def import_model(self, purpose, stream, settings, *, size=None):
         self.require_available()
         config = self._config(purpose, settings)
         source = SOURCES[purpose]
-        if file.size is not None and file.size != source["bytes"]:
+        if size is not None and size != source["bytes"]:
             raise ValueError("模型大小不符，请选择 " + source["filename"])
         if self.locks[purpose].locked():
             raise ValueError("模型正在运行，请稍后导入")
@@ -192,47 +200,24 @@ class AndroidLocalModelManager(LocalModelManager):
             folder = self.path(config)
             folder.mkdir(parents=True, exist_ok=True)
             pending = folder / "model.gguf.part"
-            cancelled = threading.Event()
-
-            def copy_and_verify():
-                total = 0
-                checksum = hashlib.sha256()
-                # UploadFile is already spooled before this handler. One worker avoids
-                # a threadpool round trip for every MiB on embedded Android Python.
-                with pending.open("wb") as output:
-                    while not cancelled.is_set():
-                        block = file.file.read(1024 * 1024)
-                        if not block:
-                            break
-                        total += len(block)
-                        if total > source["bytes"]:
-                            raise ValueError("模型文件超过预期大小")
-                        checksum.update(block)
-                        output.write(block)
-                if cancelled.is_set():
-                    return total
-                if total != source["bytes"] or checksum.hexdigest() != source["sha256"]:
-                    raise ValueError("模型 SHA-256 不匹配，请选择随此 APK 提供的 " + source["filename"])
-                return total
-
-            copying = asyncio.create_task(asyncio.to_thread(copy_and_verify))
+            manifest = folder / "tavern-ready.json.part"
             try:
-                try:
-                    total = await asyncio.shield(copying)
-                except asyncio.CancelledError:
-                    cancelled.set()
-                    await copying
-                    raise
-                await self._stop(purpose)
-                pending.replace(folder / "model.gguf")
-                manifest = folder / "tavern-ready.json.part"
+                total = await write_model(stream, pending, source)
+                # Prepare metadata before touching the old model. The pinned hash
+                # identifies identical weight bytes even if shutdown interrupts
+                # the pair of final renames after model.gguf has been replaced.
                 manifest.write_text(
                     json.dumps({"version": 1, "revision": source["revision"], "sha256": source["sha256"]}),
                     "utf-8",
                 )
+                await self._stop(purpose)
+                pending.replace(folder / "model.gguf")
                 manifest.replace(folder / "tavern-ready.json")
+            except OSError as error:
+                raise ValueError("模型文件写入失败，请检查可用空间与存储权限：" + str(error)) from error
             finally:
                 pending.unlink(missing_ok=True)
+                manifest.unlink(missing_ok=True)
         return {"imported": True, "filename": source["filename"], "bytes": total}
 
     async def _stop(self, purpose):

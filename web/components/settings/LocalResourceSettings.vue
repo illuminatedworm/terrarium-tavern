@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useTimedError } from '../../composables/useTimedError';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { api } from '../../lib/api';
+import { api, uploadModel } from '../../lib/api';
 import type { LocalModelPurpose, ModelWarmupState } from '../../composables/useModelWarmup';
 const props = defineProps<{ settings: any; flush: () => Promise<unknown>; warmup: ModelWarmupState }>();
 const purposes: Array<{ key: LocalModelPurpose; label: string; family: string }> = [
@@ -15,6 +15,9 @@ const status = ref<any>({ models: {}, jobs: [] }),
   error = ref('');
 const isAndroid = computed(() => status.value.platform === 'android');
 const modelFiles: Partial<Record<LocalModelPurpose, HTMLInputElement | null>> = {};
+const imports = ref<Partial<Record<LocalModelPurpose, { controller: AbortController; progress: number }>>>(
+  {},
+);
 function rememberInput(purpose: LocalModelPurpose, element: unknown) {
   modelFiles[purpose] = element as HTMLInputElement | null;
 }
@@ -116,17 +119,23 @@ async function importModel(purpose: LocalModelPurpose, event: Event) {
   pending.value[purpose] = true;
   error.value = '';
   feedback.value = '正在传入并校验模型文件…';
+  const controller = new AbortController();
+  imports.value[purpose] = { controller, progress: 0 };
   try {
     await props.flush();
-    const body = new FormData();
-    body.append('file', file);
-    await api(`/local-models/${purpose}/import`, body);
+    await uploadModel(`/local-models/${purpose}/import`, file, controller.signal, (progress) => {
+      if (imports.value[purpose]) imports.value[purpose]!.progress = progress;
+    });
     await refresh();
     feedback.value = '模型已导入并通过 SHA-256 校验，可以预热。';
   } catch (e) {
-    error.value = String(e);
-    feedback.value = '';
+    if (e instanceof DOMException && e.name === 'AbortError') feedback.value = '模型导入已取消。';
+    else {
+      error.value = String(e);
+      feedback.value = '';
+    }
   } finally {
+    delete imports.value[purpose];
     input.value = '';
     pending.value[purpose] = false;
   }
@@ -186,6 +195,7 @@ onMounted(async () => {
 onUnmounted(() => {
   disposed = true;
   clearTimeout(timer);
+  Object.values(imports.value).forEach((item) => item.controller.abort());
 });
 useTimedError(error);
 </script>
@@ -325,8 +335,22 @@ useTimedError(error);
         >
           预热
         </button>
-        <small v-if="busy(purpose.key)">后台任务执行中…</small>
+        <template v-if="imports[purpose.key]">
+          <progress
+            :value="imports[purpose.key]!.progress"
+            max="1"
+            :aria-label="purpose.label + '导入进度'"
+          />
+          <small role="status">{{
+            imports[purpose.key]!.progress < 1
+              ? `已传入 ${Math.floor(imports[purpose.key]!.progress * 100)}%`
+              : '正在完成校验…'
+          }}</small>
+          <button @click="imports[purpose.key]!.controller.abort()">取消导入</button>
+        </template>
+        <small v-else-if="busy(purpose.key)">后台任务执行中…</small>
       </div>
+      <p v-if="imports[purpose.key]" class="muted">导入期间请保持此页打开，离开将取消尚未完成的导入。</p>
     </section>
   </div>
   <h4>世界书索引</h4>

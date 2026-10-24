@@ -243,9 +243,24 @@ def create_app(data_dir=None):
     async def local_model_status():
         return service.local_models.status(store.settings())
 
-    @app.post("/api/local-models/{purpose}/import")
-    async def import_local_model(purpose: Literal["embedding", "reranker"], file: UploadFile = File(...)):
-        return await service.local_models.import_model(purpose, file, store.settings())
+    @app.post(
+        "/api/local-models/{purpose}/import",
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+            }
+        },
+    )
+    async def import_local_model(purpose: Literal["embedding", "reranker"], request: Request):
+        if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/octet-stream":
+            raise HTTPException(415, "模型导入需要 application/octet-stream 原始文件，请更新客户端")
+        length = request.headers.get("content-length")
+        if length is not None and not length.isdecimal():
+            raise ValueError("模型文件长度无效")
+        return await service.local_models.import_model(
+            purpose, request.stream(), store.settings(), size=int(length) if length is not None else None
+        )
 
     @app.post("/api/local-models/{purpose}/{action}")
     async def local_model_action(

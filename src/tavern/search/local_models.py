@@ -276,7 +276,7 @@ class LocalModelManager:
         manifest = self.path(settings.local_models.embedding) / "tavern-ready.json"
         return json.loads(manifest.read_text("utf-8"))["revision"] if manifest.exists() else "unavailable"
 
-    async def import_model(self, purpose, file, settings):
+    async def import_model(self, purpose, stream, settings, *, size=None):
         raise ValueError("此平台请通过下载功能准备 CUDA 模型")
 
     def status(self, settings):

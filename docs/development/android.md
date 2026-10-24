@@ -146,7 +146,7 @@ Android 的 [`Process.destroyForcibly()` 继承实现](https://android.googlesou
 
 ### 模型自检
 
-`dev.py smoke --suite models` 验证真实 GGUF 导入、原生加载、批处理、跨微批输入、索引分片、重排及进程释放。先把两个模型文件放进开发版私有缓存：
+`dev.py smoke --suite models` 验证真实 GGUF 流式导入、原生加载、批处理、跨微批输入、索引分片、重排及进程释放。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
 
 ```powershell
 adb push .cache/android/model-probe/models/Qwen3-Embedding-0.6B-Q8_0.gguf .cache/android/model-probe/models/Qwen3-Reranker-0.6B-Q8_0.gguf /data/local/tmp/

@@ -227,8 +227,6 @@ async def office_documents(root, checks):
 
 
 async def local_models(root, cache_dir, checks):
-    from starlette.datastructures import UploadFile
-
     from tavern.android.local_models import SOURCES, mobile_config
     from tavern.core.models import Settings
     from tavern.search.local_models import create_local_model_manager
@@ -248,8 +246,12 @@ async def local_models(root, cache_dir, checks):
             print("IMPORT: " + purpose, flush=True)
             path = Path(cache_dir) / "model-fixtures" / SOURCES[purpose]["filename"]
             with path.open("rb") as source:
-                file = UploadFile(source, size=path.stat().st_size, filename=path.name)
-                await manager.import_model(purpose, file, settings)
+
+                async def chunks():
+                    while block := source.read(1024 * 1024):
+                        yield block
+
+                await manager.import_model(purpose, chunks(), settings, size=path.stat().st_size)
             print("WARMUP: " + purpose, flush=True)
             await manager.warmup(purpose, settings)
         assert all(item["ready"] for item in manager.status(settings)["models"].values())

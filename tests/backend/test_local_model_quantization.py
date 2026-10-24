@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import io
 import json
 import sys
 from types import SimpleNamespace
@@ -57,9 +56,8 @@ async def test_android_import_and_cancellation_preserve_weights_and_stop_only_ow
 ):
     from copy import deepcopy
 
-    from starlette.datastructures import UploadFile
-
     from tavern.android import local_models as android
+    from tavern.android import model_import
     from tavern.android.local_model_server import EXECUTABLE
     from tavern.search.retrieval_config import LocalModel
 
@@ -79,12 +77,34 @@ async def test_android_import_and_cancellation_preserve_weights_and_stop_only_ow
     folder.mkdir(parents=True)
     model = folder / "model.gguf"
     model.write_bytes(b"previous")
+
+    async def chunks(value):
+        yield value[:4]
+        yield value[4:]
+
+    # Force several writes with tiny inputs. A rejected or interrupted upload
+    # must not publish partial weights or leave the next import locked out.
+    monkeypatch.setattr(model_import, "BLOCK_BYTES", 4)
     with pytest.raises(ValueError, match="SHA-256"):
-        await manager.import_model(
-            "embedding", UploadFile(io.BytesIO(b"x" * len(data)), size=len(data)), settings
-        )
+        await manager.import_model("embedding", chunks(b"x" * len(data)), settings, size=len(data))
     assert model.read_bytes() == b"previous" and not (folder / "model.gguf.part").exists()
-    await manager.import_model("embedding", UploadFile(io.BytesIO(data), size=len(data)), settings)
+
+    receiving = asyncio.Event()
+
+    async def interrupted():
+        yield data[:4]
+        receiving.set()
+        await asyncio.Event().wait()
+
+    upload = asyncio.create_task(manager.import_model("embedding", interrupted(), settings))
+    await receiving.wait()
+    assert (folder / "model.gguf.part").exists()
+    upload.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await upload
+    assert model.read_bytes() == b"previous" and not (folder / "model.gguf.part").exists()
+    assert not manager.locks["embedding"].locked()
+    await manager.import_model("embedding", chunks(data), settings, size=len(data))
     assert model.read_bytes() == data
     assert android.read_manifest(folder / "tavern-ready.json")["version"] == 1
 
