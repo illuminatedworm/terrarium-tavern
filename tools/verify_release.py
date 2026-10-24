@@ -13,6 +13,27 @@ from pathlib import Path, PurePosixPath
 import httpx
 
 
+def installation_environment(target: Path) -> dict[str, str]:
+    # cwd alone does not isolate uv: inherited project/environment selectors can
+    # redirect sync into the developer's live .venv. Python import overrides can
+    # also make the check load the checkout instead of the extracted release.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON"}
+        and not key.startswith("TAVERN_")
+    }
+    env.update(
+        UV_PROJECT=str(target),
+        UV_WORKING_DIR=str(target),
+        UV_PROJECT_ENVIRONMENT=str(target / ".venv"),
+        UV_PYTHON_INSTALL_DIR=str(target / ".cache" / "python"),
+        NO_PROXY="127.0.0.1,localhost",
+        PYTHONIOENCODING="utf-8",
+    )
+    return env
+
+
 def verify(archive_path):
     root = Path(__file__).resolve().parents[1]
     output = root / ".cache" / "release-validation"
@@ -28,7 +49,7 @@ def verify(archive_path):
             assert not name.endswith((".sqlite3", ".db", ".log", ".env", ".safetensors", ".kohakutr"))
             assert hashlib.sha256(archive.read(name)).hexdigest() == digest
         archive.extractall(target)
-    env = {**os.environ, "NO_PROXY": "127.0.0.1,localhost", "PYTHONIOENCODING": "utf-8"}
+    env = installation_environment(target)
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with (output / "install.log").open("w", encoding="utf-8") as log:
 

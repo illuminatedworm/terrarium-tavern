@@ -397,7 +397,8 @@ async def test_script_failure_rolls_back(tmp_path):
 
 
 async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
-    monkeypatch.delenv("TAVERN_STARTUP_TOKEN", raising=False)
+    monkeypatch.delenv("TAVERN_PLATFORM", raising=False)
+    monkeypatch.setenv("TAVERN_STARTUP_TOKEN", "leftover-android-host-token")
     app = create_app(tmp_path)
     async with (
         app.router.lifespan_context(app),
@@ -405,6 +406,13 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
     ):
         assert (await c.get("/api/health")).status_code == 200
         assert (await c.get("/api/health", headers={"origin": "http://localhost:5173"})).status_code == 200
+        # Desktop retains ordinary static-file validation and no Android host CSP.
+        for path in ("/", "/static/runtime.js"):
+            resource = await c.get(path)
+            assert resource.status_code == 200
+            assert "cache-control" not in resource.headers
+            assert "content-security-policy" not in resource.headers
+            assert (await c.get(path, headers={"if-none-match": resource.headers["etag"]})).status_code == 304
         assert (
             await c.patch(
                 "/api/settings/shared",
@@ -448,7 +456,16 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
         assert (await c.get("/api/settings")).status_code == 200
         # Extracted APK files share one mtime; unhashed entries must not survive an update.
         for path in ("/", "/static/runtime.js"):
-            assert (await c.get(path)).headers["cache-control"] == "no-store"
+            resource = await c.get(path)
+            assert resource.headers["cache-control"] == "no-store"
+            refreshed = await c.get(
+                path,
+                headers={
+                    "if-none-match": resource.headers["etag"],
+                    "if-modified-since": resource.headers["last-modified"],
+                },
+            )
+            assert refreshed.status_code == 200 and refreshed.content == resource.content
 
 
 async def test_preview_and_cancel_are_atomic(tmp_path):

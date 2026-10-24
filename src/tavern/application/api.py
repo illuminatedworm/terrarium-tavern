@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from tavern.android.platform import is_android
 from tavern.application.modes import ModeRuntime
 from tavern.character.cards import append_lorebook, export_card, normalize
 from tavern.conversation.context import compile_context
@@ -38,8 +39,8 @@ from tavern.storage.store import Conflict, Store, dump
 VERSION = "0.7.0"
 
 
-class AppFiles(StaticFiles):
-    """Only content-hashed build assets may be cached.
+class AndroidFiles(StaticFiles):
+    """Only content-hashed APK build assets may be cached.
 
     The Android host extracts these files with fixed 1980 zip timestamps, so
     Last-Modified never changes and Starlette's mtime-plus-size ETag repeats for
@@ -48,9 +49,20 @@ class AppFiles(StaticFiles):
     """
 
     async def get_response(self, path, scope):
+        # Old WebView caches may send validators from the previous APK whose
+        # same-sized files have identical mtimes. They must receive new bytes.
+        unhashed = Path(path).parts[:1] != ("assets",)
+        if unhashed:
+            scope = {
+                **scope,
+                "headers": [
+                    (name, value)
+                    for name, value in scope["headers"]
+                    if name not in {b"if-none-match", b"if-modified-since"}
+                ],
+            }
         response = await super().get_response(path, scope)
-        # Starlette normalises the path with os.sep, so compare parts.
-        if Path(path).parts[:1] != ("assets",):
+        if unhashed:
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -75,8 +87,10 @@ def cancel_producers(app):
 
 
 def create_app(data_dir=None):
-    # The native host generates this per launch. Never expose it through API state or logs.
-    startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8")
+    android = is_android()
+    # Only the Android host owns this launch token and the APK cache policy.
+    # A leftover host variable must not change desktop authentication or caching.
+    startup_token = os.environ.get("TAVERN_STARTUP_TOKEN", "").encode("utf-8") if android else b""
     store = Store(Path(data_dir or os.environ.get("TAVERN_DATA", "data")))
     service = ModeRuntime(store)
     from tavern.character.card_author import CardAuthorService
@@ -209,13 +223,11 @@ def create_app(data_dir=None):
 
     @app.get("/api/health")
     async def health():
-        from tavern.android.platform import is_android
-
         return {
             "ok": True,
             "runtime": "KohakuTerrarium",
             "version": VERSION,
-            "platform": "android" if is_android() else "desktop",
+            "platform": "android" if android else "desktop",
             "capabilities": {
                 "local_models": service.local_models.status(store.settings())["available"],
                 "office_documents": True,
@@ -996,10 +1008,11 @@ def create_app(data_dir=None):
     async def favicon():
         return FileResponse(static / "favicon.ico", media_type="image/x-icon")
 
-    app.mount("/static", AppFiles(directory=static), name="static")
+    static_files = AndroidFiles if android else StaticFiles
+    app.mount("/static", static_files(directory=static), name="static")
     dist = Path(__file__).resolve().parents[3] / "dist"
     if not dist.exists():
         dist = static / "web"
     if dist.exists():
-        app.mount("/", AppFiles(directory=dist, html=True), name="web")
+        app.mount("/", static_files(directory=dist, html=True), name="web")
     return app
