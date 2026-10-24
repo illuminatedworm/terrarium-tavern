@@ -162,7 +162,7 @@ public final class HostService extends Service {
         PendingIntent stop = PendingIntent.getService(this, 1,
             new Intent(this, HostService.class).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE);
         return new Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_tavern)
+            .setSmallIcon(R.drawable.ic_stat_tavern)
             .setContentTitle("Terrarium Tavern")
             .setContentText(detail)
             .setContentIntent(open)

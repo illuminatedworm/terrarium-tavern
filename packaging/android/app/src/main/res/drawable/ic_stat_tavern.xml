@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon: the favicon clover outline in white; the status bar uses alpha only. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="64" android:viewportHeight="64">
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4.5" android:strokeLineJoin="round"
+        android:pathData="M32,12C25,12 20,18 23,26C12,22 7,32 12,40C16,47 26,47 31,38C31,44 29,48 25,52H39C35,48 33,44 33,38C38,47 48,47 52,40C57,32 52,22 41,26C44,18 39,12 32,12Z" />
+</vector>

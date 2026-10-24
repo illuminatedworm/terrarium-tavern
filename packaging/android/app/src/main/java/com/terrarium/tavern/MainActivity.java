@@ -18,8 +18,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Base64;
-import android.view.Gravity;
-import android.view.View;
 import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.ValueCallback;
@@ -30,12 +28,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ProgressBar;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.webkit.JavaScriptReplyProxy;
@@ -61,10 +54,7 @@ public final class MainActivity extends Activity implements HostService.Listener
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService files = Executors.newSingleThreadExecutor();
     private WebView web;
-    private LinearLayout status;
-    private TextView statusText;
-    private ProgressBar progress;
-    private Button retry;
+    private LaunchView launch;
     private HostService host;
     private boolean bound;
     private String origin;
@@ -94,7 +84,7 @@ public final class MainActivity extends Activity implements HostService.Listener
         }
         @Override public void onServiceDisconnected(ComponentName name) {
             host = null;
-            showStatus("本地服务已断开，请重新启动。", false);
+            launch.showFailure("本地服务已断开", "请重新启动本地服务。", null);
         }
     };
 
@@ -107,7 +97,7 @@ public final class MainActivity extends Activity implements HostService.Listener
             getWindow().setNavigationBarColor(Color.TRANSPARENT);
         }
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(23, 26, 28));
+        root.setBackgroundColor(getColor(R.color.canvas));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT < 30) {
                 // No separate keyboard inset before API 30: keep every system inset outside the page.
@@ -120,7 +110,7 @@ public final class MainActivity extends Activity implements HostService.Listener
             Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
             int keyboard = insets.getInsets(WindowInsets.Type.ime()).bottom;
             view.setPadding(0, 0, 0, keyboard);
-            status.setPadding(28 + bars.left, 28 + bars.top, 28 + bars.right, 28 + Math.max(bars.bottom, keyboard));
+            launch.setInsets(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard));
             float density = getResources().getDisplayMetrics().density;
             safeArea = String.format(Locale.ROOT,
                 "(s=>{s.setProperty('--safe-top','%.1fpx');s.setProperty('--safe-right','%.1fpx');"
@@ -131,35 +121,18 @@ public final class MainActivity extends Activity implements HostService.Listener
             return WindowInsets.CONSUMED;
         });
         web = new WebView(this);
-        web.setBackgroundColor(Color.rgb(23, 26, 28));
+        web.setBackgroundColor(getColor(R.color.canvas));
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
-        status = new LinearLayout(this);
-        status.setOrientation(LinearLayout.VERTICAL);
-        status.setGravity(Gravity.CENTER);
-        status.setPadding(28, 28, 28, 28);
-        status.setBackgroundColor(Color.rgb(23, 26, 28));
-        progress = new ProgressBar(this);
-        status.addView(progress);
-        ScrollView scroll = new ScrollView(this);
-        statusText = new TextView(this);
-        statusText.setTextColor(Color.rgb(231, 228, 218));
-        statusText.setTextSize(16);
-        statusText.setTextIsSelectable(true);
-        statusText.setPadding(0, 24, 0, 24);
-        scroll.addView(statusText);
-        status.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        retry = new Button(this);
-        retry.setText("重新启动");
-        retry.setOnClickListener(view -> {
+        launch = new LaunchView(this);
+        launch.setOnRetry(view -> {
             if (host != null) {
                 if (host.getPort() > 0) {
                     web.reload();
-                    showStatus("正在载入界面…", true);
+                    launch.showProgress("正在载入界面", null);
                 } else host.startBackend();
             } else connectHost();
         });
-        status.addView(retry);
-        root.addView(status, new FrameLayout.LayoutParams(-1, -1));
+        root.addView(launch, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
         root.requestApplyInsets();
         configureWebView();
@@ -168,8 +141,8 @@ public final class MainActivity extends Activity implements HostService.Listener
             if (abandoned != null) for (File file : abandoned) file.delete();
         });
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-            showStatus("Android System WebView 版本过旧，请先在系统应用商店更新后重新打开。", false);
-            retry.setVisibility(View.GONE);
+            launch.showFailure("需要更新 Android System WebView", "当前版本过旧，请先在系统应用商店更新后重新打开。", null);
+            launch.hideRetry();
             return;
         }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -179,7 +152,7 @@ public final class MainActivity extends Activity implements HostService.Listener
     }
 
     private void connectHost() {
-        showStatus("正在启动本地 Python 服务…\n首次启动需要解压应用资源。", true);
+        showStarting();
         Intent intent = new Intent(this, HostService.class);
         startForegroundService(intent);
         if (!bound) bound = bindService(intent, connection, Context.BIND_AUTO_CREATE);
@@ -235,18 +208,18 @@ public final class MainActivity extends Activity implements HostService.Listener
             @Override public void onPageFinished(WebView view, String url) {
                 if (pageFailed || !isLocal(Uri.parse(url))) return;
                 if (safeArea != null) view.evaluateJavascript(safeArea, null);
-                status.setVisibility(View.GONE);
+                launch.dismiss();
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError failure) {
                 if (request.isForMainFrame()) {
                     pageFailed = true;
-                    showStatus("无法载入本地界面：" + failure.getDescription(), false);
+                    launch.showFailure("无法载入本地界面", "请重新启动后重试。", String.valueOf(failure.getDescription()));
                 }
             }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
                 if (request.isForMainFrame()) {
                     pageFailed = true;
-                    showStatus("本地界面返回 HTTP " + response.getStatusCode() + "，请重新启动后重试。", false);
+                    launch.showFailure("无法载入本地界面", "请重新启动后重试。", "HTTP " + response.getStatusCode());
                 }
             }
         });
@@ -303,18 +276,15 @@ public final class MainActivity extends Activity implements HostService.Listener
                 "tavern_session=" + service.getStartupToken() + "; Path=/; HttpOnly; SameSite=Strict",
                 accepted -> {
                     if (accepted) web.loadUrl(origin + "/");
-                    else showStatus("无法设置本地访问凭据，请检查系统 WebView。", false);
+                    else launch.showFailure("无法设置本地访问凭据", "请检查系统 WebView 是否可用。", null);
                 });
         } else if (service.getError() != null) {
-            showStatus("本地服务启动失败\n\n" + service.getError(), false);
-        } else showStatus("正在启动本地 Python 服务…\n首次启动需要解压应用资源。", true);
+            launch.showFailure("本地服务启动失败", "可查看下方错误信息，或重新启动后重试。", service.getError());
+        } else showStarting();
     }
 
-    private void showStatus(String text, boolean loading) {
-        statusText.setText(text);
-        progress.setVisibility(loading ? View.VISIBLE : View.GONE);
-        retry.setVisibility(loading ? View.GONE : View.VISIBLE);
-        status.setVisibility(View.VISIBLE);
+    private void showStarting() {
+        launch.showProgress("正在启动本地服务", "首次启动需要解压应用资源，请稍候。");
     }
 
     private void receiveExport(String text, JavaScriptReplyProxy reply) {

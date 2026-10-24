@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The clover of src/tavern/static/favicon.svg (64 grid), centred in the adaptive icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.2" android:scaleY="1.2" android:translateX="15.6" android:translateY="15.6">
+        <path android:fillColor="#2C333C" android:strokeColor="#B0C0D2" android:strokeWidth="3.5" android:strokeLineJoin="round"
+            android:pathData="M32,12C25,12 20,18 23,26C12,22 7,32 12,40C16,47 26,47 31,38C31,44 29,48 25,52H39C35,48 33,44 33,38C38,47 48,47 52,40C57,32 52,22 41,26C44,18 39,12 32,12Z" />
+    </group>
+</vector>

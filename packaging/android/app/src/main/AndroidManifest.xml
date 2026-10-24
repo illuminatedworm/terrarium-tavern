@@ -9,7 +9,8 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:label="${appLabel}"
-        android:icon="@drawable/ic_tavern"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
         <uses-native-library android:name="libOpenCL.so" android:required="false" />

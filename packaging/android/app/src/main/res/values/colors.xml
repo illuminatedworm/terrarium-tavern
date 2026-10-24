@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The web canvas token (web/styles/tokens.css), so the window, launch screen and page meet without a seam. -->
+    <color name="canvas">#0C0D0F</color>
+    <!-- Tile colour of the desktop icon, src/tavern/static/favicon.svg. -->
+    <color name="icon_tile">#1C1E21</color>
+</resources>

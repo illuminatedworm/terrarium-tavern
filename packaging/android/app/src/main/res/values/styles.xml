@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#C4CCC9</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#171A1C</item>
-        <item name="android:navigationBarColor">#171A1C</item>
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:statusBarColor">@color/canvas</item>
+        <item name="android:navigationBarColor">@color/canvas</item>
+        <!-- Android 12+ system splash: the launcher tile behind the clover, as on the home screen. -->
+        <item name="android:windowSplashScreenIconBackgroundColor" tools:targetApi="31">@color/icon_tile</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>

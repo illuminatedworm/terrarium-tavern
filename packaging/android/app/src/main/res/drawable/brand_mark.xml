@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- src/tavern/static/favicon.svg at 1.5x with a faint rim, the launch screen mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp" android:height="96dp" android:viewportWidth="96" android:viewportHeight="96">
+    <path android:fillColor="#1C1E21" android:strokeColor="#1FFFFFFF" android:strokeWidth="1"
+        android:pathData="M21,0.5h54a20.5,20.5 0,0 1,20.5 20.5v54a20.5,20.5 0,0 1,-20.5 20.5h-54a20.5,20.5 0,0 1,-20.5 -20.5v-54a20.5,20.5 0,0 1,20.5 -20.5z" />
+    <group android:scaleX="1.5" android:scaleY="1.5">
+        <path android:fillColor="#2C333C" android:strokeColor="#B0C0D2" android:strokeWidth="3.5" android:strokeLineJoin="round"
+            android:pathData="M32,12C25,12 20,18 23,26C12,22 7,32 12,40C16,47 26,47 31,38C31,44 29,48 25,52H39C35,48 33,44 33,38C38,47 48,47 52,40C57,32 52,22 41,26C44,18 39,12 32,12Z" />
+    </group>
+</vector>
