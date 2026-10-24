@@ -21,6 +21,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `search/` | 召回、准入、文本解析、本地模型进程和索引 |
 | `storage/` | SQLite、事务、分支、备份与存储清理 |
 | `scripting/` | 共享模型传输、原生回复、隔离脚本、依赖和 MVU 处理 |
+| `android/` | Android 专属的本地模型、文档解析与启动；桌面只导入其中的平台判断 `platform.py`，分叉点见 [Android 开发](android.md#与桌面的边界) |
 
 `skills/`、`tokenizer_data/` 是随包资源，`static/` 保存生成的界面与脚本。制卡 agent 的内置指引分为[制卡](../../src/tavern/skills/card-authoring/card-guide.md)与[适配](../../src/tavern/skills/adapt-card-to-tavern/SKILL.md)两组，读取链路见[制卡 agent 设计](../design/card-author.md#内置指引)。
 
@@ -48,6 +49,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | 设置字段 | [设置 API](../reference/settings-api.md) | 默认值、迁移、范围修订和前端保存合并 |
 | 卡片编辑 | [工作区设计](../design/card-author.md) | 草稿版本、资源引用和模型视图恢复 |
 | 检索或上下文 | [检索](../guides/retrieval.md)、[上下文](../design/context-lifecycle.md) | 准入、窗口计数和预览一致性 |
+| 平台相关行为 | [Android 与桌面的边界](android.md#与桌面的边界) | 桌面输出不变、Android 裁剪依赖未被引用 |
 
 测试集中在 `tests/`，命令及选择方式见[验证与发行](validation.md)。
 

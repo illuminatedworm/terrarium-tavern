@@ -3,4 +3,5 @@ plugins {
     id "com.chaquo.python" version "17.1.0" apply false
 }
 
-layout.buildDirectory = file("../../.cache/android/build/root")
+ext.androidDevDir = file("../../android-dev")
+layout.buildDirectory = new File(androidDevDir, "build/root")

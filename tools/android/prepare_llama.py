@@ -7,8 +7,8 @@ import tarfile
 from pathlib import Path
 
 from dev import run
-from model_reference import ROOT, sources
-from recover_native import download, sha256, verify, write_json
+from model_reference import sources
+from recover_native import DEFAULT_CACHE, download, sha256, verify, write_json
 
 LIBRARIES = (
     "libggml-base.so",
@@ -37,14 +37,11 @@ def prepare_cpu(cache: Path, offline: bool):
     output = cache / "llama-jni/arm64-v8a"
     assets = cache / "distribution-assets/third-party/llama.cpp"
     assets.mkdir(parents=True, exist_ok=True)
+    # Pin upstream Git bytes, not a Windows checkout whose CRLF conversion changes the hash.
     for name, license in engine["licenses"].items():
         target = assets / ("LICENSE-" + name)
-        checkout_file = cache / "model-probe/llama.cpp" / license["path"]
         if target.exists():
             verify(target, license["sha256"])
-        elif checkout_file.exists():
-            verify(checkout_file, license["sha256"])
-            shutil.copyfile(checkout_file, target)
         elif offline:
             raise ValueError("缺少原生库许可文件，请先运行 tools/android/prepare_llama.py")
         else:
@@ -94,7 +91,7 @@ def prepare(cache: Path, offline: bool):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cache", type=Path, default=ROOT / ".cache/android")
+    parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     prepare(args.cache.resolve(), args.offline)

@@ -20,8 +20,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from dev import Device
-from model_reference import CACHE, ROOT, inputs, sources
-from recover_native import sha256, verify, write_json
+from model_reference import CACHE, inputs, sources
+from recover_native import DEFAULT_CACHE, sha256, verify, write_json
 
 REMOTE = "/data/local/tmp/terrarium-model-probe"
 CONTEXT = 512
@@ -361,7 +361,7 @@ def main():
     if reference["inputs"] != inputs() or reference["sources"] != pins["reference"]:
         raise ValueError("参考输入或模型版本已经变化，请重新生成 BF16 对照")
     models = assets(cache, pins)
-    device = Device(ROOT / ".cache/android/sdk/platform-tools/adb.exe", args.serial)
+    device = Device(DEFAULT_CACHE / "sdk/platform-tools/adb.exe", args.serial)
     description = device.describe()
     if "arm64-v8a" not in description["abi"].split(","):
         raise ValueError("固定的 Android 原生包仅支持 arm64-v8a")

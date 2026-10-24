@@ -11,7 +11,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parents[2]
+from recover_native import DEFAULT_CACHE, ROOT
+
 APP = "com.terrarium.tavern"
 DEV_APP = APP + ".dev"
 INSTRUMENTATION = DEV_APP + "/com.terrarium.tavern.DevSmokeInstrumentation"
@@ -96,7 +97,7 @@ def build_environment(cache):
     environment = os.environ.copy()
     jdk = sorted((cache / "jdk").glob("*/bin/java.exe"))
     if len(jdk) != 1:
-        raise RuntimeError("需要 .cache/android/jdk 下唯一的 JDK 17；构建环境见 docs/development/android.md")
+        raise RuntimeError(f"需要 {cache / 'jdk'} 下唯一的 JDK 17；构建环境见 docs/development/android.md")
     environment.update(
         JAVA_HOME=str(jdk[0].parents[1]),
         ANDROID_HOME=str(cache / "sdk"),
@@ -225,7 +226,7 @@ def main():
         parser.error("当前工具使用 Windows Android 构建环境")
     if args.command in {"check", "smoke"} and args.target != "dev":
         parser.error("自动自检只运行独立开发版，不能指向个人数据")
-    cache = ROOT / ".cache/android"
+    cache = DEFAULT_CACHE
     output = cache / "dev"
     output.mkdir(parents=True, exist_ok=True)
     report = {"command": args.command, "target": args.target, "ok": False}

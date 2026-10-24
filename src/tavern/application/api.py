@@ -36,7 +36,7 @@ from tavern.core.models import (
 from tavern.storage.store import Conflict, Store, dump
 
 # Application version; bump together with the locations listed in .agents/VERSIONING.md.
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 
 
 class AndroidFiles(StaticFiles):

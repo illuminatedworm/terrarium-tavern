@@ -19,9 +19,10 @@
 - `src/tavern/`：API、回合编排、检索、上下文、记忆、隔离运行时与存储。
 - `web/`：界面；`compat/`：兼容桥；`vendor/mvu/`：固定上游源码，修改须注明来源与差异。
 - `tests/`、`tools/`、`docs/`：回归、评估与发行工具、当前行为文档。
+- `android-dev/`：长期保留的本地 Android 工具链、依赖、模型和构建工作区；不是临时缓存，不随 `.cache/` 清理。目录说明纳入 Git，其余内容忽略，准备方法见 [Android 开发](docs/development/android.md)。
 - `data/`、`.cache/`、`dist/`、`releases/` 和生成静态资源是运行或构建产物。
 - 项目内的 `AGENTS.md` 只允许位于项目根目录，禁止在 `.agents/` 或其他目录新建；其余 agent 资料仍放在 `.agents/` 下。
-- **Android 工作不得改变桌面（Windows/Linux）的功能、界面、启动方式与默认行为。** Android 差异收在 `is_android()` 等平台边界后面，见 [Android 维护约束](docs/development/android.md#维护约束)；改共享代码时核对桌面输出不变。确需改变桌面行为（含安全加固），先说明动机与影响并取得用户明确同意。
+- **Android 工作不得改变桌面（Windows/Linux）的功能、界面、启动方式与默认行为。** Android 差异收在 `is_android()` 等平台边界后面，见 [Android 与桌面的边界](docs/development/android.md#与桌面的边界)；改共享代码时核对桌面输出不变。确需改变桌面行为（含安全加固），先说明动机与影响并取得用户明确同意。
 - 先确认现有行为、调用顺序和数据归属，再修改；不得覆盖无关的用户改动。
 - 新修改如果与本文件或项目文档中的明确要求相反，必须主动提醒用户，指出冲突的要求及来源，不得默默覆盖或恢复已取消的行为。
 

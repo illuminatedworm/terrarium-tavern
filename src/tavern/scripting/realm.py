@@ -25,10 +25,9 @@ def default_backend(*, tools: bool = False) -> "RealmBackend":
     ``tools`` marks Card Author validation and dependency bundling. Desktop backends
     each own a browser; Android shares one process per kind, so tools get their own.
     """
-    import os
-    import sys
+    from tavern.android.platform import is_android
 
-    if sys.platform == "android" or os.environ.get("TAVERN_PLATFORM") == "android":
+    if is_android():
         from tavern.scripting.android_realm import AndroidBackend
 
         return AndroidBackend(tools=tools)

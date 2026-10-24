@@ -99,7 +99,7 @@ INT8 使用 bitsandbytes 的 LLM.int8()，异常值阈值为 6，异常特征与
 
 - [search/retrieval.py](../../src/tavern/search/retrieval.py)、[lore_admission.py](../../src/tavern/search/lore_admission.py)：召回、融合与准入。
 - [retrieval_config.py](../../src/tavern/search/retrieval_config.py)：默认值和配置校验。
-- `GET /api/local-models` 与 `POST /api/local-models/{embedding|reranker}/{download|warmup}`：资源状态与任务。
+- `GET /api/local-models` 与 `POST /api/local-models/{embedding|reranker}/{download|warmup}`：资源状态与任务。Android 另返回 `devices`（每项含 `device/label/available/reason/retry`），每个 `models` 项含 `selected_device/device_available/device_retryable/device_error`；已加载模型的 `execution` 含 `actual_device/offloaded_layers`，加速设备另有 `total_layers/model_buffer_mib/execution_note`，未加载时为 `null`。
 - `POST /api/local-models/{embedding|reranker}/import`：Android 接收 `Content-Type: application/octet-stream` 的原始 GGUF 文件体，使用有界缓冲单次落盘，完整校验大小与 SHA-256 后发布。可提供 `Content-Length` 提前检查大小；未提供时仍按实际收到的字节限制。旧 multipart 请求返回 HTTP 415，调用方须改为直接发送文件。取消、断连或写入失败不会发布部分模型；同时导入或推理会被拒绝。
 - `POST /api/sessions/{id}/retrieval/rebuild`：准备有效世界书索引，Half Agent 同时准备当前分支归档经历的向量索引；不执行查询。
 - `POST /api/sessions/{id}/preview`：只读上下文预览，不加载或推理神经模型。

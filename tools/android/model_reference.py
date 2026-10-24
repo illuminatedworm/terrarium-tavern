@@ -7,8 +7,9 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-CACHE = ROOT / ".cache/android/model-probe"
+from recover_native import DEFAULT_CACHE, ROOT
+
+CACHE = DEFAULT_CACHE / "model-probe"
 QUERY = "北岸港口的守卫住在哪里？"
 DOCUMENTS = [
     "北岸港口的守卫阿舟住在灯塔二层，每晚巡视码头。",

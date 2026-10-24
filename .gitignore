@@ -3,6 +3,9 @@
 venv/
 node_modules/
 *.egg-info/
+# Persistent Android toolchains and build assets; keep the directory guide in Git.
+/android-dev/*
+!/android-dev/README.md
 
 # Private application data, restores and backups (never publish)
 /data/

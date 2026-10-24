@@ -2,7 +2,7 @@
 
 按安装、使用、角色卡制作和开发任务查阅。Half Agent 与 Full Agent 的模型编排和记忆机制分别说明。
 
-当前版本：**v0.7.0（实验阶段）**。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
+当前版本：**v0.8.0（实验阶段）**。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
 
 ## 开始使用
 
@@ -49,6 +49,7 @@
 | Full Agent 全部工具的简短列表与作用 | [工具速查](reference/full-agent-tools-summary.md) |
 | Full Agent 工具参数、引用和路径规则 | [工具协议](reference/full-agent-tools.md) |
 | 开发运行、测试选择、实测与打包 | [验证与发行](development/validation.md) |
+| Android 构建、真机开发及与桌面的共用／隔离边界 | [Android 开发](development/android.md) |
 | 原创和第三方许可、发行未决事项 | [许可范围与发行维护](development/licensing.md)、[许可文件](../LICENSE/README.md) |
 
 文档组织与维护约定见[开发入口](development/structure.md#文档维护)。

@@ -1,177 +1,215 @@
-# Android APK 构建
+# Android 开发
 
-Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一应用，故事数据保存在手机应用私有目录，不需要连接电脑上的后端。当前产物为私人安装用的 debug 签名构建，不是公开发行。
+Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一应用，故事数据保存在手机应用私有目录，不连接电脑后端。当前产物是私人安装用的 debug 签名 APK，不是公开发行。
 
 ## 设备范围
 
-- Android 9（API 28）及以上，`arm64-v8a`，需要较新的 Android System WebView；缺少所需特性时应用会提示更新。
-- 主界面和后台脚本共用文档起始网络隔离，禁止顶层与嵌套文档恢复 WebRTC；主界面缺少这项 WebView 能力时暂停交互卡片并提示更新，静态内容仍可访问。`dev.py smoke --suite ui` 单独验证主界面使用的宿主策略，覆盖五类文档与回环 UDP 监听，不访问外网。
+- Android 9（API 28）及以上，`arm64-v8a`，需要较新的 Android System WebView；缺少所需特性时应用提示更新。
 - **仅支持 4 KiB 内存页设备。** libfreetype、libxml2、libexslt、libxslt、jiter、kohakuvault、rpds 仍是 4 KiB 的 ELF 加载段对齐；支持 16 KiB 设备需要重新构建这些依赖并验证完整 APK。
-- 本地向量与重排使用固定版本的 Qwen3 0.6B Q8_0 GGUF，可分别选择 CPU、OpenCL GPU 或实验性 Hexagon NPU，权重单独导入，不打进 APK；已有 CUDA 配置保留，需在界面显式切换。关键词与 BM25 沿用桌面的 Jieba、Sudachi 和 core 词典。
+- 本地向量与重排只接受两个固定的 Qwen3 0.6B Q8_0 GGUF，可分别选择 CPU、OpenCL GPU（API 34+）或实验性 Hexagon NPU（API 34+），权重单独导入。
 
-`dev.py doctor` 可查看已连接设备的 ABI 与内存页大小。
+`dev.py doctor` 可查看已连接设备的 ABI、API 级别与内存页大小。
+
+## 与桌面的边界
+
+**Android 工作不得改变桌面（Windows/Linux）的功能、界面、启动方式与默认行为**；确需改变（含安全加固）先说明动机与影响并取得用户明确同意。改动先按下面三类定位。
+
+### 两端共用：改一处，两端同时生效
+
+| 范围 | 内容 |
+| --- | --- |
+| 后端业务 | `src/tavern/` 中除下表分叉点以外的全部代码：回合编排、Writer/Tracker、记忆、世界书检索与注入、提示词、模型请求、制卡 agent、参谋 agent、MVU |
+| 持久格式 | 数据库 schema、设置文档版本、个人数据包；Android 备份可导入桌面，反之亦然。格式变化须两端都能升级 |
+| 界面 | `web/`、`compat/`、`vendor/mvu/` 只有一份，APK 打包同一次 `npm run build` 的产物 |
+| 脚本隔离约定 | [`realm.py`](../../src/tavern/scripting/realm.py) 的后端接口，以及 [`network_guard.py`](../../src/tavern/scripting/network_guard.py) 的文档起始脚本（桌面受控窗口与 Android WebView 共用） |
+| 依赖与版本 | `uv.lock`、Python 3.13 基准、应用版本号；Android 从 `uv.lock` 导出后裁剪，不另设锁文件 |
+
+改共用代码时核对桌面输出不变，并确认 Android 裁剪的依赖（见[固定来源与适配](#固定来源与适配)）没有被新代码引用。
+
+### 平台分叉点：只在这些位置分支
+
+后端以 [`is_android()`](../../src/tavern/android/platform.py) 判断平台，它只读取 Android 宿主设置的 `TAVERN_PLATFORM=android`；前端以 `window.TavernAndroid` 桥或 `/api/health` 的 `platform` 判断。新的平台差异应加入这些位置之一，或新增同样窄的边界，不在业务代码中散布判断。
+
+| 位置 | 桌面 | Android |
+| --- | --- | --- |
+| [`application/api.py`](../../src/tavern/application/api.py) `create_app` | 本地访问边界 | 另加启动令牌认证、固定 Host、CSP 与 `AndroidFiles` 缓存策略 |
+| [`scripting/realm.py`](../../src/tavern/scripting/realm.py) `default_backend` | Playwright Chromium | [`android_realm.py`](../../src/tavern/scripting/android_realm.py)，`:realm` / `:realm_tools` 进程 |
+| [`search/local_models.py`](../../src/tavern/search/local_models.py) `create_local_model_manager` | CUDA/Hugging Face 子进程 | [`android/local_models.py`](../../src/tavern/android/local_models.py)，llama.cpp GGUF |
+| [`character/editor_files.py`](../../src/tavern/character/editor_files.py) | MarkItDown | [`android/documents.py`](../../src/tavern/android/documents.py)，`:documents` 进程 |
+| [`chatgpt/vault.py`](../../src/tavern/chatgpt/vault.py) | Windows DPAPI / Linux 明文加权限 | Android Keystore AES-GCM |
+| [`android/platform.py`](../../src/tavern/android/platform.py) `open_browser` | `webbrowser` | 系统浏览器 Intent |
+| [`web/lib/download.ts`](../../web/lib/download.ts) | 普通下载链接 | 系统保存对话框 |
+| [`web/lib/hostCapabilities.ts`](../../web/lib/hostCapabilities.ts) | 卡片脚本照常运行 | WebView 不能隔离网络时暂停卡片脚本 |
+| [`LocalResourceSettings.vue`](../../web/components/settings/LocalResourceSettings.vue) | 下载 CUDA 模型 | 导入 GGUF、选择运行设备 |
+| [`web/styles/tokens.css`](../../web/styles/tokens.css) `--safe-*` | 恒为 0 | 宿主写入状态栏、手势条和挖孔内边距 |
+
+### 单端专属：互不影响
+
+| 平台 | 位置 |
+| --- | --- |
+| 仅 Android | `src/tavern/android/`（两端都导入的 `platform.py` 除外）、`scripting/android_realm.py`、`packaging/android/`、`tools/android/`、`android-dev/` |
+| 仅桌面 | `desktop.py` 受控窗口、`setup`/`start`/`run-dev` 脚本、`scripting/playwright_realm.py`、CUDA 与 MarkItDown 依赖 |
+
+桌面的 `setup` 与 `npm run build` 不涉及 Android 工具链；Android 构建不修改桌面 `.venv`。
 
 ## 构建环境
 
-当前工具面向 Windows 本地构建。先准备以下工具，脚本不会安装或修改系统工具链：
+当前工具面向 Windows 本地构建，工具链全部装在项目内的 [`android-dev/`](../../android-dev/README.md)，不改系统 PATH、默认 Python 或桌面 `.venv`。该目录长期保留，不随 `.cache/` 清理；只有目录说明纳入 Git。
 
-| 工具         | 固定要求                                        |
-| ------------ | ----------------------------------------------- |
-| Python       | 3.13；项目版本见 `.python-version`              |
-| JDK          | 17                                              |
-| Android SDK  | Platform 35、Build Tools 35.0.0                 |
-| Android NDK  | `27.2.12479018`                                 |
-| Rust         | `1.99.1`，已安装 `aarch64-linux-android` target |
-| Gradle       | 8.13                                            |
-| Node/npm、uv | 用于已有前端构建与 `uv.lock` 导出               |
+| 工具 | 固定要求 |
+| --- | --- |
+| Python | 3.13.15 |
+| JDK | Temurin 17.0.17+10 |
+| Android SDK | Platform 35、Build Tools 35.0.0 |
+| Android NDK | `27.2.12479018` |
+| Rust | `1.99.1`，`aarch64-linux-android` target |
+| Gradle | 8.13 |
+| Node/npm、uv | 前端构建与 `uv.lock` 导出 |
+| Visual Studio Build Tools | C++ 工具与 Windows SDK，Rust 宿主构建需要；须自行安装 |
 
-默认缓存根为 `.cache/android/`。NDK 默认位于 `.cache/android/sdk/ndk/27.2.12479018`，可给准备工具传 `--ndk` 指向其他位置。Rust 默认使用 `.cache/android/cargo` 和 `.cache/android/rustup`，也尊重环境中的 `CARGO_HOME`、`RUSTUP_HOME`。
-
-从项目根目录创建专用构建环境：
+已安装 uv 和 Python 3.11+ 后，从项目根目录准备环境：
 
 ```powershell
-uv venv --python 3.13 .cache/android/build-env
-uv pip install --python .cache/android/build-env/Scripts/python.exe --index-url https://pypi.org/simple pip==26.2.2 maturin==1.15.0 setuptools-rust==1.13.0 setuptools==84.2.1 wheel==0.48.0 packaging==26.3 lief==1.0.0
+python tools/android/setup.py --accept-sdk-licenses
 ```
 
-构建工具读取当前终端的 `HTTP_PROXY`、`HTTPS_PROXY`，不改全局 pip、uv 或系统代理配置。
+该命令下载并校验固定的 JDK、Gradle、SDK 命令行工具和 Rust 安装器，安装 SDK/NDK 与 Rust target，并建立专用 Python 与 `build-env`。省略 `--accept-sdk-licenses` 时按 SDK 管理器提示处理许可。失败后可重跑，已通过哈希校验的下载会复用。
 
-Android 合并后的桌面开发环境也统一使用 Python 3.13。已有 Windows/Linux 环境须按[升级说明](../guides/maintenance.md#备份升级与回退)重新运行相应 `setup`；uv 会重建不兼容的 `.venv`。启用本地检索时保留安装开关，torch 等可选依赖需重新安装；Android 专用 `build-env` 与桌面 `.venv` 分别管理。
+构建工具读取当前终端的 `HTTP_PROXY`、`HTTPS_PROXY`。`--ndk` 可指向其他 NDK；Rust 尊重环境中的 `CARGO_HOME`、`RUSTUP_HOME`。旧的 `.cache/android/` 不再使用。
 
 ## 准备依赖
 
 ```powershell
-.cache/android/build-env/Scripts/python.exe tools/android/prepare.py --prefer-pypi-native
+android-dev/build-env/Scripts/python.exe tools/android/prepare.py --prefer-pypi-native
 ```
 
-该命令依次从固定 APK 恢复原生依赖、编译三个扩展、按 Android 平台裁剪 `uv export` 清单、构建 Jieba 与固定 KohakuTerrarium 源码 wheel，再下载其余 `android_24_arm64_v8a`、`cp313` wheel。产物保存在 `.cache/android/wheels/`；sdist 按 `uv.lock` 校验，PyPI wheel 按锁文件或固定版本的官方摘要校验。最终 `.cache/android/requirements.txt` 带 `--no-index`、`--require-hashes` 与每个 wheel 的哈希，Gradle 只消费本地 wheelhouse。
+该命令依次从固定 APK 恢复原生依赖、编译三个扩展、按 Android 裁剪 `uv export` 清单、构建 Jieba 与固定 KohakuTerrarium 源码 wheel，再下载其余 `android_24_arm64_v8a`、`cp313` wheel。产物在 `android-dev/wheels/`；最终的 `android-dev/requirements.txt` 带 `--no-index`、`--require-hashes`，Gradle 只消费本地 wheelhouse。
 
-记录匹配的已有产物校验后复用；未知来源、哈希冲突或未声明的源码修改会报错，不自动删除缓存。迁入此前另行验证的本地编译 wheel 时传 `--reuse-existing-builds`，来源记录会注明未重新编译。各阶段也可单独执行：
+已有产物校验通过后复用；未知来源、哈希冲突或未声明的源码修改会报错。迁入此前另行验证的本地编译 wheel 时传 `--reuse-existing-builds`。各阶段也可单独执行：
 
 ```powershell
-.cache/android/build-env/Scripts/python.exe tools/android/recover_native.py --skip-pypi-native
-.cache/android/build-env/Scripts/python.exe tools/android/build_wheels.py --jobs 4
-.cache/android/build-env/Scripts/python.exe tools/android/prepare.py --receipts-only
+android-dev/build-env/Scripts/python.exe tools/android/recover_native.py --skip-pypi-native
+android-dev/build-env/Scripts/python.exe tools/android/build_wheels.py --jobs 4
+android-dev/build-env/Scripts/python.exe tools/android/prepare.py --receipts-only
 ```
 
-`--receipts-only` 不下载或编译，只为已有 wheelhouse 重新生成哈希锁定清单和许可资产。
+`--receipts-only` 只为已有 wheelhouse 重新生成哈希清单和许可资产。
 
 ## 固定来源与适配
 
 应用使用的 KohakuTerrarium **始终是 2.1.5**，源码固定在 [`e4fb517939ba07086481251717e888cb74dc19a4`](https://github.com/Kohaku-Lab/KohakuTerrarium/tree/e4fb517939ba07086481251717e888cb74dc19a4)。
 
-原生依赖的备用来源固定为 [KohakuTerrarium 2.1.7 Android APK](https://github.com/Kohaku-Lab/KohakuTerrarium/releases/download/v2.1.7/kohakuterrarium-2.1.7-android.apk)，SHA-256 为 `1234727d90444b841e947ddd0a6970d96b57cdc36b97b20e1073b79516996835`。它只提供依赖二进制，不升级上述源码。恢复器只提取列出的依赖根目录与发行元数据，保留许可证、bytecode 与 `.so` 原内容，重建 WHEEL/RECORD 并添加来源说明。`--prefer-pypi-native` 改用 PyPI 的 MarkupSafe 3.0.4 与 KohakuVault 0.8.6 Android wheel。
+原生依赖的备用来源固定为 [KohakuTerrarium 2.1.7 Android APK](https://github.com/Kohaku-Lab/KohakuTerrarium/releases/download/v2.1.7/kohakuterrarium-2.1.7-android.apk)（SHA-256 `1234727d90444b841e947ddd0a6970d96b57cdc36b97b20e1073b79516996835`），只提取依赖二进制，不升级上述源码。`--prefer-pypi-native` 改用 PyPI 的 MarkupSafe 3.0.4 与 KohakuVault 0.8.6 Android wheel。
 
-自行编译的 tiktoken 0.14.0、SudachiPy 0.6.11、pydantic-core 2.41.5 取自 `uv.lock` 的已校验 sdist，使用 [Chaquopy Python 3.13.7 sysroot](https://repo.maven.apache.org/maven2/com/chaquo/python/python/3.13.7/python-3.13.7-aarch64-linux-android.tar.gz)（SHA-256 `0d889ce4237b0e37f3c8b45e6094aec693bb5faaf5cbdfb7167e16fedbc1a40e`）交叉编译，链接参数含 `-Wl,-z,max-page-size=16384`：
+tiktoken 0.14.0、SudachiPy 0.6.11、pydantic-core 2.41.5 取自 `uv.lock` 的已校验 sdist，使用 [Chaquopy Python 3.13.7 sysroot](https://repo.maven.apache.org/maven2/com/chaquo/python/python/3.13.7/python-3.13.7-aarch64-linux-android.tar.gz)（SHA-256 `0d889ce4237b0e37f3c8b45e6094aec693bb5faaf5cbdfb7167e16fedbc1a40e`）交叉编译：
 
-- tiktoken 改用 maturin，同时打包 `tiktoken` 与 `tiktoken_ext`，构建时检查插件模块已进入 wheel；可用 `build_wheels.py --package tiktoken` 单独重建。
-- SudachiPy 改用 maturin，`sudachi-lib/src/plugin/loader.rs` 的 `.so` 命名条件增加 Android；脚本只接受已核对的原文或精确补丁结果。
+- tiktoken 与 SudachiPy 改用 maturin；SudachiPy 的插件 `.so` 命名条件增加 Android，脚本只接受已核对的补丁结果。
 - tiktoken 与 SudachiPy 使用 `tools/android/native-locks/` 中的固定 Cargo.lock，pydantic-core 沿用 sdist 自带锁文件，统一 `--locked` 编译。
+- 可用 `build_wheels.py --package <名称>` 单独重建。
 
-Android 裁剪 Playwright、CUDA/Hugging Face 推理、MarkItDown/Magika/ONNX 等当前路由不用的依赖；Office 改用独立进程中的 mammoth、markdownify 与 openpyxl。裁剪集合与覆盖版本（NumPy 1.26.2、LibCST 0.3.23、trafilatura 2.0.0 等）集中列在 `tools/android/prepare.py`。
+Android 裁剪 Playwright、CUDA/Hugging Face 推理、MarkItDown/Magika/ONNX 等不用的依赖，Office 改用 mammoth、markdownify 与 openpyxl。裁剪集合与覆盖版本集中在 `tools/android/prepare.py`。
 
 ## 构建和安装
 
-在当前终端设置 `JAVA_HOME` 指向 JDK 17、`ANDROID_HOME` 指向 SDK，准备好前端依赖后执行：
+日常开发使用下一节的 `dev.py`。需要手动构建个人使用包时：
 
 ```powershell
+$env:JAVA_HOME = (Resolve-Path android-dev/jdk/jdk-17.0.17+10).Path
+$env:ANDROID_HOME = (Resolve-Path android-dev/sdk).Path
+$env:GRADLE_USER_HOME = Join-Path $PWD 'android-dev/gradle-home'
 npm.cmd ci
 npm.cmd run build
-.cache/android/build-env/Scripts/python.exe tools/android/prepare_llama.py
-$env:TAVERN_BUILD_PYTHON = (Resolve-Path .cache/android/build-env/Scripts/python.exe).Path
-& .cache/android/gradle-8.13/bin/gradle.bat -p packaging/android --no-daemon assembleDebug
-adb install -r .cache/android/build/app/outputs/apk/debug/app-debug.apk
+android-dev/build-env/Scripts/python.exe tools/android/prepare_llama.py
+$env:TAVERN_BUILD_PYTHON = (Resolve-Path android-dev/build-env/Scripts/python.exe).Path
+& android-dev/gradle-8.13/bin/gradle.bat -p packaging/android --project-cache-dir (Join-Path $PWD 'android-dev/gradle-project') --no-daemon --max-workers=1 --no-watch-fs assembleDebug
+& android-dev/sdk/platform-tools/adb.exe install -r android-dev/build/app/outputs/apk/debug/app-debug.apk
 ```
 
-APK 输出到 `.cache/android/build/app/outputs/apk/debug/app-debug.apk`。`-r` 在相同签名下保留数据更新；不同电脑的默认 debug 密钥可能不同，更换签名前先在应用内备份数据。
+`-r` 在相同签名下保留数据更新；不同电脑的默认 debug 密钥可能不同，更换签名前先在应用内备份数据。
 
-Gradle 不读取 `HTTP_PROXY`、`HTTPS_PROXY`。Maven 下载需要代理时在本次调用中传 JVM 参数，PowerShell 中每个 `-D...` 参数需整体加引号：
+Gradle 不读取 `HTTP_PROXY`、`HTTPS_PROXY`，需要代理时传 JVM 参数（PowerShell 中每个 `-D...` 整体加引号）：
 
 ```powershell
-& .cache/android/gradle-8.13/bin/gradle.bat "-Dhttp.proxyHost=<代理主机>" "-Dhttp.proxyPort=<代理端口>" "-Dhttps.proxyHost=<代理主机>" "-Dhttps.proxyPort=<代理端口>" -p packaging/android --no-daemon assembleDebug
+& android-dev/gradle-8.13/bin/gradle.bat "-Dhttp.proxyHost=<主机>" "-Dhttp.proxyPort=<端口>" "-Dhttps.proxyHost=<主机>" "-Dhttps.proxyPort=<端口>" -p packaging/android --no-daemon assembleDebug
 ```
 
 ## 日常 USB 开发
 
-连接一台已授权 USB 调试的手机并解锁亮屏后，从项目根目录执行：
+连接已授权 USB 调试的手机，解锁亮屏后执行：
 
 ```powershell
-.cache/android/build-env/Scripts/python.exe tools/android/dev.py check
+android-dev/build-env/Scripts/python.exe tools/android/dev.py check
 ```
 
-该命令依次离线增量构建、ADB 覆盖安装并运行真机自检。默认目标是独立的 `dev` 构建变体：包名 `com.terrarium.tavern.dev`，显示为“Terrarium Tavern 开发版”，使用自己的数据目录；个人使用包仍为 `com.terrarium.tavern`。自检代码只打包进 `dev` 变体，不使用个人设置、API 密钥或模型权重。
+该命令离线增量构建、覆盖安装并运行真机自检。默认目标是 `dev` 构建变体：包名 `com.terrarium.tavern.dev`，显示为“Terrarium Tavern 开发版”，数据目录独立；个人使用包为 `com.terrarium.tavern`。自检代码只打包进 `dev` 变体，不使用个人设置、API 密钥或模型权重。
 
-自检通过 Android Instrumentation 运行，覆盖原生分词依赖；Half Agent 与 Full Agent 的角色卡导入、开场变量初始化和对话读取；带脚本的消息帧、制卡展示断言与依赖打包；制卡 agent 读取 DOCX/XLSX；以及后端停止后立即在原端口重启（会确认端口仍处于 TIME_WAIT）。重启检查启动开发版自己的后端与数据目录，其余检查只使用结束后即清理的临时目录。运行期间会显示开发自检页，请保持该页在前台，避免厂商后台冻结；锁屏或熄屏时会直接报错，解锁后可只运行 `smoke`。
+| 命令或参数 | 用途 |
+| --- | --- |
+| `doctor` | 连接状态、ABI、API 级别、SoC、内存页与可见内存 |
+| `build` | 只增量构建开发版，无需连接手机 |
+| `deploy` | 构建并覆盖安装开发版 |
+| `check` | 构建、安装并运行除 `devices` 与模型外的全部自检 |
+| `smoke --suite <名称>` | 对已安装的开发版只运行一组自检，见下表 |
+| `logs` | 读取开发版主进程及各辅助进程的日志 |
+| `--target app` | 与 `deploy` 或 `logs` 合用，作用于个人使用包；不运行测试、不清空数据 |
+| `--web` | 修改 `web/`、`compat/`、`vendor/` 后同时重建前端与 SDK |
+| `--serial <序列号>` | 多设备时指定目标 |
+| `--online` | 允许 Gradle 下载缺失依赖 |
 
-| 命令或参数               | 用途                                                       |
-| ------------------------ | ---------------------------------------------------------- |
-| `doctor`                 | 查看连接状态、设备 ABI、API 级别、SoC、内存页与可见内存    |
-| `build`                  | 只增量构建开发版 APK，无需连接手机                         |
-| `deploy`                 | 构建并覆盖安装开发版，不运行自检                           |
-| `check`                  | 构建、覆盖安装并运行自检                                   |
-| `smoke --suite sessions` | 对已安装的开发版只运行两种会话初始化检查                   |
-| `smoke --suite native`   | 对已安装的开发版只检查原生分词依赖                         |
-| `smoke --suite scripts`  | 只运行消息帧、制卡展示断言与依赖打包检查                   |
-| `smoke --suite documents` | 只运行制卡 agent 的 DOCX/XLSX 读取检查                    |
-| `smoke --suite restart`  | 只运行后端停止后立即重启检查                               |
-| `smoke --suite models`   | 对已安装的开发版运行本地模型检查，见下文                   |
-| `logs`                   | 读取开发版主进程及各辅助进程的日志                         |
-| `logs --target app`      | 只读采集个人使用包的日志                                   |
-| `deploy --target app`    | 构建并更新个人使用包；不运行测试、不清空数据               |
-| `--web`                  | 修改 `web/`、`compat/` 或前端构建输入后，同时重建前端与 SDK |
-| `--serial <序列号>`      | 多设备时指定目标                                           |
-| `--online`               | 允许 Gradle 下载缺失依赖，沿用终端代理环境变量             |
+| 自检组 | 内容 |
+| --- | --- |
+| `native` | 原生分词依赖 |
+| `sessions` | Half Agent 与 Full Agent 的角色卡导入、开场变量初始化和对话读取 |
+| `scripts` | 带脚本的消息帧、制卡展示断言与依赖打包 |
+| `documents` | 制卡 agent 读取 DOCX/XLSX |
+| `restart` | 后端停止后立即在原端口重启 |
+| `ui` | 主界面宿主网络策略，不访问外网 |
+| `devices` | 只探测加速设备，不加载权重 |
+| `models`、`models-opencl`、`models-hexagon` | 本地模型，见[模型自检](#模型自检) |
 
-只改 Python 或 Java 时直接增量构建；修改前端必须加 `--web`。自检会结束开发版进程，不要同时在开发版中手动调试。开发版主 WebView 开启了远程调试，可在电脑 Chrome 的 `chrome://inspect` 查看。安装超过 90 秒未返回时，工具报告“安装状态未知”且不重复传包，在手机上确认安装后可直接运行 `smoke`。更新个人使用包前，先按[维护指南](../guides/maintenance.md)导出备份并完成或取消当前生成。
+自检期间保持开发自检页在前台，锁屏或熄屏会直接报错，解锁后可只运行 `smoke`。自检会结束开发版进程，不要同时手动调试。开发版主 WebView 开启远程调试，可在电脑 Chrome 的 `chrome://inspect` 查看。安装超过 90 秒未返回时报告“安装状态未知”，在手机上确认后可直接运行 `smoke`。
 
-输出保存在受忽略的 `.cache/android/dev/`，每类只保留最近一次：`build.log`、`install.log`、`smoke.log`、`logcat.txt` 和带各阶段耗时的 `report.json`。
+输出在 `android-dev/dev/`，每类只保留最近一次：`build.log`、`install.log`、`smoke.log`、`logcat.txt` 和 `report.json`。
+
+更新个人使用包前，先按[维护指南](../guides/maintenance.md)导出备份并完成或取消当前生成。
 
 ## 应用内本地模型
 
-`tools/android/prepare_llama.py` 校验固定的 llama.cpp `b11829` CPU 与 Snapdragon 原生包。CPU 库按白名单提取并 strip，入口为 `libtavern_llama_server.so`；Snapdragon 包使用构建依赖 LIEF 1.0.0，把 ARM64 库、`DT_SONAME` 和内部 `DT_NEEDED` 统一加上 `libtavern_accel_` 前缀，保留 Hexagon DSP skel 的固定名称。两套库互不覆盖，权重共用；来源、修改前后 SHA-256 与第三方许可写入发行资产，`snapdragon.json` 记录适配。加速库保留 16 KiB LOAD 对齐，但 APK 其他依赖仍只验收了 4 KiB 设备。`dev.py build/deploy/check` 会离线调用此步骤，缺少原生包时报错。
+用户侧的导入与设置见[检索指南](../guides/retrieval.md)，本节说明打包与运行约束。
 
-Gradle 使用 `jniLibs.useLegacyPackaging=true`，安装器把原生代码提取到 `nativeLibraryDir`，应用只从这里启动入口，不执行可写目录中的程序（见 [Android 的可执行文件限制](https://developer.android.com/about/versions/10/behavior-changes-10#execute-permission)）。每个模型有独立进程、loopback 随机端口和临时认证密钥。取消、超时或停止服务会结束对应进程；引擎明确拒绝的请求（例如超过上下文）只报告错误，模型保持加载。
+`tools/android/prepare_llama.py` 校验固定的 llama.cpp [`b11829`](https://github.com/ggml-org/llama.cpp/releases/tag/b11829) CPU 与 Snapdragon 原生包。CPU 入口为 `libtavern_llama_server.so`；Snapdragon 库统一加 `libtavern_accel_` 前缀（Hexagon DSP skel 保持原名），两套库互不覆盖，权重共用。来源、修改前后哈希与第三方许可写入发行资产。`dev.py build/deploy/check` 离线调用此步骤，缺少原生包时报错，须先联网准备。
 
-CPU 参与计算时使用四线程，其他运行参数固定为单槽、4096-token 上下文；CPU/Hexagon 使用 512-token 微批，OpenCL 使用 4096-token 微批，沿用保存的批量大小、向量维度和项目提示词。超过上下文时报错，不截断查询或提示词；世界书索引与重排沿用现有 token 分片，已准入条目仍完整注入。
-
-Android 的 [`Process.destroyForcibly()` 继承实现](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/java/java/lang/Process.java)调用 `destroy()`，其[原生实现仅发送 SIGTERM](https://android.googlesource.com/platform/libcore/+/refs/heads/android16-release/ojluni/src/main/native/UNIXProcess_md.c)。应用通过系统 shell 在 `exec` 前取得自有子进程 PID；正常停止未退出时，明确发送 SIGKILL 并等待回收，避免超时后残留模型进程。此边界不依赖 root 或隐藏 Java API。
-
-b11829 的 Adreno Q8_0 路径在 512-token 分片附加 EOS 后，单 token 尾批曾产生不稳定向量。OpenCL 按整个 4096-token 有界上下文处理，避免此尾批；不会截断输入，设备与微批参数一并参与派生索引身份。
-
-### 运行设备
-
-两个模型分别保存 `cpu`、`opencl:0` 或 `hexagon:0`，设置格式 version 12 保留已有 CPU/CUDA 选择。设备变化不复制或重新导入权重，但需重新预热，派生向量按设备及引擎包身份隔离。界面同时显示已选设备、实际设备、模型层卸载数量与不可用原因；不支持的算子仍可能由 CPU 执行，不能把层卸载解释成所有运算都在加速器上。
-
-Android 的 `GET /api/local-models` 返回 `devices`（每项含 `device/label/available/reason/retry`）；每个 `models` 项返回 `selected_device/device_available/device_retryable/device_error`。已加载模型的 `execution` 包含 `actual_device/offloaded_layers`，加速模型另有 `total_layers/model_buffer_mib/execution_note`；未加载时为 `null`。设备列表来自服务启动后在后台进行的应用内探测，不阻塞界面启动；探测完成前 CPU 可直接使用，加速设备显示“正在探测”。探测超时、子进程失败或异常属于可重试状态，预热该设备时会等待当前探测并重新探测一次；API 版本、指令扩展或设备列表不含该设备等确定结果不重试。模型实际状态则随请求更新。
-
-加速引擎来自[固定官方 Snapdragon 包](https://github.com/ggml-org/llama.cpp/releases/tag/b11829)，要求 Android API 34+、该包所需的 ARM 指令扩展及兼容驱动；CPU 保持 Android 9+ 的原边界。清单把 `libOpenCL.so`、`libcdsprpc.so` 声明为可选，独立子进程的 `LD_LIBRARY_PATH` 包含安装库目录与 `/vendor/lib64`，`ADSP_LIBRARY_PATH`、`CDSP_LIBRARY_PATH` 指向安装库目录。能力探测在应用 UID 下运行 `--list-devices`，最多 20 秒且不加载权重；预热再核对实际设备、非零模型缓冲与层卸载日志。仅能枚举设备不代表每个模型都能成功推理，启动或推理失败会明确报错，不自动改用 CPU。OpenCL 编译内核的磁盘缓存关闭，避免没有容量边界的缓存增长。
-
-Hexagon 是[上游实验性后端](https://github.com/ggml-org/llama.cpp/blob/184f6536024668e8908ab8c86033d56708e62b40/docs/backend/snapdragon/README.md)。reranker 并非只能使用 NPU；它在三种设备上均采用 `rank` pooling、两维 `yes/no` 输出适配及 `P(yes)` 评分。
+- 原生程序只从安装器提取的 `nativeLibraryDir` 启动，不执行可写目录中的文件。
+- 每个模型独立进程、loopback 随机端口和临时认证密钥；取消、超时或停止服务结束对应进程，不影响另一个模型。
+- 固定单槽、4096-token 上下文，超过时报错，不截断；世界书索引沿用 token 分片，已准入条目完整注入。
+- 设备选择保存为 `cpu`、`opencl:0` 或 `hexagon:0`。切换设备不重新导入权重，但需重新预热，派生向量按设备与引擎包隔离。
+- 加速设备在服务启动后由后台探测，探测完成前 CPU 可直接使用。加速推理失败时明确报错，不自动回退 CPU。界面显示实际设备与层卸载数量；层卸载不代表所有算子都在加速器上执行。
+- Hexagon 是[上游实验性后端](https://github.com/ggml-org/llama.cpp/blob/184f6536024668e8908ab8c86033d56708e62b40/docs/backend/snapdragon/README.md)。reranker 在三种设备上都使用 `rank` pooling 读取 `P(yes)`。
 
 ### 模型文件
 
-应用只接受 `src/tavern/android/model_sources.json` 中固定 SHA-256 的两个文件：
+应用只接受 [`model_sources.json`](../../src/tavern/android/model_sources.json) 中固定 SHA-256 的两个文件：
 
 - 向量：Qwen 官方 [`Qwen3-Embedding-0.6B-Q8_0.gguf`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/370f27d7550e0def9b39c1f16d3fbaa13aa67728/Qwen3-Embedding-0.6B-Q8_0.gguf)。
-- 重排：Qwen 没有发布官方 GGUF，`Qwen3-Reranker-0.6B-Q8_0.gguf` 需用固定 llama.cpp 转换器从官方权重生成；社区转换版哈希不同，会被拒绝。先在装有本地检索依赖的桌面版中下载 Qwen3-Reranker-0.6B（版本 `main`），再运行 `.venv/Scripts/python.exe tools/android/model_probe_prepare.py`。
+- 重排：Qwen 没有官方 GGUF，须用固定 llama.cpp 转换器从官方权重生成，社区转换版哈希不同会被拒绝。先在装有本地检索依赖的桌面版中下载 Qwen3-Reranker-0.6B（版本 `main`），再运行 `.venv/Scripts/python.exe tools/android/model_probe_prepare.py`。
 
-转换工具同时下载向量文件，两个产物都位于 `.cache/android/model-probe/models/`。导入时应用逐块写入唯一暂存文件并核对完整 SHA-256，成功后原子发布；失败或取消不替换已验证的旧文件。手机模型目录与派生向量独立于桌面缓存，不能混用。
+两个产物都在 `android-dev/model-probe/models/`。手机模型与派生向量独立于桌面缓存，不能混用。
 
 ### 模型自检
 
-`dev.py smoke --suite devices` 仅探测应用内设备；`--suite models` 使用同一夹具比较 CPU/GPU/NPU 的真实 GGUF 导入、加载、跨微批输入、长条目索引、重排与双模型共存。取消发生在请求体发完后，确认目标进程退出且另一模型仍可推理。记录冷加载、推理耗时、进程 RSS 峰值和卸载证据；RSS 不等于加速器全部内存占用。记录加速结果相对 CPU 的向量余弦相似度，跨硬件数值差异不单独作为失败条件；已知相关文档的向量／重排排序须正确，同一设备重复输入的向量须稳定，重排最大绝对误差须 ≤ 0.001。失败后可用 `--suite models-opencl` 或 `--suite models-hexagon` 只重跑对应后端，复用开发缓存中的 CPU 对照；报告与对照均在开发版 `cache/model-fixtures/`，变更夹具或引擎后应重新生成 CPU 对照。界面导入直接发送文件流，后端不再先暂存 multipart；按最多 1 MiB 的写入块累计哈希，校验成功后原子替换。接收与校验期间不占用模型锁，旧模型可继续推理；同一模型同时只允许一个导入，只有停止旧进程和替换文件时才短暂持锁。启动时清理未完成的模型临时文件，正式权重不属于这项清理。先把两个模型文件放进开发版私有缓存：
+`--suite models` 用同一夹具比较 CPU、GPU、NPU 的真实导入、加载、跨微批输入、长条目索引、重排、取消与双模型共存，并记录耗时、RSS 峰值和与 CPU 的向量余弦相似度。判定条件：已知相关文档排序正确、同设备重复输入的向量稳定、重排最大绝对误差 ≤ 0.001；跨硬件数值差异本身不算失败。`models-opencl`、`models-hexagon` 只重跑对应后端，复用缓存的 CPU 对照；变更夹具或引擎后应重新生成对照。
+
+运行前把两个模型文件放进开发版私有缓存：
 
 ```powershell
-adb push .cache/android/model-probe/models/Qwen3-Embedding-0.6B-Q8_0.gguf .cache/android/model-probe/models/Qwen3-Reranker-0.6B-Q8_0.gguf /data/local/tmp/
+adb push android-dev/model-probe/models/Qwen3-Embedding-0.6B-Q8_0.gguf android-dev/model-probe/models/Qwen3-Reranker-0.6B-Q8_0.gguf /data/local/tmp/
 adb shell run-as com.terrarium.tavern.dev mkdir -p cache/model-fixtures
 adb shell run-as com.terrarium.tavern.dev cp /data/local/tmp/Qwen3-Embedding-0.6B-Q8_0.gguf /data/local/tmp/Qwen3-Reranker-0.6B-Q8_0.gguf cache/model-fixtures/
 ```
 
-其他自检范围不加载模型权重。
-
 ## 本地模型推理探针
 
-`tools/android/model_probe.py` 不经过应用，直接在 Windows CPU 和 ADB 连接的手机上用同一 Q8_0 GGUF 推理，并与项目 `_infer` 路径生成的 CUDA BF16 结果对照，用于区分引擎性能与应用集成问题。前提：桌面 `.venv` 已安装本地检索依赖，`data/models/` 有清单指定版本的两份源模型，电脑至少有 2 GiB 空闲显存。
+`tools/android/model_probe.py` 不经过应用，直接在 Windows CPU 与 ADB 连接的手机上用同一 GGUF 推理，并与桌面 CUDA BF16 结果对照，用于区分引擎问题与应用集成问题。需要桌面 `.venv` 已装本地检索依赖、`data/models/` 有两份源模型、至少 2 GiB 空闲显存。
 
 ```powershell
 $env:PYTHONUTF8 = "1"
@@ -180,29 +218,25 @@ $env:PYTHONUTF8 = "1"
 .venv/Scripts/python.exe tools/android/model_probe.py
 ```
 
-前两步只在来源或样本变化后重做；`model_probe.py` 支持 `--serial` 与 `--resume`。重排通过 `/embedding` 的 `rank` pooling 读取 `P(yes)`，固定引擎需要 `--override-kv qwen3.embedding_length_out=int:2` 才能读出两维分类结果，应用内使用相同参数。数值比较的参考阈值见 `model_probe.py` 的 `LIMITS`，不作为打包门槛；token、输出维度或首选文档不符时返回非零退出码。产物与报告位于受忽略的 `.cache/android/model-probe/`，手机端文件位于 `/data/local/tmp/terrarium-model-probe/`。
+前两步只在来源或样本变化后重做；`model_probe.py` 支持 `--serial` 与 `--resume`。阈值见脚本的 `LIMITS`，不作为打包门槛；token、输出维度或首选文档不符时返回非零退出码。产物在 `android-dev/model-probe/`。
 
 ## 依赖许可资产
 
-`.cache/android/distribution-assets/third-party/` 随 APK 打包，包含原始 METADATA、wheel 内许可、项目许可、wheel SHA-256 清单和来源记录。SudachiPy 0.6.11 的 sdist 没有独立 LICENSE，工具另存其[固定上游 Git blob](https://api.github.com/repos/WorksApplications/sudachi.rs/git/blobs/261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64)中的 Apache-2.0 文本。
+`android-dev/distribution-assets/third-party/` 随 APK 打包，包含原始 METADATA、wheel 内许可、项目许可、wheel 哈希清单和来源记录。SudachiPy 0.6.11 的 sdist 没有独立 LICENSE，工具另存其[固定上游 Git blob](https://api.github.com/repos/WorksApplications/sudachi.rs/git/blobs/261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64)中的 Apache-2.0 文本。
 
 这些清单记录技术来源，不代表发行授权审查已通过；html2text 的 GPL 与项目非商业授权的兼容性仍按[许可维护](licensing.md)记录为未决。
 
-## 手机端运行边界
+## 手机端运行约束
 
-导入文件使用系统文件选择器，不按 MIME 类型过滤（JSON 常被标成文本或二进制，CHARX 没有标准类型），由各导入流程校验内容；选择即授予本次读取权限，无需存储权限。`Android/data` 等系统受限目录无法选择，需先复制到 `Download` 等公共目录。
-
-首次启动选择可用端口并保存，之后复用同一 origin，使阅读设置和侧栏偏好保持有效；端口被其他应用占用时报错，不更换 origin。每次后端启动生成新令牌，API 与静态资源都需要认证。主 WebView 只允许请求当前本地 origin：剧情图片经既有图片缓存读取，其他页面的远程直链图片不加载，外链交给系统浏览器。
-
-Android 11 及以上界面铺满状态栏、手势条和挖孔区域，宿主把这些内边距写入页面的 `--safe-*` 变量，桌面浏览器中均为 0；键盘弹出时 WebView 缩到键盘上方。APK 内静态文件的修改时间固定，除带哈希的 `assets/` 外一律不缓存，应用更新后首次启动还会清空 WebView 缓存。
-
-故事脚本在 `:realm` 进程运行，制卡验证与依赖打包在 `:realm_tools` 进程运行，Office 在 `:documents` 进程解析；超时或取消只终止对应进程。脚本桥以 JSON 传递参数和结果，兼容层安装后返回的 API 对象留在脚本环境中。后端由可见的前台服务承载；停止服务会取消故事、制卡和参谋任务并让存储收尾。系统终止进程后依靠原子提交与重启恢复。
-
-前台服务仍受设备的后台冻结与省电策略约束。冻结期间模型请求和本地接口可能暂停，回到前台后恢复，也可能因连接超时而报错；失败回合不会部分提交。进程被结束后，重新打开应用会将未完成回合标记为中断，并保留已提交剧情；按界面的继续或重试入口恢复工作。应用不修改设备的冻结或省电规则。
+- **进程**：后端由可见的前台服务承载。故事脚本在 `:realm`、制卡验证与依赖打包在 `:realm_tools`、Office 解析在 `:documents` 进程运行，超时或取消只终止对应进程。停止服务会取消故事、制卡和参谋任务并让存储收尾。
+- **访问边界**：首次启动选定端口并保存，之后复用同一 origin，使阅读设置和侧栏偏好保持有效；端口被占用时报错，不更换 origin。每次启动生成新令牌，API 与静态资源都需认证（见[架构](../design/architecture.md)）。主 WebView 只请求本地 origin，外链交给系统浏览器。
+- **文件导入**：使用系统文件选择器，不按 MIME 类型过滤，由导入流程校验内容；`Android/data` 等受限目录需先复制到 `Download` 等公共目录。
+- **显示**：Android 11+ 界面铺满系统栏，内边距经 `--safe-*` 变量传入；键盘弹出时 WebView 缩到键盘上方。应用更新后首次启动清空 WebView 缓存。
+- **后台冻结**：前台服务仍受厂商冻结与省电策略约束，期间请求可能暂停或超时报错，失败回合不部分提交。进程被结束后，重新打开会把未完成回合标记为中断，可按界面入口继续或重试。应用不修改设备的冻结或省电规则。
+- **长世界书**：手机 CPU 可能超过默认每条 60 秒的索引时限，可在“检索 → 高级参数”调整“单条索引超时（秒）”。
 
 ## 维护约束
 
-- 桌面（Windows/Linux）的功能、界面、启动方式与默认行为不因 Android 改变；确需改变时先取得用户明确同意。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及 Android 工具链。
+- 平台差异只放在[平台分叉点](#平台分叉点只在这些位置分支)；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`。
 - 不提供“手机作为客户端连接电脑后端”的远程模式，它与[架构](../design/architecture.md)中服务只监听 loopback 的约定冲突。
-- Chaquopy 中不能用 `sys.executable` 或 `multiprocessing` 启动 Python 子进程，Playwright 也无法启动 Chromium；需要隔离的工作放进独立 Android 进程的 Service。同一进程的 WebView 共用渲染进程，脚本死循环会拖住同进程页面，重置也会让该进程内所有脚本环境失效，因此故事脚本与制卡工具分属 `:realm` 和 `:realm_tools`。
-- 手机 CPU 上长世界书可能超过默认每条 60 秒的索引时限；在目标模式的“检索 → 高级参数”中显式调整“单条索引超时（秒）”，范围为 1–3600 秒。查询与重排分别使用各自的超时设置。
+- Chaquopy 中不能用 `sys.executable` 或 `multiprocessing` 启动 Python 子进程，Playwright 也无法启动 Chromium；需要隔离的工作放进独立 Android 进程的 Service。同一进程的 WebView 共用渲染进程，脚本死循环会拖住同进程页面，因此故事脚本与制卡工具分属 `:realm` 和 `:realm_tools`。

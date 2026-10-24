@@ -18,7 +18,8 @@ from email.parser import BytesParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CACHE = ROOT / ".cache" / "android"
+# Persistent Android development assets must survive routine .cache cleanup.
+DEFAULT_CACHE = ROOT / "android-dev"
 APK_URL = (
     "https://github.com/Kohaku-Lab/KohakuTerrarium/releases/download/v2.1.7/kohakuterrarium-2.1.7-android.apk"
 )
