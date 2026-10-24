@@ -14,6 +14,7 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.memories.memory_records import Record, source_hash
+from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
 from tests.backend.test_full_agent import ScriptHost
 from tests.backend.test_message_versions import generate
@@ -124,6 +125,7 @@ async def main(all_viewports=False):
                         context = await browser.new_context(
                             viewport={"width": width, "height": height}, device_scale_factor=scale
                         )
+                        await context.add_init_script(NETWORK_GUARD)
                         await context.add_init_script(
                             f'if (window === window.top && !localStorage.getItem("tavern-session")) localStorage.setItem("tavern-session", {json.dumps(session["id"])});'
                         )

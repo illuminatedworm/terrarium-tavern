@@ -38,6 +38,7 @@ android {
     sourceSets {
         main {
             assets.srcDir "../../../.cache/android/distribution-assets"
+            assets.srcDir "../../../src/tavern/static/security"
             jniLibs.srcDir "../../../.cache/android/llama-jni"
         }
     }

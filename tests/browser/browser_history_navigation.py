@@ -14,6 +14,7 @@ from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.full_agent.state import new_state
 from tavern.memories.memory import fingerprint
+from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump, uid
 
 
@@ -81,6 +82,7 @@ async def main():
                 browser = await playwright.chromium.launch()
                 report["browser"] = browser.version
                 page = await browser.new_page(viewport={"width": 1440, "height": 900})
+                await page.context.add_init_script(NETWORK_GUARD)
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 await page.goto(address)

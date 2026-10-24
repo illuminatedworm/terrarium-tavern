@@ -15,6 +15,8 @@ from threading import Thread
 import httpx
 from playwright.async_api import async_playwright
 
+from tavern.scripting.network_guard import NETWORK_GUARD
+
 BASE = "http://127.0.0.1:8015"
 OUTPUT = Path(".cache/release-validation")
 
@@ -87,6 +89,7 @@ async def main():
             context = await browser.new_context(
                 viewport={"width": width, "height": height}, device_scale_factor=scale
             )
+            await context.add_init_script(NETWORK_GUARD)
             page = await context.new_page()
             page.on("pageerror", lambda e: errors.append(str(e)))
             await page.goto(BASE)

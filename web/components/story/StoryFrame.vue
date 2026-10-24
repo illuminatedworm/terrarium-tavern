@@ -11,6 +11,7 @@ import {
 import { frameCapabilities } from '../../../compat/frame-capabilities';
 import { frameBoot } from '../../lib/storyFrameBoot';
 import { api } from '../../lib/api';
+import { isolatedCardScripts } from '../../lib/hostCapabilities';
 const props = defineProps<{
   message: any;
   session: any;
@@ -120,7 +121,7 @@ async function build(force = false) {
   if (disposed || (suspended.value && !force)) return;
   const version = ++buildVersion;
   loadError.value = '';
-  if (!props.html || (needsScripts.value && !props.enabled)) {
+  if (!props.html || (needsScripts.value && (!props.enabled || !isolatedCardScripts))) {
     token = crypto.randomUUID();
     source.value = '';
     ready = false;
@@ -382,7 +383,7 @@ watch(
       v-if="source"
       ref="frame"
       class="card-frame"
-      :sandbox="enabled && needsScripts ? 'allow-scripts' : ''"
+      :sandbox="enabled && isolatedCardScripts && needsScripts ? 'allow-scripts' : ''"
       :srcdoc="source"
       :style="{ height: height + 'px' }"
       title="角色卡交互界面"
@@ -392,6 +393,9 @@ watch(
     <p v-else-if="suspended" class="muted" role="status">面板将在滚动到此处时恢复。</p>
     <p v-else-if="!enabled" class="muted" role="status">
       此对话尚未启用脚本，交互面板已暂停。可在会话设置中启用。
+    </p>
+    <p v-else-if="needsScripts && !isolatedCardScripts" class="muted" role="status">
+      当前窗口无法隔离卡片网络访问，交互面板已暂停。请从桌面启动入口打开应用窗口；Android 请更新系统 WebView。
     </p>
     <p v-else-if="!loadError" class="muted" role="status">正在加载交互面板…</p>
     <div v-if="loadError" class="error" role="alert">

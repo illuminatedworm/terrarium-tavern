@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -21,15 +22,23 @@ async def test_script_realms_block_webrtc_in_main_and_new_child_documents():
 
     backend = PlaywrightBackend()
     try:
-        context = await backend.new_context(lambda url, method: None)
-        page = await context.open_page(
+        html = (
             '<meta http-equiv="Content-Security-Policy" '
-            "content=\"default-src 'none'; script-src 'unsafe-inline'; connect-src 'none'\">",
-            lambda *args: None,
+            "content=\"default-src 'none'; script-src 'unsafe-inline'; frame-src blob: data:; connect-src 'none'\">"
         )
+        address = "http://127.0.0.1:1/realm-probe"
+        context = await backend.new_context(
+            lambda url, method: (html, "text/html") if url == address else None
+        )
+        page = await context.open_page("", lambda *args: None)
+        # The route supplies this document without opening a network connection.
+        # Chromium crashes on script-bearing Blob navigation from an opaque
+        # about:blank document with meta CSP, including without any init script.
+        await page.page.goto(address)
         # The unguarded browser sends ICE packets even under this CSP and deny-all
         # request routing. A fresh about:blank frame must not restore that capability.
-        blocked = await page.evaluate("""async () => {
+        blocked = await asyncio.wait_for(
+            page.evaluate("""async () => {
             const probe = target =>
                 ['RTCPeerConnection', 'webkitRTCPeerConnection'].map(name => {
                     try {
@@ -38,22 +47,69 @@ async def test_script_realms_block_webrtc_in_main_and_new_child_documents():
                         return false;
                     } catch { return true; }
                 });
-            const child = document.createElement('iframe');
-            document.body.append(child);
-            const results = [window, child.contentWindow].flatMap(probe);
-            const loaded = new Promise(resolve => {
-                addEventListener('message', event => resolve(event.data), {once:true});
-            });
-            child.srcdoc = '<script>parent.postMessage((' + probe.toString()
+            const blank = document.createElement('iframe');
+            document.body.append(blank);
+            const results = [window, blank.contentWindow].flatMap(probe);
+            blank.remove();
+            const html = '<script>parent.postMessage((' + probe.toString()
                 + ')(window),"*")</script>';
-            results.push(...await loaded);
-            child.remove();
+            const blob = URL.createObjectURL(new Blob([html], {type:'text/html'}));
+            for (const [attribute, value] of [
+                ['srcdoc', html], ['src', blob],
+                ['src', 'data:text/html,' + encodeURIComponent(html)],
+            ]) {
+                const child = document.createElement('iframe');
+                const loaded = new Promise(resolve => {
+                    const receive = event => {
+                        if (event.source !== child.contentWindow) return;
+                        removeEventListener('message', receive);
+                        resolve(event.data);
+                    };
+                    addEventListener('message', receive);
+                });
+                child.setAttribute(attribute, value);
+                document.body.append(child);
+                results.push(...await loaded);
+                child.remove();
+            }
+            URL.revokeObjectURL(blob);
             return results;
-        }""")
-        assert blocked == [True] * 6
+        }"""),
+            timeout=8,
+        )
+        assert blocked == [True] * 10
         await context.close()
     finally:
         await backend.close()
+
+
+async def test_desktop_window_closure_shuts_down_service_and_releases_window(monkeypatch, tmp_path):
+    from tavern import desktop
+
+    ready, stopping = asyncio.Event(), asyncio.Event()
+    released = []
+
+    class Window:
+        def __init__(self, *args):
+            self.closed = asyncio.Event()
+
+        async def open(self):
+            assert ready.is_set()
+            self.closed.set()
+
+        async def close(self):
+            assert stopping.is_set()
+            released.append("window")
+
+    class Server:
+        async def serve(self):
+            ready.set()
+            await stopping.wait()
+            released.append("service")
+
+    monkeypatch.setattr(desktop, "DesktopWindow", Window)
+    await desktop.serve_window(Server(), ready, stopping.set, tmp_path, "http://127.0.0.1:8000")
+    assert released == ["service", "window"]
 
 
 async def test_full_agent_patch_failure_restores_server_and_message_frame_mirrors():

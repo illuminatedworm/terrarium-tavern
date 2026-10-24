@@ -186,6 +186,9 @@ public final class MainActivity extends Activity implements HostService.Listener
     }
 
     private void configureWebView() {
+        // Missing document-start support leaves the capability absent. The UI
+        // then pauses script panels while retaining static content and settings.
+        CardNetworkPolicy.install(this, web);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);

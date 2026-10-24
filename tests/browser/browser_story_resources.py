@@ -18,6 +18,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
 
 
@@ -139,6 +140,7 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
                         context = await browser.new_context(
                             viewport={"width": width, "height": height}, device_scale_factor=scale
                         )
+                        await context.add_init_script(NETWORK_GUARD)
                         await context.add_init_script(
                             f'if(window===top)localStorage.setItem("tavern-session",{json.dumps(session["id"])});'
                         )

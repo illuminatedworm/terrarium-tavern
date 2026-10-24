@@ -2,9 +2,10 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-usage() { printf '%s\n' '用法：./start.sh [--port PORT] [--data DIRECTORY]'; }
+usage() { printf '%s\n' '用法：./start.sh [--port PORT] [--data DIRECTORY] [--server-only]'; }
 port=8000
 data=data
+window=(--desktop)
 while (($#)); do
     case "$1" in
         --port|-p)
@@ -15,6 +16,7 @@ while (($#)); do
             if (($# < 2)); then usage >&2; exit 2; fi
             data=$2; shift 2
             ;;
+        --server-only) window=(); shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf '未知参数：%s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -49,4 +51,4 @@ except OSError:
 else:
     sys.exit(f"TAVERN_PORT_IN_USE: 端口 {port} 已被使用；请先运行 ./stop.sh，或使用 --port 选择另一端口。")
 PY
-exec .venv/bin/python -m tavern --port "$port" --data "$data"
+exec .venv/bin/python -m tavern --port "$port" --data "$data" "${window[@]}"

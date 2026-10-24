@@ -2,14 +2,7 @@
 
 import asyncio
 
-NETWORK_GUARD = """(() => {
-    // CSP and Playwright request routing do not intercept WebRTC's ICE traffic.
-    for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection'])
-        Object.defineProperty(globalThis, name, {
-            value: class { constructor() { throw Error('卡片不能直接访问网络'); } },
-            writable: false, configurable: false,
-        });
-})();"""
+from tavern.scripting.network_guard import NETWORK_GUARD
 
 
 class PlaywrightPage:

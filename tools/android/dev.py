@@ -201,7 +201,7 @@ def main():
     parser.add_argument("--online", action="store_true", help="允许 Gradle 下载缺失依赖；默认离线")
     parser.add_argument(
         "--suite",
-        choices=("all", "native", "sessions", "scripts", "documents", "restart", "models"),
+        choices=("all", "native", "sessions", "scripts", "documents", "restart", "models", "ui"),
         default="all",
     )
     args = parser.parse_args()

@@ -5,6 +5,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 ## 设备范围
 
 - Android 9（API 28）及以上，`arm64-v8a`，需要较新的 Android System WebView；缺少所需特性时应用会提示更新。
+- 主界面和后台脚本共用文档起始网络隔离，禁止顶层与嵌套文档恢复 WebRTC；主界面缺少这项 WebView 能力时暂停交互卡片并提示更新，静态内容仍可访问。`dev.py smoke --suite ui` 单独验证主界面使用的宿主策略，覆盖五类文档与回环 UDP 监听，不访问外网。
 - **仅支持 4 KiB 内存页设备。** libfreetype、libxml2、libexslt、libxslt、jiter、kohakuvault、rpds 仍是 4 KiB 的 ELF 加载段对齐；支持 16 KiB 设备需要重新构建这些依赖并验证完整 APK。
 - 本地向量与重排使用固定版本的 Qwen3 0.6B CPU/Q8_0 GGUF，权重单独导入，不打进 APK；已有 CUDA 配置保留，需在界面显式切换。关键词与 BM25 沿用桌面的 Jieba、Sudachi 和 core 词典。
 
@@ -189,7 +190,7 @@ Android 11 及以上界面铺满状态栏、手势条和挖孔区域，宿主把
 
 ## 维护约束
 
-- 桌面（Windows/Linux）行为保持不变。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及。
+- 桌面（Windows/Linux）通过独立受控窗口运行交互卡片，启动与退出方式见[维护指南](../guides/maintenance.md)。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及 Android 工具链。
 - 不提供“手机作为客户端连接电脑后端”的远程模式，它与[架构](../design/architecture.md)中服务只监听 loopback 的约定冲突。
 - Chaquopy 中不能用 `sys.executable` 或 `multiprocessing` 启动 Python 子进程，Playwright 也无法启动 Chromium；需要隔离的工作放进独立 Android 进程的 Service。同一进程的 WebView 共用渲染进程，脚本死循环会拖住同进程页面，重置也会让该进程内所有脚本环境失效，因此故事脚本与制卡工具分属 `:realm` 和 `:realm_tools`。
 - 手机 CPU 上长世界书可能超过默认每条 60 秒的索引时限；在目标模式的“检索 → 高级参数”中显式调整“单条索引超时（秒）”，范围为 1–3600 秒。查询与重排分别使用各自的超时设置。

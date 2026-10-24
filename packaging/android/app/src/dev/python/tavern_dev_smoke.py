@@ -84,6 +84,17 @@ async def message_frame():
         try:
             assert len(session.frames) == 1
             assert await session.frames[0].texts("#status") == ['帧脚本"已运行"']
+            # Android's initial empty child may precede document-start injection.
+            # The response sandbox must already make that Window inaccessible.
+            for page in (session.page, session.frames[0]):
+                assert await page.evaluate("""() => {
+                    history.replaceState(null, '', location.href.split('#')[0] + '#probe');
+                    const child = document.createElement('iframe');
+                    document.body.append(child);
+                    try { void child.contentWindow.RTCPeerConnection; return false; }
+                    catch (error) { return error.name === 'SecurityError'; }
+                    finally { child.remove(); }
+                }""")
         finally:
             await session.close()
     finally:
@@ -292,8 +303,8 @@ async def local_models(root, cache_dir, checks):
 
 
 def run(cache_dir, suite):
-    # "restart" runs in DevSmokeInstrumentation; Python only validates the name here.
-    if suite not in {"all", "native", "sessions", "scripts", "documents", "restart", "models"}:
+    # Native UI/restart probes run in DevSmokeInstrumentation.
+    if suite not in {"all", "native", "sessions", "scripts", "documents", "restart", "models", "ui"}:
         raise ValueError("未知自检范围：" + suite)
     checks = []
     started = time.perf_counter()

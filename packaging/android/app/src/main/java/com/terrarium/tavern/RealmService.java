@@ -2,7 +2,6 @@ package com.terrarium.tavern;
 
 import android.app.Service;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -42,10 +41,13 @@ import org.json.JSONObject;
 public class RealmService extends Service {
     // HTTPS resources reach shouldInterceptRequest; network loads themselves are disabled.
     // Non-HTTP transports cannot enter that callback, so CSP and bootstrap disable them.
-    private static final String CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; "
+    // WebView document-start injection is too late for a parent synchronously
+    // reading a newly inserted about:blank child's Window. An opaque sandbox
+    // origin prevents that access before the child's own guarded scripts run.
+    private static final String CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https:; "
             + "connect-src https:; img-src data: blob: https:; style-src 'unsafe-inline' data: https:; "
             + "font-src data: https:; media-src data: blob: https:; frame-src 'none'; child-src 'none'; "
-            + "worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; webrtc 'block'";
+            + "worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Map<String, Page> pages = new HashMap<>();
     private final Map<String, Messenger> contexts = new HashMap<>();
@@ -280,16 +282,23 @@ public class RealmService extends Service {
                     return true;
                 }
             });
-            WebViewCompat.addWebMessageListener(web, "__tavernBridge", Collections.singleton(origin),
+            WebViewCompat.addWebMessageListener(web, "__tavernBridge", Collections.singleton("*"),
                     (view, message, source, mainFrame, reply) -> {
-                        if (!mainFrame || !source.equals(Uri.parse(origin)) || destroyed) return;
+                        // CSP deliberately makes the source origin opaque. The
+                        // owned WebView's fixed top-level URL and main-frame bit
+                        // bind the bridge; nested frames never receive authority.
+                        String current = view.getUrl();
+                        if (!mainFrame || destroyed || current == null
+                                || !(current.equals(url) || current.startsWith(url + "#"))) return;
                         try { message(new JSONObject(message.getData()), reply); }
                         catch (Exception error) {
                             send(client, object("type", "pageerror", "page", id, "error", error.toString()));
                         }
                     });
+            if (!CardNetworkPolicy.install(RealmService.this, web))
+                throw new IllegalStateException("Android System WebView 不支持文档起始隔离，请先更新");
             WebViewCompat.addDocumentStartJavaScript(web, NETWORK_GUARD, Collections.singleton("*"));
-            WebViewCompat.addDocumentStartJavaScript(web, BOOTSTRAP, Collections.singleton(origin));
+            WebViewCompat.addDocumentStartJavaScript(web, BOOTSTRAP, Collections.singleton("*"));
         }
 
         void message(JSONObject message, JavaScriptReplyProxy reply) throws Exception {
@@ -363,14 +372,14 @@ public class RealmService extends Service {
     // Window must not recover a network constructor disabled in the top-level document.
     private static final String NETWORK_GUARD = "(()=>{'use strict';"
             + "const define=(name,value)=>Object.defineProperty(globalThis,name,{value,writable:false,configurable:false});"
-            + "for(const name of ['WebSocket','WebTransport','RTCPeerConnection','webkitRTCPeerConnection','Worker','SharedWorker'])"
+            + "for(const name of ['WebSocket','WebTransport','Worker','SharedWorker'])"
             + "define(name,class{constructor(){throw Error('卡片不能访问网络或启动工作线程')}});"
-            + "if(navigator.serviceWorker)Object.defineProperty(navigator,'serviceWorker',{value:undefined});"
+            + "Object.defineProperty(navigator,'serviceWorker',{value:undefined});"
             + "for(const name of ['indexedDB','caches','webkitRequestFileSystem'])define(name,undefined);"
             + "Object.defineProperty(navigator,'storage',{value:undefined});"
             + "define('open',()=>null);})();";
 
-    private static final String BOOTSTRAP = "(()=>{'use strict';const bridge=globalThis.__tavernBridge;"
+    private static final String BOOTSTRAP = "(()=>{'use strict';if(window!==top)return;const bridge=globalThis.__tavernBridge;"
             + "const send=message=>bridge.postMessage(JSON.stringify(message));const calls=new Map();let sequence=0;"
             + "const define=(name,value)=>Object.defineProperty(globalThis,name,{value,writable:false,configurable:false});"
             + "bridge.onmessage=event=>{const result=JSON.parse(event.data),pending=calls.get(result.request);"
