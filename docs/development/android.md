@@ -202,7 +202,7 @@ Android 11 及以上界面铺满状态栏、手势条和挖孔区域，宿主把
 
 ## 维护约束
 
-- 桌面（Windows/Linux）通过独立受控窗口运行交互卡片，启动与退出方式见[维护指南](../guides/maintenance.md)。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及 Android 工具链。
+- 桌面（Windows/Linux）的功能、界面、启动方式与默认行为不因 Android 改变；确需改变时先取得用户明确同意。平台差异收在可替换的边界后面：`scripting/realm.py` 的脚本后端、`search/local_models.create_local_model_manager` 与 `android/platform.py`；Android 构建步骤只放在 `tools/android/` 和 `packaging/android/`，桌面的 `setup` 与 `npm run build` 不涉及 Android 工具链。
 - 不提供“手机作为客户端连接电脑后端”的远程模式，它与[架构](../design/architecture.md)中服务只监听 loopback 的约定冲突。
 - Chaquopy 中不能用 `sys.executable` 或 `multiprocessing` 启动 Python 子进程，Playwright 也无法启动 Chromium；需要隔离的工作放进独立 Android 进程的 Service。同一进程的 WebView 共用渲染进程，脚本死循环会拖住同进程页面，重置也会让该进程内所有脚本环境失效，因此故事脚本与制卡工具分属 `:realm` 和 `:realm_tools`。
 - 手机 CPU 上长世界书可能超过默认每条 60 秒的索引时限；在目标模式的“检索 → 高级参数”中显式调整“单条索引超时（秒）”，范围为 1–3600 秒。查询与重排分别使用各自的超时设置。

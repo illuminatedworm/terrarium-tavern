@@ -1,4 +1,4 @@
-﻿param([int]$Port = 8000, [string]$Data = 'data', [switch]$ServerOnly)
+﻿param([int]$Port = 8000, [string]$Data = 'data', [switch]$Desktop)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 if (!(Test-Path -LiteralPath '.venv/Scripts/python.exe')) { throw '请先运行 .\setup.ps1' }
@@ -13,6 +13,6 @@ try {
     $tavernClient.Dispose()
 }
 # Keep the result as an array: splatting a scalar string passes one argument per character.
-$tavernOptions = @(if (!$ServerOnly) { '--desktop' })
+$tavernOptions = @(if ($Desktop) { '--desktop' })
 & .venv/Scripts/python.exe -m tavern --port $Port --data $Data @tavernOptions
 if ($LASTEXITCODE) { throw "启动失败（退出码 $LASTEXITCODE）" }

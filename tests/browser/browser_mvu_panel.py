@@ -171,8 +171,16 @@ async def main(all_viewports=False, host_only=False):
                                 )
                                 plain = await ordinary.new_page()
                                 await plain.goto(address)
+                                # Desktop browsers keep running card panels without the host guard.
+                                plain_frame = plain.frame_locator('section[aria-label="MVU 变量"] iframe')
+                                await expect(plain_frame.locator("#hp")).to_have_text("73")
+                                # An Android WebView lacking document-start injection pauses them instead.
+                                await ordinary.add_init_script(
+                                    "window.TavernAndroid = {postMessage() {}, onmessage: null};"
+                                )
+                                await plain.reload()
                                 await expect(plain.locator('.frame-shell [role="status"]')).to_contain_text(
-                                    "当前窗口无法隔离"
+                                    "当前 WebView 无法隔离"
                                 )
                                 await expect(plain.locator(".frame-shell iframe")).to_have_count(0)
                                 await expect(plain.locator(".messages")).to_contain_text("客人推门进来")

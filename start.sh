@@ -2,10 +2,10 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-usage() { printf '%s\n' '用法：./start.sh [--port PORT] [--data DIRECTORY] [--server-only]'; }
+usage() { printf '%s\n' '用法：./start.sh [--port PORT] [--data DIRECTORY] [--desktop]'; }
 port=8000
 data=data
-window=(--desktop)
+window=()
 while (($#)); do
     case "$1" in
         --port|-p)
@@ -16,7 +16,7 @@ while (($#)); do
             if (($# < 2)); then usage >&2; exit 2; fi
             data=$2; shift 2
             ;;
-        --server-only) window=(); shift ;;
+        --desktop) window=(--desktop); shift ;;
         -h|--help) usage; exit 0 ;;
         *) printf '未知参数：%s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
