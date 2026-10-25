@@ -104,7 +104,7 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 12 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.version == 13 and migrated.full_agent.tools.max_duration_seconds == 900
     assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 7}

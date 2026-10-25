@@ -1,12 +1,12 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 12、数据库 schema 为 13、个人数据包格式为 5。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 13、数据库 schema 为 13、个人数据包格式为 5。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
 会话的 `kemini` 为创建时固定的布尔值（`POST /api/sessions` 可选字段，默认 `false`），仅允许 `channel_origin` 为 `standard`；会话更新接口不能修改，分支与数据包原样继承，导入时校验同样约束。剧情消息的 `auxiliary` 为 `{kind: thinking|disclaimer|extra, text: string}[]`，旧消息为空列表；`kemini_auxiliary` SSE 事件的 `items` 替换当前响应辅助记录，沿用事件序号去重。
 
-`thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加自拟包装。默认值来自原预设对应条目，移除 SillyTavern 宏，并将独立边界标签与 Interleaving 包装改为 Markdown 分隔。新增的 roleplay_prompt 位于助手确认前，content_prompt 位于自检后，output_prompt 位于传输指令后；均可显式保存。请求只读取已保存文本；设置升级仅在旧值完全匹配旧默认值时更新明确列出的默认提示，自定义文本不变。
+`thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加自拟包装。默认值来自原预设对应条目，移除 SillyTavern 宏，独立边界标签仍用 Markdown 分隔，Interleaving 三段式示例和自检原文完整保留在同一条 `kemini_control` 消息中；CLEAR 和末尾输出提示仅引用名称，不放置孤立开标签。新增的 roleplay_prompt 位于助手确认前，content_prompt 位于自检后，output_prompt 位于传输指令后；均可显式保存。请求只读取已保存文本；设置 version 13 对三项指定提示的旧格式进行原位迁移，包括自定义文本；保留原有首尾空白、换行形式及其他自定义要求，缺少可识别格式段时将完整对应原文模块写入同一可编辑字段，不在请求时隐藏追加。
 
 参谋 agent 配置位于 `shared.advisor`，设置文档为版本 10。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
@@ -180,7 +180,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 13**，设置文档为 **version 12**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 13**，设置文档为 **version 13**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
@@ -214,6 +214,8 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 设置 version 10 → 11 为两种模式的 `retrieval` 增加 `index_timeout`（单条向量索引超时，整数秒，范围 1–3600，默认 60）。升级前备份数据库，两个模式的修订号各加一；其他已保存设置与剧情原文保留。界面值、运行时使用值和导入导出值一致，重复迁移保留用户已经调整的时限。
 
 设置 version 11 → 12 扩展 `shared.local_models.{embedding,reranker}.device` 的 Android Q8_0 设备选择为 `cpu`、`opencl:0`、`hexagon:0`。升级前备份数据库，已有设备值与其他配置原样保留，不新增覆盖字段；导入导出使用相同格式。
+
+设置 version 12 → 13 将 `shared.kemini.clear_prompt`、`thinking_prompt`、`output_prompt` 的保存值迁移到 Interleaving 输出格式。默认值和自定义值都执行迁移；保留首尾空白、原有换行和其他自定义内容，优先替换可定位的旧示例及引用，缺少可识别格式段时追加完整对应原文模块。只对实际修改过的 shared 范围增加一次修订号，重复读取不再迁移。升级沿用写入前整库备份，数据库仍为 schema 13；不修改历史回复或增加开关。
 
 ## 实现与验证
 

@@ -13,7 +13,12 @@ from tavern.character.editor_config import CardAuthorConfig
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
 from tavern.core.kemini import KeminiConfig
-from tavern.core.kemini_prompts import LEGACY_CLEAR_PROMPT, LEGACY_INFO_PROMPT, LEGACY_THINKING_PROMPT
+from tavern.core.kemini_prompts import (
+    LEGACY_CLEAR_PROMPT,
+    LEGACY_INFO_PROMPT,
+    LEGACY_THINKING_PROMPT,
+    migrate_interleaving_prompts,
+)
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
@@ -195,7 +200,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[12] = 12
+    version: Literal[13] = 13
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -470,6 +475,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         if raw["version"] == 11:
             # New explicit Android devices; preserve every saved CPU/CUDA choice.
             raw["version"] = 12
+        if raw["version"] == 12:
+            raw["version"] = 13
+            if migrate_interleaving_prompts(raw.setdefault("shared", {}).setdefault("kemini", {})):
+                changed_scopes.add("shared")
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):

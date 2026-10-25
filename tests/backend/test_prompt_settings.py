@@ -14,6 +14,7 @@ from tavern.core.kemini import (
     control_text,
     prefix_frames,
     transport_tools,
+    turn_frames,
 )
 from tavern.core.models import ContextRecipe, Settings
 from tavern.core.prompts import (
@@ -59,17 +60,19 @@ def test_defaults_and_custom_prompts():
     for field in ("clear_prompt", "identity_prompt", "info_prompt", "thinking_prompt", "disclaimer_text"):
         expected = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[field], flags=re.S)
         if field == "clear_prompt":
-            expected = expected.replace("</clear>", "---").replace(
-                "after <Interleaving>", "after the Markdown separator"
+            expected = (
+                expected.replace("</clear>", "---\n").replace("after <Interleaving>", "after Interleaving")
+                + "\n"
             )
+        elif field == "identity_prompt":
+            expected = expected.removeprefix("\n").replace("</instructions>\n\n\n", "</instructions>\n\n")
+            expected += "\n"
         elif field == "info_prompt":
-            expected = expected.replace("<info>", "---")
+            expected = expected.replace("<info>", "---").replace("下面是", "分割线后是") + "\n"
         elif field == "thinking_prompt":
             expected = (
-                expected.replace("<Interleaving>", "---")
-                .replace("</Interleaving>", "---")
-                .replace("<interactive_input>", "当前用户输入")
-                .replace("<char_guide>", "角色设定")
+                expected.replace("<interactive_input>", "当前用户输入").replace("<char_guide>", "角色设定")
+                + "\n"
             )
         assert getattr(kemini, field) == expected
     transport = source["transport_prompt"].replace("${toolName}", TOOL_NAME)
@@ -80,7 +83,7 @@ def test_defaults_and_custom_prompts():
     assert [m["content"] for m in frames] == [
         kemini.filler_text,
         kemini.clear_prompt,
-        source["identity_prompt"],
+        kemini.identity_prompt,
         kemini.info_prompt,
     ]
     assert control_text(kemini) == "\n\n".join(
@@ -93,10 +96,21 @@ def test_defaults_and_custom_prompts():
         ]
     )
     assert "你会在</think>后直接以<thinking>进行首次思考" in kemini.output_prompt
-    assert kemini.output_prompt.endswith("---") and "不少于1000字" in kemini.content_prompt
-    assert not any(
-        tag in control_text(kemini) for tag in ("<Interleaving>", "<plot_guide>", "<char_guide>", "殷仙龄")
+    assert kemini.output_prompt == (
+        "## 输出格式\n\n你会在</think>后直接以<thinking>进行首次思考\n\n"
+        + source["clear_prompt"].rsplit("\n\n", 1)[1].replace("after <Interleaving>", "after Interleaving")
+        + "\n\n然后直接开始输出\n"
     )
+    assert "不少于1000字" in kemini.content_prompt
+    assert not any(tag in control_text(kemini) for tag in ("<plot_guide>", "<char_guide>", "殷仙龄"))
+    paired = [
+        frame
+        for frame in [*frames, *turn_frames(kemini)]
+        if "<Interleaving>" in frame["content"] or "</Interleaving>" in frame["content"]
+    ]
+    assert len(paired) == 1 and paired[0]["message_type"] == "kemini_control"
+    assert paired[0]["content"].count("<Interleaving>") == 1
+    assert paired[0]["content"].count("</Interleaving>") == 1
     declaration = transport_tools([], kemini)[0]["function"]
     assert declaration["description"] == source["tool_description"]
     assert declaration["parameters"] == {
@@ -126,7 +140,7 @@ def test_defaults_and_custom_prompts():
     old["full_agent"]["tools"].pop("chapter_tokens")
     old["full_agent"]["tools"].pop("chapters_total_tokens")
     migrated = migrate_settings(old)
-    assert migrated.version == 9
+    assert migrated.version == 13
     assert migrated.shared.kemini.identity_prompt == "已保存的身份"
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
     assert (migrated.half_agent.memory_recall_count, migrated.half_agent.memory_recall_filter) == (3, True)
@@ -142,30 +156,40 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
 
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
-    raw["version"] = 6
+    raw["version"] = 12
     fields = raw["shared"]["kemini"]
-    source = json.loads(
-        (Path(__file__).parents[1] / "fixtures" / "kemini_source_prompts.json").read_text("utf-8")
+    defaults = KeminiConfig()
+    leading, trailing = "\r\n \r\n", "\r\n\t\r\n"
+    clear = defaults.clear_prompt.strip().replace("after Interleaving", "after the Markdown separator")
+    clear += "\n\n用户自行保留的要求"
+    thinking = (
+        "用户自检前置要求\n\n"
+        + defaults.thinking_prompt.replace("<Interleaving>", "---").replace("</Interleaving>", "---")
+        + "\n\n用户自检末尾要求"
     )
-    for key in ("clear_prompt", "info_prompt", "thinking_prompt"):
-        fields[key] = re.sub(r"\{\{(?:setvar|getvar)::.*?\}\}", "", source[key], flags=re.S)
-    for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
-        fields.pop(key)
+    fields["clear_prompt"] = leading + clear.replace("\n", "\r\n") + trailing
+    fields["thinking_prompt"] = leading + thinking.replace("\n", "\r\n") + trailing
+    fields["output_prompt"] = leading + "用户末尾要求" + trailing
     fields.update(filler_text="用户小说全文末尾", enabled=True, normal_disclaimer_enabled=True)
-    custom = json.loads(json.dumps(raw))
-    custom["shared"]["kemini"]["clear_prompt"] += "\n用户自行保留的要求"
-    assert migrate_settings(custom).shared.kemini.clear_prompt == custom["shared"]["kemini"]["clear_prompt"]
-    fields["info_prompt"] = "用户资料分隔\n\n***"
+    expected = {
+        "clear_prompt": leading
+        + clear.replace("after the Markdown separator", "after Interleaving").replace("\n", "\r\n")
+        + trailing,
+        "thinking_prompt": leading
+        + ("用户自检前置要求\n\n" + defaults.thinking_prompt + "\n\n用户自检末尾要求").replace("\n", "\r\n")
+        + trailing,
+        "output_prompt": leading
+        + "用户末尾要求\r\n\r\n"
+        + defaults.output_prompt.strip().replace("\n", "\r\n")
+        + trailing,
+    }
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     upgraded = Store(tmp_path).settings_document()
-    assert upgraded.version == 9 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
-    assert upgraded.shared.kemini.clear_prompt == KeminiConfig().clear_prompt
-    assert upgraded.shared.kemini.thinking_prompt == KeminiConfig().thinking_prompt
-    for key in ("info_prompt", "filler_text", "enabled", "normal_disclaimer_enabled"):
-        assert getattr(upgraded.shared.kemini, key) == fields[key]
-    for key in ("roleplay_prompt", "content_prompt", "output_prompt"):
-        assert getattr(upgraded.shared.kemini, key) == getattr(KeminiConfig(), key)
+    assert upgraded.version == 13 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    for key, value in upgraded.shared.kemini.model_dump().items():
+        assert value == expected.get(key, fields[key])
+    assert migrate_settings(upgraded.model_dump()) == upgraded
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     import sqlite3

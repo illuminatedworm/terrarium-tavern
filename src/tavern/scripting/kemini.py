@@ -18,6 +18,7 @@ class AuxiliaryParser:
             )
             if enabled
         }
+        self.wrappers = ("<Interleaving>", "</Interleaving>") if config.enabled else ()
         self.buffer, self.hidden, self.current = "", "", ""
         self.fence = ""
         self.parts = []
@@ -31,7 +32,7 @@ class AuxiliaryParser:
                 if self.hidden
                 else [self.fence]
                 if self.fence
-                else [*[f"<{tag}>" for tag in self.tags], "```", "~~~"]
+                else [*[f"<{tag}>" for tag in self.tags], *self.wrappers, "```", "~~~"]
             )
             matches = [(self.buffer.find(marker), marker) for marker in markers if marker in self.buffer]
             if matches:
@@ -40,6 +41,9 @@ class AuxiliaryParser:
                 if marker in ("```", "~~~"):
                     output.append(before + marker)
                     self.fence = "" if self.fence else marker
+                    continue
+                if marker in self.wrappers:
+                    output.append(before)
                     continue
                 if self.hidden:
                     self.parts.append({"kind": self.tags[self.hidden], "text": self.current + before})

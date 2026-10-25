@@ -39,7 +39,7 @@ describe('persistent model catalog UI', () => {
       api_path: 'proxy/v2',
     });
     const saved = {
-      version: 12,
+      version: 13,
       full_agent: { model: original },
       half_agent: {},
       shared: {},

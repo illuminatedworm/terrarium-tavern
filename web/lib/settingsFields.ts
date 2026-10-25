@@ -79,7 +79,7 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.thinking_prompt',
     label: '显式自检提示',
-    help: '交错思考的格式示意与要求。默认以 Markdown 分隔输出区域，保留用于分离辅助记录的 <thinking> 标签。只控制显式输出，不控制模型内部推理。',
+    help: '完整的交错思考格式与要求。默认用同一消息中的成对 <Interleaving> 标签包裹三段思考与正文；<thinking> 用于分离辅助记录。只控制显式输出，不控制模型内部推理。',
   },
   {
     path: 'kemini.content_prompt',
@@ -99,7 +99,7 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.output_prompt',
     label: '末尾输出提示',
-    help: '最后发送，包含首次显式思考与直接开始输出的要求。默认使用 Markdown 分隔符，不使用 Interleaving 包装；不改变模型实际思考档位。',
+    help: '最后发送，包含首次显式思考与直接开始输出的完整要求。引用前面的 Interleaving 成对示例，不另放孤立开标签；不改变模型实际思考档位。',
   },
   {
     path: 'kemini.tool_description',

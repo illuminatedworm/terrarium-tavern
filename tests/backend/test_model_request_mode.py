@@ -85,8 +85,14 @@ async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools()
 
     cfg = config(model_request_mode="stream")
     cfg.kemini = KeminiConfig(enabled=True, normal_disclaimer_enabled=True)
-    prose = "开门😀\n```html\n<thinking>代码原文</thinking>\n```"
-    raw = '<thinking>创作安排\n含"引号"</thinking>' + prose + "<disclaimer>声明</disclaimer>"
+    prose = "开门😀\n```html\n<Interleaving><thinking>代码原文</thinking></Interleaving>\n```"
+    raw = (
+        '前附加内容<Interleaving><thinking>创作安排\n含"引号"</thinking>'
+        + prose
+        + "<thinking>第二段自检</thinking>继续<thinking>第三段自检</thinking>收尾"
+        + "</Interleaving>后附加内容<disclaimer>声明</disclaimer>"
+    )
+    expected = "前附加内容" + prose + "继续收尾后附加内容"
     encoded = json.dumps({"content": raw})
     frames = [
         {
@@ -114,9 +120,11 @@ async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools()
     async with provider(cfg, lambda _: sse(events=frames)) as p:
         p.operation_purpose = "narrative"
         response = await p.chat_complete_with_preview(MESSAGES, chunks.append)
-        assert response.content == "".join(chunks) == prose
+        assert response.content == "".join(chunks) == expected
         assert p.last_auxiliary == [
             {"kind": "thinking", "text": '创作安排\n含"引号"'},
+            {"kind": "thinking", "text": "第二段自检"},
+            {"kind": "thinking", "text": "第三段自检"},
             {"kind": "disclaimer", "text": "声明"},
         ]
         assert len(chunks) > 1
@@ -126,6 +134,9 @@ async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools()
         KeminiReply(cfg.kemini, True).finish("", [call, SimpleNamespace(name="read_state")])
     with pytest.raises(ValueError, match="未闭合"):
         KeminiReply(cfg.kemini, True).finish("<thinking>不完整", [])
+    assert KeminiReply(cfg.kemini, True).finish("普通正文", [])[0] == "普通正文"
+    assert KeminiReply(cfg.kemini, True).finish("<Interleaving>开标签正文", [])[0] == "开标签正文"
+    assert KeminiReply(cfg.kemini, False).finish("闭标签正文</Interleaving>", [])[0] == "闭标签正文"
     assert AuxiliaryParser(KeminiConfig()).feed(raw, final=True) == raw
     disabled_disclaimer = AuxiliaryParser(KeminiConfig(normal_disclaimer_enabled=True))
     assert disabled_disclaimer.feed(raw, final=True) == raw
