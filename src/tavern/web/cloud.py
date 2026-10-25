@@ -107,7 +107,7 @@ class WebSession:
                     async for chunk in chunks:
                         yield chunk
                 return
-            except WebSearchUnavailable:
+            except WebSearchUnavailable as error:
                 if not cloud:
                     raise
                 self.cloud, self.failed = False, True
@@ -118,7 +118,7 @@ class WebSession:
                         "auth_mode": "oauth",
                         "operation": "search",
                         "status": "fallback",
-                        "reason": "云端搜索不可用，本请求改用共享本地搜索服务",
+                        "reason": str(error) + "；本请求改用共享本地搜索服务",
                     },
                 )
                 self.event(

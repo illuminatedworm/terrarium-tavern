@@ -179,7 +179,9 @@ async def test_bounded_ordered_fallback_logs_reasons_and_keeps_zero_results(make
     def route(request):
         seen.append(request.url.host)
         if request.url.host == "mcp.exa.ai":
-            return httpx.Response(429, text="private fixture-exa-key")
+            return httpx.Response(
+                429, json={"error": {"message": "upstream quota exhausted fixture-exa-key"}}
+            )
         if request.url.host == "api.tavily.com":
             return httpx.Response(200, json={"results": []})
         pytest.fail("A valid empty result must not invoke a lower-priority service")
@@ -188,7 +190,8 @@ async def test_bounded_ordered_fallback_logs_reasons_and_keeps_zero_results(make
     web.event = lambda kind, payload: events.append((kind, payload))
     result = await web.search("zero", 1)
     assert result["results"] == [] and seen == ["mcp.exa.ai", "api.tavily.com"]
-    assert result["attempts"][0]["reason"] == "服务限流或额度已用完"
+    assert "upstream quota exhausted [REDACTED]" in result["attempts"][0]["reason"]
+    assert "HTTP 429" in result["attempts"][0]["reason"]
     assert [p["status"] for _, p in events] == ["started", "error", "started", "completed"]
     assert "fixture-exa-key" not in json.dumps([result, events])
 

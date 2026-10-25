@@ -3,6 +3,7 @@
 import copy
 import json
 
+from tavern.scripting.http_errors import upstream_message
 from tavern.scripting.responses_stream import ResponsesOutput
 from tavern.scripting.sse import stream_error
 
@@ -35,7 +36,7 @@ class StreamState:
                 }
                 self.completion_seen = True
             elif kind == "response.failed":
-                raise ValueError("Responses 流未完整结束")
+                raise ValueError(stream_error("Responses 流未完整结束", event, secret=self.secret))
             return ""
         if api == "chat_completions":
             if event.get("usage"):
@@ -88,13 +89,11 @@ class StreamState:
                 self.result.setdefault("usage", {}).update(event.get("usage", {}))
             elif kind == "message_stop":
                 self.completion_seen = True
-            elif kind == "error":
-                raise ValueError(stream_error("Anthropic 流返回错误", event))
             return ""
-        if event.get("error"):
-            raise ValueError(stream_error("Gemini 流返回错误", event))
         if event.get("usageMetadata"):
             self.result["usageMetadata"] = event["usageMetadata"]
+        if event.get("promptFeedback"):
+            self.result["promptFeedback"] = event["promptFeedback"]
         self.result["modelVersion"] = event.get("modelVersion", self.result.get("modelVersion"))
         candidates = event.get("candidates") or []
         if not candidates:
@@ -109,6 +108,8 @@ class StreamState:
         if candidate.get("finishReason"):
             self.completion_seen = True
             self.result["finishReason"] = candidate["finishReason"]
+        if candidate.get("finishMessage"):
+            self.result["finishMessage"] = candidate["finishMessage"]
         return "".join(p.get("text", "") for p in pieces if not p.get("thought"))
 
     def finish(self):
@@ -119,7 +120,9 @@ class StreamState:
         same-response text fragments still belong to one story.
         """
         if not self.completion_seen:
-            raise ValueError("模型流连接提前结束，本回合未提交")
+            raise ValueError(
+                upstream_message("模型流连接提前结束，本回合未提交", self.result, secret=self.secret)
+            )
         if self.api == "chat_completions":
             message = {"content": self.text, "tool_calls": [self.calls[i] for i in sorted(self.calls)]}
             if self.reasoning:
@@ -129,7 +132,9 @@ class StreamState:
             self.result["choices"] = [{"message": message, "finish_reason": self.result["finish_reason"]}]
         elif self.api == "responses":
             if self.result.get("status") != "completed":
-                raise ValueError("Responses 流未完整结束")
+                raise ValueError(
+                    upstream_message("Responses 流未完整结束，本回合未提交", self.result, secret=self.secret)
+                )
             self.result = self.response_output.finish(self.result)
         elif self.api == "anthropic":
             for block in self.blocks.values():
@@ -141,6 +146,11 @@ class StreamState:
                 {
                     "content": {"role": "model", "parts": self.parts},
                     "finishReason": self.result["finishReason"],
+                    **(
+                        {"finishMessage": self.result["finishMessage"]}
+                        if "finishMessage" in self.result
+                        else {}
+                    ),
                 }
             ]
         return self.result

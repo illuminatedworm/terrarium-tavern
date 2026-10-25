@@ -12,7 +12,7 @@ from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.character.editor_worldbook import is_worldbook, validate_worldbook_document
 from tavern.core.message_adapter import provider_messages
-from tavern.scripting.native_response import message_digest
+from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation
 from tavern.storage.store import dump
 from tavern.web.client import WebTools
@@ -357,7 +357,7 @@ class EditorRun:
             calls = getattr(provider, "last_tool_calls", []) or []
             completion = provider.last_completion
             if completion.action == "incomplete":
-                raise ValueError("模型回复未完整结束，本轮进度保留")
+                raise ValueError(completion_message("模型回复未完整结束，本轮进度保留", completion))
             if len(calls) > 16 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
                 raise ValueError("无效的工具调用序列，本轮进度保留")
             for call in calls:

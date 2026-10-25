@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from tavern.core.cache_policy import fingerprint
+from tavern.scripting.http_errors import upstream_detail
 
 REASONING_FIELDS = ("reasoning", "reasoning_details", "reasoning_content")
 
@@ -13,9 +14,10 @@ REASONING_FIELDS = ("reasoning", "reasoning_details", "reasoning_content")
 class ResponseCompletion:
     action: Literal["tools", "continue", "end", "incomplete"]
     reason: str
+    detail: str = ""
 
 
-def response_completion(api, payload, calls):
+def response_completion(api, payload, calls, *, secret=""):
     """Interpret an entire provider response, independently of transport EOF.
 
     Keep ChatResponse.finish_reason compatible with the other agents. Full
@@ -39,7 +41,12 @@ def response_completion(api, payload, calls):
         action = ("tools" if calls else "end") if complete else "incomplete"
     if action == "tools" and not calls:
         action = "incomplete"
-    return ResponseCompletion(action, reason)
+    return ResponseCompletion(action, reason, upstream_detail(payload, secret=secret))
+
+
+def completion_message(fallback: str, completion: ResponseCompletion | None, reason: str = "") -> str:
+    detail = (completion.detail or completion.reason) if completion is not None else reason
+    return f"{detail}；{fallback}" if detail else fallback
 
 
 def message_digest(message):

@@ -29,7 +29,7 @@ from tavern.full_agent.story import LEGACY_TURN_TOOLS, story_history
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 from tavern.full_agent.visibility import context_messages
 from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
-from tavern.scripting.native_response import message_digest, portable
+from tavern.scripting.native_response import completion_message, message_digest, portable
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 
 # Each executed call checkpoints the whole draft, so a runaway relay batch costs
@@ -546,7 +546,7 @@ class FullAgent:
                 if completion.action == "incomplete":
                     raise TurnError(
                         "PROVIDER_INCOMPLETE",
-                        "Full Agent 回复未完整结束，本回合未提交；请检查输出上限或服务商响应",
+                        completion_message("Full Agent 回复未完整结束，本回合未提交", completion),
                     )
                 if any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                     raise TurnError("TOOL_PROTOCOL_INVALID", "模型返回了无效的工具调用序列")

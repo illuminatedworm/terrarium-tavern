@@ -210,7 +210,12 @@ class ChatGPTAccounts:
                             "resource": API_ROOT,
                         },
                     )
-                    payload = response.json()
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        if response.status_code == 200:
+                            raise
+                        payload = response.text
                     if response.status_code != 200:
                         error = response_error(
                             payload,
@@ -223,7 +228,7 @@ class ChatGPTAccounts:
                         if error.code in TERMINAL_REFRESH:
                             self._clear(account_id, account["generation"])
                             raise ChatGPTError(
-                                "ChatGPT 登录已失效，请重新登录",
+                                str(error) + "；ChatGPT 登录已失效，请重新登录",
                                 code="sign_in_required",
                                 status=error.status,
                                 request_id=error.request_id,
@@ -311,6 +316,7 @@ class ChatGPTAccounts:
                 tokens = account.get("tokens") or {}
                 self._clear(account_id, account["generation"])
                 confirmed = not tokens.get("refresh_token")
+                revocation_detail = ""
                 if not confirmed:
                     for attempt in range(2):
                         try:
@@ -325,10 +331,26 @@ class ChatGPTAccounts:
                                     },
                                 )
                             confirmed = response.status_code == 200
+                            if not confirmed:
+                                try:
+                                    payload = response.json()
+                                except ValueError:
+                                    payload = response.text
+                                revocation_detail = str(
+                                    response_error(
+                                        payload,
+                                        response.status_code,
+                                        secrets=tuple(
+                                            tokens.get(key, "")
+                                            for key in ("access_token", "refresh_token", "id_token")
+                                        ),
+                                    )
+                                )
                             if confirmed or response.status_code < 500:
                                 break
-                        except (httpx.HTTPError, ValueError):
-                            pass
+                        except (httpx.HTTPError, ValueError) as error:
+                            if isinstance(error, ChatGPTError):
+                                revocation_detail = str(error)
                         if attempt == 0:
                             await asyncio.sleep(0.25)
             return {
@@ -337,7 +359,8 @@ class ChatGPTAccounts:
                 "usage_url": USAGE_URL,
                 "message": "已退出 ChatGPT"
                 if confirmed
-                else "已在本地退出，但未确认远程撤销；请在 ChatGPT 设置中断开应用",
+                else (revocation_detail + "；" if revocation_detail else "")
+                + "已在本地退出，但未确认远程撤销；请在 ChatGPT 设置中断开应用",
             }
         finally:
             self._blocked.discard(account_id)
@@ -368,6 +391,8 @@ class ChatGPTAccounts:
             try:
                 async with self.client(use_proxy) as client:
                     config = await metadata(client)
+            except ChatGPTError:
+                raise
             except (httpx.HTTPError, ValueError):
                 raise ChatGPTError(
                     "无法连接 OpenAI 登录服务，请检查网络设置", code="login_unavailable"
@@ -472,7 +497,10 @@ class ChatGPTAccounts:
         attempt["status"] = "exchanging"
         try:
             if query.get("error"):
-                raise ChatGPTError("此次 ChatGPT 登录未获授权", code="access_denied")
+                error = response_error(
+                    query, secrets=(attempt["verifier"], attempt["state"], attempt["nonce"])
+                )
+                raise ChatGPTError(str(error), code="access_denied", diagnostic=error.diagnostic)
             issued = query.get("client_id") or attempt["client_id"]
             if (
                 not issued
@@ -497,12 +525,21 @@ class ChatGPTAccounts:
                 )
                 if response.status_code != 200:
                     try:
-                        error = response_error(response.json(), response.status_code)
-                        if error.code == "invalid_grant" and not attempt["account_id"]:
-                            attempt["retry_client_id"] = issued
+                        payload = response.json()
                     except ValueError:
-                        pass
-                    raise ChatGPTError("ChatGPT 登录交换失败，请重新发起登录", code="code_exchange_failed")
+                        payload = response.text
+                    error = response_error(
+                        payload,
+                        response.status_code,
+                        secrets=(query["code"], attempt["verifier"]),
+                    )
+                    if error.code == "invalid_grant" and not attempt["account_id"]:
+                        attempt["retry_client_id"] = issued
+                    raise ChatGPTError(
+                        str(error) + "；ChatGPT 登录交换失败，请重新发起登录",
+                        code="code_exchange_failed",
+                        diagnostic=error.diagnostic,
+                    )
                 payload = response.json()
                 if not isinstance(payload, dict):
                     raise ChatGPTError("ChatGPT 登录响应无效", code="invalid_token_response")

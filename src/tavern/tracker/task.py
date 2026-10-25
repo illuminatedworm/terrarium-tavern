@@ -24,6 +24,7 @@ from tavern.memories.history_recall import HistoryBudget, HistoryRecall, MemoryT
 from tavern.memories.memory_engine import apply_operations, consolidate
 from tavern.memories.memory_protocol import References
 from tavern.memories.memory_records import install_memory, read_memory, with_source_status
+from tavern.scripting.native_response import completion_message
 from tavern.scripting.request_context import OperationContexts, configure_operation
 from tavern.tracker.context import initial_messages
 from tavern.tracker.tools import SPECS, definitions
@@ -287,7 +288,13 @@ class TrackerTask:
                 {"calls": 1, "usage": response.usage or {}, "duration_s": time.perf_counter() - begun},
             )
             if getattr(response, "finish_reason", None) in ("length", "content_filter"):
-                raise ValueError("Tracker 回复未完整结束，草稿未提交")
+                raise ValueError(
+                    completion_message(
+                        "Tracker 回复未完整结束，草稿未提交",
+                        getattr(self.provider, "last_completion", None),
+                        response.finish_reason,
+                    )
+                )
             calls = getattr(self.provider, "last_tool_calls", []) or []
             if len(calls) > 8 or any(not c.id for c in calls) or len({c.id for c in calls}) != len(calls):
                 raise ValueError("Tracker 工具调用序列无效")

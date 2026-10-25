@@ -24,7 +24,7 @@ from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.provider import make_provider, require_model_connection
 from tavern.core.tokens import request_tokens
-from tavern.scripting.native_response import message_digest
+from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation, response_origin
 from tavern.storage.store import Conflict, dump, uid
 from tavern.web.client import WebTools
@@ -404,7 +404,13 @@ class AdvisorRun:
                 self.view.messages(messages), extra_body={"tool_choice": "none"}
             )
             if getattr(response, "finish_reason", None) in ("length", "content_filter"):
-                raise ValueError("咨询整理响应被截断或过滤，本批摘要未保存；原咨询保留。")
+                raise ValueError(
+                    completion_message(
+                        "咨询整理响应被截断或过滤，本批摘要未保存；原咨询保留。",
+                        getattr(provider, "last_completion", None),
+                        response.finish_reason,
+                    )
+                )
             if getattr(provider, "last_tool_calls", []):
                 raise ValueError("咨询整理返回工具调用，未执行")
             text = getattr(response, "text", None) or getattr(response, "content", "")
@@ -614,7 +620,7 @@ class AdvisorRun:
             calls = getattr(provider, "last_tool_calls", []) or []
             completion = provider.last_completion
             if completion.action == "incomplete":
-                raise ValueError("模型回复未完整结束，本次进度保留")
+                raise ValueError(completion_message("模型回复未完整结束，本次进度保留", completion))
             used_calls = {c["id"] for m in self.trace for c in m.get("tool_calls", [])}
             if (
                 len(calls) > 32

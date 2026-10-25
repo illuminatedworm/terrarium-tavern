@@ -7,6 +7,7 @@ import httpx
 
 from tavern.core.cache_policy import endpoint, fingerprint
 from tavern.scripting.genai_transport import GenAITransport
+from tavern.scripting.http_errors import response_error, upstream_message
 from tavern.scripting.reasoning import reasoning_capabilities
 from tavern.search.retrieval_config import ApiMode, ModelProfile
 
@@ -114,6 +115,8 @@ def register_model_routes(app, store):
                     response = await client.get(url, headers=headers)
                     response.raise_for_status()
                     payload = response.json()
+            if isinstance(payload, dict) and payload.get("error"):
+                raise ValueError(upstream_message("获取模型列表失败", payload, secret=provider.api_key))
             data = (
                 payload.get("models" if mode == "gemini" else "data") if isinstance(payload, dict) else None
             )
@@ -131,7 +134,9 @@ def register_model_routes(app, store):
                 "updated_at": time.time(),
             }
         except httpx.HTTPStatusError as error:
-            raise ValueError(f"获取模型列表失败：HTTP {error.response.status_code}") from None
+            raise ValueError(
+                "获取模型列表失败：" + str(response_error(error.response, provider.api_key))
+            ) from None
         except httpx.RequestError:
             raise ValueError("无法连接模型接口，请检查地址、代理和网络") from None
         except json.JSONDecodeError:

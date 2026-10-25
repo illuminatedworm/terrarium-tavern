@@ -8,14 +8,24 @@ import httpx
 import jwt
 
 from tavern.chatgpt import ISSUER
-from tavern.chatgpt.errors import ChatGPTError
+from tavern.chatgpt.errors import ChatGPTError, response_error
 
 DISCOVERY = ISSUER + "/.well-known/openid-configuration"
 
 
+def check_response(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+    raise response_error(payload, response.status_code, response.headers.get("x-request-id"))
+
+
 async def metadata(client):
     response = await client.get(DISCOVERY)
-    response.raise_for_status()
+    check_response(response)
     result = response.json()
     expected = {
         "issuer": ISSUER,
@@ -36,7 +46,7 @@ async def validate_identity(client, config, token, client_id, *, nonce=None, sub
         if header.get("alg") != "RS256" or not header.get("kid"):
             raise ValueError("invalid signing key")
         response = await client.get(config["jwks_uri"])
-        response.raise_for_status()
+        check_response(response)
         document = response.json()
         if not isinstance(document, dict):
             raise ValueError("invalid signing keys")
@@ -61,6 +71,8 @@ async def validate_identity(client, config, token, client_id, *, nonce=None, sub
         if isinstance(claims["aud"], list) and len(claims["aud"]) > 1 and claims.get("azp") != client_id:
             raise ValueError("authorized party mismatch")
         return claims
+    except ChatGPTError:
+        raise
     except (jwt.PyJWTError, ValueError, KeyError, StopIteration, TypeError):
         raise ChatGPTError("ChatGPT 身份校验失败，未保存此次登录", code="invalid_identity") from None
 

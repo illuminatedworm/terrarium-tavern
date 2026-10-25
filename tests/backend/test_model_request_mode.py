@@ -7,14 +7,18 @@ import zipfile
 
 import httpx
 import pytest
+from google.genai.errors import APIError
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
+from tavern.chatgpt.errors import response_error as chatgpt_response_error
+from tavern.chatgpt.oauth import metadata
 from tavern.core.kemini import TOOL_NAME, KeminiConfig, control_text, inject_half
 from tavern.core.provider import make_provider
 from tavern.core.settings import SettingsDocument
 from tavern.full_agent.prefix_debug import PrefixDebug, compare_parameters, wire_parameters
 from tavern.scripting.kemini import AuxiliaryParser, KeminiReply
+from tavern.scripting.model_stream import StreamState
 from tavern.storage.request_debug import RequestDebugLog
 from tavern.storage.store import Store
 from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account, sse
@@ -61,12 +65,12 @@ async def test_http_failure_explanation_reaches_work_records_without_debug(tmp_p
         assert record["description"] == wrapped
         async with provider(
             cfg,
-            lambda _: sse(events=[{"error": {"message": "stream echoed test-key and Bearer private-token"}}]),
+            lambda _: sse(events=[{"error": {"detail": message + "；保留流错误末尾 Bearer private-token"}}]),
         ) as transport:
             with pytest.raises(ValueError, match="返回错误") as caught:
                 await transport.chat_complete(MESSAGES)
         error = str(caught.value)
-        assert "stream echoed [REDACTED]" in error
+        assert "[REDACTED]" in error and "保留流错误末尾" in error
         assert "test-key" not in error and "private-token" not in error
         assert not RequestDebugLog(tmp_path, cfg).records()
     cfg = config()
@@ -78,6 +82,78 @@ async def test_http_failure_explanation_reaches_work_records_without_debug(tmp_p
         assert "gateway rejected Bearer [REDACTED]" in str(caught.value)
         assert "仅显示错误片段" in str(caught.value) and "test-key" not in str(caught.value)
         assert len(str(caught.value)) < 4100
+
+    # Failure envelopes and completion reasons must survive before any local
+    # output parsing; neither field selection nor UI wrapping may expose keys.
+    for payload in (
+        {"error": {"code": "quota_exhausted", "message": message}},
+        {"detail": message},
+        {"error": "invalid_grant", "error_description": message},
+    ):
+        error = str(chatgpt_response_error(payload, secrets=("test-key",)))
+        assert "token custom groups have no available channel" in error and "test-key" not in error
+    for kind in ("response.failed", "response.incomplete"):
+        state = StreamState("responses", secret="test-key")
+        payload = {
+            "status": "incomplete",
+            "error": {"code": "upstream_failure", "message": message},
+            "incomplete_details": {"reason": "max_output_tokens"},
+        }
+        with pytest.raises(ValueError) as caught:
+            state.feed({"type": kind, "response": payload})
+            state.finish()
+        assert "token custom groups have no available channel" in str(caught.value)
+        assert "test-key" not in str(caught.value)
+        assert "max_output_tokens" in str(caught.value)
+    cfg = config(model_request_mode="stream")
+    cfg.kemini.enabled = True
+    async with provider(
+        cfg,
+        lambda _: sse(
+            events=[
+                {"choices": [{"delta": {"content": "<thinking>未完成自检"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "content_filter"}]},
+            ]
+        ),
+    ) as transport:
+        transport.operation_purpose = "narrative"
+        with pytest.raises(ValueError, match="content_filter"):
+            await transport.chat_complete(MESSAGES)
+        assert transport._completed_response is None and not transport.last_tool_calls
+    payload = {"candidates": [{"finishReason": "SAFETY", "finishMessage": message, "content": {"parts": []}}]}
+    async with provider(config("gemini", model_request_mode="stream"), lambda _: sse(events=[payload])) as p:
+        with pytest.raises(ValueError) as caught:
+            await p.chat_complete(MESSAGES)
+        assert "SAFETY" in str(caught.value) and "test-key" not in str(caught.value)
+        assert "token custom groups have no available channel" in str(caught.value)
+    for payload in ({}, {"irrelevant": "must-not-appear"}, "<html>private error page</html>"):
+        error = str(chatgpt_response_error(payload, 503))
+        assert "服务暂不可用" in error and "must-not-appear" not in error and "<html>" not in error
+    state = StreamState("gemini", secret="test-key")
+    state.feed({"promptFeedback": {"blockReason": "SAFETY", "blockReasonMessage": message}})
+    with pytest.raises(ValueError) as caught:
+        state.finish()
+    assert "SAFETY" in str(caught.value) and "test-key" not in str(caught.value)
+    for api in APIS:
+        async with provider(
+            config(api, model_request_mode="non_stream"),
+            lambda _: httpx.Response(200, json={"error": {"code": 500, "message": message}}),
+        ) as transport:
+            with pytest.raises(ValueError) as caught:
+                await transport.chat_complete(MESSAGES)
+            assert "token custom groups have no available channel" in str(caught.value)
+            assert "test-key" not in str(caught.value)
+    async with provider(config("gemini"), lambda _: pytest.fail("No request expected")) as transport:
+        with pytest.raises(ValueError) as caught:
+            async with transport.genai.operation():
+                raise APIError(500, {"error": {"message": message}})
+        assert "token custom groups have no available channel" in str(caught.value)
+        assert "test-key" not in str(caught.value)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(503, json={"detail": "identity service busy"}))
+    ) as client:
+        with pytest.raises(ValueError, match="identity service busy"):
+            await metadata(client)
 
 
 async def test_kemini_fragmented_reply_preserves_prose_and_rejects_mixed_tools():

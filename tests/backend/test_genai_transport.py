@@ -271,7 +271,7 @@ async def test_sdk_reports_stream_error_without_sse_separator_and_keeps_partial_
     async with provider(cfg, route) as transport:
         with pytest.raises(
             ValueError,
-            match="Gemini 流返回错误（insufficient_quota）：本次可用额度已耗尽，生成已停止；本回合未提交",
+            match="insufficient_quota：本次可用额度已耗尽，生成已停止；Gemini 流返回错误；本回合未提交",
         ):
             await transport.chat_complete_with_preview([{"role": "user", "content": "继续"}], previews.append)
         assert previews == ["未完成正文"]

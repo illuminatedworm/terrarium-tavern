@@ -32,10 +32,15 @@ from tavern.scripting.cloud_cache import (
 )
 from tavern.scripting.failure_debug import FailureDebug
 from tavern.scripting.genai_transport import GenAITransport
-from tavern.scripting.http_errors import response_error
+from tavern.scripting.http_errors import response_error, upstream_message
 from tavern.scripting.kemini import KeminiReply
 from tavern.scripting.model_stream import StreamState
-from tavern.scripting.native_response import attachment, prepare_messages, response_completion
+from tavern.scripting.native_response import (
+    attachment,
+    completion_message,
+    prepare_messages,
+    response_completion,
+)
 from tavern.scripting.protocols import (
     definitions,
     native_messages,
@@ -665,6 +670,8 @@ class ModelTransport(BaseLLMProvider):
 
     def _finish_payload(self, payload):
         api = self.settings.api_mode
+        if payload.get("error") or payload.get("type") == "error":
+            raise ValueError(upstream_message("模型返回错误，本回合未提交", payload, secret=self.key))
         self._last_tool_calls, self._last_assistant_extra_fields = [], {}
         model = payload.get("model", payload.get("modelVersion")) or self.settings.model
         finish, text, raw = "stop", "", payload.get("usage") or {}
@@ -676,7 +683,11 @@ class ModelTransport(BaseLLMProvider):
             # reply. Apply the streaming completion boundary before exposing
             # prose or tool calls to any agent.
             if finish not in ("stop", "tool_calls", "length", "content_filter"):
-                raise ValueError("Chat Completions 响应未完整结束，本回合未提交")
+                raise ValueError(
+                    upstream_message(
+                        "Chat Completions 响应未完整结束，本回合未提交", payload, secret=self.key
+                    )
+                )
             self._last_tool_calls = [
                 NativeToolCall(id=c["id"], name=c["function"]["name"], arguments=c["function"]["arguments"])
                 for c in message.get("tool_calls") or []
@@ -686,7 +697,9 @@ class ModelTransport(BaseLLMProvider):
             }
         elif api == "responses":
             if payload.get("status") != "completed":
-                raise ValueError("Responses 请求未完整结束，本回合未提交")
+                raise ValueError(
+                    upstream_message("Responses 请求未完整结束，本回合未提交", payload, secret=self.key)
+                )
             reasoning = []
             for item in payload.get("output", []):
                 if item["type"] == "function_call":
@@ -722,7 +735,7 @@ class ModelTransport(BaseLLMProvider):
                 payload.get("stop_reason"), "stop"
             )
             if not payload.get("stop_reason"):
-                raise ValueError("Anthropic 响应未完整结束")
+                raise ValueError(upstream_message("Anthropic 响应未完整结束", payload, secret=self.key))
         else:
             raw = payload.get("usageMetadata") or {}
             candidate = (payload.get("candidates") or [{}])[0]
@@ -745,15 +758,24 @@ class ModelTransport(BaseLLMProvider):
             reason = candidate.get("finishReason")
             finish = "stop" if reason == "STOP" else "length" if reason == "MAX_TOKENS" else "content_filter"
             if not reason:
-                raise ValueError("Gemini 响应未完整结束")
+                raise ValueError(upstream_message("Gemini 响应未完整结束", payload, secret=self.key))
         self._last_usage = normalize_usage(raw, api)
         self.usage_history.append(copy.deepcopy(self._last_usage))
-        self.last_completion = response_completion(api, payload, self._last_tool_calls)
+        self.last_completion = response_completion(api, payload, self._last_tool_calls, secret=self.key)
         original_text, rewritten = text, False
         if self._kemini:
-            text, self._last_tool_calls = self._kemini.finish(
-                text, self._last_tool_calls, preserve_story_tool=self._story_tool
-            )
+            try:
+                text, self._last_tool_calls = self._kemini.finish(
+                    text, self._last_tool_calls, preserve_story_tool=self._story_tool
+                )
+            except ValueError:
+                if self.last_completion.action != "incomplete":
+                    raise
+                # A truncated JSON/string/tag is a consequence of the native
+                # failure; keep its cause instead of reporting a format error.
+                raise ValueError(
+                    completion_message("模型回复未完整结束，本回合未提交", self.last_completion)
+                ) from None
             rewritten = self._kemini.transported or text != original_text
             self.last_auxiliary = self._kemini.parts
             if self.auxiliary_capture and not self._story_tool:
@@ -843,7 +865,7 @@ class ModelTransport(BaseLLMProvider):
         if self.settings.model_request_mode == "non_stream":
             response = await self._complete_request(messages, tools=tools, **kwargs)
             if response.finish_reason in ("length", "content_filter"):
-                raise ValueError("模型回复未完整结束，本回合未提交")
+                raise ValueError(completion_message("模型回复未完整结束，本回合未提交", self.last_completion))
             yield response.content
             return
         async with aclosing(self._consume_stream(messages, tools=tools, **kwargs)) as chunks:
@@ -868,7 +890,9 @@ class ModelTransport(BaseLLMProvider):
                         yield delta
                 result = self._finish(state.finish())
                 if result.finish_reason in ("length", "content_filter"):
-                    raise ValueError("模型流未完整结束，本回合未提交")
+                    raise ValueError(
+                        completion_message("模型流未完整结束，本回合未提交", self.last_completion)
+                    )
                 self._completed_response = result
                 if self._kemini and not self._last_tool_calls and not self._story_tool:
                     yield self._kemini.tail(result.content)
@@ -883,7 +907,7 @@ class ModelTransport(BaseLLMProvider):
                     yield delta
             result = self._finish(state.finish())
             if result.finish_reason in ("length", "content_filter"):
-                raise ValueError("模型流未完整结束，本回合未提交")
+                raise ValueError(completion_message("模型流未完整结束，本回合未提交", self.last_completion))
             self._completed_response = result
             if self._kemini and not self._last_tool_calls and not self._story_tool:
                 yield self._kemini.tail(result.content)

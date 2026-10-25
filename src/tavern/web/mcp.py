@@ -2,6 +2,8 @@
 
 import json
 
+from tavern.scripting.http_errors import upstream_message
+
 URL = "https://mcp.exa.ai/mcp"
 VERSION = "2025-03-26"
 
@@ -39,7 +41,11 @@ class ExaMCP:
         if len(matches) != 1 or matches[0].get("jsonrpc") != "2.0":
             raise ValueError("Exa MCP 响应关联无效")
         packet = matches[0]
-        if "error" in packet or not isinstance(packet.get("result"), dict):
+        if "error" in packet:
+            raise ValueError(
+                upstream_message("Exa MCP 拒绝请求", packet, secret=self.headers.get("x-api-key", ""))
+            )
+        if not isinstance(packet.get("result"), dict):
             raise ValueError("Exa MCP 拒绝请求或协议响应无效")
         return packet["result"]
 
@@ -70,17 +76,11 @@ class ExaMCP:
                 raise ValueError("Exa 工具参数已变化，当前版本无法调用")
             result = await self.rpc("tools/call", {"name": name, "arguments": arguments})
             if result.get("isError"):
-                # Upstream text may contain credentials; only expose a classified error.
-                text = self.text(result).lower()
-                if any(word in text for word in ("rate limit", "quota", "credit", "429")):
-                    reason = "服务限流或额度不足"
-                elif any(word in text for word in ("unauthorized", "invalid api key", "forbidden")):
-                    reason = "密钥无效或未获授权"
-                elif "invalid request" in text or "validation error" in text or "maxcharacters must" in text:
-                    reason = "服务不接受当前工具参数"
-                else:
-                    reason = "工具执行失败"
-                raise ValueError("Exa " + reason)
+                raise ValueError(
+                    upstream_message(
+                        "Exa 工具执行失败", self.text(result), secret=self.headers.get("x-api-key", "")
+                    )
+                )
             return result
         finally:
             if "Mcp-Session-Id" in self.headers:

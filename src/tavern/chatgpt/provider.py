@@ -190,17 +190,14 @@ class ChatGPTProvider(ModelTransport):
     def _finish(self, payload):
         self.accounts.require_account(self.account_id, self.generation)
         if payload.get("status") != "completed":
-            raise ChatGPTError(
-                "ChatGPT 响应未完整结束，本轮未提交",
-                code="incomplete_response",
-                request_id=self._request_id(),
-            )
+            raise response_error(payload, request_id=self._request_id(), secrets=(self.key,))
         for item in payload.get("output", []):
             if item.get("type") == "web_search_call":
                 if not self._cloud_search:
                     raise ChatGPTError("模型返回了未授权的云端搜索，本轮未提交", code="invalid_tool_call")
                 if item.get("status") in {"failed", "incomplete"}:
-                    raise ChatGPTError("云端搜索未完成", code="web_search_failed")
+                    error = response_error(item, request_id=self._request_id(), secrets=(self.key,))
+                    raise ChatGPTError(str(error), code="web_search_failed", diagnostic=error.diagnostic)
             if item.get("type") == "function_call":
                 if item.get("namespace") != "tavern" or item.get("name") not in self._allowed_tools:
                     raise ChatGPTError("模型返回了未授权的工具调用，本轮未提交", code="invalid_tool_call")
@@ -284,7 +281,7 @@ class ChatGPTProvider(ModelTransport):
         except ChatGPTError as error:
             self._record_error(error)
             if self._cloud_search and search_failure(error):
-                raise WebSearchUnavailable("云端搜索不可用") from None
+                raise WebSearchUnavailable(str(error)) from None
             raise
         except (httpx.HTTPError, json.JSONDecodeError):
             error = ChatGPTError(

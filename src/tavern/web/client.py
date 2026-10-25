@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx
 
+from tavern.scripting.http_errors import DETAIL_LIMIT, upstream_detail, upstream_message
 from tavern.web.mcp import ExaMCP
 from tavern.web.results import READ_DEFAULT_LIMIT, exa_search_rows, read_result, search_result
 from tavern.web.sources import protect_secrets, source_links
@@ -115,7 +116,7 @@ class WebTools:
         if not configured:
             await public_url(url)
         async with client.stream(method, url, params=params, json=body, headers=headers) as response:
-            response.raise_for_status()
+            await self.check_response(response)
             chunks, size = [], 0
             async for chunk in response.aiter_bytes():
                 size += len(chunk)
@@ -145,7 +146,7 @@ class WebTools:
                         params = None
                         configured = False
                         continue
-                    response.raise_for_status()
+                    await self.check_response(response)
                     chunks, size = [], 0
                     async for chunk in response.aiter_bytes():
                         size += len(chunk)
@@ -171,11 +172,12 @@ class WebTools:
             response = await self.fetch(
                 endpoint.rstrip("/") + "/search", params={"q": query, "format": "json"}, configured=True
             )
-            if not isinstance(response.json().get("results"), list):
-                raise ValueError("SearXNG 搜索响应无效")
+            data = response.json()
+            if not isinstance(data.get("results"), list):
+                raise ValueError(upstream_message("SearXNG 搜索响应无效", data))
             rows = [
                 {"title": r.get("title", ""), "url": r["url"], "snippet": r.get("content", "")}
-                for r in response.json().get("results", [])
+                for r in data.get("results", [])
                 if r.get("url")
             ]
         else:
@@ -219,18 +221,40 @@ class WebTools:
             )
         return {} if name == "exa" else {"X-Tavily-Access-Mode": "keyless"}
 
+    async def check_response(self, response: httpx.Response) -> None:
+        if response.is_success:
+            return
+        # Error pages can be huge. Retain only enough bytes for the bounded
+        # explanation, then close via the caller's stream context.
+        keys = (self.config.exa.api_key, self.config.tavily.api_key)
+        chunks, remaining = [], DETAIL_LIMIT * 4 + max(len(key.encode()) for key in keys) + 1
+        async for chunk in response.aiter_bytes():
+            chunks.append(chunk[:remaining])
+            remaining -= min(len(chunk), remaining)
+            if not remaining:
+                break
+        httpx.Response(
+            response.status_code, content=b"".join(chunks), request=response.request
+        ).raise_for_status()
+
     def safe_error(self, error):
-        # Never return a response body or a request header from an upstream error.
         if isinstance(error, httpx.TimeoutException):
             return "服务请求超时"
         if isinstance(error, httpx.HTTPStatusError):
             code = error.response.status_code
-            return {
+            fallback = {
                 401: "密钥无效或未获授权",
                 403: "服务拒绝访问",
                 402: "服务额度不足",
                 429: "服务限流或额度已用完",
-            }.get(code, f"服务 HTTP {code}")
+            }.get(code, "服务请求失败")
+            try:
+                payload = error.response.json()
+            except ValueError:
+                payload = error.response.text
+            payload = protect_secrets(payload, (self.config.exa.api_key, self.config.tavily.api_key))
+            detail = upstream_detail(payload)
+            return f"{detail or fallback}（HTTP {code}）"
         if isinstance(error, httpx.HTTPError):
             return "服务网络连接失败"
         if isinstance(error, (json.JSONDecodeError, KeyError, TypeError, AttributeError)):
@@ -240,7 +264,7 @@ class WebTools:
             key = getattr(self.config, name).api_key
             if key:
                 text = text.replace(key, "[REDACTED]")
-        return text if isinstance(error, ValueError) else "服务请求失败"
+        return (upstream_detail(text) or "服务请求失败") if isinstance(error, ValueError) else "服务请求失败"
 
     async def attempt(self, operation, call, *, transform, service=None):
         self.require_enabled()
@@ -329,7 +353,9 @@ class WebTools:
                 )
                 data = response.json()
                 if not isinstance(data.get("results"), list):
-                    raise ValueError("Tavily 搜索响应无效")
+                    raise ValueError(
+                        upstream_message("Tavily 搜索响应无效", data, secret=self.config.tavily.api_key)
+                    )
                 rows = [
                     {"title": row.get("title", ""), "url": row["url"], "snippet": row.get("content", "")}
                     for row in data["results"]
@@ -375,7 +401,11 @@ class WebTools:
                 data = response.json()
                 rows = data.get("results")
                 if data.get("failed_results") or not isinstance(rows, list) or len(rows) != 1:
-                    raise ValueError("Tavily 未能提取此网页")
+                    failed = data.get("failed_results") or []
+                    detail = failed[0] if failed else data
+                    raise ValueError(
+                        upstream_message("Tavily 未能提取此网页", detail, secret=self.config.tavily.api_key)
+                    )
                 row = rows[0]
                 text = row.get("raw_content")
                 if not isinstance(text, str) or not text.strip():

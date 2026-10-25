@@ -2,7 +2,7 @@
 
 import json
 
-from tavern.scripting.http_errors import redact_detail
+from tavern.scripting.http_errors import upstream_message
 
 
 async def stream_events(response):
@@ -59,15 +59,4 @@ def stream_error(label, event, *, secret=""):
     plain string or top-level `message`). Keep it bounded; it is shown in the
     UI and stored with the failed run.
     """
-    error = event.get("error")
-    if not isinstance(error, dict):
-        error = {"message": error} if isinstance(error, str) else event
-    codes = [
-        str(error[key]) for key in ("code", "status", "type") if error.get(key) not in (None, "", "error")
-    ]
-    message = str(error.get("message") or "").strip()
-    detail = (f"（{' '.join(codes)}）" if codes else "") + (f"：{message}" if message else "")
-    # HTTP 200 SSE errors can echo credentials just like HTTP failures. Redact
-    # before bounding the explanation, so a cut cannot expose a key prefix.
-    detail = redact_detail(detail, secret)[:500]
-    return f"{label}{detail}；本回合未提交"
+    return upstream_message(f"{label}；本回合未提交", event, secret=secret)

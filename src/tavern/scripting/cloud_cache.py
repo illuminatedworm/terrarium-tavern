@@ -10,6 +10,7 @@ import httpx
 
 from tavern.core.cache_policy import effective_retention, fingerprint
 from tavern.core.tokens import count_text
+from tavern.scripting.http_errors import response_error, upstream_message
 from tavern.scripting.protocols import native_messages, native_tools
 
 DISABLED = {}
@@ -139,11 +140,14 @@ async def gemini_object(provider, messages, tools, tool_choice="auto"):
             return copy.deepcopy(entry), None
         except httpx.HTTPStatusError as error:
             status = error.response.status_code
+            detail = str(response_error(error.response, provider.key))
             if status in (404, 405):
-                DISABLED[cap] = f"服务商不支持创建 Gemini 缓存对象（HTTP {status}）"
-            return None, f"创建缓存对象失败（HTTP {status}），完整发送上下文"
-        except (httpx.HTTPError, ValueError, TypeError):
-            return None, "创建缓存对象不可用，完整发送上下文"
+                DISABLED[cap] = detail + "；服务商不支持创建 Gemini 缓存对象"
+            return None, detail + "；创建缓存对象失败，完整发送上下文"
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            return None, upstream_message(
+                "创建缓存对象不可用，完整发送上下文", str(error), secret=provider.key
+            )
 
 
 async def invalidate_object(provider, entry):

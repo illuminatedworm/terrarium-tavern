@@ -3,6 +3,7 @@
 import re
 
 from tavern.chatgpt import USAGE_URL
+from tavern.scripting.http_errors import upstream_detail
 
 MESSAGES = {
     "invalid_client": "ChatGPT 客户端注册无效，请检查连接配置",
@@ -77,7 +78,8 @@ class ChatGPTError(ValueError):
 
 
 def response_error(payload, status=None, request_id=None, *, secrets=()):
-    source = payload.get("error", {}) if isinstance(payload, dict) else {}
+    body = payload.get("response", payload) if isinstance(payload, dict) else payload
+    source = body.get("error", {}) if isinstance(body, dict) else {}
     code = source.get("code") or source.get("type") if isinstance(source, dict) else source
     code = (
         code
@@ -94,10 +96,14 @@ def response_error(payload, status=None, request_id=None, *, secrets=()):
             503: "ChatGPT 服务暂不可用，请稍后重试",
         }.get(status, "ChatGPT 请求未完成"),
     )
+    safe_payload = redact(payload, secrets)
+    detail = upstream_detail(safe_payload)
+    if detail:
+        message = detail
     return ChatGPTError(
         message,
         code=code,
         status=status,
         request_id=request_id,
-        diagnostic={"status": status, "request_id": request_id, "body": redact(payload, secrets)},
+        diagnostic={"status": status, "request_id": request_id, "body": safe_payload},
     )

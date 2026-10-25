@@ -18,7 +18,7 @@ from google.genai import errors, types
 from pydantic import ValidationError
 
 from tavern.core.cache_policy import endpoint
-from tavern.scripting.http_errors import response_error
+from tavern.scripting.http_errors import response_error, upstream_message
 from tavern.scripting.sse import stream_error, stream_events
 
 
@@ -128,7 +128,13 @@ class GenAITransport:
                 await error.response.aread()
                 if error.response.is_error:
                     raise response_error(error.response, self.key) from error
-            raise ValueError(f"Gemini 返回无效响应（{error.code}）") from None
+            raise ValueError(
+                upstream_message(
+                    "Gemini 返回无效响应",
+                    {"code": error.code, "status": error.status, "message": error.message},
+                    secret=self.key,
+                )
+            ) from None
         finally:
             try:
                 for response in operation.responses:
@@ -205,7 +211,9 @@ class GenAITransport:
             for response in operation.responses:
                 payload = response.json()
                 if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-                    raise ValueError("模型接口未返回有效的模型列表")
+                    raise ValueError(
+                        upstream_message("模型接口未返回有效的模型列表", payload, secret=self.key)
+                    )
             return result
 
     async def close(self):
