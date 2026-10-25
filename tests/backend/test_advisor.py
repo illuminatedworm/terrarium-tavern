@@ -155,6 +155,18 @@ async def test_offers_are_visible_calls_without_story_writes(tmp_path):
     assert session["title"] in trace[1]["content"]
     assert "error" not in trace[3]["content"] and "error" in trace[5]["content"]
 
+    # A written reply with successful offers is final; no round restates it.
+    class ReplyWithOffers(ToolLLM):
+        async def chat(self, messages, **kwargs):
+            async for chunk in super().chat(messages, **kwargs):
+                yield chunk or "可以先推门。"
+
+    provider = ReplyWithOffers([("offer_inputs", {"options": ["推门进去"]})])
+    result = await ask(advisor, session["id"], provider, "下一步？")
+    assert (result["status"], provider.call_count) == ("completed", 1), result
+    exchange = advisor.public(session["id"])["exchanges"][1]
+    assert exchange["response"] == "可以先推门。" and exchange["trace"][-1]["role"] == "tool"
+
 
 class Failure(ToolLLM):
     async def chat(self, messages, **kwargs):

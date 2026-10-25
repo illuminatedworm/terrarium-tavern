@@ -11,7 +11,7 @@ defineProps<{
 const emit = defineEmits<{ reading: [id: string] }>();
 const history = ref<InstanceType<typeof StoryHistory>>();
 defineExpose({
-  jumpTo: (id: string) => history.value?.jumpTo(id),
+  jumpTo: (id: string, offset?: number) => history.value?.jumpTo(id, 'start', offset),
   jumpBoundary: (edge: 'start' | 'end') => history.value?.jumpBoundary(edge),
   releaseAnchor: () => history.value?.releaseAnchor(),
 });

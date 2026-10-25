@@ -46,7 +46,7 @@ let observer: ResizeObserver | undefined;
 let scrollFrame = 0;
 let disposed = false;
 let jumpVersion = 0;
-let pinned: { id: string; edge: 'start' | 'end' } | undefined;
+let pinned: { id: string; edge: 'start' | 'end'; offset: number } | undefined;
 let lastBoundary: { id: string; edge: 'start' | 'end'; top: number } | undefined;
 function releaseAnchor() {
   pinned = undefined;
@@ -68,7 +68,9 @@ function alignPinned() {
   const rect = node.getBoundingClientRect();
   const viewport = readingBounds(scroller);
   scroller.scrollTop +=
-    pinned.edge === 'start' ? rect.top - viewport.top - 16 : rect.bottom - viewport.bottom + 16;
+    pinned.edge === 'start'
+      ? rect.top - viewport.top - pinned.offset
+      : rect.bottom - viewport.bottom + pinned.offset;
   if (lastBoundary?.id === pinned.id && lastBoundary.edge === pinned.edge)
     lastBoundary.top = scroller.scrollTop;
 }
@@ -152,12 +154,13 @@ function rowStyle(id: string) {
     containIntrinsicSize: `auto ${measured.get(id) || 280}px`,
   };
 }
-async function jumpTo(id: string, edge: 'start' | 'end' = 'start') {
+/** `offset` keeps the edge that far inside the reading bounds, e.g. where the reader already was. */
+async function jumpTo(id: string, edge: 'start' | 'end' = 'start', offset = 16) {
   const index = indices.value.get(id);
   const scroller = props.scroller;
   if (index === undefined || !scroller) return;
   const version = ++jumpVersion;
-  pinned = { id, edge };
+  pinned = { id, edge, offset };
   for (let attempt = 0; attempt < 3; attempt++) {
     if (disposed || version !== jumpVersion) return;
     if (virtual.value && !nodes.has(id)) scroller.scrollTop = origin() + heights.offset(index);

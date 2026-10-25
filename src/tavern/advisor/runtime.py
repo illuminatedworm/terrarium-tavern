@@ -18,7 +18,7 @@ from tavern.advisor.context import (
     sources,
 )
 from tavern.advisor.storage import AdvisorStore
-from tavern.advisor.tools import AdvisorTools, definitions
+from tavern.advisor.tools import OFFER_TOOLS, AdvisorTools, definitions
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
@@ -625,4 +625,10 @@ class AdvisorRun:
             self.pending = assistant
             self.save()
             await self.execute_pending()
+            # Offers only decorate the reply already written in this response;
+            # another round would make the model restate it after they appear.
+            results = {m["tool_call_id"]: json.loads(m["content"]) for m in self.trace if m["role"] == "tool"}
+            if text.strip() and all(c.name in OFFER_TOOLS and "error" not in results[c.id] for c in calls):
+                self.commit(text)
+                return
         raise ValueError("本次调用额度已用完，可继续咨询；待保存偏好尚未生效")

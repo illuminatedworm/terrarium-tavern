@@ -170,6 +170,7 @@ class LocalResources(StrictSettings):
 class SharedSettings(StrictSettings):
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
+    reply_locate_start: bool = Field(default=True, strict=True)
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"

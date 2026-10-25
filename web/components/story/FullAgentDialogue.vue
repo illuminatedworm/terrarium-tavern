@@ -21,7 +21,7 @@ const history = ref<InstanceType<typeof StoryHistory>>();
 const visibleMessages = ref<any[]>([]);
 const loadingMessages = new Set<string>();
 defineExpose({
-  jumpTo: (id: string) => history.value?.jumpTo(id),
+  jumpTo: (id: string, offset?: number) => history.value?.jumpTo(id, 'start', offset),
   jumpBoundary: (edge: 'start' | 'end') => history.value?.jumpBoundary(edge),
   releaseAnchor: () => history.value?.releaseAnchor(),
 });

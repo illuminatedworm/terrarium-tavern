@@ -104,6 +104,7 @@ export interface SettingsDocument {
     web: WebSettings;
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;
+    reply_locate_start: boolean;
     debug_failed_requests: boolean;
     debug_full_agent_prefix: boolean;
     advisor: {

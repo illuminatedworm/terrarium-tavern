@@ -8,6 +8,14 @@ export const shortcutFields: SettingField[] = [
     help: '用于剧情、参谋 agent 和制卡 agent 的输入框，保存后立即生效；Ctrl+Enter 方案在 macOS 上也接受 Command+Enter。放大编辑和历史编辑保留各自的快捷键。',
   },
 ];
+export const readingFields: SettingField[] = [
+  {
+    path: 'reply_locate_start',
+    label: '回复完成后定位到正文开头',
+    type: 'checkbox',
+    help: '跟随最新内容时，回复完成后跳到本条正文开头；关闭后停留在末尾。未跟随时始终保持当前阅读位置。保存后立即生效。',
+  },
+];
 export const debugFields: SettingField[] = [
   {
     path: 'debug_full_agent_prefix',

@@ -175,7 +175,7 @@ async function classifyChannel(channel: Channel) {
   }
 }
 const dialogue = ref<{
-  jumpTo: (id: string) => Promise<void> | undefined;
+  jumpTo: (id: string, offset?: number) => Promise<void> | undefined;
   jumpBoundary: (edge: 'start' | 'end') => Promise<void> | undefined;
   releaseAnchor: () => void;
 }>();
@@ -436,7 +436,8 @@ async function saveUpdateVariables() {
     variablePreferenceSaving.value = false;
   }
 }
-const chat = ref<HTMLElement>();
+const chat = ref<HTMLElement>(),
+  draftArticle = ref<HTMLElement>();
 // The glass composer floats over the message list so prose scrolls beneath it;
 // its measured height reserves matching space at the end of the list and lifts
 // the overlays (rail, jump buttons, regeneration panel) above it.
@@ -1251,6 +1252,25 @@ async function jumpBoundary(edge: 'start' | 'end') {
 watch(storyView, (view) => {
   if (view === 'dialogue' && pendingReplyStart.value) void navigateMessage(pendingReplyStart.value);
 });
+/**
+ * Where the reader sits inside the streaming reply while not following. Tool and
+ * story activity is listed above the draft and the committed reply replaces it,
+ * so these changes must not move the text being read.
+ */
+function draftReadingOffset() {
+  const scroller = chat.value,
+    node = draftArticle.value;
+  if (followLatest.value || storyView.value !== 'dialogue' || !scroller || !node) return undefined;
+  const top = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  return top <= 24 ? top : undefined;
+}
+async function holdDraft(offset: number) {
+  await nextTick();
+  const scroller = chat.value,
+    node = draftArticle.value;
+  if (scroller && node)
+    scroller.scrollTop += node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+}
 async function scroll(force = false) {
   if (force) {
     readingPinned.value = false;
@@ -1630,7 +1650,9 @@ function observe(id: string) {
         draft.value = turnDraft(draft.value, event);
         void scroll();
       } else {
+        const reading = draftReadingOffset();
         trace.value.push(event);
+        if (reading !== undefined) void holdDraft(reading);
         if (event.kind === 'full_agent_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
@@ -1656,7 +1678,9 @@ function observe(id: string) {
         ]);
         if (!ownsTurn()) return;
         const following = followLatest.value,
-          top = chat.value?.scrollTop || 0;
+          top = chat.value?.scrollTop || 0,
+          reading = draftReadingOffset(),
+          locateStart = loadedSettings().shared.reply_locate_start;
         const completedReply =
           turn.status === 'committed' && !turn.request?.scene_refresh
             ? updated.messages
@@ -1664,7 +1688,7 @@ function observe(id: string) {
                 .reverse()
                 .find((message) => message.role === 'assistant')
             : null;
-        if (following && completedReply) {
+        if (following && completedReply && locateStart) {
           readingPinned.value = true;
           followLatest.value = false;
         }
@@ -1674,11 +1698,16 @@ function observe(id: string) {
         session.value = updated;
         await nextTick();
         if (!ownsTurn()) return;
-        if (following && completedReply) {
+        if (following && completedReply && locateStart) {
           if (storyView.value === 'dialogue') await navigateMessage(completedReply.id);
           else pendingReplyStart.value = completedReply.id;
         } else if (following) await scroll();
-        else {
+        else if (completedReply && reading !== undefined) {
+          // Keep the reply where its draft was read; the pin also absorbs its
+          // activity records, which load after the commit and sit above it.
+          readingPinned.value = true;
+          await dialogue.value?.jumpTo(completedReply.id, reading);
+        } else {
           chat.value?.scrollTo({ top, behavior: 'instant' });
           followLatest.value = false;
         }
@@ -2732,7 +2761,7 @@ useTimedError(error);
                 </template>
               </template>
               <template #draft>
-                <article v-if="draft && pendingVisible" class="message assistant">
+                <article v-if="draft && pendingVisible" ref="draftArticle" class="message assistant">
                   <header class="message-meta">
                     <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
                     <strong>{{ name }}</strong

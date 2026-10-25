@@ -132,6 +132,7 @@ class Settings(BaseModel):
     network: Network = Field(default_factory=Network)
     web: WebConfig = Field(default_factory=WebConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
+    reply_locate_start: bool = Field(default=True, strict=True)
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
