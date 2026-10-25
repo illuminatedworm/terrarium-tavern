@@ -574,7 +574,7 @@ async def test_multiple_contexts_keep_drafts_and_model_history_independent(tmp_p
         assert carried["base_revision"] == first["base_revision"]
         assert carried["runs"] == fresh["runs"] == []
         assert not carried["can_undo"] and not fresh["can_undo"]
-        provider = ScriptedLLM(["独立上下文的答复"])
+        provider = ToolLLM([])
         editor.provider_factory = lambda: provider
         for context in (carried, fresh):
             run = editor.submit(
@@ -603,14 +603,14 @@ async def test_new_context_does_not_cancel_running_source(tmp_path):
     source = editor.edits.create(card["id"])
     started, release = asyncio.Event(), asyncio.Event()
 
-    class Waiting(ScriptedLLM):
+    class Waiting(ToolLLM):
         async def chat(self, messages, **kwargs):
             started.set()
             await release.wait()
             async for part in super().chat(messages, **kwargs):
                 yield part
 
-    editor.provider_factory = lambda: Waiting(["原对话继续完成"])
+    editor.provider_factory = lambda: Waiting([])
     try:
         run = editor.submit(
             source["id"], CardAuthorRequest(text="继续工作", expected_revision=0, operation_id="running")
@@ -684,3 +684,33 @@ def test_delete_rejects_stale_and_running_context_and_preserves_shared_draft_ass
     assert (store.root / "blobs" / card["original"]).exists()
     edits.delete(other["id"], 0)
     assert not (store.root / "blobs" / card["original"]).exists()
+
+
+async def test_native_end_with_tools_finishes_on_prose_beside_them(tmp_path):
+    # Some relays end the turn while still returning calls; the batch runs and
+    # the round completes without another paid request, keeping that prose.
+    class EndWithTools(ToolLLM):
+        @property
+        def last_completion(self):
+            return ResponseCompletion("end", "stop")
+
+        async def chat(self, messages, **kwargs):
+            async for _ in super().chat(messages, **kwargs):
+                yield "已改好描述。"
+
+    store = Store(tmp_path)
+    editor = CardAuthorService(store)
+    workspace = editor.edits.create(import_fixture(store)["id"])
+    operations = [{"op": "replace", "path": "/description", "value": "新描述"}]
+    provider = EndWithTools([("patch_draft", {"operations": operations, "comment": "修改"})])
+    editor.provider_factory = lambda: provider
+    try:
+        run = editor.submit(
+            workspace["id"], CardAuthorRequest(text="改描述", expected_revision=0, operation_id="end")
+        )
+        await editor.tasks[run["id"]]
+        result = editor.edits.run(run["id"])
+        assert (result["status"], result["response"], provider.call_count) == ("completed", "已改好描述。", 1)
+        assert editor.edits.get(workspace["id"])["document"]["description"] == "新描述"
+    finally:
+        await editor.close()

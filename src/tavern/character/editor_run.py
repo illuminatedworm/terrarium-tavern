@@ -244,12 +244,13 @@ class EditorRun:
             result.append(item)
         return result
 
-    def commit(self, provider, text, assistant):
+    def commit(self, provider, text, assistant=None):
         for item in self.working["cards"]:
             (validate_worldbook_document if is_worldbook(item) else validate_document)(item["document"])
         response = self.context.view.restore(text)
-        self.context.messages.append(assistant)
-        self.trace.append(assistant)
+        if assistant:  # A closing tool batch is already in the context and trace.
+            self.context.messages.append(assistant)
+            self.trace.append(assistant)
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.edits.check(db, self.wid, self.request["expected_revision"], idle=False)
@@ -303,6 +304,9 @@ class EditorRun:
         self.save()
         await self.execute_pending()
         maximum = 12 if self.legacy else self.cfg.card_author_config.max_steps
+        # The final answer is this run's last prose, possibly written beside the
+        # closing tool batch; intermediate prose stays in the activity log.
+        reply = ""
         for _ in range(maximum):
             if self.calls >= maximum:
                 break
@@ -351,6 +355,9 @@ class EditorRun:
                 },
             )
             calls = getattr(provider, "last_tool_calls", []) or []
+            completion = provider.last_completion
+            if completion.action == "incomplete":
+                raise ValueError("模型回复未完整结束，本轮进度保留")
             if len(calls) > 16 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
                 raise ValueError("无效的工具调用序列，本轮进度保留")
             for call in calls:
@@ -361,6 +368,11 @@ class EditorRun:
                 except (ValueError, TypeError):
                     raise ValueError("模型工具参数不是合法 JSON 对象；本轮进度保留") from None
             assistant = self.response(provider, text, calls)
+            if text.strip():
+                reply = text
+            # Like Full Agent, only the native end signal completes the round; a
+            # response yielding for tools continues even when it carries prose.
+            ended = completion.action == "end"
             if not calls:
                 if self.context.must_rollover:
                     self.context.messages.extend(
@@ -375,13 +387,23 @@ class EditorRun:
                         ]
                     )
                     continue
-                if not text.strip():
+                if not ended:
+                    self.context.messages.append(assistant)
+                    self.trace.append(assistant)
+                    continue
+                if not reply.strip():
                     raise ValueError("模型没有返回完整说明，本轮进度保留")
-                self.commit(provider, text, assistant)
+                self.commit(provider, reply, assistant)
                 return
             self.context.messages.append(assistant)
             self.trace.append(assistant)
             self.pending_calls = {"assistant": assistant, "results": [], "forced": self.context.must_rollover}
             self.save()
             await self.execute_pending()
+            if ended:
+                # Executed tools stay paired; a resume asks the model again.
+                if not reply.strip():
+                    raise ValueError("模型没有返回完整说明，本轮进度保留")
+                self.commit(provider, reply)
+                return
         raise ValueError("本次模型调用额度已用完，进度已保留；可继续或补充要求")

@@ -43,6 +43,9 @@ class Editor:
             def route(request):
                 self.requests.append(request)
                 payload = reply(api, next(plan))
+                # Native Anthropic yields for tools with tool_use, not end_turn.
+                if api == "anthropic" and any(p["type"] == "tool_use" for p in payload["content"]):
+                    payload["stop_reason"] = "tool_use"
                 return sse(api, payload)
 
             return ModelTransport(

@@ -140,7 +140,8 @@ export type EditorActivityBlock =
 
 /** Text is public provider output, never reasoning/debug payloads. Request/tool
  * boundaries work for ordinary APIs as well as Responses commentary messages.
- * Only the successful final request moves to the committed reply below the run.
+ * A completed run's last prose is its committed reply below the run, even when it
+ * was written beside the closing tool batch.
  */
 export function editorActivityBlocks(events: EditorEvent[], runStatus: string): EditorActivityBlock[] {
   const ordered = mergeEditorEvents([], events);
@@ -161,13 +162,10 @@ export function editorActivityBlocks(events: EditorEvent[], runStatus: string): 
     } else if (event.kind === 'tool_started' && current) current.hasTools = true;
   }
   const live = ['queued', 'running'].includes(runStatus);
+  const reply = runStatus === 'completed' ? texts.filter((text) => text.text.trim()).at(-1) : undefined;
   const entries = [
     ...editorActions(ordered, runStatus).map((action) => ({ seq: action.seq, action })),
-    ...texts
-      .filter(
-        (text) => text.text.trim() && !(runStatus === 'completed' && text === current && !text.hasTools),
-      )
-      .map((text) => ({ seq: text.seq, text })),
+    ...texts.filter((text) => text.text.trim() && text !== reply).map((text) => ({ seq: text.seq, text })),
   ].sort((a, b) => a.seq - b.seq);
   const blocks: EditorActivityBlock[] = [];
   for (const entry of entries) {

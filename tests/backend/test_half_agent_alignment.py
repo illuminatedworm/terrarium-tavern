@@ -133,7 +133,11 @@ def sse(api, payload):
                     )
         events.extend(
             [
-                {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": payload["usage"]},
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": payload.get("stop_reason") or "end_turn"},
+                    "usage": payload["usage"],
+                },
                 {"type": "message_stop"},
             ]
         )
