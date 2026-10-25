@@ -10,7 +10,7 @@ import pytest
 from tavern.application.service import RoleplayRuntime
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_context import apply_context, finalize_record, load_trace
-from tavern.core.kemini import PREFIX_SOURCES, control_text, prefix_frames
+from tavern.core.kemini import PREFIX_SOURCES, TURN_SOURCES, control_text, prefix_frames
 from tavern.core.message_adapter import MessageAdapterConfig, adapt_messages
 from tavern.core.models import ContextRecipe, SessionCreate, Settings, TurnRequest
 from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget, complete_with_recall
@@ -213,6 +213,13 @@ def test_kemini_order_survives_projection_and_turn_replay():
     disabled = story.compile()
     assert not any(row["source"].startswith("kemini_") for row in disabled["trace"])
     assert next(row for row in disabled["trace"] if row["source"] == "state")["role"] == "system"
+    # A revoked dynamic source must not follow the request-local Kemini frames.
+    story.cfg.kemini.enabled = True
+    story.commit(story.compile())
+    story.note = ""
+    cleared = story.compile()
+    assert [row["source"] for row in cleared["trace"][-4:]] == ["author_note", *TURN_SOURCES]
+    assert "已撤销" in cleared["trace"][-4]["content"]
     assert story.cfg.message_adapter.mappings["gemini"]["state"].role == "system"
 
 

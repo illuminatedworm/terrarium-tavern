@@ -314,10 +314,11 @@ def apply_context(
             frame["runtime_content"] = raw if source in KEMINI_TRANSIENT else notice + "\n" + raw
             frame["runtime_phase"] = "body"
         updates.append(frame)
+    revoked = []
     for key, previous_value in seen.items():
         if key not in current and (previous_value["value"] is not None or reassert):
             source = previous_value["source"]
-            updates.append(
+            revoked.append(
                 {
                     "role": previous_value["role"],
                     "source": source,
@@ -330,8 +331,12 @@ def apply_context(
                 }
             )
             if previous_value.get("message_type"):
-                updates[-1]["message_type"] = previous_value["message_type"]
-                updates[-1]["runtime_phase"] = "body"
+                revoked[-1]["message_type"] = previous_value["message_type"]
+                revoked[-1]["runtime_phase"] = "body"
+    # Kemini turn frames must end the request. Without them the index is the
+    # end, so ordinary conversations keep their exact request order.
+    at = next((i for i, f in enumerate(updates) if f["source"] in KEMINI_TRANSIENT), len(updates))
+    updates[at:at] = revoked
     if previous_record and not reason:
         items = copy.deepcopy(list(sent))
     old_count = previous.get("continuation_count", 0) if previous_record and not reason else 0
