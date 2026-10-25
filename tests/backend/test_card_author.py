@@ -18,6 +18,7 @@ from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import export_card, parse_card
 from tavern.conversation.context import compile_context
 from tavern.core.models import CardAuthorRequest, SessionCreate, Settings
+from tavern.scripting.native_response import ResponseCompletion
 from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Conflict, Store
 
@@ -75,6 +76,10 @@ class ToolLLM(ScriptedLLM):
     @property
     def last_tool_calls(self):
         return self.native
+
+    @property
+    def last_completion(self):
+        return ResponseCompletion("tools", "tool_calls") if self.native else ResponseCompletion("end", "stop")
 
     async def chat(self, messages, **kwargs):
         self.call_log.append(messages)

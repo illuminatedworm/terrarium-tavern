@@ -38,6 +38,8 @@ export function useAdvisor(sid: string, preferenceSaved: () => void) {
     stopObserving();
     const token = generation,
       cursor = eventCursor();
+    let reply = '',
+      current = '';
     streaming.value = '';
     events.value = [];
     notice.value = '';
@@ -47,14 +49,20 @@ export function useAdvisor(sid: string, preferenceSaved: () => void) {
       if (disposed || token !== generation) return;
       const event = JSON.parse(message.data) as AdvisorEvent;
       if (!cursor.accept(event)) return;
-      if (event.kind === 'response_started' || event.kind === 'response_restarted') streaming.value = '';
-      else if (event.kind === 'text') streaming.value += event.payload.text;
+      // Prose from earlier responses stays part of the reply; a restart only
+      // withdraws the unfinished response, as the server joins the same way.
+      if (event.kind === 'response_started') {
+        reply = event.payload.reply || '';
+        current = '';
+      } else if (event.kind === 'response_restarted') current = '';
+      else if (event.kind === 'text') current += event.payload.text;
       else if (event.kind === 'context_warning' || event.kind === 'compacting')
         notice.value = event.payload.message;
       else if (event.kind === 'completed') {
         if (event.payload.preference_updated) preferenceSaved();
         notice.value = event.payload.preference_updated ? '本轮偏好已保存' : '';
       } else if (event.kind === 'error' || event.kind === 'cancelled') error.value = event.payload.message;
+      streaming.value = current.trim() && reply ? `${reply}\n\n${current}` : reply || current;
       if (!['text', 'response_started'].includes(event.kind)) events.value.push(event);
     };
     observer.addEventListener('end', () => {

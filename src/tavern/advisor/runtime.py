@@ -18,7 +18,7 @@ from tavern.advisor.context import (
     sources,
 )
 from tavern.advisor.storage import AdvisorStore
-from tavern.advisor.tools import OFFER_TOOLS, AdvisorTools, definitions
+from tavern.advisor.tools import AdvisorTools, definitions
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
@@ -258,6 +258,7 @@ class AdvisorRun:
             cfg.web, cfg.network, service.web_transport, mode=config.web.mode, event=self.event
         )
         self.context_prepared = progress.get("context_prepared", False)
+        self.model_completed = progress.get("model_completed", False)
         self.calls = 0
         self.request_context = ProviderRequestContext(
             str(uuid5(NAMESPACE_URL, "advisor:" + self.sid)), rid, "consultation", self.store.device_id()
@@ -283,6 +284,7 @@ class AdvisorRun:
             "view": list(self.view.forward),
             "identity": context_identity(self.cfg, self.config),
             "context_prepared": self.context_prepared,
+            "model_completed": self.model_completed,
             "reserved": sorted(self.view.reserved),
             "web_fallback": self.web_session.failed,
             "web_events": self.web_events,
@@ -481,6 +483,21 @@ class AdvisorRun:
         self.pending = None
         self.save()
 
+    def reply(self):
+        """Prose from every response of this consultation, in order; tools may sit between."""
+        return "\n\n".join(
+            m["content"] for m in self.trace if m["role"] == "assistant" and (m.get("content") or "").strip()
+        )
+
+    def finish(self):
+        reply = self.reply()
+        if not reply.strip():
+            # Executed tools stay paired; resume asks the model for the answer.
+            self.model_completed = False
+            self.save()
+            raise ValueError("模型已结束但未返回回答，本次进度保留")
+        self.commit(reply)
+
     def commit(self, text, *, compact_only=False):
         response = self.view.restore(text)
         # Opaque compact state can contain projected handles. Keep its mapping
@@ -562,6 +579,8 @@ class AdvisorRun:
             )
             return
         await self.execute_pending()
+        if self.model_completed:
+            return self.finish()
         for _ in range(max(0, self.config.max_steps - self.calls)):
             compiled = self.compiled()
             self.event(
@@ -577,7 +596,7 @@ class AdvisorRun:
                     {"message": "请求估算超出模型容量，仍完整发送已选资料；可调整近期剧情范围或上下文容量。"},
                 )
             self.save()
-            self.event("response_started", {})
+            self.event("response_started", {"reply": self.view.restore(self.reply())})
             text = ""
             self.request_slot()
             async for chunk in self.web_session.chat(
@@ -593,6 +612,9 @@ class AdvisorRun:
                     text += chunk
                     self.event("text", {"text": chunk})
             calls = getattr(provider, "last_tool_calls", []) or []
+            completion = provider.last_completion
+            if completion.action == "incomplete":
+                raise ValueError("模型回复未完整结束，本次进度保留")
             used_calls = {c["id"] for m in self.trace for c in m.get("tool_calls", [])}
             if (
                 len(calls) > 32
@@ -615,20 +637,17 @@ class AdvisorRun:
                 message_digest(assistant),
             )
             self.event("usage", getattr(provider, "last_usage", {}) or {})
-            if not calls:
-                if not text.strip():
-                    raise ValueError("模型未返回完整回答，本次进度保留")
-                self.trace.append(assistant)
-                self.commit(text)
-                return
+            # Like Full Agent, only the native end signal completes the reply; a
+            # response yielding for tools continues even when it carries prose.
+            ended = completion.action == "end"
+            if ended and not calls and not text.strip() and not self.reply().strip():
+                raise ValueError("模型未返回完整回答，本次进度保留")
             self.trace.append(assistant)
-            self.pending = assistant
-            self.save()
-            await self.execute_pending()
-            # Offers only decorate the reply already written in this response;
-            # another round would make the model restate it after they appear.
-            results = {m["tool_call_id"]: json.loads(m["content"]) for m in self.trace if m["role"] == "tool"}
-            if text.strip() and all(c.name in OFFER_TOOLS and "error" not in results[c.id] for c in calls):
-                self.commit(text)
-                return
+            self.model_completed = ended
+            if calls:
+                self.pending = assistant
+                self.save()
+                await self.execute_pending()
+            if ended:
+                return self.finish()
         raise ValueError("本次调用额度已用完，可继续咨询；待保存偏好尚未生效")

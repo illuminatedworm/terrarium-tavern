@@ -64,8 +64,6 @@ READ_NAMES = (
     "search_notes",
     "read_note",
 )
-# A reply whose only calls are successful offers ends the consultation.
-OFFER_TOOLS = frozenset({"offer_inputs", "offer_titles"})
 SPECS = {name: STORY_SPECS[name] for name in READ_NAMES}
 SPECS.update(
     {
@@ -85,11 +83,11 @@ SPECS.update(
         **WEB_SPECS,
         "offer_inputs": (
             InputOffer,
-            "Show clickable options under your reply; a click only fills the main conversation input box, and the user edits and sends it. Use for concrete actions or lines the user may want to send next. Call it alongside your complete reply: when a reply's only calls are offers and they succeed, the consultation ends there.",
+            "Show clickable options under your reply; a click only fills the main conversation input box, and the user edits and sends it. Use for concrete actions or lines the user may want to send next.",
         ),
         "offer_titles": (
             TitleOffer,
-            "Show title candidates under your reply only when the current user explicitly asks to rename or title this story. The title changes only if the user clicks one; never call it on your own initiative. Call it alongside your complete reply: when a reply's only calls are offers and they succeed, the consultation ends there.",
+            "Show title candidates under your reply only when the current user explicitly asks to rename or title this story. The title changes only if the user clicks one; never call it on your own initiative.",
         ),
         "update_turn_preference": (
             PreferenceUpdate,
@@ -318,10 +316,14 @@ class AdvisorTools:
             return await o.web.search(args.query, args.limit, args.objective)
         if name == "read_webpage":
             return await o.web.read(args.url, args.offset, args.limit, service=args.service)
-        if name in OFFER_TOOLS:
+        if name in {"offer_inputs", "offer_titles"}:
             # The persisted call arguments are the visible offer; nothing is
             # written until the user clicks one in the interface.
-            return {"shown": True, "notice": "选项已显示在回复下方；用户点击后才会填入输入框或修改标题。"}
+            return {
+                "shown": True,
+                "notice": "选项已显示在回复下方；用户点击后才会填入输入框或修改标题。"
+                "本次咨询已写出的文字都已显示，不要重述；没有补充时直接结束回复。",
+            }
         if name == "update_turn_preference":
             o.check_preference_write()
             if args.action == "clear" and args.content:
