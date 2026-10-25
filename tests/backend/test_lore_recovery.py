@@ -16,6 +16,7 @@ from tests.support.tracker_model import TrackerModel
 
 
 def Settings(**values):
+    values.setdefault("chunk_mode", "messages")
     return AppSettings(retrieval={"channels": ["keyword"]}, **values)
 
 

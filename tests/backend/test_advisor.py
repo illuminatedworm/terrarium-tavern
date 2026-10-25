@@ -235,7 +235,7 @@ def test_recent_range_zero_and_complete_exchanges(tmp_path):
     assert advisor.public(session["id"])["effective"]["range_source"] == "story"
     revision = advisor.data.get(session["id"])["revision"]
     advisor.options(session["id"], OptionsRequest(expected_revision=revision, recent_exchanges=None))
-    assert advisor.public(session["id"])["effective"]["recent_exchanges"] == 3
+    assert advisor.public(session["id"])["effective"]["recent_exchanges"] == 6
 
 
 async def test_long_source_reaches_final_request_without_ids(tmp_path):
@@ -267,7 +267,7 @@ async def test_api_exposes_readonly_preview_and_settings(tmp_path):
         response = await client.get(f"/api/sessions/{session['id']}/advisor")
         assert response.status_code == 200
         result = (await client.get("/api/settings")).json()
-        assert result["shared"]["advisor"]["recent_exchanges"] == 3
+        assert result["shared"]["advisor"]["recent_exchanges"] == 6
         assert any(p["path"] == "advisor.system_prompt" for p in result["prompt_definitions"])
         assert (await client.get(f"/api/sessions/{session['id']}/advisor/preview")).status_code == 200
     assert advisor.data.get(session["id"])["revision"] == 0

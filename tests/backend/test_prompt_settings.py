@@ -145,8 +145,8 @@ def test_defaults_and_custom_prompts():
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
     assert (migrated.half_agent.memory_recall_count, migrated.half_agent.memory_recall_filter) == (3, True)
     assert (migrated.full_agent.tools.chapter_tokens, migrated.full_agent.tools.chapters_total_tokens) == (
-        512,
-        4096,
+        2048,
+        16384,
     )
     assert migrate_settings(migrated.model_dump()) == migrated
 

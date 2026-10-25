@@ -10,13 +10,13 @@
 
 | 设置／字段 | 默认值 | 范围与作用 |
 |---|---:|---|
-| 窗口模式 `chunk_mode` | `messages` | 按消息批次、历史预算 `tokens`，或关闭 `off` |
-| 历史消息 cap `history_message_cap` | 40 | 8–1000；计剧情与本次输入，开场白算一条 |
+| 窗口模式 `chunk_mode` | `tokens` | 按历史预算、消息批次 `messages`，或关闭 `off` |
+| 历史消息 cap `history_message_cap` | 200 | 8–1000；计剧情与本次输入，开场白算一条；两种开启模式均受此上限约束 |
 | 每批移除量 `chunk_size` | 10 | 2–100；按剧情消息计数，向完整交流边界对齐 |
 | 日常预算 `daily_context_budget` | 98304 tokens | 2048–2000000；与模型可用输入容量取较小值 |
 | 压力触发 `context_pressure_trigger` | 85% | 10%–99%；达到压力后继续裁剪到目标 |
 | 压力目标 `context_pressure_target` | 70% | 5%–98%；必须小于触发比例 |
-| 历史预算 `chunk_max_tokens` | 6000 tokens | 512–2000000；仅历史预算模式额外使用 |
+| 历史预算 `chunk_max_tokens` | 65536 tokens | 512–2000000；仅历史预算模式额外使用 |
 
 历史条数不包含中途世界书，但世界书占用 token 容量。例如四次交流有八条剧情和二十条中途条目，剧情计数是八条，本次输入另计一条。
 
@@ -33,13 +33,13 @@
 | 字段 | 默认值 | 范围与作用 |
 |---|---:|---|
 | `memory_interval_turns` | 5 | 1–100；正文后检查，裁剪前另行检查来源覆盖 |
-| `tracker_max_steps` | 8 | 2–100；每个前置／后置任务的模型请求上限 |
-| `memory_timeout` | 120 秒 | 5–180；每次 Tracker 请求单独计时 |
-| `memory_input_tokens` | 32768 | 2048–2000000；按完整交流分批的输入目标，单条超量仍完整发送 |
+| `tracker_max_steps` | 12 | 2–100；每个前置／后置任务的模型请求上限 |
+| `memory_timeout` | 180 秒 | 5–180；每次 Tracker 请求单独计时 |
+| `memory_input_tokens` | 65536 | 2048–2000000；按完整交流分批的输入目标，单条超量仍完整发送 |
 | `memory_evidence_tokens` | 4096 | 0–32768；兼容字段，0 关闭辅助资料，正数启用，不截断已选资料 |
-| `memory_output_tokens` | 4096 | 256–65536；含记忆任务的输出额度 |
-| `memory_capacity_tokens` | 4096 | 512–65536；交给 Writer 的活跃记忆容量 |
-| `memory_current_max_records` | 5 | 1–100；自动当前进展数量，超量先退出来源最旧者 |
+| `memory_output_tokens` | 16384 | 256–65536；含记忆任务及疑难复核的输出额度 |
+| `memory_capacity_tokens` | 16384 | 512–65536；交给 Writer 的活跃记忆容量 |
+| `memory_current_max_records` | 10 | 1–100；自动当前进展数量，超量先退出来源最旧者 |
 | `memory_episode_cooldown_rounds` | 20 | 0–10000；自动经历自最新来源后满指定轮数退出，0 关闭时间准出 |
 | `memory_review_enabled` | 开启 | 关键疑问有新增资料时最多复核一次 |
 | `memory_recall_count` | 3 | 0–20；每次正文请求最多召回的归档经历条数，0 关闭召回 |

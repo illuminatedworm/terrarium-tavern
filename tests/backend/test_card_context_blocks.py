@@ -226,6 +226,7 @@ def test_half_agent_keeps_greeting_plain_in_context(greeting):
 
 
 def compile_mode(mode, document, history=(), *, snapshot=None, api="chat_completions", **settings):
+    settings.setdefault("chunk_mode", "off")
     cfg = Settings(runtime_mode=mode, api_mode=api, retrieval={"channels": ["keyword"]}, **settings)
     cfg._adapter_lane = "full_agent" if mode == "full_agent" else "foreground"
     snap = snapshot if snapshot is not None else {"state": {}}

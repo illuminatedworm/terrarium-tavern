@@ -173,6 +173,7 @@ async def test_token_pressure_trims_early_and_window_off_retains_everything(tmp_
     cfg = Settings(
         context_tokens=10000,
         reply_tokens=128,
+        chunk_mode="messages",
         background={"context_tokens": 32768, "reply_tokens": 1024},
         history_message_cap=40,
         chunk_size=10,

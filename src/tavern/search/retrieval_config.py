@@ -26,7 +26,7 @@ class Provider(BaseModel):
     name: str = "默认提供商"
     base_url: str = "https://api.openai.com"
     api_key: str = ""
-    use_proxy: bool = True
+    use_proxy: bool = False
     auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
     chatgpt_account_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
@@ -71,9 +71,9 @@ class ModelProfile(ModelConnection):
     provider_connections: dict[str, ModelConnection] = Field(default_factory=dict)
     message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
-    context_tokens: int = Field(32768, ge=2048, le=2000000)
-    reply_tokens: int = Field(2048, ge=128, le=65536)
-    temperature: float | None = Field(0.8, ge=0, le=2)
+    context_tokens: int = Field(131072, ge=2048, le=2000000)
+    reply_tokens: int = Field(16384, ge=128, le=65536)
+    temperature: float | None = Field(None, ge=0, le=2)
     top_p: float | None = Field(None, ge=0, le=1)
     top_k: int | None = Field(None, ge=0)
     frequency_penalty: float | None = Field(None, ge=-2, le=2)
@@ -112,9 +112,9 @@ class ModelProfile(ModelConnection):
 
 class Network(BaseModel):
     proxy: str = ""
-    api_proxy: bool = True
-    hf_proxy: bool = True
-    resources_proxy: bool = True
+    api_proxy: bool = False
+    hf_proxy: bool = False
+    resources_proxy: bool = False
 
 
 class RetrievalSettings(BaseModel):
@@ -140,9 +140,9 @@ class RetrievalSettings(BaseModel):
     # Title text of ordinary entries in BM25/vector fragments, rerank fallback and
     # subject headings. Keys and content are always matched.
     title_in_retrieval: bool = True
-    embedding_timeout: float = Field(1.0, gt=0, le=120)
+    embedding_timeout: float = Field(5.0, gt=0, le=120)
     index_timeout: int = Field(60, ge=1, le=3600, strict=True)
-    rerank_timeout: float = Field(1.5, gt=0, le=120)
+    rerank_timeout: float = Field(10.0, gt=0, le=120)
     query_prompt: str = Field(default=DEFAULT_QUERY_PROMPT, max_length=200000)
     protocol_prompt: str = Field(default=DEFAULT_RETRIEVAL_PROTOCOL, max_length=200000)
 

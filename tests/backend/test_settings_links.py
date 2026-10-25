@@ -11,7 +11,7 @@ from tavern.core.models import Settings
     [
         {"history_message_cap": 7},
         {"context_pressure_trigger": 0.05},
-        {"chunk_mode": "tokens", "chunk_max_tokens": 29000},
+        {"chunk_mode": "tokens", "chunk_max_tokens": 131072},
     ],
 )
 def test_invalid_linked_settings_are_rejected(changes):
@@ -20,7 +20,7 @@ def test_invalid_linked_settings_are_rejected(changes):
 
 
 def test_boundary_and_off_mode_values():
-    assert Settings().memory_timeout == 120
+    assert Settings().memory_timeout == 180
     assert Settings(memory_timeout=60).memory_timeout == 60
     cfg = Settings(history_message_cap=8, chunk_size=2, memory_interval_turns=1)
     assert cfg.history_message_cap == 8
@@ -35,7 +35,7 @@ def test_boundary_and_off_mode_values():
         Settings(history_message_cap=1000, chunk_size=100, memory_interval_turns=50).memory_interval_turns
         == 50
     )
-    assert (Settings().memory_current_max_records, Settings().memory_episode_cooldown_rounds) == (5, 20)
+    assert (Settings().memory_current_max_records, Settings().memory_episode_cooldown_rounds) == (10, 20)
     assert (
         Settings(
             memory_current_max_records=1, memory_episode_cooldown_rounds=0

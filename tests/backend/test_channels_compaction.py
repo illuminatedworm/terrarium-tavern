@@ -381,6 +381,8 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
         model="fixture",
         auth_mode="chatgpt_subscription",
         context_tokens=10000,
+        reply_tokens=1024,
+        chunk_mode="off",
         context_strategy="openai_compact",
     )
     body = [
@@ -546,7 +548,9 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
     from tavern.core.tokens import request_tokens
     from tavern.full_agent.compaction import rebuild_local
 
-    settings = Settings(model="fixture", context_tokens=8192, context_strategy=strategy)
+    settings = Settings(
+        model="fixture", context_tokens=8192, reply_tokens=1024, chunk_mode="off", context_strategy=strategy
+    )
     body, starts = [], []
     for index in range(3):
         starts.append({"offset": len(body), "history_start": index * 2})
@@ -630,7 +634,13 @@ def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoin
     from tavern.conversation.compaction import compact_limit, project_compact
     from tavern.core.models import Settings
 
-    settings = Settings(model="fixture", context_tokens=8192, context_strategy="openai_compact")
+    settings = Settings(
+        model="fixture",
+        context_tokens=8192,
+        reply_tokens=1024,
+        chunk_mode="off",
+        context_strategy="openai_compact",
+    )
 
     def projection(text, state=None):
         return project_compact(
@@ -667,6 +677,7 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
     config.full_agent.official_model.context_tokens = 10000
+    config.full_agent.official_model.reply_tokens = 1024
     store.save_settings(config)
     _, session = story(store, "full_agent")
     service = runtime(store)

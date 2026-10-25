@@ -281,17 +281,17 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     await saved()
                     assert (await read())["shared"]["debug_full_agent_prefix"] is False
                     shortcut = page.get_by_role("combobox", name="输入时发送和换行", exact=True)
-                    await expect(shortcut).to_have_value("enter")
+                    await expect(shortcut).to_have_value("ctrl_enter")
                     async with page.expect_response(
                         lambda response: (
                             response.request.method == "PATCH" and response.url.endswith("/settings/shared")
                         )
                     ):
-                        await shortcut.select_option("ctrl_enter")
+                        await shortcut.select_option("enter")
                     await saved()
-                    assert (await read())["shared"]["send_shortcut"] == "ctrl_enter"
+                    assert (await read())["shared"]["send_shortcut"] == "enter"
                     await page.get_by_role("button", name="撤回本页修改", exact=True).click()
-                    await expect(shortcut).to_have_value("enter")
+                    await expect(shortcut).to_have_value("ctrl_enter")
                     debug = page.get_by_role("checkbox", name="保留失败请求原始数据", exact=False)
                     await expect(debug).not_to_be_checked()
                     async with page.expect_response(
@@ -405,13 +405,17 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     assert current["half_agent"] == before["half_agent"]
                     await page.unroute("**/api/settings/full_agent", delayed)
                     await page.get_by_role("button", name="撤回本页修改", exact=True).click()
-                    await expect(output_field).to_have_value("2048")
+                    await expect(output_field).to_have_value(
+                        str(before["full_agent"]["model"]["reply_tokens"])
+                    )
                     await saved()
                     # Server validation is visible; invalid drafts never reach persisted settings.
                     context = page.get_by_label("上下文窗口（tokens）", exact=True)
                     await context.fill("2048")
                     await expect(page.locator(".settings-save-status")).to_have_text("保存失败")
-                    assert (await read())["full_agent"]["model"]["context_tokens"] == 32768
+                    assert (await read())["full_agent"]["model"]["context_tokens"] == before["full_agent"][
+                        "model"
+                    ]["context_tokens"]
                     await select("half agent 模型与生成")
                     await expect(page.get_by_role("alertdialog")).to_have_count(0)
                     async with page.expect_response(
@@ -515,7 +519,9 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     await page.get_by_role("button", name="撤回本页修改", exact=True).click()
                     await saved()
                     assert (await read())["full_agent"]["lore_max_entries"] == 9
-                    assert (await read())["full_agent"]["model"]["reply_tokens"] == 2048
+                    assert (await read())["full_agent"]["model"]["reply_tokens"] == before["full_agent"][
+                        "model"
+                    ]["reply_tokens"]
                     # Page search opens folded fields and focuses the control.
                     await page.get_by_role("searchbox", name="搜索设置").fill("提示缓存")
                     await (

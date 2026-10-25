@@ -503,7 +503,7 @@ async def consolidate(
                         review_text = await generate(
                             review,
                             phase="memory_review",
-                            output_tokens=min(2048, settings.memory_output_tokens),
+                            output_tokens=settings.memory_output_tokens,
                         )
                         _merge_history_sources(supplied, getattr(review_text, "history_sources", {}))
                         response = (

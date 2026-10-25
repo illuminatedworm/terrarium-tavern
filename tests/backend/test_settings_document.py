@@ -19,12 +19,12 @@ async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         opened = (await client.post("/api/settings/edit-sessions", json={})).json()
         original = opened["settings"]
-        assert original["shared"]["send_shortcut"] == "enter"
+        assert original["shared"]["send_shortcut"] == "ctrl_enter"
         pages = [page["key"] for page in original["pages"] if page["scope"] == "shared"]
         assert pages[-1] == "misc"
         assert pages.index("preference_presets") == pages.index("editor") + 1
         revision = original["revisions"]["shared"]
-        for shortcut in ("ctrl_enter", "shift_enter", "button_only"):
+        for shortcut in ("enter", "shift_enter", "button_only"):
             response = await client.patch(
                 "/api/settings/shared",
                 json={
@@ -53,7 +53,7 @@ async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
             },
         )
         assert undo.status_code == 200, undo.text
-        assert undo.json()["shared"]["send_shortcut"] == "enter"
+        assert undo.json()["shared"]["send_shortcut"] == "ctrl_enter"
         assert undo.json()["half_agent"] == original["half_agent"]
         assert undo.json()["full_agent"] == original["full_agent"]
 

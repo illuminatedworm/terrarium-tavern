@@ -136,9 +136,11 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
         "tavern.memories.memory_engine.select_evidence", lambda *a, **kw: [extra if kw else first]
     )
     phases = []
+    settings = Settings(memory_output_tokens=8192)
 
     async def generate(prompt, phase, **kwargs):
         phases.append(phase)
+        assert kwargs["output_tokens"] == settings.memory_output_tokens
         assert "random-setting" not in json.dumps(prompt) and "random-version" not in json.dumps(prompt)
         if phase == "memory":
             return answer(
@@ -161,7 +163,7 @@ async def test_setting_and_review_aliases_restore_versions_and_new_record_identi
         )
 
     result = await consolidate(
-        history(["艾琳把戒指借给旅人。"]), Settings(), generate, memory={"version": 3, "records": []}
+        history(["艾琳把戒指借给旅人。"]), settings, generate, memory={"version": 3, "records": []}
     )
     record = result["records"][0]
     assert phases == ["memory", "memory_review"]

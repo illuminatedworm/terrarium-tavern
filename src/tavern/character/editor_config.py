@@ -92,8 +92,8 @@ class CardAuthorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     system_prompt: str = SYSTEM
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
-    pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
-    handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
+    pressure_ratio: float = Field(default=0.80, ge=0.25, le=0.9)
+    handoff_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
     web: AgentWebConfig = Field(default_factory=AgentWebConfig)
 
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { handleComposerKeydown, type SendShortcut } from '../../web/lib/composerShortcut';
+import { handleComposerKeydown, sendShortcutHint, type SendShortcut } from '../../web/lib/composerShortcut';
 
 function key(overrides: Partial<KeyboardEvent> = {}) {
   return {
@@ -17,6 +17,16 @@ function key(overrides: Partial<KeyboardEvent> = {}) {
 }
 
 describe('chat composer shortcuts', () => {
+  it('keeps Enter as a newline and sends on Ctrl+Enter by default', () => {
+    const newline = key();
+    expect(handleComposerKeydown(newline)).toBe(false);
+    expect(newline.preventDefault).not.toHaveBeenCalled();
+    const send = key({ ctrlKey: true });
+    expect(handleComposerKeydown(send)).toBe(true);
+    expect(send.preventDefault).toHaveBeenCalledOnce();
+    expect(sendShortcutHint()).toBe(sendShortcutHint('ctrl_enter'));
+  });
+
   it.each<[SendShortcut, Partial<KeyboardEvent>]>([
     ['enter', {}],
     ['ctrl_enter', { ctrlKey: true }],

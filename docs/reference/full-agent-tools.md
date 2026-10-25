@@ -14,7 +14,7 @@
 
 ## 参数与数据边界
 
-剧情规划 `plot` 独立于 note，使用 `write_plot({"content":"完整阶段大纲"})` 写入。其唯一开关为会话的 `plot_enabled`，默认关闭；工具页不能独立禁用它。正文为 1–64000 字符且非空白，另受 `plot_tokens` 限制，默认 4096 tokens。当前完整版本通过 `<tavern_plot>` 提供，无需预读或来源引用；成功只返回 `saved_to_draft:true`。开启且大纲为空时，运行时拒绝收尾，要求先成功建纲；后续不要求每轮写入。
+剧情规划 `plot` 独立于 note，使用 `write_plot({"content":"完整阶段大纲"})` 写入。其唯一开关为会话的 `plot_enabled`，默认关闭；工具页不能独立禁用它。正文为 1–64000 字符且非空白，另受 `plot_tokens` 限制，默认 8192 tokens。当前完整版本通过 `<tavern_plot>` 提供，无需预读或来源引用；成功只返回 `saved_to_draft:true`。开启且大纲为空时，运行时拒绝收尾，要求先成功建纲；后续不要求每轮写入。
 
 玩家接口 `PUT /api/sessions/{sid}/full-agent/plot` 接收 `expected_revision` 和可选 `enabled`／`content`，至少提供一项；空字符串清空大纲。开关可在空白故事修改，正文须已有剧情节点。关闭保留内容并暂停使用；修改与运行、待审核和上下文整理互斥。手动编辑后的大纲仍可由模型调整。
 
@@ -86,7 +86,7 @@ handoff 使用最新运行时记忆或最近成功写入中较新的内容，失
 - `chapters`：0–10 个按顺序执行的操作，C 编号指本次调用前的编号。`add` 通常只给标题和要点，起点自动接在上一章之后；省略 `through` 时，new_context 自动覆盖到最后一条退出消息，write_handoff 自动覆盖到最后一条已提交消息。只有主动语义分章时才用已知 H 填写 `through`，一次调用中省略终点的 add 应放在其他 add 之后。`revise` 改写一章的标题与要点，范围不变；`merge` 把 2–10 个相邻章节合并为一章，范围取并集。title 为 1–80 字符，每章 1–20 条要点。
 - `current`：1–30 条要点，整体替换当前交接。
 - 要点：`text` 1–2000 字符；`refs` 可省略、默认 `[]`，最多 4 个 H 引用或闭区间，章节引用须落在本章范围内；`kind` 为 fact（默认）或 inference。引用只用于有精确回查需要的已提交原文，不为文风、角色资料或当前输入拼凑 H；这些内容直接写入交接即可。assistant 正文不带位置标记，精确 H 从历史工具取得，不要求推算。
-- 限额：当前交接 handoff_tokens（默认 2048），单章 chapter_tokens（默认 512），全部章节 chapters_total_tokens（默认 4096），均按渲染后的文本计数。章节总量超限时返回 CONTENT_LIMIT，提示合并最旧的相邻章节。
+- 限额：当前交接 handoff_tokens（默认 8192），单章 chapter_tokens（默认 2048），全部章节 chapters_total_tokens（默认 16384），均按渲染后的文本计数。章节总量超限时返回 CONTENT_LIMIT，提示合并最旧的相邻章节。
 - new_context 先根据模型选择的 `keep_recent` 将保留边界扩展到完整交流，只要求章节覆盖最终保留起点之前的原文。保留的最近消息和当前输入不要求提前归档；全部历史保留时允许沿用空交接。实际退出范围未覆盖时返回 HANDOFF_COVERAGE，模型可补齐交接，或增加 keep_recent 保留尚未归档的交流。
 
 成功结果返回 `chapters`：当前每章的 C 编号、标题和范围，供同一窗口后续调用 revise／merge。keep_recent 为 0–12 条剧情消息，默认 2，保留边界向前扩展到完整交流，当前输入另行保留。旧工具交换整体退出，必要结论应写入记忆。

@@ -23,9 +23,21 @@ async def test_proxy_defaults_are_direct_and_explicit_settings_survive(monkeypat
 
     doc = SettingsDocument()
     assert doc.shared.network.proxy == Settings().proxy == ""
+    assert not any(
+        (doc.shared.network.api_proxy, doc.shared.network.hf_proxy, doc.shared.network.resources_proxy)
+    )
+    assert not doc.shared.providers[0].use_proxy and not Settings().use_proxy
     saved_proxy = "http://proxy.example:8080"
     doc.shared.network.proxy = saved_proxy
-    assert migrate_settings(doc.model_dump()).shared.network.proxy == saved_proxy
+    doc.shared.network.api_proxy = doc.shared.network.hf_proxy = doc.shared.network.resources_proxy = True
+    doc.shared.providers[0].use_proxy = True
+    doc.shared.send_shortcut = "enter"
+    # Saved values from an earlier installation remain authoritative after defaults change.
+    doc.half_agent.foreground.context_tokens, doc.half_agent.foreground.reply_tokens = 32768, 2048
+    doc.half_agent.chunk_mode, doc.half_agent.chunk_max_tokens = "messages", 6000
+    doc.half_agent.memory_output_tokens, doc.half_agent.memory_capacity_tokens = 4096, 4096
+    assert migrate_settings(doc.model_dump()) == doc
+    assert doc.runtime().use_proxy and doc.runtime().reply_tokens == 2048
     calls = []
     real_client = httpx.AsyncClient
 
@@ -61,6 +73,7 @@ async def test_model_listing_uses_saved_key_and_proxy(tmp_path, monkeypatch):
     settings = app.state.store.settings()
     settings.providers[0].api_key = "secret"
     settings.network.proxy = "http://proxy.example:8080"
+    settings.network.api_proxy = settings.providers[0].use_proxy = True
     app.state.store.save_settings(settings)
     real_client = httpx.AsyncClient
     calls = []

@@ -14,6 +14,7 @@ from tavern.storage.store import Store, dump
 
 
 def Settings(**values):
+    values.setdefault("chunk_mode", "messages")
     return AppSettings(retrieval={"channels": ["keyword"]}, **values)
 
 

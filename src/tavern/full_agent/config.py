@@ -98,12 +98,12 @@ class FullAgentConfig(BaseModel):
     max_duration_seconds: int = Field(default=900, ge=30, le=7200, strict=True)
     auto_retrieval: bool = True
     parallel_tool_calls: bool = Field(default=True, strict=True)
-    pressure_ratio: float = Field(default=0.70, ge=0.25, le=0.9)
-    handoff_tokens: int = Field(default=2048, ge=128, le=16384, strict=True)
-    chapter_tokens: int = Field(default=512, ge=64, le=4096, strict=True)
-    chapters_total_tokens: int = Field(default=4096, ge=256, le=65536, strict=True)
-    note_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)
-    plot_tokens: int = Field(default=4096, ge=128, le=16384, strict=True)
+    pressure_ratio: float = Field(default=0.80, ge=0.25, le=0.9)
+    handoff_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
+    chapter_tokens: int = Field(default=2048, ge=64, le=4096, strict=True)
+    chapters_total_tokens: int = Field(default=16384, ge=256, le=65536, strict=True)
+    note_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
+    plot_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
 
 
 def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False):

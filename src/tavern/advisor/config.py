@@ -31,10 +31,12 @@ SYSTEM = """你是角色扮演游戏的参谋 agent 和辅助，另有一个 Age
 
 class AdvisorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: ModelProfile = Field(default_factory=lambda: ModelProfile(provider_id="", model=""))
+    model: ModelProfile = Field(
+        default_factory=lambda: ModelProfile(provider_id="", model="", reply_tokens=8192)
+    )
     official_model: ModelProfile | None = None
     system_prompt: str = SYSTEM
-    recent_exchanges: int = Field(default=3, ge=0, le=1000, strict=True)
+    recent_exchanges: int = Field(default=6, ge=0, le=1000, strict=True)
     keep_recent: int = Field(default=4, ge=1, le=100, strict=True)
     auto_compact: bool = True
     context_strategy: Literal["local", "openai_compact"] = "local"

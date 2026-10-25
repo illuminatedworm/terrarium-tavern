@@ -7,12 +7,12 @@ export const sendShortcutOptions: Array<{ value: SendShortcut; label: string }> 
   { value: 'button_only', label: '仅点击按钮发送 · Enter 换行' },
 ];
 
-export function sendShortcutHint(shortcut: SendShortcut = 'enter'): string {
+export function sendShortcutHint(shortcut: SendShortcut = 'ctrl_enter'): string {
   return sendShortcutOptions.find((option) => option.value === shortcut)!.label;
 }
 
 /** Only consume the configured chord; IME confirmation and held keys never send. */
-export function handleComposerKeydown(event: KeyboardEvent, shortcut: SendShortcut = 'enter'): boolean {
+export function handleComposerKeydown(event: KeyboardEvent, shortcut: SendShortcut = 'ctrl_enter'): boolean {
   if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.altKey) return false;
   const matches =
     shortcut === 'enter'

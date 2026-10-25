@@ -23,7 +23,7 @@ function add() {
       name: channel.value === 'chatgpt' ? 'OpenAI Official' : '新提供商',
       base_url: 'https://api.openai.com',
       api_key: '',
-      use_proxy: true,
+      use_proxy: false,
       auth_mode: channel.value === 'chatgpt' ? 'chatgpt_subscription' : 'api_key',
       chatgpt_account_id: null,
     },

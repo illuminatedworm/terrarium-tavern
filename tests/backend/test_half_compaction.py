@@ -635,6 +635,7 @@ async def test_fork_import_and_log_cleanup_keep_replay_sources(tmp_path):
 async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(tmp_path, accept):
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
+    config.half_agent.chunk_mode = "messages"
     config.half_agent.official_foreground.context_tokens = 8192
     config.half_agent.official_foreground.reply_tokens = 1024
     store.save_settings(config)

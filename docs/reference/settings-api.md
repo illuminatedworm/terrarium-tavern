@@ -205,7 +205,7 @@ schema 8 / 设置 version 5 添加消息的独立辅助记录、会话的 `kemin
 
 设置 version 6 → 7 增加 `roleplay_prompt`、`content_prompt`、`output_prompt`，对应角色扮演追加要求、正文约束和末尾输出提示。仅当 CLEAR、资料起始、自检文本完全匹配旧默认值时，替换其中的独立边界标签、Interleaving 包装及相关引用。小说填充、全部自定义文本和开关原样保留；十三项文本均以数据库中的保存值为准。
 
-设置 version 7 → 8 为 `half_agent` 增加 `memory_recall_count`（默认 3）与 `memory_recall_filter`（默认关闭），为 `full_agent.tools` 增加 `chapter_tokens`（默认 512）与 `chapters_total_tokens`（默认 4096）。新增字段写入其可见默认值，已保存的其他设置原样保留，两个范围的修订号各加一。
+设置 version 7 → 8 为 `half_agent` 增加 `memory_recall_count`（默认 3）与 `memory_recall_filter`（默认关闭），为 `full_agent.tools` 增加 `chapter_tokens` 与 `chapters_total_tokens`。缺少的新增字段按当前可见出厂默认值补齐，已有保存值及其他设置原样保留，两个范围的修订号各加一。
 
 设置 version 8 → 9 允许显式的 Android `cpu` / `q8_0` GGUF 配置。已有 CUDA 模型、量化、设备、版本与所有其他设置原样保留；用户在本地模型页选择手机配置后才写入新值。升级前沿用完整数据库备份，旧程序不能直接打开 version 9 设置。
 

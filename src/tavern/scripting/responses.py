@@ -15,8 +15,8 @@ class ResponsesProvider(ModelTransport):
             model=model,
             base_url=base_url,
             api_mode="responses",
-            temperature=kwargs.get("temperature", 0.7),
-            reply_tokens=kwargs.get("max_tokens") or 2048,
+            temperature=kwargs.get("temperature"),
+            reply_tokens=kwargs.get("max_tokens") or Settings.model_fields["reply_tokens"].default,
         )
         super().__init__(settings, api_key)
 

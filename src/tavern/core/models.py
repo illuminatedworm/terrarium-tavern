@@ -119,7 +119,7 @@ class Settings(BaseModel):
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     # Stable persisted/API keys: foreground = Writer, background = Tracker.
     foreground: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
-    background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=1024))
+    background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=8192))
     card_author: ModelProfile | None = None
     advisor: ModelProfile | None = None
     card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
@@ -131,7 +131,7 @@ class Settings(BaseModel):
     local_models: LocalModels = Field(default_factory=LocalModels)
     network: Network = Field(default_factory=Network)
     web: WebConfig = Field(default_factory=WebConfig)
-    send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "enter"
+    send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
     reply_locate_start: bool = Field(default=True, strict=True)
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
@@ -207,7 +207,7 @@ class Settings(BaseModel):
     memory_system_prompt: str = DEFAULT_MEMORY_PROMPT
     maintenance_system_prompt: str = DEFAULT_MAINTENANCE_PROMPT
     tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
-    tracker_max_steps: int = Field(default=8, ge=2, le=100, strict=True)
+    tracker_max_steps: int = Field(default=12, ge=2, le=100, strict=True)
     preference_prompt: str = DEFAULT_PREFERENCE_PROMPT
     regenerate_prompt: str = DEFAULT_REGENERATE_PROMPT
     probe_system_prompt: str = DEFAULT_PROBE_PROMPT
@@ -220,14 +220,14 @@ class Settings(BaseModel):
     # Legacy setting retained for stored profiles; selected entries are always complete.
     lore_max_chars: int = Field(default=3000, ge=1, le=2000000, strict=True)
     proxy: str = ""
-    use_proxy: bool = True
+    use_proxy: bool = False
     api_mode: Literal["chat_completions", "responses", "anthropic", "gemini"] = "chat_completions"
     message_adapter: MessageAdapterConfig = Field(default_factory=MessageAdapterConfig)
     api_path: str | None = None
     cache: CacheSettings = Field(default_factory=CacheSettings)
     cache_scope: str = ""
     cache_window: str = ""
-    temperature: float | None = Field(default=0.8, ge=0, le=2)
+    temperature: float | None = Field(default=None, ge=0, le=2)
     top_p: float | None = Field(default=None, ge=0, le=1)
     top_k: int | None = Field(default=None, ge=0)
     frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
@@ -235,17 +235,17 @@ class Settings(BaseModel):
     prompt_cache_key: str | None = Field(default=None, max_length=256)
     prompt_cache_mode: Literal["default", "no_write", "instructions"] = "default"
     prompt_cache_retention: Literal["default", "in_memory", "24h"] = "default"
-    context_tokens: int = Field(default=32768, ge=2048, le=2000000, strict=True)
-    reply_tokens: int = Field(default=2048, ge=128, le=65536, strict=True)
+    context_tokens: int = Field(default=131072, ge=2048, le=2000000, strict=True)
+    reply_tokens: int = Field(default=16384, ge=128, le=65536, strict=True)
     policy: Policy = "automatic"
     lore_injection_mode: LoreInjectionMode = "conversation"
     capability: Literal["unknown", "accepted", "unsupported"] = "unknown"
     capability_key: str = ""
     reasoning_effort: ReasoningEffort = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
-    chunk_mode: Literal["messages", "tokens", "off"] = "messages"
+    chunk_mode: Literal["messages", "tokens", "off"] = "tokens"
     chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
-    history_message_cap: int = Field(default=40, ge=8, le=1000, strict=True)
+    history_message_cap: int = Field(default=200, ge=8, le=1000, strict=True)
     memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
     context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
     context_pressure_target: float = Field(default=0.70, ge=0.05, le=0.98)
@@ -253,13 +253,13 @@ class Settings(BaseModel):
     log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)
     log_max_mib: int = Field(default=512, ge=1, le=16384, strict=True)
     retrieval_cache_max_mib: int = Field(default=256, ge=1, le=16384, strict=True)
-    chunk_max_tokens: int = Field(default=6000, ge=512, le=2000000, strict=True)
-    memory_timeout: int = Field(default=120, ge=5, le=180, strict=True)
-    memory_input_tokens: int = Field(default=32768, ge=2048, le=2000000, strict=True)
+    chunk_max_tokens: int = Field(default=65536, ge=512, le=2000000, strict=True)
+    memory_timeout: int = Field(default=180, ge=5, le=180, strict=True)
+    memory_input_tokens: int = Field(default=65536, ge=2048, le=2000000, strict=True)
     memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
-    memory_output_tokens: int = Field(default=4096, ge=256, le=65536, strict=True)
-    memory_capacity_tokens: int = Field(default=4096, ge=512, le=65536, strict=True)
-    memory_current_max_records: int = Field(default=5, ge=1, le=100, strict=True)
+    memory_output_tokens: int = Field(default=16384, ge=256, le=65536, strict=True)
+    memory_capacity_tokens: int = Field(default=16384, ge=512, le=65536, strict=True)
+    memory_current_max_records: int = Field(default=10, ge=1, le=100, strict=True)
     memory_episode_cooldown_rounds: int = Field(default=20, ge=0, le=10000, strict=True)
     memory_review_enabled: bool = Field(default=True, strict=True)
     memory_recall_count: int = Field(default=3, ge=0, le=20, strict=True)

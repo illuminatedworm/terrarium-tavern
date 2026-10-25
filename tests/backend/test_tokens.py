@@ -34,7 +34,7 @@ def test_unknown_model_is_explicit_reference_estimate_and_roles_are_independent(
 
 
 def test_compile_budget_uses_tokens_and_breakdown_matches_final_wire():
-    cfg = Settings(context_tokens=4096, reply_tokens=128, system_prompt="规则")
+    cfg = Settings(context_tokens=4096, reply_tokens=128, chunk_mode="off", system_prompt="规则")
     session = {"id": "s", "persona": "人", "recipe": ContextRecipe().model_dump()}
     text = "界" * 1000  # 3,000 UTF-8 bytes but 1,000 o200k tokens.
     context = compile_context(

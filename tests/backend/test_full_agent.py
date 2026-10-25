@@ -1673,9 +1673,10 @@ def test_explicit_window_and_memory_inventory(story, window_number, notes, expec
     assert [m["position"] for m in result["trace"]] == list(range(len(result["messages"])))
 
 
-def test_budget_signal_only_after_seventy_percent_near_memory(story):
+def test_budget_signal_only_after_configured_pressure_near_memory(story):
     store, session = story
     settings = store.settings().for_role("full_agent")
+    settings.full_agent_config.pressure_ratio = 0.7
     settings.reply_tokens = 1024
     settings.context_tokens = 20000
     document = {"name": "向导"}
@@ -1719,6 +1720,7 @@ def test_budget_signal_only_after_seventy_percent_near_memory(story):
 def test_pressure_notice_changes_only_with_actionable_state(story):
     store, session = story
     settings = store.settings().for_role("full_agent")
+    settings.full_agent_config.pressure_ratio = 0.7
     settings.context_tokens = 20000
     settings.reply_tokens = 128
     document = {"name": "向导", "description": "背景。" * 1000}
@@ -1799,8 +1801,8 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
 async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
     store, session = story
     settings = store.settings()
-    settings.foreground.context_tokens = 16000
-    settings.foreground.reply_tokens = 1024
+    settings.full_agent.context_tokens = 16000
+    settings.full_agent.reply_tokens = 1024
     store.save_settings(settings)
     large = "旧场景细节。" * 6000
     with store.connection() as db:
