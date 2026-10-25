@@ -1,5 +1,6 @@
 import copy
 from pathlib import Path
+from urllib.parse import unquote
 
 from httpx import ASGITransport, AsyncClient
 
@@ -13,6 +14,7 @@ async def test_card_api_revision_save_keeps_existing_story_settings(tmp_path):
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
     session = store.new_session(SessionCreate(card_id=card["id"]))
     doc = copy.deepcopy(card["document"])
+    doc["data"]["name"] = "新雾港 #1; 100%"
     doc["data"]["description"] = "覆盖后的当前设定"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.put(
@@ -21,6 +23,12 @@ async def test_card_api_revision_save_keeps_existing_story_settings(tmp_path):
         assert response.status_code == 200
         assert response.json()["document"] == doc
         assert response.json()["revision"] == card["revision"] + 1
+        exported = await client.get(f"/api/cards/{card['id']}/export")
+        assert exported.status_code == 200
+        assert exported.json() == doc
+        disposition = exported.headers["content-disposition"]
+        assert unquote(disposition.split("filename*=UTF-8''", 1)[1]) == "新雾港 #1; 100%.json"
+        assert disposition.isascii()
         preview = await client.post(f"/api/sessions/{session['id']}/preview", json={"text": "继续"})
         assert preview.status_code == 200
         assert "覆盖后的当前设定" not in next(

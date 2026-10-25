@@ -6,6 +6,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -504,7 +505,10 @@ def create_app(data_dir=None):
         return Response(
             content,
             media_type=mime,
-            headers={"Content-Disposition": f'attachment; filename="character.{ext}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="character.{ext}"; '
+                f"filename*=UTF-8''{quote(card['name'] + '.' + ext, safe='')}"
+            },
         )
 
     def portrait_response(card):
