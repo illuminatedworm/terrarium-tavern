@@ -1,7 +1,7 @@
 # Terrarium Tavern 便携版
 
-解压到可写的新目录。Windows x64 双击 `start.cmd`；Linux x64 在该目录运行 `./start.sh`。
-默认访问 <http://127.0.0.1:8000>，退出时运行 `stop.ps1` 或 `./stop.sh`。
+解压到可写的新目录。Windows x64 双击 `点击开始.cmd`；Linux x64 在该目录运行 `./start.sh`。
+默认访问 <http://127.0.0.1:51273>，退出时运行 `stop.ps1` 或 `./stop.sh`。
 
 包内附带 Python、Node.js（含 npm）、锁定的 Python 依赖、已构建界面与 Playwright Chromium。
 首次启动不运行安装器、不联网下载依赖，不需要系统 Python、Node、uv 或 Git。

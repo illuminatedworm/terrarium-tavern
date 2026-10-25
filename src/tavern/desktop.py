@@ -145,7 +145,7 @@ async def with_dev_frontend(run: Callable[[], Awaitable[None]]):
     vite = root / "node_modules/vite/bin/vite.js"
     if not node or not vite.is_file():
         raise RuntimeError("请先运行 setup，准备 Node 和前端依赖")
-    for port in (8000, 5173):
+    for port in (51273, 5173):
         with socket.socket() as probe:
             if probe.connect_ex(("127.0.0.1", port)) == 0:
                 raise RuntimeError(f"端口 {port} 已被使用，请先停止旧服务")

@@ -3,7 +3,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 usage() { printf '%s\n' '用法：./start.sh [--port PORT] [--data DIRECTORY] [--desktop]'; }
-port=8000
+port=51273
 data=data
 window=()
 while (($#)); do

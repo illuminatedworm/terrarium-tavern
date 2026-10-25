@@ -35,4 +35,4 @@ npm.cmd run build
 if ($LASTEXITCODE) { throw '前端构建失败' }
 & .venv/Scripts/python.exe -m playwright install chromium
 if ($LASTEXITCODE) { throw 'Chromium 安装失败' }
-Write-Host '安装完成。运行 .\start.ps1，然后访问 http://127.0.0.1:8000'
+Write-Host '安装完成。运行 .\点击开始.cmd，然后访问 http://127.0.0.1:51273'

@@ -1,4 +1,4 @@
-﻿param([int]$Port = 8000, [string]$Data = 'data', [switch]$Desktop)
+﻿param([int]$Port = 51273, [string]$Data = 'data', [switch]$Desktop)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 . (Join-Path $PSScriptRoot 'tools/desktop-env.ps1')

@@ -3,7 +3,7 @@ set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 usage() { printf '%s\n' '用法：./stop.sh [--port PORT]'; }
-port=8000
+port=51273
 while (($#)); do
     case "$1" in
         --port|-p)

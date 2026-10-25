@@ -84,4 +84,4 @@ if $proxy_set; then tavern_npm+=("--proxy=$proxy" "--https-proxy=$proxy"); fi
 npm "${tavern_npm[@]}"
 npm run build
 .venv/bin/python -m playwright install chromium
-printf '%s\n' '安装完成。运行 ./start.sh，然后访问 http://127.0.0.1:8000'
+printf '%s\n' '安装完成。运行 ./start.sh，然后访问 http://127.0.0.1:51273'

@@ -10,7 +10,7 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 
 ```powershell
 .\setup.ps1 -Proxy ''
-.\start.ps1
+.\点击开始.cmd
 ```
 
 此命令使用直连下载。使用代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
@@ -30,9 +30,9 @@ Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代�
 长期使用的工具链位于 `desktop-dev/`，不要按临时缓存清理。已有系统 Node.js 22+ 时可加
 `-SkipNodeDownload` 或 `--skip-node-download`；启动、构建和开发脚本优先使用已准备的内置 Node。
 已有 `.venv` 对 `.cache/python` 的引用不会自动搬迁，重建环境和便携包说明见[桌面开发](../development/desktop.md)。
-启动后访问 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+启动后访问 [http://127.0.0.1:51273](http://127.0.0.1:51273)。
 
-便携包已附带 Python、Node、锁定依赖、界面与 Chromium，解压后直接使用 `start.cmd` / `start.ps1`
+便携包已附带 Python、Node、锁定依赖、界面与 Chromium，解压后直接使用 `点击开始.cmd` / `start.ps1`
 或 `./start.sh`，无需运行安装脚本。Windows 包使用 embeddable Python；Linux 包要求 glibc x64，
 Chromium 的系统共享库仍由目标发行版提供。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
 

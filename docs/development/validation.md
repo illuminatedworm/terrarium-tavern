@@ -10,11 +10,11 @@
 | 仅启动 Vite | `npm.cmd run dev:web` | `npm run dev:web` |
 | 构建静态页面 | `.\build.ps1` 或 `npm.cmd run build` | `./build.sh` 或 `npm run build` |
 
-开发页面为 [http://127.0.0.1:5173](http://127.0.0.1:5173)。开发脚本复用端口 8000 上已通过健康检查的本项目后端，或自行启动后端并在退出时关闭该进程。仅启动 Vite 时，需另行运行对应系统的 `start` 脚本。`.\run-dev.ps1 -Desktop` / `./run-dev.sh --desktop` 打开可选的受控窗口：入口独立拥有 Vite、后端和窗口，任一服务失败或窗口关闭时统一收尾，端口被占用则报错，不接管已有服务。
+开发页面为 [http://127.0.0.1:5173](http://127.0.0.1:5173)。开发脚本复用端口 51273 上已通过健康检查的本项目后端，或自行启动后端并在退出时关闭该进程。仅启动 Vite 时，需另行运行对应系统的 `start` 脚本。`.\run-dev.ps1 -Desktop` / `./run-dev.sh --desktop` 打开可选的受控窗口：入口独立拥有 Vite、后端和窗口，任一服务失败或窗口关闭时统一收尾，端口被占用则报错，不接管已有服务。
 
 卡片 UI 的浏览器验收在导航前安装 `tavern.scripting.network_guard.NETWORK_GUARD`，模拟受控宿主。`browser_mvu_panel` 默认单视口，覆盖宿主隔离、嵌套文档 WebRTC 回环探针、普通桌面浏览器照常运行面板与缺少隔离的 Android 宿主暂停；布局变更时使用 `--all-viewports`。
 
-端口 8000 提供最近一次构建的静态页面。构建更新 `dist/` 和 `src/tavern/static/web/`。Vue 运行时单独打包为共享分块，入口与按需页面共用。设置、角色卡编辑器和制卡界面按需加载，调整加载边界后应分别打开这些页面，检查分块与样式。
+端口 51273 提供最近一次构建的静态页面。构建更新 `dist/` 和 `src/tavern/static/web/`。Vue 运行时单独打包为共享分块，入口与按需页面共用。设置、角色卡编辑器和制卡界面按需加载，调整加载边界后应分别打开这些页面，检查分块与样式。
 
 `npm run dev` 的包脚本调用 Windows PowerShell，Linux 使用上表的 Bash 入口。
 

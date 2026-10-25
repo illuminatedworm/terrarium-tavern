@@ -24,7 +24,7 @@ FILES = (
     "vitest.config.ts",
     "setup.ps1",
     "start.ps1",
-    "start.cmd",
+    "点击开始.cmd",
     "stop.ps1",
     "run-dev.ps1",
     "build.ps1",

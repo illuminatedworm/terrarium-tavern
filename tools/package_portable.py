@@ -129,7 +129,7 @@ def finish_package(
                 (app / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, app / relative)
     scripts = (
-        ("start.ps1", "stop.ps1", "start.cmd", "clear-conversations.cmd")
+        ("start.ps1", "stop.ps1", "点击开始.cmd", "clear-conversations.cmd")
         if windows
         else (
             "start.sh",

@@ -9,15 +9,15 @@ def main():
         description="Terrarium Tavern — powered by KohakuTerrarium",
         epilog="KohakuTerrarium: https://github.com/Kohaku-Lab/KohakuTerrarium",
     )
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=51273)
     parser.add_argument("--data", default="data")
     parser.add_argument("--desktop", action="store_true", help="打开支持隔离卡片脚本的桌面窗口")
-    parser.add_argument("--dev", action="store_true", help="启动受控开发窗口、Vite 5173 与后端 8000")
+    parser.add_argument("--dev", action="store_true", help="启动受控开发窗口、Vite 5173 与后端 51273")
     parser.add_argument("--backup", help="创建完整备份 ZIP 后退出")
     parser.add_argument("--restore", help="从备份 ZIP 恢复到 --data 指定的新空目录")
     args = parser.parse_args()
-    if args.dev and args.port != 8000:
-        parser.error("--dev 使用固定后端端口 8000")
+    if args.dev and args.port != 51273:
+        parser.error("--dev 使用固定后端端口 51273")
     if args.backup or args.restore:
         from tavern.storage.backup import backup, restore
         from tavern.storage.store import Store

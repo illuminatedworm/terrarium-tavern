@@ -11,7 +11,7 @@ if ($Desktop) {
 }
 if (!(Test-Path -LiteralPath 'node_modules/vite/bin/vite.js')) { throw '请先运行 .\setup.ps1' }
 
-$port = 8000
+$port = 51273
 $backendStarted = $false
 $backend = $null
 $probe = [System.Net.Sockets.TcpClient]::new()
@@ -35,7 +35,7 @@ try {
         Write-Host "复用已运行的后端（端口 $port）。"
     } else {
         $backend = Start-Process -FilePath $tavernPython `
-            -ArgumentList '-m tavern --port 8000 --data data' -WorkingDirectory $PSScriptRoot `
+            -ArgumentList '-m tavern --port 51273 --data data' -WorkingDirectory $PSScriptRoot `
             -WindowStyle Hidden -PassThru
         $backendStarted = $true
         $ready = $false

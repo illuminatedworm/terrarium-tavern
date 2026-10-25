@@ -1,4 +1,4 @@
-﻿param([int]$Port = 8000)
+﻿param([int]$Port = 51273)
 $ErrorActionPreference = 'Stop'
 try {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 3

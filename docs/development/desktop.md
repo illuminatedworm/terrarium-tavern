@@ -67,7 +67,7 @@ Chromium 版本由锁定的 Playwright 决定，随包携带完整浏览器与�
 包内保留运行时与依赖许可、`uv.lock`、依赖清单、运行时来源和逐文件校验清单；归档旁生成 SHA-256。
 源码包仍由 `tools/package_release.py` 单独生成。
 
-Windows 使用 `start.cmd` 或 `start.ps1`；Linux 使用 `./start.sh`。参数及数据目录语义与源码版一致。
+Windows 使用 `点击开始.cmd` 或 `start.ps1`；Linux 使用 `./start.sh`。参数及数据目录语义与源码版一致。
 便携包更新到新程序目录，保留或恢复所选数据目录，避免混用两版运行时。启动会输出实际解释器路径。
 
 ## Linux 系统边界

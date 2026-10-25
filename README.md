@@ -118,7 +118,7 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 
 ```powershell
 .\setup.ps1 -Proxy ''
-.\start.ps1
+.\点击开始.cmd
 ```
 
 以上命令使用直连。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
@@ -143,7 +143,7 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 
 </details>
 
-启动后访问 **[http://127.0.0.1:8000](http://127.0.0.1:8000)**。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
+启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
 
 > [!TIP]
 > 默认检索使用关键词与 BM25，CPU 即可运行。如需本地向量检索与重排，安装时添加 `-LocalRetrieval`（Windows）或 `--local-retrieval`（Linux），再到应用设置中下载并预热模型。模型 API 的代理在应用设置中单独配置。
