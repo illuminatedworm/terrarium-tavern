@@ -230,6 +230,7 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
     doc = app.state.store.settings_document()
     doc.shared.providers[0].api_key = "fixture-secret"
     app.state.store.save_settings(doc)
+    doc = app.state.store.settings_document()
     real_client = httpx.AsyncClient
     calls = []
     fail = False
@@ -267,9 +268,13 @@ async def test_catalog_cache_survives_restart_and_failed_refresh(tmp_path, monke
         assert (await api.post("/api/settings/models", json=query)).status_code == 400
         assert (await api.get("/api/settings/models", params=query)).json() == cached
         assert len(calls) == 2
-        assert (await api.get("/api/settings/models", params={**query, "api_path": "v3"})).json()[
-            "updated_at"
-        ] is None
+        for other_mode in ("chat_completions", "responses", "anthropic", "gemini"):
+            assert (
+                await api.get(
+                    "/api/settings/models", params={**query, "api_mode": other_mode, "api_path": "v3"}
+                )
+            ).json() == cached
+        assert app.state.store.settings_document() == doc
 
     restarted = create_app(tmp_path)
     async with real_client(transport=httpx.ASGITransport(app=restarted), base_url="http://testserver") as api:

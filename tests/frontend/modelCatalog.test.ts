@@ -112,24 +112,53 @@ describe('persistent model catalog UI', () => {
     scope.stop();
   });
 
-  it('shares refreshed lists between profiles using the same connection', async () => {
+  it('shares a provider catalogue across roles without sharing their connection settings', async () => {
     vi.mocked(api).mockReset().mockResolvedValue({ models: [], updated_at: null });
-    const profile = { provider_id: 'shared-list', api_mode: 'responses', api_path: '' } as ModelProfile;
+    const profiles = [
+      {
+        provider_id: 'shared-list',
+        api_mode: 'responses',
+        api_path: 'gateway/v2',
+        model: 'story-model',
+      },
+      {
+        provider_id: 'shared-list',
+        api_mode: 'gemini',
+        api_path: 'v1beta',
+        model: 'advisor-model',
+      },
+    ] as ModelProfile[];
+    const original = clone(profiles);
     const scope = effectScope();
     const [first, second] = scope.run(() => [
       useModelCatalog(
-        () => profile,
+        () => profiles[0],
         () => undefined,
       ),
       useModelCatalog(
-        () => profile,
+        () => profiles[1],
         () => undefined,
       ),
     ])!;
     await nextTick();
     vi.mocked(api).mockResolvedValueOnce({ models: ['new-model'], updated_at: 200 });
-    await first.refresh();
+    await Promise.all([first.refresh(), second.refresh()]);
+    expect(vi.mocked(api).mock.calls.filter(([path]) => path === '/settings/models')).toHaveLength(1);
+    expect(api).toHaveBeenLastCalledWith('/settings/models', {
+      provider_id: 'shared-list',
+      api_mode: 'responses',
+      api_path: 'gateway/v2',
+    });
     expect(second.catalog.value?.models).toEqual(['new-model']);
+    vi.mocked(api).mockResolvedValueOnce({ models: ['latest-model'], updated_at: 300 });
+    await second.refresh();
+    expect(api).toHaveBeenLastCalledWith('/settings/models', {
+      provider_id: 'shared-list',
+      api_mode: 'gemini',
+      api_path: 'v1beta',
+    });
+    expect(first.catalog.value?.models).toEqual(['latest-model']);
+    expect(profiles).toEqual(original);
     scope.stop();
   });
 

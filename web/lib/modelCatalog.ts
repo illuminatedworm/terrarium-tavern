@@ -36,10 +36,12 @@ export function useModelCatalog(
   }));
   const key = computed(() =>
     JSON.stringify([
-      request.value,
+      // Roles share only the provider's catalogue. Refresh requests keep each
+      // role's own protocol/path, and selecting a model never changes another role.
+      request.value.provider_id,
       provider()?.base_url,
       provider()?.has_api_key,
-      provider()?.api_key,
+      provider()?.api_key || '',
       provider()?.auth_mode,
       provider()?.chatgpt_account_id,
       chatgptGeneration(provider()),

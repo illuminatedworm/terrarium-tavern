@@ -1,15 +1,45 @@
-"""Explicit catalogue refreshes, with durable connection-specific cached reads."""
+"""Explicit catalogue refreshes, with one durable catalogue per provider."""
 
 import json
 import time
 
 import httpx
 
-from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.core.cache_policy import API_MODES, endpoint, fingerprint
 from tavern.scripting.genai_transport import GenAITransport
 from tavern.scripting.http_errors import response_error, upstream_message
 from tavern.scripting.reasoning import reasoning_capabilities
 from tavern.search.retrieval_config import ApiMode, ModelProfile
+
+
+def legacy_catalog_keys(document, provider, requested):
+    # Old keys contain only hashes. Recover catalogues from the provider's saved
+    # role connections and default endpoints without changing those connections.
+    connections = {(mode, "") for mode in API_MODES}
+    connections.add((requested.api_mode, requested.api_path))
+    profiles = [profile for _, _, profile in document.profiles()]
+    profiles.extend((document.shared.advisor.model, document.shared.advisor.official_model))
+    for profile in profiles:
+        if profile is None:
+            continue
+        saved = (
+            profile if profile.provider_id == provider.id else profile.provider_connections.get(provider.id)
+        )
+        if saved is not None:
+            connections.add((saved.api_mode, saved.api_path))
+    credential = fingerprint(provider.api_key)
+    keys = set()
+    for mode, path in connections:
+        url = endpoint(provider.base_url, mode, resource="models", api_path=path)
+        families = (
+            ("openai", "chat_completions", "responses")
+            if mode in ("chat_completions", "responses")
+            else (mode,)
+        )
+        keys.update(
+            "provider_models:" + fingerprint([provider.id, url, family, credential]) for family in families
+        )
+    return keys
 
 
 def register_model_routes(app, store):
@@ -19,7 +49,8 @@ def register_model_routes(app, store):
         return reasoning_capabilities(api_mode, model)
 
     def connection(profile):
-        config = store.settings_document().shared
+        document = store.settings_document()
+        config = document.shared
         provider = next((p for p in config.providers if p.id == profile.provider_id), None)
         if provider is None:
             raise ValueError("提供商不存在，请先保存设置")
@@ -36,33 +67,28 @@ def register_model_routes(app, store):
                     store.chatgpt.generation(provider.chatgpt_account_id),
                 ]
             )
-            return config, provider, url, key
+            return document, provider, url, key
         url = endpoint(provider.base_url, profile.api_mode, resource="models", api_path=profile.api_path)
-        # Chat Completions and Responses use the same authenticated /models
-        # endpoint. Changing the generation protocol must not hide its catalogue.
-        family = "openai" if profile.api_mode in ("chat_completions", "responses") else profile.api_mode
-        key = "provider_models:" + fingerprint([provider.id, url, family, fingerprint(provider.api_key)])
-        return config, provider, url, key
+        # Catalogue identity belongs to the provider; the requesting role still
+        # controls the protocol/path used for an explicit refresh. v2 keeps old
+        # connection-specific entries intact while adopting their latest list.
+        key = "provider_models:v2:" + fingerprint(
+            [provider.id, provider.base_url, fingerprint(provider.api_key)]
+        )
+        return document, provider, url, key
 
     @app.get("/api/settings/models")
     async def cached_models(provider_id: str, api_mode: ApiMode = "chat_completions", api_path: str = ""):
-        _, provider, url, key = connection(
-            ModelProfile(provider_id=provider_id, api_mode=api_mode, api_path=api_path)
-        )
+        profile = ModelProfile(provider_id=provider_id, api_mode=api_mode, api_path=api_path)
+        document, provider, _, key = connection(profile)
         with store.connection() as db:
             row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-            if (
-                row is None
-                and provider.auth_mode != "chatgpt_subscription"
-                and api_mode in ("chat_completions", "responses")
-            ):
-                # Read pre-migration caches without a network call. Never borrow
-                # a list from another provider, endpoint or credential.
-                old_keys = [
-                    "provider_models:" + fingerprint([provider.id, url, mode, fingerprint(provider.api_key)])
-                    for mode in ("chat_completions", "responses")
-                ]
-                rows = db.execute("SELECT value FROM meta WHERE key IN (?,?)", old_keys).fetchall()
+            if row is None and provider.auth_mode != "chatgpt_subscription":
+                old_keys = legacy_catalog_keys(document, provider, profile)
+                placeholders = ",".join("?" for _ in old_keys)
+                rows = db.execute(
+                    f"SELECT value FROM meta WHERE key IN ({placeholders})", tuple(old_keys)
+                ).fetchall()
                 if rows:
                     row = max(rows, key=lambda item: json.loads(item[0]).get("updated_at") or 0)
                     db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", (key, row[0]))
@@ -77,7 +103,8 @@ def register_model_routes(app, store):
 
     @app.post("/api/settings/models")
     async def refresh_models(profile: ModelProfile):
-        config, provider, url, key = connection(profile)
+        document, provider, url, key = connection(profile)
+        config = document.shared
         if provider.auth_mode == "chatgpt_subscription":
             result = await subscription_models(store.chatgpt, provider, url)
             # Reauthorization/exit while listing must not publish an obsolete account catalogue.
