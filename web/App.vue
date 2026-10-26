@@ -161,6 +161,12 @@ function applyFullSession(updated: Session) {
 }
 const contextOps = useContextOperations(() => session.value, applyFullSession);
 const contextBusy = contextOps.busy;
+watch(
+  () => contextOps.operation.value?.id,
+  (id) => {
+    if (id && session.value) session.value.opening_editable = false;
+  },
+);
 provide('context-operations', contextOps);
 const settingsChannel = ref<Channel>();
 async function classifyChannel(channel: Channel) {
@@ -747,6 +753,7 @@ const latestReply = computed(() =>
     : null,
 );
 const editableMessageIds = computed(() => {
+  if (session.value?.opening_editable && !contextBusy.value) return new Set([session.value.messages[0].id]);
   const request = retryableTurn.value?.request;
   // A failed send/replacement owns the latest input; edit its persisted request
   // as a fresh attempt instead of offering another edit on the committed pair.
@@ -1647,6 +1654,7 @@ async function submitStoryTurn(request: TurnRequest): Promise<TurnRecord | false
   try {
     const turn: TurnRecord = await api(`/sessions/${sid}/turns`, request);
     if (!viewScope.owns(token)) return false;
+    openStory().opening_editable = false;
     activeTurn.value = turn;
     const pendingText = request.mode === 'regenerate' ? request.replacement_text : request.text;
     if (pendingText) pendingInput.value = { raw: pendingText };
@@ -1876,6 +1884,7 @@ function pauseForMessageEdit() {
     }),
   );
 }
+let editingMessageRevision = 0;
 function beginMessageEdit(message: StoryMessageRecord) {
   if (
     !editableMessageIds.value.has(message.id) ||
@@ -1888,6 +1897,7 @@ function beginMessageEdit(message: StoryMessageRecord) {
   pauseForMessageEdit();
   editingMessageId.value = message.id;
   editingMessageText.value = message.raw;
+  editingMessageRevision = openStory().revision;
 }
 function cancelMessageEdit() {
   const previous = editingMessageId.value;
@@ -1937,6 +1947,25 @@ async function switchReplyVersion(message: StoryMessageRecord, offset: number) {
   }
 }
 async function saveMessageEdit(message: StoryMessageRecord) {
+  if (message.role === 'assistant' && !message.parent) {
+    if (savingMessageEdit.value || busy.value || contextBusy.value) return;
+    const token = viewScope.current();
+    savingMessageEdit.value = true;
+    try {
+      await guarded(async () => {
+        session.value = await viewApi(
+          `/sessions/${openStory().id}/opening`,
+          { text: editingMessageText.value, expected_revision: editingMessageRevision },
+          'PUT',
+        );
+        cancelMessageEdit();
+        await refreshContextStats();
+      });
+    } finally {
+      if (viewScope.owns(token)) savingMessageEdit.value = false;
+    }
+    return;
+  }
   if (!editableMessageIds.value.has(message.id) || !latestReply.value) return;
   await submitInputEdit({
     ...storyTurnOptions(),
@@ -3160,6 +3189,7 @@ useTimedError(error);
           "
           :story-title="session.title"
           @preference-saved="api('/sessions/' + session.id).then(applyFullSession)"
+          @started="session.opening_editable = false"
           @use-input="useAdvisorInput"
           @title="applyAdvisorTitle"
         />

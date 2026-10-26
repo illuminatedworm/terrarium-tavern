@@ -109,6 +109,7 @@ class ContextOperations:
                     time.time(),
                 ),
             )
+            db.execute("UPDATE sessions SET opening_locked=1 WHERE id=?", (sid,))
         self.tasks[oid] = asyncio.create_task(self.run(oid))
         return self.get(oid)
 

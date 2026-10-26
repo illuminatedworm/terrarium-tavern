@@ -318,6 +318,12 @@ class SessionCreate(BaseModel):
     worldbook_ids: WorldbookIds = Field(default_factory=list)
 
 
+class OpeningEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=0)
+    text: str
+
+
 def without_nulls(value):
     """Script generation options are external JSON: null means omitted at any depth.
 

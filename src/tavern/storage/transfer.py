@@ -136,7 +136,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 5,
+        "version": 6,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -307,7 +307,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -395,6 +395,14 @@ def validate_package(store, package, blobs):
             card(value, True)
         for bundle in package["sessions"]:
             session = bundle["session"]
+            # Older packages cannot establish whether a cleared consultation sent the opening.
+            if package["version"] < 6:
+                session["opening_locked"] = 1
+            if type(session.get("opening_locked")) not in (bool, int) or session["opening_locked"] not in (
+                0,
+                1,
+            ):
+                raise ValueError("开场白编辑状态无效")
             from tavern.advisor.transfer import validate_bundle as validate_advisor
 
             validate_advisor(bundle.get("advisor"), session.get("channel_origin"))

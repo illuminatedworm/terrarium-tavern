@@ -108,6 +108,7 @@ function forwardAction(
         v-model="editingMessageText"
         :original="message.raw"
         :busy="savingEdit"
+        :opening="message.role === 'assistant' && !message.parent"
         @cancel="emit('cancelEdit')"
         @save="emit('saveEdit', message)"
       />
@@ -172,7 +173,7 @@ function forwardAction(
             class="icon-action"
             :disabled="busy || switchingVersion || !!editingMessageId || reviewing"
             aria-label="编辑"
-            title="修改本轮用户输入并重试"
+            :title="message.role === 'assistant' ? '修改开场白' : '修改本轮用户输入并重试'"
             @click="emit('edit', message)"
           >
             <Icon name="pencil" :size="16" />

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-const props = defineProps<{ original: string; busy?: boolean }>();
+const props = defineProps<{ original: string; busy?: boolean; opening?: boolean }>();
 const text = defineModel<string>({ required: true });
 const emit = defineEmits<{ cancel: []; save: [] }>();
 const root = ref<HTMLElement>();
@@ -28,7 +28,7 @@ function scheduleResize() {
   frame = requestAnimationFrame(resize);
 }
 function requestSave() {
-  if (props.busy || !text.value.trim()) return;
+  if (props.busy || (!props.opening && !text.value.trim())) return;
   if (text.value === props.original) emit('cancel');
   else emit('save');
 }
@@ -78,16 +78,24 @@ onBeforeUnmount(() => {
       ref="textarea"
       v-model="text"
       rows="1"
-      aria-label="修改用户输入"
+      :aria-label="opening ? '修改开场白' : '修改用户输入'"
       :readonly="busy"
       @input="resize"
       @keydown="keydown"
     />
     <div class="inline-edit-actions">
-      <span>Ctrl + Enter 修改并重试 · Esc 取消</span>
+      <span v-if="opening"
+        >仅修改当前对话；保存会重新初始化开场变量和脚本状态。Ctrl + Enter 保存 · Esc 取消</span
+      >
+      <span v-else>Ctrl + Enter 修改并重试 · Esc 取消</span>
       <button type="button" :disabled="busy" @click="emit('cancel')">取消</button>
-      <button type="button" class="primary" :disabled="busy || !text.trim()" @click="requestSave">
-        {{ busy ? '正在发起重试…' : '修改并重试' }}
+      <button
+        type="button"
+        class="primary"
+        :disabled="busy || (!opening && !text.trim())"
+        @click="requestSave"
+      >
+        {{ opening ? (busy ? '正在保存…' : '保存开场白') : busy ? '正在发起重试…' : '修改并重试' }}
       </button>
     </div>
   </div>

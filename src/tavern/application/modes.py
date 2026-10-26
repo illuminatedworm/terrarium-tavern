@@ -1,7 +1,10 @@
 """Application routing only. The two story engines never invoke one another."""
 
+import copy
+
 from tavern.application.service import RoleplayRuntime
 from tavern.full_agent.runtime import FullAgentRuntime
+from tavern.storage.store import Conflict
 
 
 class ModeRuntime:
@@ -53,6 +56,25 @@ class ModeRuntime:
 
     async def initialize_session(self, sid):
         return await self.engine(sid).initialize_session(sid)
+
+    async def edit_opening(self, sid, edit):
+        from tavern.scripting.opening import prepare_opening
+
+        session = self.store.session(sid)
+        if session["revision"] != edit.expected_revision:
+            raise Conflict("会话已改变，请刷新后重试")
+        if not session["opening_editable"]:
+            raise Conflict("当前不能修改开场白；仅限首次模型任务前、没有运行中操作的新对话")
+        greeting = copy.deepcopy(session["messages"][0])
+        greeting.update(raw=edit.text, model=edit.text, display=edit.text)
+        # Repeated edits start from clean initialization, never from earlier init markers
+        # or script side effects. The editor explicitly describes this reset.
+        greeting["snapshot"].update(state={}, scopes={})
+        engine = self.engine(sid)
+        greeting = await prepare_opening(
+            engine.runtime, engine.dependencies, session, self.store.session_card(sid), greeting
+        )
+        return self.store.save_opening(session, greeting)
 
     async def cancel(self, tid):
         await self.engine(self.store.turn(tid)["session"]).cancel(tid)

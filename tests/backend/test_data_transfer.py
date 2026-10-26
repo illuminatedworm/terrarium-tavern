@@ -19,8 +19,10 @@ from tavern.storage.transfer import ExportSelection, export_package, import_pack
 from tests.backend.test_full_agent import Model
 
 
-def seed(store, mode="half_agent"):
-    card = store.import_card(json.dumps({"name": "旅人", "first_mes": "故事开始。"}).encode(), "card.json")
+def seed(store, mode="half_agent", **fields):
+    card = store.import_card(
+        json.dumps({"name": "旅人", "first_mes": "故事开始。", **fields}).encode(), "card.json"
+    )
     persona = store.save_persona(None, PersonaEdit(name="玩家", description="寻找钟楼"))
     session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"], agent_mode=mode))
     return card, persona, session
@@ -36,7 +38,22 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
     source, engine = source_app.state.store, source_app.state.service
     target_app = create_app(tmp_path / "target")
     target, target_engine = target_app.state.store, target_app.state.service
-    card, persona, session = seed(source, mode)
+    card, persona, session = seed(
+        source,
+        mode,
+        first_mes="原开场。<initvar>hp: 100\nold: true</initvar>",
+        extensions={
+            "regex_scripts": [
+                {
+                    "findRegex": r"/<initvar>[\s\S]*?<\/initvar>/g",
+                    "replaceString": "",
+                    "placement": [2],
+                    "promptOnly": True,
+                    "markdownOnly": True,
+                }
+            ]
+        },
+    )
     model = (
         Model(
             ("read_history", {"ref": "H2"}),
@@ -48,11 +65,40 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
     )
     engine.provider_factory = lambda: model
     try:
+        session = await engine.initialize_session(session["id"])
+        assert session["snapshot"]["state"]["stat_data"]["old"] is True
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=source_app), base_url="http://testserver"
+        ) as api:
+            # Repeated opening edits must replace initialized variables, and the actual
+            # next request/export must consume the same text that the user saved.
+            response = await api.put(
+                f"/api/sessions/{session['id']}/opening",
+                json={"text": "修改后的开场。<initvar>hp: 80</initvar>", "expected_revision": 0},
+            )
+            assert response.status_code == 200, response.text
+            session = response.json()
+            response = await api.put(
+                f"/api/sessions/{session['id']}/opening",
+                json={
+                    "text": "最终开场。<initvar>hp: 60</initvar>",
+                    "expected_revision": session["revision"],
+                },
+            )
+            assert response.status_code == 200, response.text
+            session = response.json()
+        assert session["snapshot"]["state"]["stat_data"] == {"hp": 60}
+        assert session["messages"][0]["model"] == session["messages"][0]["display"] == "最终开场。"
+        assert session["opening_editable"] and not session["turns"]
+        assert source.card(card["id"])["document"] == card["document"]
         turn = engine.submit(
-            session["id"], TurnRequest(text="一起去钟楼", operation_id="source", expected_revision=0)
+            session["id"],
+            TurnRequest(text="一起去钟楼", operation_id="source", expected_revision=session["revision"]),
         )
         await engine.tasks[turn["id"]]
         assert source.turn(turn["id"])["status"] == "committed"
+        wire = dump(model.requests[0]["messages"] if mode == "full_agent" else model.last_messages)
+        assert "最终开场。" in wire and "原开场。" not in wire and "修改后的开场。" not in wire
         auxiliary = [{"kind": "thinking", "text": "生成记录 " + session["id"]}]
         with source.connection() as db:
             db.execute(
@@ -69,7 +115,8 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 5
+        assert payload["version"] == 6
+        assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
             from tavern.full_agent.state import note_view

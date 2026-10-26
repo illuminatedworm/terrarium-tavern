@@ -224,50 +224,18 @@ class RoleplayRuntime:
         finish_turn(self.store, tid, session, pending, snapshot)
 
     async def initialize_session(self, sid):
+        from tavern.scripting.opening import prepare_opening
+
         session = self.store.session(sid)
         card = self.store.session_card(session["id"])
-        if card["permission"]:
-            # Resolves imports/assets before creating the story; source card is unchanged.
-            await self.dependencies.resolve(card)
-        logs = []
-
-        async def host(method, args):
-            if method == "log":
-                logs.append(args)
-                return None
-            raise ValueError("开场初始化时不允许发起模型请求")
-
-        # Worldbooks mounted at creation live in the snapshot document, so their
-        # [InitVar] entries initialize the opening like the card's own entries.
-        document = (session["snapshot"].get("content") or {}).get("document", card["document"])
-        runtime = await self.runtime.open(
-            document,
-            session["messages"],
-            session["snapshot"],
-            bool(card["permission"]),
-            host,
-            self.dependencies.scripts(card),
-            lambda html: self.dependencies.markup(card, html),
-            persona=session["persona"],
-            opening=True,
+        greeting = await prepare_opening(
+            self.runtime, self.dependencies, session, card, session["messages"][-1]
         )
-        try:
-            mirror = await runtime.call("snapshot")
-            snapshot = session["snapshot"]
-            snapshot["state"], snapshot["scopes"] = mirror["state"], mirror["scopes"]
-            greeting = session["messages"][-1]
-            rules = regex_scripts(document)
-            display = await runtime.call("transform", greeting["raw"], rules, 2, "display", 0)
-            if card["permission"] and "<" in display:
-                display = self.dependencies.markup(card, display)
-            model = await runtime.call("transform", greeting["raw"], rules, 2, "model", 0)
-            with self.store.connection() as db:
-                db.execute(
-                    "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
-                    (dump(snapshot), model, display, greeting["id"]),
-                )
-        finally:
-            await runtime.close()
+        with self.store.connection() as db:
+            db.execute(
+                "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
+                (dump(greeting["snapshot"]), greeting["model"], greeting["display"], greeting["id"]),
+            )
         return self.store.session(sid)
 
     async def interaction(self, sid, payload):
@@ -277,7 +245,7 @@ class RoleplayRuntime:
             expected_revision=payload["expected_revision"],
             allow_content_edit=bool(payload.get("allow_content_edit")),
         )
-        tid, created = self.store.create_turn(sid, req)
+        tid, created = self.store.create_turn(sid, req, model_task=False)
         if not created:
             return self.store.session(sid)
         runtime = None

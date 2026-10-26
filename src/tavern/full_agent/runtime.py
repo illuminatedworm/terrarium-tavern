@@ -68,47 +68,18 @@ class FullAgentRuntime:
             self.store.reject_review(tid)
 
     async def initialize_session(self, sid):
+        from tavern.scripting.opening import prepare_opening
+
         session = self.store.session(sid)
         card = self.store.session_card(sid)
-        if card["permission"]:
-            await self.dependencies.resolve(card)
-
-        async def host(method, args):
-            if method == "log":
-                return None
-            raise ValueError("开场初始化不允许调用模型")
-
-        # Worldbooks mounted at creation live in the snapshot document, so their
-        # [InitVar] entries initialize the opening like the card's own entries.
-        document = (session["snapshot"].get("content") or {}).get("document", card["document"])
-        script = await self.runtime.open(
-            document,
-            session["messages"],
-            session["snapshot"],
-            bool(card["permission"]),
-            host,
-            self.dependencies.scripts(card),
-            lambda html: self.dependencies.markup(card, html),
-            persona=session["persona"],
-            opening=True,
+        greeting = await prepare_opening(
+            self.runtime, self.dependencies, session, card, session["messages"][-1]
         )
-        try:
-            mirror = await script.call("snapshot")
-            snapshot = session["snapshot"]
-            snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
-            greeting = session["messages"][-1]
-            rules = regex_scripts(document)
-            model = await script.call("transform", greeting["raw"], rules, 2, "model", 0)
-            display = await script.call("transform", greeting["raw"], rules, 2, "display", 0)
-            if card["permission"] and "<" in display:
-                display = self.dependencies.markup(card, display)
-            with self.store.connection() as db:
-                db.execute(
-                    "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
-                    (dump(snapshot), model, display, greeting["id"]),
-                )
-        finally:
-            await script.close()
+        with self.store.connection() as db:
+            db.execute(
+                "UPDATE messages SET snapshot=?,model=?,display=? WHERE id=?",
+                (dump(greeting["snapshot"]), greeting["model"], greeting["display"], greeting["id"]),
+            )
         return self.store.session(sid)
 
     async def run(self, tid):
