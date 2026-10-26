@@ -2652,7 +2652,6 @@ useTimedError(error);
             @touchstart.passive="readingPinned = false"
             @keydown="readingPinned = false"
           >
-            <div class="chapter"><span></span> 此刻，故事由你续写 <span></span></div>
             <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
               <button
                 class="cache-breakpoint-dot"

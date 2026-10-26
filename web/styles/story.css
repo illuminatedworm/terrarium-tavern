@@ -230,27 +230,6 @@
 .dialogue-viewport > .messages::-webkit-scrollbar {
   display: none;
 }
-.chapter {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  margin: 10px 0 30px;
-  color: var(--text-faint);
-  font: italic var(--fs-md) / 1.4 var(--font-display);
-  letter-spacing: 0.18em;
-  white-space: nowrap;
-}
-/* The rules give way before the label wraps on narrow columns. */
-.chapter span {
-  flex: 0 1 80px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--border-control));
-}
-.chapter span:last-child {
-  background: linear-gradient(90deg, var(--border-control), transparent);
-}
-
 /* ---------- Message anatomy ---------- */
 .message {
   position: relative;

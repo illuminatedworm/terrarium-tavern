@@ -489,8 +489,6 @@
   margin-top: 6px;
 }
 .persona-preview {
-  max-height: 200px;
-  overflow: auto;
   white-space: pre-wrap;
 }
 .full-json {
@@ -907,16 +905,13 @@
   margin-bottom: 6px;
   font-size: var(--fs-2xl);
 }
-.story-setup > .character-heading {
-  margin-top: 6px;
-}
 .story-setup > .edit-notice {
   margin: 18px 0 0;
 }
 .story-setup .character-heading .portrait-detail {
-  width: 92px;
-  height: 120px;
-  border-radius: var(--radius-lg);
+  width: 56px;
+  height: 72px;
+  border-radius: var(--radius-md);
 }
 .story-setup.kemini .character-heading .portrait-detail {
   background: var(--experiment-portrait);
@@ -924,9 +919,13 @@
   color: var(--experiment);
 }
 .story-setup .character-heading h1 {
-  margin: 0 0 6px;
+  margin: 0 0 2px;
   font-family: var(--font-display);
-  font-size: var(--fs-3xl);
+  font-size: var(--fs-2xl);
+}
+.story-setup .character-heading p {
+  margin: 0;
+  font-size: var(--fs-sm);
 }
 .story-steps {
   display: flex;
@@ -1040,17 +1039,50 @@
 .story-card-description small {
   font-size: var(--fs-2xs);
 }
-/* Setup: options in a pane beside a reading-style opening preview. */
+/* Setup: options in a pane beside a reading-style opening preview. On two-column
+   widths the panes fill the page height and scroll inside, so the step action
+   stays put whatever the persona preview or step shows. */
+.story-setup-config {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 24px;
+}
+.story-setup-config > * {
+  flex: none;
+  width: 100%;
+}
+.story-setup-config > .editor-back {
+  align-self: flex-start;
+  width: auto;
+  margin-bottom: 8px;
+}
+.story-setup-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+.story-setup-header .story-steps {
+  margin: 0;
+}
 .story-setup-grid {
   display: grid;
+  flex: 1 0 360px;
   grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 22px;
-  margin-top: 26px;
-  align-items: start;
+  min-height: 360px;
+  margin-top: 18px;
+}
+.story-setup-options,
+.story-opening {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-lg);
 }
 .story-setup-options {
-  padding: 20px 22px 22px;
-  border-radius: var(--radius-lg);
   background: var(--glass-sheen), var(--glass-pane);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -1058,34 +1090,89 @@
     var(--glass-highlight),
     inset 0 0 0 1px var(--glass-edge);
 }
-.story-setup-options > h3:first-child,
-.story-opening > h3:first-child {
-  margin: 0 0 12px;
+.story-setup-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px;
+}
+.story-setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.story-setup-section > * {
+  margin: 0;
+}
+.story-setup-section > h3,
+.story-opening-head > h3 {
+  margin: 0;
   color: var(--text-secondary);
   font-size: var(--fs-md);
 }
-.story-setup-options > .primary {
+.story-setup-section > .muted {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+/* The persona preview takes the pane's spare height instead of growing it. */
+.story-persona {
+  flex: 1 0 auto;
+  min-height: 150px;
+}
+.story-persona > .persona-preview {
+  flex: 1 1 0;
+  min-height: 72px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.3);
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+}
+.story-default-hint {
+  margin-left: 8px;
+  font-size: var(--fs-xs);
+}
+.story-setup-footer {
   display: flex;
+  flex: none;
+  gap: 10px;
+  padding: 14px 22px 18px;
+  border-top: 1px solid var(--border-subtle);
+}
+.story-setup-footer > .primary {
+  display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
-  width: 100%;
   min-height: 44px;
-  margin-top: 20px;
   border-radius: var(--radius-pill);
   font-size: var(--fs-base);
 }
 .enter-icon {
   margin-left: 8px;
 }
-.story-setup-options > .story-setup-back {
-  display: flex;
-  margin: 10px auto 0;
-}
 .story-opening {
-  padding: 20px 26px 26px;
-  border-radius: var(--radius-lg);
   background: rgb(var(--well-rgb) / 0.3);
   box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+.story-opening-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 26px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.story-opening-text {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 26px 22px;
 }
 .story-opening p {
   font-size: var(--fs-lg);
@@ -1096,10 +1183,8 @@
 .greeting-tabs {
   display: flex;
   gap: 4px;
+  min-width: 0;
   overflow: auto;
-  margin: 0 0 18px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-subtle);
 }
 .greeting-tabs button {
   flex-shrink: 0;
@@ -1146,9 +1231,25 @@
     gap: 20px;
   }
 }
+/* One column: panes take their natural height and the page scrolls instead. */
 @media (max-width: 1000px) {
   .story-setup-grid {
+    flex: none;
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+    min-height: 0;
+  }
+  .story-setup-body,
+  .story-opening-text {
+    overflow: visible;
+  }
+  .story-persona {
+    flex: none;
+    min-height: 0;
+  }
+  .story-persona > .persona-preview {
+    flex: none;
+    max-height: 200px;
   }
 }
 @media (max-width: 1000px) {
@@ -1202,12 +1303,8 @@
     justify-content: center;
     min-width: 0;
   }
-  .story-setup .character-heading .portrait-detail {
-    width: 72px;
-    height: 94px;
-  }
   .story-setup .character-heading h1 {
-    font-size: var(--fs-2xl);
+    font-size: var(--fs-title);
   }
   /* Three equal single-line steps across the page instead of wrapped labels. */
   .story-steps {
@@ -1256,8 +1353,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
-  .story-setup-options,
-  .story-opening {
-    padding: 16px;
+  .story-setup-body,
+  .story-setup-footer,
+  .story-opening-head,
+  .story-opening-text {
+    padding-inline: 16px;
   }
 }
