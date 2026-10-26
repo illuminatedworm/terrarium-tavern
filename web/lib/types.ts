@@ -141,6 +141,7 @@ export interface Session {
   agent_mode: AgentMode;
   channel_origin: Channel | null;
   kemini: boolean;
+  opening_editable: boolean;
   policy: string | null;
   policy_effective: string;
   recipe: JsonObject;

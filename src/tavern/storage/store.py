@@ -96,7 +96,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 SETTINGS_VERSIONS = range(2, 14)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -117,6 +117,8 @@ SESSION_COLUMNS = {
     "agent_mode": "TEXT NOT NULL DEFAULT 'half_agent'",
     # Existing conversations stay ordinary; Kemini is chosen only at creation.
     "kemini": "INTEGER NOT NULL DEFAULT 0",
+    # Old stories have no durable first-request fact; never infer it from prunable logs.
+    "opening_locked": "INTEGER NOT NULL DEFAULT 1",
 }
 MESSAGE_COLUMNS = {"auxiliary": "TEXT NOT NULL DEFAULT '[]'"}
 
@@ -746,6 +748,7 @@ class Store(MessageAdapters):
                     "card_data": dump({**card, "session_id": sid, "dependencies": dependencies}),
                     "channel_origin": channel,
                     "kemini": int(options.kemini),
+                    "opening_locked": 0,
                 },
             )
             insert_row(
@@ -886,6 +889,13 @@ class Store(MessageAdapters):
             copy.deepcopy(result["messages"][-1]["snapshot"])
             if result["messages"]
             else new_snapshot(result["agent_mode"])
+        )
+        result["opening_editable"] = (
+            not result["opening_locked"]
+            and len(result["messages"]) == 1
+            and result["messages"][0]["role"] == "assistant"
+            and result["messages"][0]["parent"] is None
+            and not any(t["status"] in ("queued", "running", "awaiting_review") for t in turns)
         )
         if result["agent_mode"] == "full_agent":
             from tavern.full_agent.state import read_full_state
@@ -1256,7 +1266,40 @@ class Store(MessageAdapters):
             )
         return self.session(sid)
 
-    def create_turn(self, sid, request):
+    def save_opening(self, session, greeting):
+        """Publish text and its initialized state together, after the async sandbox finishes."""
+        sid = session["id"]
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT revision,head,opening_locked FROM sessions WHERE id=?", (sid,)
+            ).fetchone()
+            if current is None:
+                raise NotFound("会话不存在")
+            if current["opening_locked"]:
+                raise Conflict("已启动模型任务，不能再修改开场白")
+            if current["revision"] != session["revision"] or current["head"] != greeting["id"]:
+                raise Conflict("会话已改变，请刷新后重试")
+            if db.execute(
+                "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
+                (sid,),
+            ).fetchone():
+                raise Conflict("请先完成或取消当前回合")
+            db.execute(
+                "UPDATE messages SET raw=?,model=?,display=?,snapshot=? WHERE id=? AND session=?",
+                (
+                    greeting["raw"],
+                    greeting["model"],
+                    greeting["display"],
+                    dump(greeting["snapshot"]),
+                    greeting["id"],
+                    sid,
+                ),
+            )
+            db.execute("UPDATE sessions SET revision=revision+1 WHERE id=?", (sid,))
+        return self.session(sid)
+
+    def create_turn(self, sid, request, *, model_task=True):
         experiment_allowed = self.settings_document().shared.kemini.enabled
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -1336,6 +1379,9 @@ class Store(MessageAdapters):
                 "INSERT INTO turns(id,session,operation,request,status,created) VALUES (?,?,?,?,?,?)",
                 (tid, sid, request.operation_id, request.model_dump_json(), "queued", time.time()),
             )
+            if model_task:
+                # The task owns the opening before any async preparation, even if it later fails.
+                db.execute("UPDATE sessions SET opening_locked=1 WHERE id=?", (sid,))
             if request.resume_turn_id:
                 row = db.execute(
                     "SELECT payload FROM full_agent_progress WHERE turn=?", (request.resume_turn_id,)

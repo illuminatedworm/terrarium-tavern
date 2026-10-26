@@ -135,6 +135,10 @@ class AdvisorService:
             ).fetchone()
             if prior:
                 return self.data.run(prior[0])
+            if not session["opening_locked"]:
+                current = db.execute("SELECT revision FROM sessions WHERE id=?", (sid,)).fetchone()
+                if current[0] != session["revision"]:
+                    raise Conflict("开场所在对话已改变，请重新发起咨询")
             self.data.ensure(db, sid, request.expected_revision)
             if db.execute(
                 "SELECT 1 FROM advisor_runs WHERE session=? AND status IN ('queued','running')", (sid,)
@@ -177,6 +181,8 @@ class AdvisorService:
                 "INSERT INTO advisor_runs(id,session,operation,request,status,created,progress) VALUES (?,?,?,?,'queued',?,?)",
                 (rid, sid, request.operation_id, dump(payload), time.time(), dump(progress)),
             )
+            # Consultation also consumes the opening; clearing its history must not unlock it.
+            db.execute("UPDATE sessions SET opening_locked=1 WHERE id=?", (sid,))
         try:
             owner = AdvisorRun(self, rid, cfg, config)
         except Exception as error:

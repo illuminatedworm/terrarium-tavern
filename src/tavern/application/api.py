@@ -22,6 +22,7 @@ from tavern.core.models import (
     ContentEdit,
     ContextRecipe,
     LoreInjectionRemoval,
+    OpeningEdit,
     PersonaEdit,
     RevisionRequest,
     SceneRefreshRequest,
@@ -586,6 +587,10 @@ def create_app(data_dir=None):
         await service.delete_card(cid)
         return {"deleted": cid}
 
+    @app.put("/api/sessions/{sid}/opening")
+    async def edit_opening(sid: str, edit: OpeningEdit):
+        return await service.edit_opening(sid, edit)
+
     @app.get("/api/sessions/{sid}")
     async def session(sid: str):
         result = store.session(sid)
@@ -677,7 +682,7 @@ def create_app(data_dir=None):
             operation_id=operation_id or uid(),
             allow_content_edit=True,
         )
-        tid, created = store.create_turn(session["id"], req)
+        tid, created = store.create_turn(session["id"], req, model_task=False)
         if not created:
             return store.session(session["id"])
         try:

@@ -8,7 +8,7 @@ import {
   type AdvisorState,
 } from '../lib/advisor';
 
-export function useAdvisor(sid: string, preferenceSaved: () => void) {
+export function useAdvisor(sid: string, preferenceSaved: () => void, started: () => void = () => {}) {
   const state = ref<AdvisorState | null>(null),
     error = ref(''),
     loading = ref(false),
@@ -91,6 +91,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void) {
         compact,
       })) as AdvisorRun;
       if (disposed) return false;
+      started();
       state.value.run = run;
       watchRun(run);
       return true;

@@ -30,6 +30,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   settings: [];
   preferenceSaved: [];
+  started: [];
   useInput: [text: string];
   title: [text: string];
 }>();
@@ -50,7 +51,11 @@ const {
   discard,
   clear,
   clearing,
-} = useAdvisor(props.sessionId, () => emit('preferenceSaved'));
+} = useAdvisor(
+  props.sessionId,
+  () => emit('preferenceSaved'),
+  () => emit('started'),
+);
 const draft = ref(''),
   showModel = ref(false),
   showContextOptions = ref(false),

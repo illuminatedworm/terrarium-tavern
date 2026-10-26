@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -5,7 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
-from tavern.core.models import SessionCreate, TurnRequest
+from tavern.core.models import OpeningEdit, SessionCreate, TurnRequest
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.memories.memory_records import Record, new_memory, source_hash
 from tavern.storage.store import Conflict, Store, dump, uid
@@ -107,6 +108,73 @@ async def test_version_endpoint(story):
         )
     assert response.status_code == 200
     assert response.json()["head"] == first["head"]
+
+
+async def test_opening_save_cannot_overwrite_failed_or_concurrent_work(tmp_path):
+    from tavern.advisor.runtime import ConsultationRequest
+    from tavern.application.context_operations import ContextOperationRequest
+    from tests.backend.test_full_agent import Model, ScriptHost
+
+    app = create_app(tmp_path)
+    store, service, advisor = app.state.store, app.state.service, app.state.advisor
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    session = store.new_session(SessionCreate(card_id=card["id"]))
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class OpeningHost(ScriptHost):
+        fail = True
+
+        async def open(self, *args, **kwargs):
+            if self.fail:
+                raise ValueError("invalid opening")
+            started.set()
+            await release.wait()
+            return await super().open(*args, **kwargs)
+
+    service.half.runtime = host = OpeningHost()
+    edit = OpeningEdit(text="new opening", expected_revision=0)
+    try:
+        with pytest.raises(ValueError, match="invalid opening"):
+            await service.edit_opening(session["id"], edit)
+        assert store.session(session["id"])["messages"] == session["messages"]
+        host.fail = False
+        save = asyncio.create_task(service.edit_opening(session["id"], edit))
+        await started.wait()
+        turn, _ = store.create_turn(
+            session["id"], TurnRequest(text="continue", operation_id=uid(), expected_revision=0)
+        )
+        store.set_turn(turn, status="cancelled")
+        release.set()
+        with pytest.raises(Conflict, match="已启动模型任务"):
+            await save
+        assert store.session(session["id"])["messages"] == session["messages"]
+        reopened = Store(tmp_path)
+        reopened.recover()
+        assert not reopened.session(session["id"])["opening_editable"]
+        fork = reopened.fork_session(session["id"], session["head"], 0)
+        assert not fork["opening_editable"]
+
+        # Consultation and context operations own independent task tables. Their
+        # cancellation/clearing must not reopen text they have already captured.
+        consultation = store.new_session(SessionCreate(card_id=card["id"]))
+        advisor.provider_factory = lambda: Model("advice")
+        run = advisor.submit(
+            consultation["id"], ConsultationRequest(text="discuss", operation_id=uid(), expected_revision=0)
+        )
+        await advisor.cancel(run["id"])
+        advisor.data.clear(consultation["id"], advisor.data.get(consultation["id"])["revision"])
+        assert not store.session(consultation["id"])["opening_editable"]
+        official = store.new_session(SessionCreate(card_id=card["id"], channel_origin="chatgpt"))
+        operation = service.context_operations.start(
+            official["id"],
+            ContextOperationRequest(kind="enable_compact", operation_id=uid(), expected_revision=0),
+        )
+        await service.context_operations.cancel(operation["id"])
+        assert not store.session(official["id"])["opening_editable"]
+    finally:
+        release.set()
+        await advisor.close()
+        await service.close()
 
 
 async def test_card_edit_version_keeps_memory_coverage_and_request_traces(story):
