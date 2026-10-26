@@ -44,7 +44,7 @@ onMounted(() => {
   <p v-if="status.available && missing.length" class="muted">
     {{
       available.length ? `${missing.map((purpose) => labels[purpose]).join('、')} 尚未下载，` : ''
-    }}请到“设置 → 通用 → 本地模型”下载模型。
+    }}请到“设置 → 通用 → 本地资源”下载模型。
   </p>
   <p v-if="status.available" class="muted">
     {{

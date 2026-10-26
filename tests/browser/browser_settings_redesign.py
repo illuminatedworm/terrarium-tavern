@@ -165,7 +165,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
 
                     before = await read()
                     if models_only:
-                        await select("通用 本地模型")
+                        await select("通用 本地资源")
                         for label in ("向量模型", "重排模型"):
                             card = page.get_by_role("region", name=label, exact=True)
                             await card.get_by_role("button", name="使用手机 Q8_0 配置", exact=True).click()
@@ -184,7 +184,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         assert actual == baseline
                         await page.reload()
                         await page.get_by_role("button", name="设置", exact=True).click()
-                        await select("通用 本地模型")
+                        await select("通用 本地资源")
                         await expect(
                             page.get_by_role("region", name="向量模型", exact=True).get_by_role(
                                 "combobox", name="设备", exact=True

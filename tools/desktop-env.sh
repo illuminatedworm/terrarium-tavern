@@ -3,9 +3,8 @@
 if [[ -x runtime/python/bin/python3 ]]; then
     tavern_portable=true
     tavern_python="$PWD/runtime/python/bin/python3"
-    tavern_node_directory="$PWD/runtime/node/bin"
     export PLAYWRIGHT_BROWSERS_PATH="$PWD/runtime/browsers" PYTHONNOUSERSITE=1
-    unset PYTHONHOME PYTHONPATH
+    unset PYTHONHOME PYTHONPATH PLAYWRIGHT_NODEJS_PATH
 else
     tavern_portable=false
     tavern_python="$PWD/.venv/bin/python"
@@ -15,7 +14,7 @@ else
     fi
     tavern_node_prefix=$("$tavern_python" -c 'import json; print(json.load(open("packaging/desktop/runtimes.json"))["node"]["linux-x64"]["prefix"])')
     tavern_node_directory="$PWD/desktop-dev/node/$tavern_node_prefix/bin"
-fi
-if [[ -x $tavern_node_directory/node ]]; then
-    export PATH="$tavern_node_directory:$PATH"
+    if [[ -x $tavern_node_directory/node ]]; then
+        export PATH="$tavern_node_directory:$PATH"
+    fi
 fi

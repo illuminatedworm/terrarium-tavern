@@ -53,10 +53,41 @@ def test_long_retrieval_input_keeps_its_tail():
     assert query_text([], text, RetrievalSettings(input_chars=64)) == text
 
 
-def test_tokenizers_cover_three_languages():
+def test_tokenizers_load_only_the_language_resources_needed(monkeypatch):
+    from tavern.search import retrieval
+    from tavern.search.japanese_dictionary import DictionaryUnavailable
+
+    real_chinese = retrieval.chinese_tokenizer
+    calls = []
+
+    def chinese():
+        calls.append("chinese")
+        return real_chinese()
+
+    monkeypatch.setattr(retrieval, "chinese_tokenizer", chinese)
+    retrieval._tokenize.cache_clear()
     assert "lighthouse" in tokenize("The Lighthouse")
+    assert not calls
     assert "灯塔" in tokenize("来到灯塔寻找守卫")
-    assert "灯台" in tokenize("灯台で船を待つ")
+    assert calls
+    with pytest.raises(DictionaryUnavailable):
+        tokenize("灯台で船を待つ")
+    # A Japanese worldbook needs the same resource even when the input is English;
+    # missing data must escape the broad BM25 degradation handler.
+    with pytest.raises(DictionaryUnavailable):
+        retrieval.lexical_recall(
+            {
+                "character_book": {
+                    "entries": [{"id": "ja", "keys": ["lighthouse"], "content": "灯台で船を待つ"}]
+                }
+            },
+            [],
+            "lighthouse",
+            {},
+            Settings(),
+            {"id": "s"},
+            "t",
+        )
 
 
 def test_bm25_finds_content_without_keywords():

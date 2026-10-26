@@ -32,7 +32,7 @@ Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代�
 已有 `.venv` 对 `.cache/python` 的引用不会自动搬迁，重建环境和便携包说明见[桌面开发](../development/desktop.md)。
 启动后访问 [http://127.0.0.1:51273](http://127.0.0.1:51273)。
 
-便携包已附带 Python、Node、锁定依赖、界面与 Chromium，解压后直接使用 `点击开始.cmd` / `start.ps1`
+便携包已附带 Python、锁定依赖（含 Playwright 自带 Node 驱动）、界面与完整 Chromium，解压后直接使用 `点击开始.cmd` / `start.ps1`
 或 `./start.sh`，无需运行安装脚本。Windows 包使用 embeddable Python；Linux 包要求 glibc x64，
 Chromium 的系统共享库仍由目标发行版提供。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
 

@@ -151,7 +151,7 @@ def page_catalog():
         ("editor", "制卡 agent", ["card_author", "card_author_config"]),
         ("preference_presets", "常用偏好", ["preference_presets"]),
         ("web", "联网与代理", ["web", "network", "model_request_mode"]),
-        ("local", "本地模型", ["local_models"]),
+        ("local", "本地资源", ["local_models"]),
         ("storage", "数据与存储", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
         ("misc", "杂项", ["send_shortcut", "reply_locate_start", "debug_failed_requests", "debug_full_agent_prefix", "kemini"]),
     ]:

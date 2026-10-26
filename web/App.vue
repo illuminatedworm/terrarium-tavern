@@ -14,6 +14,8 @@ import {
 } from 'vue';
 import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
+import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJapaneseDictionary';
+import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import { saveDownload } from './lib/download';
@@ -290,6 +292,7 @@ function closePanel() {
 }
 const startupModels = ref<StartupModels | null>(null);
 const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
+provide(japaneseDictionaryKey, useJapaneseDictionary());
 const contextStats = ref<StoryContextPreview | null>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const contextEstimateError = ref('');
@@ -2434,6 +2437,12 @@ useTimedError(error);
       </button>
       <AppNotification :message="error" />
       <AppNotification :message="memoryDiscardNotice" />
+      <JapaneseDictionaryNotice
+        @settings="
+          settingsInitialPage = 'shared.local';
+          panel = 'settings';
+        "
+      />
 
       <CardWorkspace
         v-if="pageMode === 'editor' && editorConversationId"

@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 from tavern.character.cards import lore_title
+from tavern.search.japanese_dictionary import DictionaryUnavailable, JapaneseDictionary, dictionary_path
 from tavern.search.retrieval_text import query_text
 
 _token_lock = threading.Lock()
@@ -28,33 +29,50 @@ STOP_WORDS = frozenset(
 
 
 @lru_cache(maxsize=1)
-def tokenizers():
+def chinese_tokenizer():
     import jieba
-    from sudachipy import dictionary, tokenizer
 
     chinese = jieba.Tokenizer()
     chinese.initialize()
-    return chinese, dictionary.Dictionary(dict="core").create(), tokenizer.Tokenizer.SplitMode.B
+    return chinese
+
+
+@lru_cache(maxsize=2)
+def japanese_tokenizer(path):
+    from sudachipy import dictionary, tokenizer
+
+    return dictionary.Dictionary(dict=path).create(), tokenizer.Tokenizer.SplitMode.B
+
+
+def tokenize(text):
+    words, used_japanese = _tokenize(text)
+    # All ready dictionaries have identical pinned bytes. Cached words can be
+    # shared, but never let another store borrow readiness. Keeping normalization
+    # inside the cache also avoids rescanning large documents on every cache hit.
+    if used_japanese:
+        dictionary_path()
+    return words
 
 
 @lru_cache(maxsize=16384)
-def tokenize(text):
+def _tokenize(text):
     text = unicodedata.normalize("NFKC", text).lower()
-    chinese, japanese, mode = tokenizers()
+    path = dictionary_path() if re.search(r"[\u3040-\u30ff]", text) else ""
     words = []
     with _token_lock:
         for span in re.findall(r"[\u3400-\u9fff\u3040-\u30ffー]+|[^\W_]+", text):
             if re.search(r"[\u3040-\u30ff]", span):
+                japanese, mode = japanese_tokenizer(path)
                 words.extend(
                     t.normalized_form()
                     for t in japanese.tokenize(span, mode)
                     if t.part_of_speech()[0] not in ("助詞", "助動詞", "補助記号")
                 )
             elif re.search(r"[\u3400-\u9fff]", span):
-                words.extend(chinese.cut_for_search(span))
+                words.extend(chinese_tokenizer().cut_for_search(span))
             else:
                 words.append(span)
-    return tuple(w for w in words if w.strip() and w not in STOP_WORDS)
+    return tuple(w for w in words if w.strip() and w not in STOP_WORDS), bool(path)
 
 
 def grams(text):
@@ -256,6 +274,8 @@ def lexical_recall(
             else:
                 _, index = sparse_index(entries, config)
             ranks["bm25"], sparse_scores = index.search(query, config)
+        except DictionaryUnavailable:
+            raise  # Missing Japanese evidence must never silently remove lore candidates.
         except Exception as error:
             diagnostics.append({"reason": "BM25 召回降级", "detail": str(error)})
         timings["bm25"] = round((time.perf_counter() - bm25_started) * 1000, 2)
@@ -351,6 +371,7 @@ def recall_view(ranks, ids, bm25, dense, rerank, diagnostics):
 class RetrievalEngine:
     def __init__(self, store, models):
         self.store, self.models = store, models
+        self.dictionary = JapaneseDictionary(store.root, lambda: store.settings().network)
         self.cache = OrderedDict()
         self.dense_cache = OrderedDict()
         with store.connection() as db:
@@ -444,7 +465,7 @@ class RetrievalEngine:
             if index_only or "embedding" not in settings.retrieval.channels:
                 return None, None, 0
             try:
-                query = await asyncio.to_thread(query_text, history, user_input, settings.retrieval)
+                query = await self.dictionary.run(query_text, history, user_input, settings.retrieval)
                 value = await self.models.infer(
                     "embedding",
                     "embed",
@@ -458,7 +479,7 @@ class RetrievalEngine:
                 return None, error, (time.perf_counter() - started_query) * 1000
 
         result, (query_vectors, query_error, query_ms) = await asyncio.gather(
-            asyncio.to_thread(
+            self.dictionary.run(
                 lexical_recall,
                 document,
                 history,
@@ -478,7 +499,7 @@ class RetrievalEngine:
         with self.store.connection() as db:
             exists = db.execute("SELECT 1 FROM retrieval_indexes WHERE key=?", (index_key,)).fetchone()
         if not exists and "bm25" in ranks:
-            _, sparse = await asyncio.to_thread(sparse_index, entries, config)
+            _, sparse = await self.dictionary.run(sparse_index, entries, config)
             with self.store.connection() as db:
                 db.execute(
                     "INSERT OR IGNORE INTO retrieval_indexes VALUES (?,?)",
@@ -763,7 +784,7 @@ class RetrievalEngine:
         """
         config = settings.retrieval
         ranks, diagnostics, rerank = {}, [], {}
-        ranks["bm25"], bm25 = await asyncio.to_thread(archive_lexical, rows, query, config)
+        ranks["bm25"], bm25 = await self.dictionary.run(archive_lexical, rows, query, config)
         if dense is not None:
             ranks["embedding"] = sorted(dense, key=lambda eid: -dense[eid])
         ids = fuse(ranks, rows, config)

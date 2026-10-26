@@ -11,12 +11,16 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from tavern.search.japanese_dictionary import DIC_SHA256, URL, VERSION, WHEEL_SHA256
+
 if __package__:
     from .desktop_runtime import ROOT, download, host_target, runtime_lock, sha256, unpack
     from .package_release import publishable
+    from .portable_resources import prune_resources
 else:
     from desktop_runtime import ROOT, download, host_target, runtime_lock, sha256, unpack
     from package_release import publishable
+    from portable_resources import prune_resources
 
 
 def build_environment():
@@ -24,7 +28,7 @@ def build_environment():
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}
+        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "PLAYWRIGHT_NODEJS_PATH"}
         and not key.startswith(("TAVERN_", "UV_PROJECT", "UV_WORKING_DIR", "UV_PYTHON"))
     }
     env.update(PYTHONUTF8="1", PYTHONNOUSERSITE="1")
@@ -37,7 +41,7 @@ def write_manifest(root, metadata):
         name = path.relative_to(root).as_posix()
         if path.is_symlink():
             link = os.readlink(path)
-            # Node's npm links and standalone Python's links must survive moving
+            # Standalone Python's relative links must survive moving
             # the extracted app. A link into the builder would produce a broken bundle.
             if Path(link).is_absolute() or not path.resolve().is_relative_to(root.resolve()):
                 raise ValueError(f"发行文件链接指向包外：{name}")
@@ -61,7 +65,7 @@ def archive_tree(root, destination, target):
                     with path.open("rb") as source, archive.open(info, "w", force_zip64=True) as stream:
                         shutil.copyfileobj(source, stream)
     else:
-        # Tar retains native executable modes and npm/Python relative symlinks.
+        # Tar retains native executable modes and Python's relative symlinks.
         def reproducible(info):
             info.uid = info.gid = info.mtime = 0
             info.uname = info.gname = ""
@@ -80,7 +84,7 @@ def copy_browser_cache(python, cache, destination, env):
     # Ask the installed, locked Playwright which platform-specific components it
     # needs. Do not guess revisions or copy unrelated browsers/user profiles.
     probe = subprocess.run(
-        [str(python), "-m", "playwright", "install", "--dry-run", "chromium"],
+        [str(python), "-m", "playwright", "install", "--dry-run", "--no-shell", "chromium"],
         env=probe_env,
         capture_output=True,
         text=True,
@@ -115,7 +119,9 @@ def finish_package(
     if browser_cache is not None:
         components = copy_browser_cache(python, Path(browser_cache), runtime / "browsers", env)
     else:
-        subprocess.run([str(python), "-m", "playwright", "install", "chromium"], env=env, check=True)
+        subprocess.run(
+            [str(python), "-m", "playwright", "install", "--no-shell", "chromium"], env=env, check=True
+        )
         components = sorted(p.name for p in (runtime / "browsers").iterdir() if not p.name.startswith("."))
     browser_links = runtime / "browsers/.links"
     if browser_links.exists():
@@ -145,13 +151,34 @@ def finish_package(
     shutil.copy2(ROOT / "packaging/desktop/README.md", app / "README.md")
     shutil.copy2(requirements, app / "requirements.txt")
     shutil.copy2(ROOT / "uv.lock", app / "uv.lock")
-    shutil.copy2(ROOT / "packaging/desktop/runtimes.json", app / "runtime/sources.json")
+    # Node is supplied by the locked Playwright wheel, not a second runtime archive.
+    (runtime / "sources.json").write_text(
+        json.dumps(
+            {
+                "python": lock["python"],
+                "on_demand_resources": {
+                    "sudachi_core": {
+                        "version": VERSION,
+                        "url": URL,
+                        "wheel_sha256": WHEEL_SHA256,
+                        "dictionary_sha256": DIC_SHA256,
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     # Assert importability without importing any developer source directory.
     subprocess.run(
         [
             str(python),
             "-c",
-            "import tavern,fastapi,numpy,tiktoken,playwright,sudachipy; print(tavern.__file__)",
+            "import tavern,fastapi,numpy,tiktoken,playwright,sudachipy; "
+            "from importlib.util import find_spec; "
+            "assert find_spec('sudachidict_core') is None; print(tavern.__file__)",
         ],
         env=env,
         check=True,
@@ -164,7 +191,6 @@ def finish_package(
             "target": target,
             "retrieval": retrieval,
             "python": lock["python"]["version"],
-            "node": lock["node"]["version"],
             "browsers": {
                 "source": "specified-cache" if browser_cache else "playwright-download",
                 "components": components,
@@ -215,9 +241,8 @@ def package(*, target=None, destination=None, retrieval=False, browser_cache=Non
         work = Path(temporary)
         app = work / "app"
         runtime = app / "runtime"
-        for kind in ("python", "node"):
-            artifact = lock[kind][target]
-            unpack(download(artifact), runtime / kind, artifact["prefix"])
+        artifact = lock["python"][target]
+        unpack(download(artifact), runtime / "python", artifact["prefix"])
         windows = target == "windows-x64"
         site = runtime / "python" / ("Lib/site-packages" if windows else "lib/python3.13/site-packages")
         site.mkdir(parents=True, exist_ok=True)
@@ -271,6 +296,7 @@ def package(*, target=None, destination=None, retrieval=False, browser_cache=Non
                     raise ValueError(f"应用 wheel 包含不允许发行的文件：{name}")
             archive.extractall(site)
 
+        print(json.dumps({"pruned_resources": prune_resources(site)}), flush=True)
         return finish_package(
             app,
             requirements,

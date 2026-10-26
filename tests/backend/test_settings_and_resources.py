@@ -1,6 +1,9 @@
 import asyncio
+import hashlib
+import io
 import json
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -12,6 +15,132 @@ from tavern.application.api import create_app
 from tavern.core.models import PersonaEdit, SessionCreate, Settings
 from tavern.search.local_models import LocalModelManager, _download
 from tavern.storage.store import Conflict, Store
+
+
+def dictionary_fixture(monkeypatch):
+    from tavern.search import japanese_dictionary as resource
+    from tavern.search.retrieval_config import Network
+
+    data = b"pinned compiled dictionary fixture"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(resource.DIC_MEMBER, data)
+        archive.writestr("do-not-install.py", "raise AssertionError('must not execute')")
+    wheel = buffer.getvalue()
+    for name, value in {"DIC": data, "WHEEL": wheel}.items():
+        monkeypatch.setattr(resource, name + "_BYTES", len(value))
+        monkeypatch.setattr(resource, name + "_SHA256", hashlib.sha256(value).hexdigest())
+    return resource, Network(proxy="http://proxy.example:8080", hf_proxy=True), data, wheel
+
+
+async def test_dictionary_shared_download_failure_cancel_and_retry(tmp_path, monkeypatch):
+    resource, network, data, wheel = dictionary_fixture(monkeypatch)
+    manager = resource.JapaneseDictionary(tmp_path, lambda: network)
+    received = asyncio.Event()
+    release = asyncio.Event()
+    requests = []
+    payload = wheel[:-1]
+
+    class Body(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            received.set()
+            await release.wait()
+            yield payload
+
+    def serve(request):
+        requests.append(request)
+        assert str(request.url) == resource.URL
+        return httpx.Response(200, stream=Body())
+
+    client = httpx.AsyncClient
+
+    def factory(**kwargs):
+        assert kwargs["proxy"] == network.proxy and kwargs["trust_env"] is False
+        return client(transport=httpx.MockTransport(serve))
+
+    monkeypatch.setattr(resource.httpx, "AsyncClient", factory)
+    first = asyncio.create_task(manager.ensure())
+    await received.wait()
+    second = asyncio.create_task(manager.ensure())
+    task = manager.task
+    assert manager.start() is task and manager.state == "downloading"
+    # One story cancellation leaves the shared resource job alive.
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not task.done()
+    release.set()
+    with pytest.raises(resource.DictionaryUnavailable):
+        await second
+    assert manager.state == "error" and "SHA-256" in manager.error
+    assert not manager.path.exists() and not list(manager.root.glob("*.part"))
+    with pytest.raises(resource.DictionaryUnavailable):
+        await manager.ensure()
+    assert len(requests) == 1  # No implicit retry loop after failure.
+
+    received.clear()
+    release.clear()
+    manager.start(retry=True)
+    await received.wait()
+    await manager.cancel()
+    assert manager.state == "cancelled" and not manager.path.exists()
+    assert not list(manager.root.glob("*.part"))
+    payload = wheel
+    release.set()
+    await manager.start(retry=True)
+    assert manager.is_ready() and manager.path.read_bytes() == data
+    assert len(requests) == 3 and not (manager.root / "do-not-install.py").exists()
+    await manager.ensure()
+    assert len(requests) == 3
+    await manager.close()
+
+
+async def test_dictionary_offline_import_atomic_integrity_and_restart(tmp_path, monkeypatch):
+    resource, network, data, wheel = dictionary_fixture(monkeypatch)
+    manager = resource.JapaneseDictionary(tmp_path, lambda: network)
+    # Interrupted files from another run must never count as the active dictionary.
+    manager.root.mkdir(parents=True)
+    (manager.root / "system.dic.part").write_bytes(data[:4])
+    assert not manager.is_ready()
+
+    async def stream(value):
+        yield value
+
+    async def disconnected():
+        yield data[:4]
+        raise resource.ClientDisconnect()
+
+    await manager.start(retry=True, stream=disconnected(), size=len(data), kind="dic")
+    assert manager.state == "cancelled" and "连接已断开" in manager.error
+    assert not manager.path.exists() and not list(manager.root.glob("*.part"))
+    await manager.start(retry=True, stream=stream(b"x" * len(wheel)), size=len(wheel))
+    assert manager.state == "error" and not manager.path.exists()
+    await manager.start(retry=True, stream=stream(wheel), size=len(wheel))
+    assert manager.is_ready() and manager.path.read_bytes() == data
+    with pytest.raises(ValueError, match="当前文件未导入"):
+        manager.start(retry=True, stream=stream(b"invalid"), size=7)
+    assert manager.path.read_bytes() == data
+    await manager.close()
+
+    restarted = resource.JapaneseDictionary(tmp_path, lambda: network)
+    assert restarted.state == "unchecked"
+    monkeypatch.setattr(resource.httpx, "AsyncClient", Mock(side_effect=AssertionError("offline")))
+    await restarted.ensure()
+    assert restarted.is_ready()
+    await restarted.close()
+    # A same-size corrupt final file also fails on restart; only a verified import replaces it.
+    manager.path.write_bytes(b"x" * len(data))
+    repair = resource.JapaneseDictionary(tmp_path, lambda: network)
+    with pytest.raises(resource.DictionaryUnavailable):
+        await repair.ensure()
+    await repair.start(retry=True, stream=stream(data), size=len(data), kind="dic")
+    assert repair.is_ready() and repair.path.read_bytes() == data
+    observer = repair.events()
+    assert (await anext(observer))["state"] == "ready"
+    repair.stop()
+    with pytest.raises(StopAsyncIteration):
+        await anext(observer)
+    await repair.close()
 
 
 async def test_proxy_defaults_are_direct_and_explicit_settings_survive(monkeypatch):

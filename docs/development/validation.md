@@ -127,8 +127,9 @@ ChatGPT 订阅专项：
 
 ZIP、清单和校验值输出到 `releases/`。[verify_release.py](../../tools/verify_release.py)在 Windows 新目录校验归档、安装依赖、启动服务并检查备份恢复。该脚本带有本机工具与网络配置假设，运行前需核对其环境配置。
 
-Windows/Linux 便携包使用 `tools/package_portable.py` 在各自目标平台构建，附带独立 Python、官方 Node.js、
-锁定依赖和 Chromium；`verify_release.py` 自动识别便携包，不再在线安装依赖。
+Windows/Linux 便携包使用 `tools/package_portable.py` 在各自目标平台构建，附带独立 Python、
+锁定依赖（含 Playwright 自带 Node 驱动）和完整 Chromium；不另带 Node/npm 工具链或 Headless Shell。
+`verify_release.py` 自动识别便携包，不再在线安装依赖，并使用完整 Chromium 的新无头模式验证执行。
 详细命令、平台边界及隔离验证范围见[桌面开发与便携包](desktop.md)。
 
 `verify_release.py` 和 `prepare_tokenizers.py` 沿用调用环境中的代理，不内置代理地址；`probe_prefix_cache.py` 默认直连，可用 `--proxy` 显式指定。应用及制卡评测使用应用内保存的网络配置。

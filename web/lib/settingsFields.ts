@@ -262,7 +262,7 @@ export const proxyFields: SettingField[] = [
     type: 'checkbox',
     help: '也用于联网搜索和网页读取。模型请求还需对应提供商开启“使用接口代理”。',
   },
-  { path: 'network.hf_proxy', label: '本地模型下载使用代理', type: 'checkbox' },
+  { path: 'network.hf_proxy', label: '本地资源下载使用代理（模型与日文词典）', type: 'checkbox' },
   { path: 'network.resources_proxy', label: '角色卡外部资源使用代理', type: 'checkbox' },
 ];
 export const networkFields: SettingField[] = [...requestFields, ...proxyFields];

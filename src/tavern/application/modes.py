@@ -91,6 +91,7 @@ class ModeRuntime:
             return None
 
     async def close(self):
+        self.japanese_dictionary.stop()
         await self.context_operations.close()
         await self.full.close()
         await self.half.close()

@@ -38,6 +38,12 @@ def main():
     ready = asyncio.Event()
 
     class WindowServer(uvicorn.Server):
+        def handle_exit(self, sig, frame):
+            # Resource observers exist even without a running story. Stop their
+            # producers before uvicorn drains SSE on Ctrl+C / termination signals.
+            cancel_producers(app)
+            super().handle_exit(sig, frame)
+
         async def startup(self, sockets=None):
             await super().startup(sockets)
             if self.started:

@@ -3,6 +3,7 @@ import { useTimedError } from '../../composables/useTimedError';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, uploadModel } from '../../lib/api';
 import type { LocalModelPurpose, ModelWarmupState } from '../../composables/useModelWarmup';
+import JapaneseDictionarySettings from './JapaneseDictionarySettings.vue';
 const props = defineProps<{ settings: any; flush: () => Promise<unknown>; warmup: ModelWarmupState }>();
 const purposes: Array<{ key: LocalModelPurpose; label: string; family: string }> = [
   { key: 'embedding', label: '向量模型', family: 'Embedding' },
@@ -200,6 +201,7 @@ onUnmounted(() => {
 useTimedError(error);
 </script>
 <template>
+  <JapaneseDictionarySettings :settings="settings" :flush="flush" />
   <h4>检索模型</h4>
   <p v-if="status.available === false" role="status">{{ status.reason }}</p>
   <p v-else-if="isAndroid" class="muted">

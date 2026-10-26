@@ -1,9 +1,13 @@
 """Verify source installs or native portable releases in an isolated directory."""
 
 import argparse
+import base64
+import csv
 import hashlib
+import io
 import json
 import os
+import posixpath
 import socket
 import subprocess
 import tarfile
@@ -14,6 +18,64 @@ from pathlib import Path, PurePosixPath
 
 import httpx
 
+PORTABLE_RESOURCE_PROBE = """
+import io
+import zipfile
+import numpy as np
+import pymupdf
+from markitdown import StreamInfo
+from markitdown.converters import DocxConverter, XlsxConverter
+from openpyxl import Workbook
+from tavern.search.retrieval import tokenize
+from tavern.search.japanese_dictionary import DictionaryUnavailable
+from importlib.util import find_spec
+
+assert find_spec('sudachidict_core') is None
+assert '港口' in tokenize('旅人前往港口')
+assert 'lighthouse' in tokenize('The Lighthouse')
+try:
+    tokenize('冒険者が酒場へ向かう')
+except DictionaryUnavailable:
+    pass
+else:
+    raise AssertionError('Missing dictionary must fail explicitly without a download or fallback')
+assert np.isclose(np.linalg.det([[1, 2], [3, 4]]), -2)
+
+# Fixed, invented Office fixtures exercise the retained converters and their
+# dependencies without reading user files or switching the desktop converter.
+word = io.BytesIO()
+with zipfile.ZipFile(word, 'w') as archive:
+    archive.writestr('[Content_Types].xml',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '</Types>')
+    archive.writestr('_rels/.rels',
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="r1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="word/document.xml"/></Relationships>')
+    archive.writestr('word/document.xml',
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>portable DOCX reference</w:t></w:r></w:p></w:body></w:document>')
+word.seek(0)
+assert 'portable DOCX reference' in DocxConverter().convert(word, stream_info=StreamInfo(extension='.docx')).markdown
+workbook = Workbook()
+workbook.active.append(['name', 'value'])
+workbook.active.append(['portable XLSX reference', 7])
+sheet = io.BytesIO()
+workbook.save(sheet)
+workbook.close()
+sheet.seek(0)
+assert 'portable XLSX reference' in XlsxConverter().convert(sheet, stream_info=StreamInfo(extension='.xlsx')).markdown
+with pymupdf.open() as document:
+    page = document.new_page()
+    page.insert_text((72, 72), 'portable PDF reference')
+    pdf = document.tobytes()
+with pymupdf.open(stream=pdf, filetype='pdf') as document:
+    assert 'portable PDF reference' in document[0].get_text()
+"""
+
 
 def installation_environment(target: Path) -> dict[str, str]:
     # cwd alone does not isolate uv: inherited project/environment selectors can
@@ -22,7 +84,7 @@ def installation_environment(target: Path) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON"}
+        if key not in {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON", "PLAYWRIGHT_NODEJS_PATH"}
         and not key.startswith("TAVERN_")
     }
     env.update(
@@ -65,6 +127,25 @@ def verify(archive_path):
             assert (target / name).parent.joinpath(link).resolve().is_relative_to(target.resolve())
             member = archive.getmember(name)
             assert member.issym() and member.linkname == link
+        if manifest.get("kind") == "portable":
+            assert not any("/sudachidict_core/" in name or "/sudachidict_core-" in name for name in names)
+            for name in manifest["files"]:
+                if not name.endswith(".dist-info/RECORD"):
+                    continue
+                parent = PurePosixPath(name).parent.parent
+                for relative, digest, size in csv.reader(io.StringIO(read(name).decode("utf-8"))):
+                    path = posixpath.normpath((parent / relative).as_posix())
+                    assert path in manifest["files"], f"RECORD 引用缺失文件：{path}"
+                    if digest:
+                        algorithm, encoded = digest.split("=", 1)
+                        assert algorithm == "sha256"
+                        expected_digest = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).hex()
+                        assert expected_digest == manifest["files"][path], path
+                    if size:
+                        member_size = (
+                            archive.getinfo(path).file_size if zipped else archive.getmember(path).size
+                        )
+                        assert int(size) == member_size, path
         if zipped:
             archive.extractall(target)
         else:
@@ -75,12 +156,11 @@ def verify(archive_path):
     if portable:
         native = "windows-x64" if windows else "linux-x64"
         assert manifest["target"] == native, "请在对应平台验证便携包"
-        node = target / "runtime/node" / ("" if windows else "bin")
         system_paths = [str(Path(os.environ["SystemRoot"]) / "System32")] if windows else ["/usr/bin", "/bin"]
         if windows:
             system_paths.append(str(Path(system_paths[0]) / "WindowsPowerShell/v1.0"))
         # No developer Node/uv/Python on PATH: startup must use the extracted bundle.
-        env["PATH"] = os.pathsep.join([str(node), *system_paths])
+        env["PATH"] = os.pathsep.join(system_paths)
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(target / "runtime/browsers")
         env["PYTHONNOUSERSITE"] = "1"
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -93,7 +173,6 @@ def verify(archive_path):
 
         if portable:
             python = str(target / "runtime/python" / ("python.exe" if windows else "bin/python3"))
-            run(str(node / ("node.exe" if windows else "node")), "--version")
             run(
                 python,
                 "-c",
@@ -105,13 +184,14 @@ def verify(archive_path):
                 "-c",
                 "from playwright.sync_api import sync_playwright\n"
                 "with sync_playwright() as p:\n"
-                "    browser = p.chromium.launch(headless=True, chromium_sandbox=True)\n"
+                "    browser = p.chromium.launch(channel='chromium', headless=True, chromium_sandbox=True)\n"
                 "    try:\n"
                 "        page = browser.new_page()\n"
                 "        assert page.evaluate('1 + 1') == 2\n"
                 "    finally:\n"
                 "        browser.close()\n",
             )
+            run(python, "-c", PORTABLE_RESOURCE_PROBE)
         else:
             run("uv", "sync", "--frozen", "--no-dev")
             npm = "npm.cmd" if windows else "npm"
@@ -212,6 +292,8 @@ def verify(archive_path):
         "fresh_npm_ci": not portable,
         "production_build": not portable,
         "bundled_browser": portable,
+        "dependency_records": portable,
+        "tokenizers_office_pdf": portable,
         "no_torch_startup": not manifest.get("retrieval", False),
         "duplicate_start_rejected": True,
         "backup_restore": True,

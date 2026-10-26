@@ -42,6 +42,7 @@ class RoleplayRuntime:
 
         self.local_models = create_local_model_manager(store)
         self.retrieval = RetrievalEngine(store, self.local_models)
+        self.japanese_dictionary = self.retrieval.dictionary
 
     def prepare_indexes(self, sid):
         """Opportunistic preparation after creating/opening a story; never changes story state."""
@@ -73,11 +74,13 @@ class RoleplayRuntime:
             return None  # A full preparation queue must not prevent opening a story.
 
     async def close(self):
+        self.japanese_dictionary.stop()
         for task in self.tasks.values():
             if not task.done():
                 task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
         await self.local_models.close()
+        await self.japanese_dictionary.close()
         await self.runtime.close()
         await self.dependencies.close()
 
@@ -515,6 +518,10 @@ class RoleplayRuntime:
         }
 
     async def run(self, tid):
+        with self.japanese_dictionary.bind():
+            await self._run(tid)
+
+    async def _run(self, tid):
         runtime = None
         try:
             turn = self.store.turn(tid)

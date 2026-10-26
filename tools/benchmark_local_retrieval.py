@@ -22,8 +22,9 @@ from pathlib import Path
 
 from tavern.character.cards import normalize
 from tavern.core.settings import SettingsDocument
+from tavern.search.japanese_dictionary import JapaneseDictionary
 from tavern.search.local_models import LocalModelManager
-from tavern.search.retrieval import RetrievalEngine, digest, lexical_recall, tokenizers
+from tavern.search.retrieval import RetrievalEngine, chinese_tokenizer, digest, lexical_recall
 from tavern.storage.store import Store
 
 
@@ -195,6 +196,7 @@ async def main(args):
     models = MeasuredModels(store)
     models.root = (args.data / "models").resolve()
     engine = RetrievalEngine(store, models)
+    engine.dictionary = JapaneseDictionary(args.data, lambda: settings.network)
     monitor = GpuMonitor()
     rows = []
     report = {
@@ -221,8 +223,10 @@ async def main(args):
     }
     started = time.perf_counter()
     try:
-        tokenizers()
-        entries = lexical_recall(document, [], "", {}, settings, session, "corpus")["entries"]
+        chinese_tokenizer()
+        entries = (
+            await engine.dictionary.run(lexical_recall, document, [], "", {}, settings, session, "corpus")
+        )["entries"]
         report["card_entries"] = len(normalize(document)["character_book"]["entries"])
         report["retrievable_entries"] = len(entries)
         entry_ids = {str(e["id"]) for e in entries}
@@ -330,6 +334,7 @@ async def main(args):
         report["model_calls"] = models.calls
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         await models.close()
+        await engine.dictionary.close()
         monitor.close()
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2), flush=True)
 

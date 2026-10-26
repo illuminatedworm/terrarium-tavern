@@ -1457,6 +1457,9 @@
   color: var(--text-primary);
   font-size: var(--fs-base);
 }
+.dictionary-source {
+  overflow-wrap: anywhere;
+}
 .local-model-state {
   flex: none;
   padding: 1px 9px;

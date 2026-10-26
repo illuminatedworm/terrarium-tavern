@@ -32,6 +32,7 @@ class DesktopWindow:
         self.playwright = await async_playwright().start()
         self.context = await self.playwright.chromium.launch_persistent_context(
             self.profile,
+            channel="chromium",
             headless=self.headless,
             no_viewport=True,
             chromium_sandbox=True,

@@ -12,7 +12,7 @@ from pathlib import Path
 from tavern.conversation.context import activate_lore, compile_context
 from tavern.core.models import ContextRecipe, Settings
 from tavern.search.local_models import LocalModelManager
-from tavern.search.retrieval import RetrievalEngine, sparse_index, tokenizers
+from tavern.search.retrieval import RetrievalEngine, chinese_tokenizer, sparse_index
 from tavern.storage.store import Store
 
 
@@ -37,7 +37,7 @@ async def main(neural, model_dir=None):
         models.root = Path(model_dir).resolve()
     engine = RetrievalEngine(store, models)
     settings = Settings(lore_recursive=True)
-    tokenizers()
+    chinese_tokenizer()
     fixture["queries"].extend(
         [
             {"text": text, "relevant": []}
@@ -198,6 +198,7 @@ async def main(neural, model_dir=None):
         if not all(report["acceptance"].values()):
             raise RuntimeError("检索验收指标未达标，请查看评估报告")
     finally:
+        await engine.dictionary.close()
         await models.close()
         temporary.cleanup()
 

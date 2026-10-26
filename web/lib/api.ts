@@ -32,6 +32,16 @@ export function uploadModel(
   signal: AbortSignal,
   progress: (fraction: number) => void,
 ) {
+  return uploadResource(path, file, signal, progress, '模型');
+}
+
+export function uploadResource(
+  path: string,
+  file: File,
+  signal: AbortSignal,
+  progress: (fraction: number) => void,
+  label: string,
+) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
     const abort = () => request.abort();
@@ -47,12 +57,14 @@ export function uploadModel(
       if (request.status >= 200 && request.status < 300) finish();
       else {
         const detail = request.response?.detail;
-        finish(detail === undefined ? Error(`模型导入失败（HTTP ${request.status}）`) : detailError(detail));
+        finish(
+          detail === undefined ? Error(`${label}导入失败（HTTP ${request.status}）`) : detailError(detail),
+        );
       }
     };
-    request.onerror = () => finish(Error('模型上传连接中断，请重试。'));
-    request.onabort = () => finish(new DOMException('模型导入已取消', 'AbortError'));
-    if (signal.aborted) return finish(new DOMException('模型导入已取消', 'AbortError'));
+    request.onerror = () => finish(Error(`${label}上传连接中断，请重试。`));
+    request.onabort = () => finish(new DOMException(`${label}导入已取消`, 'AbortError'));
+    if (signal.aborted) return finish(new DOMException(`${label}导入已取消`, 'AbortError'));
     signal.addEventListener('abort', abort, { once: true });
     request.send(file);
   });

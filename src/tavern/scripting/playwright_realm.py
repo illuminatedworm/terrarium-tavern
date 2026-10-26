@@ -51,7 +51,8 @@ class PlaywrightBackend:
                 from playwright.async_api import async_playwright
 
                 self.playwright = await async_playwright().start()
-                self.browser = await self.playwright.chromium.launch(headless=True)
+                # Share the full Chromium with DesktopWindow; portable bundles omit headless shell.
+                self.browser = await self.playwright.chromium.launch(channel="chromium", headless=True)
 
         async def route(route):
             result = resource(route.request.url, route.request.method)

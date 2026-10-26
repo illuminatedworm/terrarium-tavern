@@ -75,6 +75,7 @@ def cancel_producers(app):
     Desktop and Android hosts share this list so a new task owner reaches both.
     """
     service = app.state.service
+    service.japanese_dictionary.stop()
     for owner in (
         service,
         app.state.editor,
@@ -194,7 +195,8 @@ def create_app(data_dir=None):
             and (startup_token or origin not in {"http://127.0.0.1:5173", "http://localhost:5173"})
         ):
             return JSONResponse({"detail": "跨来源请求被拒绝"}, status_code=403)
-        response = await call_next(request)
+        with service.japanese_dictionary.bind():
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         if startup_token:
@@ -255,6 +257,9 @@ def create_app(data_dir=None):
     from tavern.application.settings_api import register_settings_routes
 
     register_settings_routes(app, store)
+    from tavern.application.dictionary_api import register_dictionary_routes
+
+    register_dictionary_routes(app, service.japanese_dictionary)
     from tavern.application.transfer_api import register_transfer_routes
 
     register_transfer_routes(app, store)
@@ -889,12 +894,15 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
-        result, s = compile_preview(
-            sid,
-            payload.get("text", ""),
-            payload.get("update_variables") is True,
-            payload.get("allow_content_edit") is True,
-        )
+        from tavern.search.japanese_dictionary import dictionary_read_only
+
+        with dictionary_read_only():
+            result, s = compile_preview(
+                sid,
+                payload.get("text", ""),
+                payload.get("update_variables") is True,
+                payload.get("allow_content_edit") is True,
+            )
         result["usage"] = store.latest_usage(sid)
         result["cache_usage"] = store.session_cache_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
@@ -902,12 +910,15 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/messages-preview")
     def messages_preview(sid: str, payload: dict):
-        result, _ = compile_preview(
-            sid,
-            payload.get("text", ""),
-            payload.get("update_variables") is True,
-            payload.get("allow_content_edit") is True,
-        )
+        from tavern.search.japanese_dictionary import dictionary_read_only
+
+        with dictionary_read_only():
+            result, _ = compile_preview(
+                sid,
+                payload.get("text", ""),
+                payload.get("update_variables") is True,
+                payload.get("allow_content_edit") is True,
+            )
         return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)

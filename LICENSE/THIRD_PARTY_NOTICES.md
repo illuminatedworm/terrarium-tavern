@@ -63,6 +63,12 @@ Vue、lodash、jQuery、Zod、YAML、JSON5、fast-json-patch、Acorn、DOMPurify
 
 [samples/](../samples/) 中的两张示例角色卡是为本项目制作的原创测试样例，当前版本随附的样例适用 [Terrarium Tavern 非商业许可 1.1](PROJECT_LICENSE.md)。使用、修改和再分发须注明 Terrarium Tavern 来源，并遵守非商业限制。此前已合法取得的样例所附授权不被追溯变更。
 
+## 日文检索词典
+
+[SudachiDict core 20260723](https://pypi.org/project/sudachidict-core/20260723/) 采用 **Apache-2.0**。
+桌面版按需下载固定 wheel 中的编译词典，Android 随 APK 携带；版本、固定来源和校验值见
+`src/tavern/search/japanese_dictionary.py`，原始许可随项目保留在 [SudachiDict-Apache-2.0.txt](SudachiDict-Apache-2.0.txt)。
+
 ## Token 计数
 
 [tiktoken](https://github.com/openai/tiktoken) 采用 **MIT** 许可，提供 BPE 分词实现以及 `o200k_base`、`cl100k_base` 词表。

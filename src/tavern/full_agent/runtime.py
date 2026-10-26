@@ -112,6 +112,10 @@ class FullAgentRuntime:
         return self.store.session(sid)
 
     async def run(self, tid):
+        with self.retrieval.engine.dictionary.bind():
+            await self._run(tid)
+
+    async def _run(self, tid):
         script = None
         deadline = asyncio.timeout(None)
         try:
