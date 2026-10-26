@@ -14,6 +14,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.scripting.model_transport import ModelTransport
 from tests.backend.test_full_agent_streaming import (
     body_delta,
@@ -104,7 +105,7 @@ async def main(single_viewport=False):
         try:
             assert await asyncio.to_thread(ready.wait, 5), "Acceptance server did not start"
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 page = await browser.new_page(viewport={"width": 1920, "height": 1080})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))

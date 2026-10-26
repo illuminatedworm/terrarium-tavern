@@ -27,6 +27,33 @@ Android 构建继续使用独立的 `android-dev/`，不消费桌面运行时。
 日常使用 `build.ps1` / `build.sh` 构建界面，`run-dev.ps1` / `run-dev.sh` 启动开发模式。
 直接在终端调用 `npm` 时仍由该终端的 PATH 决定版本；需要固定版本时使用 `desktop-dev/node/` 内的 npm。
 
+## 系统浏览器
+
+桌面窗口、剧情脚本、制卡 agent 的本地验证和卡片模块打包都通过 Playwright 使用系统安装的
+Microsoft Edge 或 Google Chrome 稳定版。源码安装和便携包均不下载、不分发 Chromium、Headless Shell、
+FFmpeg 或 WinLDD；浏览器测试也使用同一选择入口。
+
+- `TAVERN_BROWSER=auto`（默认）：Windows 先找 Edge、再找 Chrome；Linux 先找 Chrome、再找 Edge。
+- `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome`：只使用指定浏览器；缺失或启动失败直接报错。
+- Windows 查找用户与系统程序目录中的标准安装位置；Linux 查找 `/opt/google/chrome/chrome`
+  和 `/opt/microsoft/msedge/msedge`。仅安装 WebView2 Runtime 不满足此依赖。
+- 安装脚本和桌面 CLI 在打开数据目录前检查浏览器，输出实际路径和选择值。CLI 备份／恢复不需要浏览器。
+  自动选择只跳过未安装项，不在启动失败后静默切换；运行时不调用浏览器安装器。
+
+例如，在 PowerShell 中执行 `$env:TAVERN_BROWSER = 'chrome'` 后运行 `start.ps1`；
+Linux 可执行 `TAVERN_BROWSER=msedge ./start.sh`。改回 `auto` 恢复默认顺序。
+此变量只控制应用拥有的窗口与后台脚本，不改变用户打开普通页面的默认浏览器。
+
+受控窗口继续使用所选数据目录的 `desktop-profile/`，保留该目录中的阅读布局；后台 realm 使用独立的临时 context。
+两者均不读取系统浏览器的个人资料目录。切换浏览器或回退其版本前，可先用设置数据包导出阅读布局并备份
+`desktop-profile/`；浏览器自身的资料格式由浏览器维护，应用不在启动失败时删除或重置资料。
+剧情、设置、已提交变量和恢复快照仍以原 SQLite 数据为准。
+
+[Playwright 支持系统 Chrome/Edge 稳定版](https://playwright.dev/python/docs/browsers#google-chrome--microsoft-edge)，
+浏览器更新与企业策略会影响兼容性；排查时同时记录启动输出中的路径、浏览器版本和锁定的 Playwright 版本。
+这里减少的是下载与磁盘占用，浏览器仍使用 Chromium 内核与多进程模型，不承诺运行内存按包体积同比降低。
+Android 继续使用原有 WebView 后端和构建依赖，不读取此选择变量。
+
 ## 便携包
 
 | 平台 | Python | 归档 |
@@ -38,7 +65,7 @@ Windows [embeddable Python](https://docs.python.org/3.13/using/windows.html#the-
 不作为开发虚拟环境使用，不在其中安装 pip；构建时用开发解释器和 uv
 把锁定依赖安装到成品的 `Lib/site-packages`，用 `python313._pth` 声明隔离路径。
 Linux 使用可搬移的独立 Python，保留原有可执行位和相对符号链接。两端均通过包内的绝对解释器路径启动，
-并使用包内 Chromium；不依赖开发机的 Python 注册信息、用户 site-packages 或浏览器缓存。
+并复用系统浏览器；不依赖开发机的 Python 注册信息、用户 site-packages 或 Playwright 浏览器缓存。
 Playwright 使用其锁定 wheel 自带的 Node 驱动；成品不另带官方 Node.js 包、npm 或 Corepack。
 源码开发仍使用 `desktop-dev/node/` 中含 npm 的官方 Node.js。
 
@@ -62,13 +89,10 @@ Playwright 使用其锁定 wheel 自带的 Node 驱动；成品不另带官方 N
 
 构建从 `uv.lock` 冻结导出带哈希的依赖，在新的临时目录安装，并独立构建应用 wheel，
 不复制当前开发环境。Python 原始下载在使用前检查固定 SHA-256；校验失败保留文件并报错。
-Chromium 版本由锁定的 Playwright 决定。受控窗口、卡片脚本与模块打包通过 `channel="chromium"`
-共用完整浏览器；无头任务使用其新无头模式。构建按 `playwright install --no-shell chromium`
-选择组件，不分发另一套 Headless Shell。
-已有同修订的完整 Chromium 缓存时，可显式传入 `--browser-cache <缓存目录>`，
-按上述安装方式声明的组件逐一核对并只读复制，避免重复下载；缺项直接报错。
-缓存中已有的 Headless Shell 不会复制，也不会被删除。
-不会复制个人浏览器资料目录，包内清单记录本次使用下载还是指定缓存。
+浏览器由目标机器提供，包内清单记录 `browsers.source=system` 和支持的稳定版渠道。
+构建不启动、不复制浏览器，也不接受旧的 `--browser-cache` 参数；既有 Playwright 缓存不会被修改或清理。
+受控窗口、卡片脚本与模块打包共享浏览器选择规则；后台使用所选浏览器的无头模式。
+不会复制个人浏览器资料目录，首次启动也不会补下载浏览器组件。
 便携构建只在新安装的临时运行时中按已核对的包名与路径裁剪依赖测试、基准文件、Jieba 的
 Paddle／词性标注／关键词提取模块和 Jython pickle、Magika 命令行程序及 PyMuPDF C/C++ 开发资源。
 保留中文词典、HMM 概率代码、运行模块、模型及第三方许可，并同步更新受影响的
@@ -92,18 +116,19 @@ Windows 使用 `点击开始.cmd` 或 `start.ps1`；Linux 使用 `./start.sh`。
 ## Linux 系统边界
 
 Linux 包面向 Ubuntu 22.04/24.04、Debian 12 x64 等 glibc 发行版，不支持 Alpine/musl。
-各系统的浏览器支持范围以[所锁定 Playwright 的系统要求](https://playwright.dev/python/docs/intro#system-requirements)为准。
-附带运行时不等于附带完整操作系统：Chromium 仍依赖系统 NSS、字体、X11 等共享库。
-若目标系统缺少这些库，可使用包内 Python 执行 `-m playwright install-deps chromium`，按提示提供 sudo 权限。
+目标机器需安装 Google Chrome 或 Microsoft Edge 稳定版，同时满足浏览器与
+[所锁定 Playwright 的系统要求](https://playwright.dev/python/docs/intro#system-requirements)。
+NSS、字体、X11 等共享库由浏览器安装包和目标发行版提供。
 不在应用首次启动时自动调用系统包管理器。受控桌面窗口还需可用的图形会话；普通浏览器模式保持原行为。
 
 ## 验证
 
 在目标平台运行 `tools/verify_release.py <归档路径>`。源码包验证重新安装开发依赖；便携包验证不会联网安装，
-只使用解压后的 Python、Playwright 自带 Node 驱动和完整 Chromium，检查文件哈希、符号链接、应用来源、基础包无 torch、
+使用解压后的 Python、Playwright 自带 Node 驱动和系统 Edge/Chrome，检查包内无浏览器组件、文件哈希、符号链接、应用来源、基础包无 torch、
 浏览器执行、依赖 RECORD 一致性、无词典时的中英文分词与日文明确报错、Office 转换、PDF 读写、隔离数据目录启动、重复启动拒绝、正常关停与备份恢复。
 Windows 验证去掉 PATH 中的开发 Python/Node/uv，Linux 验证使用标准系统命令目录。
-便携启动与构建、验证会清除继承的 `PLAYWRIGHT_NODEJS_PATH`，确保使用锁定 Playwright 自带的驱动。
+便携启动与构建、验证会清除继承的 `PLAYWRIGHT_NODEJS_PATH` 和 `PLAYWRIGHT_BROWSERS_PATH`，
+确保使用锁定 Playwright 自带的驱动与系统浏览器。隔离发行验证使用 `auto` 选择，不继承开发环境的 `TAVERN_` 设置。
 验证目录、报告和日志在受忽略的 `.cache/` 下，不使用个人数据。
 
 完整构建与验证仍按 [AGENTS.md](../../AGENTS.md) 的耗时和测试执行纪律运行；

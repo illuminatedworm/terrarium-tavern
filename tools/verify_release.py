@@ -84,7 +84,15 @@ def installation_environment(target: Path) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON", "PLAYWRIGHT_NODEJS_PATH"}
+        if key
+        not in {
+            "VIRTUAL_ENV",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "UV_PYTHON",
+            "PLAYWRIGHT_NODEJS_PATH",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        }
         and not key.startswith("TAVERN_")
     }
     env.update(
@@ -128,6 +136,8 @@ def verify(archive_path):
             member = archive.getmember(name)
             assert member.issym() and member.linkname == link
         if manifest.get("kind") == "portable":
+            assert manifest["browsers"] == {"source": "system", "channels": ["msedge", "chrome"]}
+            assert not any(name.startswith("runtime/browsers/") for name in names)
             assert not any("/sudachidict_core/" in name or "/sudachidict_core-" in name for name in names)
             for name in manifest["files"]:
                 if not name.endswith(".dist-info/RECORD"):
@@ -161,7 +171,6 @@ def verify(archive_path):
             system_paths.append(str(Path(system_paths[0]) / "WindowsPowerShell/v1.0"))
         # No developer Node/uv/Python on PATH: startup must use the extracted bundle.
         env["PATH"] = os.pathsep.join(system_paths)
-        env["PLAYWRIGHT_BROWSERS_PATH"] = str(target / "runtime/browsers")
         env["PYTHONNOUSERSITE"] = "1"
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with (output / "install.log").open("w", encoding="utf-8") as log:
@@ -183,8 +192,11 @@ def verify(archive_path):
                 python,
                 "-c",
                 "from playwright.sync_api import sync_playwright\n"
+                "from tavern.desktop_browser import system_browser\n"
+                "selected = system_browser()\n"
+                "print(selected)\n"
                 "with sync_playwright() as p:\n"
-                "    browser = p.chromium.launch(channel='chromium', headless=True, chromium_sandbox=True)\n"
+                "    browser = p.chromium.launch(**selected.launch_options, headless=True, chromium_sandbox=True)\n"
                 "    try:\n"
                 "        page = browser.new_page()\n"
                 "        assert page.evaluate('1 + 1') == 2\n"
@@ -291,7 +303,7 @@ def verify(archive_path):
         "fresh_venv": not portable,
         "fresh_npm_ci": not portable,
         "production_build": not portable,
-        "bundled_browser": portable,
+        "system_browser_execution": portable,
         "dependency_records": portable,
         "tokenizers_office_pdf": portable,
         "no_torch_startup": not manifest.get("retrieval", False),

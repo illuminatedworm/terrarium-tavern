@@ -66,6 +66,7 @@ fi
 tavern_sync=(sync --frozen)
 if $local_retrieval; then tavern_sync+=(--extra retrieval); fi
 "${tavern_uv[@]}" "${tavern_sync[@]}"
+.venv/bin/python -m tavern.desktop_browser
 if ! $skip_node_download; then .venv/bin/python tools/desktop_runtime.py node; fi
 source tools/desktop-env.sh
 for tavern_command in node npm; do
@@ -83,5 +84,4 @@ tavern_npm=(ci --registry=https://registry.npmjs.org)
 if $proxy_set; then tavern_npm+=("--proxy=$proxy" "--https-proxy=$proxy"); fi
 npm "${tavern_npm[@]}"
 npm run build
-.venv/bin/python -m playwright install chromium
 printf '%s\n' '安装完成。运行 ./start.sh，然后访问 http://127.0.0.1:51273'

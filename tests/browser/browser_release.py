@@ -15,6 +15,7 @@ from threading import Thread
 import httpx
 from playwright.async_api import async_playwright
 
+from tavern.desktop_browser import system_browser
 from tavern.scripting.network_guard import NETWORK_GUARD
 
 BASE = "http://127.0.0.1:8015"
@@ -82,7 +83,7 @@ async def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     errors, checked = [], []
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        browser = await p.chromium.launch(**system_browser().launch_options)
         for width, height, scale in [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]:
             # CSS viewport plus DPR covers 1080x2376 mobile pixels and the layout
             # of a 1920x1080 desktop at 200%; this is not native browser zoom.

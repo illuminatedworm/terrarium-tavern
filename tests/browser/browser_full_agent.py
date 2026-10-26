@@ -10,6 +10,7 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
+from tavern.desktop_browser import system_browser
 from tests.backend.test_full_agent import Model, handoff
 
 
@@ -48,7 +49,7 @@ async def main():
                 await asyncio.sleep(0.05)
             assert server.started
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 page = await browser.new_page(viewport={"width": 1440, "height": 900})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))

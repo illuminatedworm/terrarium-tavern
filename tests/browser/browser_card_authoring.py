@@ -16,6 +16,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.character.editor_attachments import attach_file
+from tavern.desktop_browser import system_browser
 from tavern.storage.store import dump
 from tests.backend.test_card_author import ToolLLM, fixture
 
@@ -43,7 +44,7 @@ async def main():
                     break
                 await asyncio.sleep(0.05)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 try:
                     page = await browser.new_page(viewport={"width": 1920, "height": 1080})
                     errors = []

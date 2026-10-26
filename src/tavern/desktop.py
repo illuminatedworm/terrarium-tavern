@@ -1,4 +1,4 @@
-"""Owned Chromium app window; untrusted cards cannot choose their isolation policy."""
+"""Owned system-browser window; cards cannot choose their isolation policy."""
 
 import asyncio
 import os
@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from tavern.desktop_browser import system_browser
 from tavern.scripting.network_guard import NETWORK_GUARD
 
 
@@ -29,10 +30,11 @@ class DesktopWindow:
         from playwright.async_api import Error as PlaywrightError
         from playwright.async_api import async_playwright
 
+        browser = system_browser()
         self.playwright = await async_playwright().start()
         self.context = await self.playwright.chromium.launch_persistent_context(
             self.profile,
-            channel="chromium",
+            **browser.launch_options,
             headless=self.headless,
             no_viewport=True,
             chromium_sandbox=True,

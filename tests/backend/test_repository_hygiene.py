@@ -59,6 +59,7 @@ def test_clean_install_does_not_inherit_live_environment_paths(monkeypatch):
         "PYTHONHOME",
         "PYTHONPATH",
         "PLAYWRIGHT_NODEJS_PATH",
+        "PLAYWRIGHT_BROWSERS_PATH",
         "TAVERN_PLATFORM",
         "TAVERN_DATA",
         "TAVERN_STARTUP_TOKEN",
@@ -71,12 +72,29 @@ def test_clean_install_does_not_inherit_live_environment_paths(monkeypatch):
     for key in ("UV_PROJECT", "UV_WORKING_DIR", "UV_PROJECT_ENVIRONMENT", "UV_PYTHON_INSTALL_DIR"):
         assert Path(env[key]).is_relative_to(target)
     assert Path(env["UV_PROJECT_ENVIRONMENT"]) == target / ".venv"
-    assert not {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON", "PLAYWRIGHT_NODEJS_PATH"} & env.keys()
+    assert (
+        not {
+            "VIRTUAL_ENV",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "UV_PYTHON",
+            "PLAYWRIGHT_NODEJS_PATH",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        }
+        & env.keys()
+    )
     assert not any(key.startswith("TAVERN_") for key in env)
     assert env["HTTPS_PROXY"] == before["HTTPS_PROXY"]
     build_env = build_environment()
     assert (
-        not {"VIRTUAL_ENV", "PYTHONHOME", "PYTHONPATH", "UV_PYTHON", "PLAYWRIGHT_NODEJS_PATH"}
+        not {
+            "VIRTUAL_ENV",
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "UV_PYTHON",
+            "PLAYWRIGHT_NODEJS_PATH",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        }
         & build_env.keys()
     )
     assert not any(key.startswith(("TAVERN_", "UV_PROJECT", "UV_WORKING_DIR")) for key in build_env)
@@ -98,34 +116,6 @@ def test_runtime_cache_rejects_changed_binary_without_replacing_it(tmp_path):
     with pytest.raises(ValueError, match="缓存校验失败"):
         download(artifact, tmp_path)
     assert cached.read_bytes() == b"changed binary"
-
-
-def test_browser_cache_excludes_runtime_logs_and_unrequested_components(tmp_path, monkeypatch):
-    import subprocess
-
-    from tools.package_portable import copy_browser_cache
-
-    cache = tmp_path / "cache with spaces"
-    required = cache / "chromium-1"
-    required.mkdir(parents=True)
-    (required / "INSTALLATION_COMPLETE").touch()
-    (required / "chrome.exe").write_bytes(b"browser binary")
-    (required / "debug.log").write_text("private runtime activity", encoding="utf-8")
-    unrelated = cache / "chromium_headless_shell-1"
-    unrelated.mkdir()
-    (unrelated / "profile.json").write_text("private profile", encoding="utf-8")
-
-    def probe(command, **kwargs):
-        assert command == ["python", "-m", "playwright", "install", "--dry-run", "--no-shell", "chromium"]
-        return subprocess.CompletedProcess(command, 0, stdout=f"  Install location: {required}\n")
-
-    monkeypatch.setattr(subprocess, "run", probe)
-    output = tmp_path / "bundle"
-    copy_browser_cache(Path("python"), cache, output, {})
-    assert (output / "chromium-1/chrome.exe").read_bytes() == b"browser binary"
-    assert not (output / "chromium-1/debug.log").exists()
-    assert not (output / "chromium_headless_shell-1").exists()
-    assert (required / "debug.log").is_file()
 
 
 def test_portable_pruning_preserves_runtime_licenses_and_matching_records(tmp_path):

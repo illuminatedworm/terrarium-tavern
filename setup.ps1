@@ -15,6 +15,8 @@ python -m pip install uv
 if ($LASTEXITCODE) { throw 'uv 安装失败' }
 if ($LocalRetrieval) { python -m uv sync --frozen --extra retrieval } else { python -m uv sync --frozen }
 if ($LASTEXITCODE) { throw 'Python 依赖安装失败' }
+& .venv/Scripts/python.exe -m tavern.desktop_browser
+if ($LASTEXITCODE) { throw '请先安装 Microsoft Edge 或 Google Chrome 稳定版。' }
 if (!$SkipNodeDownload) {
     & .venv/Scripts/python.exe tools/desktop_runtime.py node
     if ($LASTEXITCODE) { throw '内置 Node.js 准备失败' }
@@ -33,6 +35,4 @@ npm.cmd @tavernNpmArgs
 if ($LASTEXITCODE) { throw '前端依赖安装失败' }
 npm.cmd run build
 if ($LASTEXITCODE) { throw '前端构建失败' }
-& .venv/Scripts/python.exe -m playwright install chromium
-if ($LASTEXITCODE) { throw 'Chromium 安装失败' }
 Write-Host '安装完成。运行 .\点击开始.cmd，然后访问 http://127.0.0.1:51273'

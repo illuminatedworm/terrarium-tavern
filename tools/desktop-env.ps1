@@ -2,9 +2,8 @@
 $tavernPortable = Test-Path -LiteralPath (Join-Path $PSScriptRoot '../runtime/python/python.exe')
 if ($tavernPortable) {
     $tavernPython = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../runtime/python/python.exe'))
-    $env:PLAYWRIGHT_BROWSERS_PATH = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../runtime/browsers'))
     $env:PYTHONNOUSERSITE = '1'
-    Remove-Item Env:PYTHONHOME,Env:PYTHONPATH,Env:PLAYWRIGHT_NODEJS_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:PYTHONHOME,Env:PYTHONPATH,Env:PLAYWRIGHT_NODEJS_PATH,Env:PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
 } else {
     $tavernPython = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../.venv/Scripts/python.exe'))
     $tavernRuntimes = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../packaging/desktop/runtimes.json') -Raw | ConvertFrom-Json

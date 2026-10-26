@@ -17,6 +17,48 @@ from tavern.tracker.task import TrackerTask
 from tests.support.tracker_model import TrackerModel
 
 
+@pytest.mark.parametrize(
+    ("platform", "preferred", "edge", "chrome"),
+    [
+        (
+            "win32",
+            "msedge",
+            "user programs/Microsoft/Edge/Application/msedge.exe",
+            "system programs/Google/Chrome/Application/chrome.exe",
+        ),
+        ("linux", "chrome", "/opt/microsoft/msedge/msedge", "/opt/google/chrome/chrome"),
+    ],
+)
+def test_system_browser_selection_honors_explicit_choice(monkeypatch, platform, preferred, edge, chrome):
+    from tavern import desktop_browser
+
+    monkeypatch.setattr(desktop_browser.sys, "platform", platform)
+    monkeypatch.setenv("LOCALAPPDATA", "user programs")
+    monkeypatch.setenv("PROGRAMFILES", "system programs")
+    monkeypatch.delenv("PROGRAMFILES(X86)", raising=False)
+    monkeypatch.setenv("TAVERN_BROWSER", "auto")
+    paths = {"msedge": Path(edge), "chrome": Path(chrome)}
+    installed = set(paths.values())
+    monkeypatch.setattr(Path, "is_file", lambda path: path in installed)
+    selected = desktop_browser.system_browser()
+    assert selected.launch_options == {"channel": preferred, "executable_path": str(paths[preferred])}
+    other = "chrome" if preferred == "msedge" else "msedge"
+    monkeypatch.setenv("TAVERN_BROWSER", other)
+    assert desktop_browser.system_browser().channel == other
+    installed.remove(paths[other])
+    # An explicit choice must not quietly run a different engine/profile policy.
+    with pytest.raises(RuntimeError, match=f"TAVERN_BROWSER={other}"):
+        desktop_browser.system_browser()
+    monkeypatch.setenv("TAVERN_BROWSER", "auto")
+    assert desktop_browser.system_browser().channel == preferred
+    installed.remove(paths[preferred])
+    installed.add(paths[other])
+    assert desktop_browser.system_browser().channel == other
+    installed.clear()
+    with pytest.raises(RuntimeError, match="未找到系统安装"):
+        desktop_browser.system_browser()
+
+
 async def test_script_realms_block_webrtc_in_main_and_new_child_documents():
     from tavern.scripting.playwright_realm import PlaywrightBackend
 

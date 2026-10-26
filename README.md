@@ -105,11 +105,12 @@ Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本�
 | Python | — | 安装脚本通过 uv 自动准备 Python 3.13 与锁定依赖 |
 | Node.js | 22+ | 安装脚本默认下载固定版本二进制包（含 npm），也可使用系统 Node |
 | Git | — | 克隆仓库；也可直接下载并解压源码 |
+| Microsoft Edge / Google Chrome | 当前稳定版 | 桌面窗口和后台卡片脚本复用系统安装；不随包下载 Chromium |
 | NVIDIA GPU | 可选 | 仅本地向量检索与重排需要，须支持 CUDA |
 
 ### 安装并启动
 
-在项目根目录运行安装脚本。脚本会准备 Python 环境与依赖、内置 Node.js、构建前端并下载 Chromium。
+先安装 Microsoft Edge 或 Google Chrome 稳定版，再在项目根目录运行安装脚本。脚本会准备 Python 环境与依赖、内置 Node.js 和前端，并检查系统浏览器；不下载 Chromium。
 开发工具链长期保存在 `desktop-dev/`，开发仍使用标准 `.venv`；已有系统 Node 可选择跳过下载。
 Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携包](docs/development/desktop.md)。
 
@@ -135,15 +136,14 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 ./start.sh
 ```
 
-默认沿用环境中的代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定。若 Chromium 提示缺少系统库，运行以下命令补齐（按系统提示提供 sudo 权限）：
-
-```bash
-.venv/bin/python -m playwright install-deps chromium
-```
+默认沿用环境中的代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定。Linux 需先使用浏览器官方安装包准备 Chrome 或 Edge 稳定版及其系统依赖。
 
 </details>
 
 启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
+
+Windows 自动优先使用 Edge、其次 Chrome；Linux 优先 Chrome、其次 Edge。启动时显示实际浏览器路径。
+可用环境变量 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定；详见[浏览器选择](docs/development/desktop.md#系统浏览器)。
 
 > [!TIP]
 > 默认检索使用关键词与 BM25，CPU 即可运行。如需本地向量检索与重排，安装时添加 `-LocalRetrieval`（Windows）或 `--local-retrieval`（Linux），再到应用设置中下载并预热模型。模型 API 的代理在应用设置中单独配置。
@@ -195,7 +195,7 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 | 前端 | Vue 3 · TypeScript · Vite |
 | 后端 | Python · FastAPI · SQLite |
 | Agent 基座 | Kohaku Terrarium |
-| 卡片脚本 | 在隔离的 Chromium 中运行 |
+| 卡片脚本 | Playwright 驱动系统 Edge / Chrome，在隔离环境中运行 |
 
 ## 许可与致谢
 

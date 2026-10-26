@@ -18,6 +18,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
 
@@ -129,7 +130,7 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
         try:
             assert await asyncio.to_thread(ready.wait, 10), "测试服务启动超时"
             async with async_playwright() as p:
-                browser = await p.chromium.launch()
+                browser = await p.chromium.launch(**system_browser().launch_options)
                 try:
                     viewports = (
                         [(1920, 1080, 1)]

@@ -29,6 +29,11 @@ def main():
             backup(Store(Path(args.data)), Path(args.backup))
             print("备份完成")
         return
+    from tavern.desktop_browser import main as check_browser
+
+    # Desktop CLI preflight happens before opening the store. Android creates its
+    # app directly and keeps using its native WebView backend.
+    check_browser()
     os.environ["TAVERN_DATA"] = args.data
     import uvicorn
 

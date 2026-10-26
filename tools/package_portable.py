@@ -28,7 +28,14 @@ def build_environment():
     env = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "PLAYWRIGHT_NODEJS_PATH"}
+        if key
+        not in {
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+            "PLAYWRIGHT_NODEJS_PATH",
+            "PLAYWRIGHT_BROWSERS_PATH",
+        }
         and not key.startswith(("TAVERN_", "UV_PROJECT", "UV_WORKING_DIR", "UV_PYTHON"))
     }
     env.update(PYTHONUTF8="1", PYTHONNOUSERSITE="1")
@@ -78,56 +85,10 @@ def archive_tree(root, destination, target):
                 )
 
 
-def copy_browser_cache(python, cache, destination, env):
-    cache = cache.resolve()
-    probe_env = {**env, "PLAYWRIGHT_BROWSERS_PATH": str(cache)}
-    # Ask the installed, locked Playwright which platform-specific components it
-    # needs. Do not guess revisions or copy unrelated browsers/user profiles.
-    probe = subprocess.run(
-        [str(python), "-m", "playwright", "install", "--dry-run", "--no-shell", "chromium"],
-        env=probe_env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
-    locations = [
-        Path(line.split(":", 1)[1].strip())
-        for line in probe.stdout.splitlines()
-        if line.strip().startswith("Install location:")
-    ]
-    if not locations:
-        raise RuntimeError("无法识别所锁定 Playwright 的浏览器组件清单")
-    for source in locations:
-        if source.resolve().parent != cache or not (source / "INSTALLATION_COMPLETE").is_file():
-            raise ValueError(f"指定缓存缺少完整的固定浏览器组件：{source}")
-        # Chromium can write debug.log beside its executable even when its user
-        # profile lives elsewhere. Runtime logs/crash dumps are never release assets.
-        shutil.copytree(
-            source, destination / source.name, symlinks=True, ignore=shutil.ignore_patterns("*.log", "*.dmp")
-        )
-    return [source.name for source in locations]
-
-
-def finish_package(
-    app, requirements, *, target, destination, lock, version, retrieval, env, browser_cache=None
-):
+def finish_package(app, requirements, *, target, destination, lock, version, retrieval, env):
     runtime = app / "runtime"
     windows = target == "windows-x64"
     python = runtime / "python" / ("python.exe" if windows else "bin/python3")
-    env = {**env, "PLAYWRIGHT_BROWSERS_PATH": str(runtime / "browsers")}
-    if browser_cache is not None:
-        components = copy_browser_cache(python, Path(browser_cache), runtime / "browsers", env)
-    else:
-        subprocess.run(
-            [str(python), "-m", "playwright", "install", "--no-shell", "chromium"], env=env, check=True
-        )
-        components = sorted(p.name for p in (runtime / "browsers").iterdir() if not p.name.startswith("."))
-    browser_links = runtime / "browsers/.links"
-    if browser_links.exists():
-        # Playwright's GC links contain the staging interpreter's absolute path.
-        assert browser_links.resolve().is_relative_to(app.resolve())
-        shutil.rmtree(browser_links)
     for directory in ("LICENSE", "samples"):
         for path in (ROOT / directory).rglob("*"):
             relative = path.relative_to(ROOT)
@@ -191,10 +152,7 @@ def finish_package(
             "target": target,
             "retrieval": retrieval,
             "python": lock["python"]["version"],
-            "browsers": {
-                "source": "specified-cache" if browser_cache else "playwright-download",
-                "components": components,
-            },
+            "browsers": {"source": "system", "channels": ["msedge", "chrome"]},
         },
     )
     pending = destination.with_name(destination.name + ".part")
@@ -208,7 +166,7 @@ def finish_package(
     return destination
 
 
-def package(*, target=None, destination=None, retrieval=False, browser_cache=None):
+def package(*, target=None, destination=None, retrieval=False):
     native = host_target()
     target = target or native
     if target != native:
@@ -306,7 +264,6 @@ def package(*, target=None, destination=None, retrieval=False, browser_cache=Non
             version=version,
             retrieval=retrieval,
             env=env,
-            browser_cache=browser_cache,
         )
 
 
@@ -314,14 +271,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("windows-x64", "linux-x64"))
     parser.add_argument("--output", type=Path)
-    parser.add_argument(
-        "--browser-cache", type=Path, help="显式复用包含完整固定组件的 Playwright 程序缓存（只读）"
-    )
     parser.add_argument("--retrieval", action="store_true", help="随包安装锁定的 CUDA 检索依赖（体积较大）")
     args = parser.parse_args()
     package(
         target=args.target,
         destination=args.output,
         retrieval=args.retrieval,
-        browser_cache=args.browser_cache,
     )

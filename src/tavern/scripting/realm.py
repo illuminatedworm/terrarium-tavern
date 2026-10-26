@@ -1,7 +1,7 @@
 """Browser realm boundary for isolated card scripts.
 
 ScriptRuntime owns script orchestration; a backend only supplies isolated pages.
-Desktop uses Playwright Chromium. A backend must keep these guarantees:
+Desktop uses system Edge/Chrome through Playwright. A backend must keep these guarantees:
 
 - Each context is an isolated group with no service workers and no network.
   Every page request, including synchronous XHR, goes to its ``Resource``;

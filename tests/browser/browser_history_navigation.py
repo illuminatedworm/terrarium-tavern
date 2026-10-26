@@ -12,6 +12,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.full_agent.state import new_state
 from tavern.memories.memory import fingerprint
 from tavern.scripting.network_guard import NETWORK_GUARD
@@ -79,7 +80,7 @@ async def main():
             while not server.started:
                 await asyncio.sleep(0.05)
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 report["browser"] = browser.version
                 page = await browser.new_page(viewport={"width": 1440, "height": 900})
                 await page.context.add_init_script(NETWORK_GUARD)

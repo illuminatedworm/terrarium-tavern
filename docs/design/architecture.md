@@ -73,9 +73,9 @@ Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 
 
 CSP 与请求拦截之外，桌面 realm 在每个文档（含新建子 frame）执行前禁用 WebRTC 连接构造器，防止 ICE 流量绕过资源回调；Android realm 沿用原生宿主的文档起始网络限制。
 
-`ScriptRuntime` 与制卡 agent 的本地验证只通过 [realm.py](../../src/tavern/scripting/realm.py) 定义的后端接口操作隔离页面，接口说明列出各后端必须保持的隔离与加载约定；桌面后端为 [playwright_realm.py](../../src/tavern/scripting/playwright_realm.py) 的 Playwright Chromium。Android 使用 [android_realm.py](../../src/tavern/scripting/android_realm.py)，通过管道与独立的 WebView 进程通信：故事脚本使用 `:realm`，制卡验证与依赖打包使用 `:realm_tools`。页面拥有独立来源，网络请求只能由资源回调提供内容，不能访问主界面的 cookie、启动令牌或原生能力。脚本取消或超时时重置所在进程，该进程内的环境随之失效，新环境可重新启动；另一类进程不受影响。
+`ScriptRuntime` 与制卡 agent 的本地验证只通过 [realm.py](../../src/tavern/scripting/realm.py) 定义的后端接口操作隔离页面，接口说明列出各后端必须保持的隔离与加载约定；桌面后端为 [playwright_realm.py](../../src/tavern/scripting/playwright_realm.py)，由 Playwright 驱动系统 Edge/Chrome 稳定版，不随包附带浏览器。Android 使用 [android_realm.py](../../src/tavern/scripting/android_realm.py)，通过管道与独立的 WebView 进程通信：故事脚本使用 `:realm`，制卡验证与依赖打包使用 `:realm_tools`。页面拥有独立来源，网络请求只能由资源回调提供内容，不能访问主界面的 cookie、启动令牌或原生能力。脚本取消或超时时重置所在进程，该进程内的环境随之失效，新环境可重新启动；另一类进程不受影响。
 
-卡片的 ES 模块依赖先下载并固定内容，再由隔离页面中的 esbuild-wasm 打包。打包器只读取清单内的模块，并保留 lodash、jquery、zod、yaml 到兼容 SDK 全局对象的映射；缺失模块直接报错，不在打包期间联网。`npm run build:sdk` 同时打包脚本工具及其许可，应用运行时不需要 Node。
+卡片的 ES 模块依赖先下载并固定内容，再由隔离页面中的 esbuild-wasm 打包。打包器只读取清单内的模块，并保留 lodash、jquery、zod、yaml 到兼容 SDK 全局对象的映射；缺失模块直接报错，不在打包期间联网。`npm run build:sdk` 同时打包脚本工具及其许可，应用运行时不需要额外安装 Node.js；桌面仍使用 Playwright 自带的 Node 驱动。
 
 外部依赖先下载、哈希缓存和离线打包。卡级缓存及已落盘的旧会话依赖可以复用，解析后回填卡级清单；每个故事仍有自己的依赖清单。运行阶段不任意联网，兼容范围见[矩阵](../guides/compatibility.md)。
 
