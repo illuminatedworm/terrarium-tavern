@@ -13,12 +13,7 @@ import {
 import type { CardReferenceOption } from '../../lib/cardReferences';
 import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
 import { conversationModelProfile } from '../../lib/modelConnections';
-import {
-  conversationCacheRate,
-  conversationCacheRateTitle,
-  type ConversationCacheUsage,
-  type EditorContextStats,
-} from '../../lib/editorContextStats';
+import { type ConversationCacheUsage, type EditorContextStats } from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
 import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
@@ -40,6 +35,7 @@ import ConversationModelControls from '../settings/ConversationModelControls.vue
 import { type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
+import CacheRateStat from '../common/CacheRateStat.vue';
 import { handleComposerKeydown, sendShortcutHint, type SendShortcut } from '../../lib/composerShortcut';
 
 const props = defineProps<{
@@ -91,7 +87,6 @@ async function classifyChannel(channel_origin: Channel) {
 const contextStats = ref<EditorContextStats | null>(null);
 const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const statsError = ref('');
-const cacheRate = computed(() => conversationCacheRate(cacheUsage.value));
 const contextLabel = computed(
   () =>
     `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens${contextStats.value?.image_count ? ` · ${contextStats.value.image_count} 张图片未计入` : ''}`,
@@ -828,7 +823,7 @@ onBeforeUnmount(() => {
           <p class="composer-meta cw-composer-meta" aria-label="制卡上下文用量">
             <ChatGPTUsage :active="workspace?.channel_origin === 'chatgpt'" :error="error" />
             <span :title="contextTitle" :class="{ 'cw-stats-error': statsError }">{{ contextLabel }}</span>
-            <span :title="conversationCacheRateTitle">缓存命中率 {{ cacheRate }}</span>
+            <CacheRateStat :usage="cacheUsage" />
           </p>
         </form>
       </div>

@@ -861,6 +861,79 @@ p.context-footnote {
   white-space: normal;
   pointer-events: none;
 }
+.cache-rate-tip {
+  width: 236px;
+  padding: 10px 12px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-rate-tip header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+.cache-rate-tip header strong {
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.cache-rate-bar {
+  height: 4px;
+  margin: 7px 0 8px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 0.16);
+  overflow: hidden;
+}
+.cache-rate-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+.cache-rate-tip dl {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+.cache-rate-tip dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+}
+/* Hit and miss dots double as the bar legend. */
+.cache-rate-tip dl .hit dt::before,
+.cache-rate-tip dl .miss dt::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+.cache-rate-tip dl .miss dt::before {
+  background: rgb(255 255 255 / 0.16);
+}
+.cache-rate-tip dl .total {
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.cache-rate-tip dd {
+  margin: 0;
+  color: var(--text-primary);
+}
+.cache-rate-tip p {
+  margin: 8px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+}
 /* Shared transient notification surface, including modal dialogs. */
 .app-notification {
   position: fixed;

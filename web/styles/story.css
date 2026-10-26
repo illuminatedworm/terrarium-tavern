@@ -745,6 +745,21 @@
 .composer-stats-error {
   color: var(--warning);
 }
+.cache-rate-stat {
+  border-radius: var(--radius-xs);
+  cursor: help;
+}
+.cache-rate-stat strong {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.cache-rate-stat:hover strong {
+  color: var(--text-secondary);
+}
+.cache-rate-stat:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 /* Sits in the right gutter under the message-jump capsule (DialogueTools.vue), so
    it never covers the prose that scrolls beneath the composer. */
 .jump-latest {

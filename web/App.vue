@@ -24,11 +24,8 @@ import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
-import {
-  conversationCacheRate,
-  conversationCacheRateTitle,
-  type ConversationCacheUsage,
-} from './lib/editorContextStats';
+import CacheRateStat from './components/common/CacheRateStat.vue';
+import { conversationCacheRate, type ConversationCacheUsage } from './lib/editorContextStats';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -2995,7 +2992,7 @@ useTimedError(error);
                   :class="{ 'composer-stats-error': contextEstimateError }"
                   >{{ composerContextLabel }}</span
                 >
-                <span :title="conversationCacheRateTitle">缓存命中率 {{ cacheRateLabel }}</span>
+                <CacheRateStat :usage="cacheUsage" />
               </p>
             </div>
           </div>
