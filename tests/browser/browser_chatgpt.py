@@ -12,6 +12,7 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
+from tavern.desktop_browser import system_browser
 from tests.backend.chatgpt_fixtures import ACCESS, CLIENT, REFRESH, IdentityFixture
 from tests.browser.select_menu import choose_menu, choose_model, menu_option
 
@@ -101,7 +102,7 @@ async def main():
                 await asyncio.sleep(0.05)
             assert server.started
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 context = await browser.new_context(viewport={"width": 1920, "height": 1080})
                 page = await context.new_page()
                 page.on("pageerror", lambda error: errors.append(str(error)))

@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import ContextBlock, SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.search.retrieval_config import Provider
 from tavern.storage.request_debug import RequestDebugLog
 from tests.browser.select_menu import choose_menu, choose_model, menu_popup
@@ -124,7 +125,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                 frontend = (await asyncio.wait_for(vite.stdout.readline(), 15)).decode().strip()
                 assert frontend.startswith("http://127.0.0.1:"), frontend
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch()
+                browser = await playwright.chromium.launch(**system_browser().launch_options)
                 try:
                     page = await browser.new_page(viewport={"width": 1920, "height": 1080})
                     if models_only:

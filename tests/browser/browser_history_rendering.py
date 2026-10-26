@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.memories.memory_records import Record, source_hash
 from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
@@ -113,7 +114,7 @@ async def main(all_viewports=False):
             if not await asyncio.to_thread(ready.wait, 10):
                 raise RuntimeError("Browser fixture server did not start")
             async with async_playwright() as p:
-                browser = await p.chromium.launch()
+                browser = await p.chromium.launch(**system_browser().launch_options)
                 try:
                     viewports = [
                         (1440, 900, 1),

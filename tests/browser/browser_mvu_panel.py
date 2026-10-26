@@ -14,6 +14,7 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.desktop import DesktopWindow
+from tavern.desktop_browser import system_browser
 from tavern.scripting.network_guard import NETWORK_GUARD
 from tavern.storage.store import dump
 
@@ -93,7 +94,11 @@ async def main(all_viewports=False, host_only=False):
                 await asyncio.sleep(0.05)
             assert server.started
             async with async_playwright() as playwright:
-                browser = await playwright.chromium.launch() if not host_only else None
+                browser = (
+                    await playwright.chromium.launch(**system_browser().launch_options)
+                    if not host_only
+                    else None
+                )
                 try:
                     viewports = [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]
                     for index, (width, height, scale) in enumerate(

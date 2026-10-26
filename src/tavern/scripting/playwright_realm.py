@@ -1,7 +1,8 @@
-"""Desktop realm backend on Playwright's headless Chromium."""
+"""Desktop realm backend on an installed Edge/Chrome controlled by Playwright."""
 
 import asyncio
 
+from tavern.desktop_browser import system_browser
 from tavern.scripting.network_guard import NETWORK_GUARD
 
 
@@ -50,9 +51,18 @@ class PlaywrightBackend:
                 # Imported lazily so platforms without Playwright can load other backends.
                 from playwright.async_api import async_playwright
 
+                browser = system_browser()
                 self.playwright = await async_playwright().start()
-                # Share the full Chromium with DesktopWindow; portable bundles omit headless shell.
-                self.browser = await self.playwright.chromium.launch(channel="chromium", headless=True)
+                try:
+                    self.browser = await self.playwright.chromium.launch(
+                        **browser.launch_options, headless=True
+                    )
+                except BaseException:
+                    # A blocked system browser must not strand the Node driver;
+                    # the next user retry starts a fresh, explicitly selected browser.
+                    await self.playwright.stop()
+                    self.playwright = None
+                    raise
 
         async def route(route):
             result = resource(route.request.url, route.request.method)

@@ -12,6 +12,7 @@ from playwright.async_api import async_playwright, expect
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.desktop_browser import system_browser
 from tavern.storage.store import dump
 
 
@@ -68,7 +69,7 @@ async def main():
                     break
                 await asyncio.sleep(0.05)
             async with async_playwright() as p:
-                browser = await p.chromium.launch()
+                browser = await p.chromium.launch(**system_browser().launch_options)
                 try:
                     for width, height, scale in [
                         (2560, 1440, 1),

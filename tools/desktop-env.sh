@@ -3,8 +3,8 @@
 if [[ -x runtime/python/bin/python3 ]]; then
     tavern_portable=true
     tavern_python="$PWD/runtime/python/bin/python3"
-    export PLAYWRIGHT_BROWSERS_PATH="$PWD/runtime/browsers" PYTHONNOUSERSITE=1
-    unset PYTHONHOME PYTHONPATH PLAYWRIGHT_NODEJS_PATH
+    export PYTHONNOUSERSITE=1
+    unset PYTHONHOME PYTHONPATH PLAYWRIGHT_NODEJS_PATH PLAYWRIGHT_BROWSERS_PATH
 else
     tavern_portable=false
     tavern_python="$PWD/.venv/bin/python"
