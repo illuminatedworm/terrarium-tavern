@@ -111,6 +111,27 @@ Android 裁剪 Playwright、CUDA/Hugging Face 推理、MarkItDown/Magika/ONNX �
 
 ## 构建和安装
 
+### 版本号与内部序号
+
+Android 的两项版本配置均在 [`packaging/android/app/build.gradle`](../../packaging/android/app/build.gradle) 中维护：
+
+| 配置 | 用途 | 示例 |
+| --- | --- | --- |
+| `versionName` | 显示给用户的应用版本，采用三位版本号 | `0.8.0` |
+| `versionCode` | Android 比较安装包新旧的内部序号，必须是正整数 | `3` |
+
+两个值没有换算关系。相同的 `versionName` 可以对应先后打出的多个 APK；例如 `0.8.0 / 3`、`0.8.0 / 4`，以后应用升到 `0.9.0` 时内部序号继续用 `5`，不重置。Android 通常会阻止安装内部序号更低的旧包；覆盖升级还要求包名和签名相符。原理见 [Android 官方版本说明](https://developer.android.com/studio/publish/versioning)。
+
+本项目约定：
+
+- **用户每次明确要求打包 APK 时，先将 `versionCode` 在当前值上加一，再构建。** 读取并修改上述 Gradle 配置，作为后续递增的唯一记录；不从日期、Git 提交数或 APK 文件名推算。
+- 同一次打包要求内的构建失败重试、签名或校验重跑共用同一内部序号，不重复增加；已经使用的序号不回退。
+- 普通开发编译、自动验证、文档修改，以及仅讨论打包方式时不增加内部序号。
+- `versionName` 保持不变，除非用户另行要求升级应用版本；按[版本号基准](../../.agents/VERSIONING.md)同步维护应用版本。
+- 交付 APK 前核对包内的 `versionName`、`versionCode` 和签名；文件名附加对应的 `build<versionCode>`，并在交付说明中写明显示版本与内部序号。
+
+### 手动构建
+
 日常开发使用下一节的 `dev.py`。需要手动构建个人使用包时：
 
 ```powershell

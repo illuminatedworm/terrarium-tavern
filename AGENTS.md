@@ -35,6 +35,7 @@
 - [上下文与检索](.agents/CONTEXT_RETRIEVAL.md)——触发：世界书检索与召回、上下文编译、窗口或 compact、记忆覆盖、token 计数、请求编排。红线：宁缺毋滥，选中条目完整注入；记忆覆盖不足时不得裁剪；不以字节或字符冒充 tokens；保持请求前缀稳定。
 - [长期使用与发行](.agents/RELEASE.md)——触发：日志与缓存生命周期、清理、升级、打包发行、发行前或布局验收。红线：清理不删剧情、分支、恢复快照及活跃、待审核回合；数据库任何写入前检查格式，持久格式变化必须递增对应格式版本。
 - [版本号基准](.agents/VERSIONING.md)——仅在用户明确提及版本号、发版或打标签时查看；平时不自行提升版本号。
+- [Android 打包与版本](docs/development/android.md#版本号与内部序号)——Android 打包前先读。用户每次明确要求打包 APK 时，将 `packaging/android/app/build.gradle` 的 `versionCode` 加一；同一次要求内重试不重复增加，三位 `versionName` 保持不变，除非用户另行要求升级应用版本。
 
 ## 数据来源与用户可见性
 
