@@ -332,6 +332,10 @@ function receive(event: MessageEvent) {
 }
 window.addEventListener('message', receive);
 onMounted(() => {
+  // Suspension frees frames scrolled far out of a long history. The inspector's status
+  // panel sits outside the message list and stays live while its page is hidden.
+  const list = shell.value?.closest('.messages');
+  if (!list) return;
   observer = new IntersectionObserver(
     ([entry]) => {
       visible = entry.isIntersecting;
@@ -340,9 +344,9 @@ onMounted(() => {
         void build(true);
       } else requestSuspend();
     },
-    { root: shell.value?.closest('.messages') || null, rootMargin: '600px' },
+    { root: list, rootMargin: '600px' },
   );
-  if (shell.value) observer.observe(shell.value);
+  observer.observe(shell.value!);
 });
 onBeforeUnmount(() => {
   disposed = true;

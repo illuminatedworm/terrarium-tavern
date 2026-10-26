@@ -630,6 +630,17 @@ watch(
   },
   { immediate: true },
 );
+// The inspector pages mount when first shown for a story and then stay mounted, so
+// collapsing the inspector or visiting the advisor keeps the card status panel alive
+// instead of rebuilding its frame on every reopen.
+const inspectorSeen = ref('');
+watch(
+  [() => layout.value.rightCollapsed, inspectorTab, () => session.value?.id],
+  ([collapsed, tab, id]) => {
+    if (!collapsed && tab !== 'advisor' && id) inspectorSeen.value = id;
+  },
+  { immediate: true },
+);
 const leftSidebarClose = ref<HTMLButtonElement | null>(null);
 const mobileSidebarButton = ref<HTMLButtonElement | null>(null);
 const rightSidebarToggle = ref<HTMLButtonElement | null>(null);
@@ -3152,7 +3163,11 @@ useTimedError(error);
           @use-input="useAdvisorInput"
           @title="applyAdvisorTitle"
         />
-        <div v-if="!layout.rightCollapsed && inspectorTab !== 'advisor'" class="inspector-content">
+        <div
+          v-if="inspectorSeen === session.id"
+          v-show="inspectorTab !== 'advisor'"
+          class="inspector-content"
+        >
           <CacheBreakpointPanel
             v-if="inspectorTab === 'cache'"
             :session="session"
