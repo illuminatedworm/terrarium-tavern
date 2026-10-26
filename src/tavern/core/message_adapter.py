@@ -540,7 +540,7 @@ WIRE_FIELDS = {
 }
 
 
-def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=None):
+def project_context(context, settings, *, tools=None, managed=None):
     from tavern.core.tokens import count_text, message_tokens, request_tokens
 
     if tools is None:
@@ -573,7 +573,7 @@ def project_context(context, settings, *, tools=None, reasoning_cost=0, managed=
     for row, raw in zip(context["trace"], ordered, strict=True):
         if raw.get("native_replay"):
             row["content"] = raw["content"]
-    context["estimated_tokens"] = request_tokens(context["messages"], settings, tools) + reasoning_cost
+    context["estimated_tokens"] = request_tokens(context["messages"], settings, tools)
     if "tokens" in context:
         context["tokens"] = context["estimated_tokens"]
     context["budget_sources"] = {

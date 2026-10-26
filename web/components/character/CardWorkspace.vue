@@ -16,6 +16,7 @@ import { conversationModelProfile } from '../../lib/modelConnections';
 import {
   conversationCacheRate,
   conversationCacheRateTitle,
+  type ConversationCacheUsage,
   type EditorContextStats,
 } from '../../lib/editorContextStats';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
@@ -88,8 +89,9 @@ async function classifyChannel(channel_origin: Channel) {
   });
 }
 const contextStats = ref<EditorContextStats | null>(null);
+const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const statsError = ref('');
-const cacheRate = computed(() => conversationCacheRate(contextStats.value?.cache_usage));
+const cacheRate = computed(() => conversationCacheRate(cacheUsage.value));
 const contextLabel = computed(
   () =>
     `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens${contextStats.value?.image_count ? ` · ${contextStats.value.image_count} 张图片未计入` : ''}`,
@@ -187,6 +189,9 @@ watch(
 );
 watch(quickEffort, (value) => localStorage.setItem(`tavern-editor-effort-${props.conversationId}`, value));
 watch([input, quickEffort, () => props.modelProfile], () => scheduleStats());
+watch([busy, active], ([busy, active]) => {
+  if (!busy && !active) scheduleStats();
+});
 watch(items, (value) => {
   if (!value.some((c) => c.ref === selected.value)) selected.value = value[0]?.ref || '';
 });
@@ -242,10 +247,12 @@ function scheduleStats() {
   clearTimeout(statsTimer);
   if (!workspace.value?.channel_origin) return;
   statsTimer = setTimeout(async () => {
+    const running = busy.value || !!active.value;
     try {
       const value = await api(base + '/stats', { text: input.value, ...modelOptions() });
       if (!alive || version !== statsVersion) return;
       contextStats.value = value;
+      if (!running && !busy.value && !active.value) cacheUsage.value = value.cache_usage ?? null;
       statsError.value = '';
     } catch (error: any) {
       if (!alive || version !== statsVersion) return;
@@ -331,6 +338,8 @@ async function send(resume = false) {
     (!resume && !input.value.trim())
   )
     return;
+  ++statsVersion;
+  clearTimeout(statsTimer);
   await guard(async () => {
     const run = await api(base + '/runs', {
       text: input.value,

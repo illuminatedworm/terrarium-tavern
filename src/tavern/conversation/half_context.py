@@ -205,7 +205,7 @@ def apply_context(
     kemini = (
         [prefix_frames(settings.kemini), control_text(settings.kemini)] if settings.kemini.enabled else []
     )
-    policy = fingerprint([settings.reasoning_effort, settings.reasoning_format, purpose, layout, *kemini])
+    policy = fingerprint([purpose, layout, *kemini])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:

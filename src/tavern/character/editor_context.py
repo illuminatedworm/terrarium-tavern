@@ -11,7 +11,7 @@ from tavern.character.editor_reads import reconcile
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
-from tavern.core.tokens import count_text, request_tokens
+from tavern.core.tokens import request_tokens
 from tavern.scripting.native_response import portable
 from tavern.scripting.request_context import response_origin
 
@@ -33,8 +33,6 @@ class EditorContext:
             [
                 self.owner.cfg.card_author_config.system_prompt,
                 self.owner.definitions,
-                self.owner.cfg.reasoning_effort,
-                self.owner.cfg.reasoning_format,
                 self.owner.environment,
                 "message-attachments-v1",
             ]
@@ -270,16 +268,6 @@ class EditorContext:
             adapt_messages(runtime_messages(self.messages, "card_author"), self.owner.cfg)[0],
             self.owner.cfg,
             self.owner.definitions,
-        ) + sum(
-            count_text(
-                json.dumps(
-                    {k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m}
-                ),
-                self.owner.cfg,
-            )
-            for m in self.messages
-            if not m.get("_native_response")
-            and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning"))
         )
 
     def rollover(self):

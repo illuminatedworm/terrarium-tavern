@@ -105,6 +105,13 @@ def message_tokens(message, settings=None):
     }
     if extra:
         cost += count_text(json.dumps(extra, ensure_ascii=False, separators=(",", ":")), settings)
+    reasoning = {
+        key: message[key] for key in ("reasoning_content", "reasoning_details", "reasoning") if key in message
+    }
+    if reasoning:
+        # Count Unicode text rather than JSON's ASCII escape representation.
+        # Native attachments return above: never count their shadow fields twice.
+        cost += count_text(json.dumps(reasoning, ensure_ascii=False), settings)
     return cost
 
 

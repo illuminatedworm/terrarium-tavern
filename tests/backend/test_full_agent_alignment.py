@@ -1274,6 +1274,33 @@ def test_rebuild_retires_legacy_countdowns_and_keeps_tool_exchanges(monkeypatch,
     assert again["messages"] == rebuilt["messages"]
 
 
+def test_reasoning_change_preserves_full_agent_runtime_frames():
+    from tavern.full_agent.context_ledger import ContextLedger
+    from tavern.full_agent.state import new_state
+
+    cfg = config("responses")
+    document = {"name": "fixture"}
+    snapshot = {"full_agent": new_state()}
+    first = ContextLedger(cfg, [], [], document, snapshot, [], "input", {})
+    first.update("post", "完整后置要求")
+    records = copy.deepcopy(first.additions)
+    assistant = {
+        "role": "assistant",
+        "content": "完整正文",
+        "reasoning_content": "完整思考",
+        "_native_epoch": first.native_epoch,
+    }
+    cfg.reasoning_effort = "low"
+    cfg.reasoning_format = "reasoning"
+    second = ContextLedger(cfg, [], [], document, snapshot, records, "input", {})
+    assert second.reason is None and second.epoch == first.epoch
+    assert second.replay(records[1]) == records[1]
+    assert second.native_message(assistant) == assistant
+    assert not second.additions
+    changed = ContextLedger(cfg, [], [], {"name": "changed"}, snapshot, records, "input", {})
+    assert changed.reason == "context_sources_changed"
+
+
 def test_history_macro_change_rebuilds_once_and_records_why():
     from tavern.full_agent.state import new_state
 

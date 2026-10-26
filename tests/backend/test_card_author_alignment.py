@@ -2,13 +2,15 @@
 
 import copy
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import httpx
 import pytest
 
 from tavern.character.card_author import CardAuthorService
-from tavern.core.models import CardAuthorRequest
+from tavern.character.editor_context import EditorContext
+from tavern.core.models import CardAuthorRequest, Settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.backup import backup, restore
 from tavern.storage.maintenance import cleanup
@@ -319,7 +321,7 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             settings = editor.store.settings_document()
             settings.shared.card_author.reasoning_effort = "high"
             editor.store.save_settings(settings)
-            expected = "context_sources_changed"
+            expected = None
         elif change == "draft":
             doc = copy.deepcopy(editor.workspace["document"])
             doc["description"] = "手工改写设定"
@@ -357,6 +359,17 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             text, expected = "保留字面量 @D1", "literal_handle_collision"
         run = await editor.run([blocks("responses", "已处理")], text)
         events = editor.service.edits.events(run["id"])
+        if change == "reasoning":
+            assert not any(e["kind"] == "context_baseline" for e in events)
+            saved = editor.service.edits.context(editor.workspace["id"])
+            assert saved["epoch"] == before["epoch"]
+            assert saved["messages"][: len(before["messages"])] == before["messages"]
+            assert editor.wire(editor.requests[-1])[: len(editor.wire(editor.requests[0]))] == editor.wire(
+                editor.requests[0]
+            )
+            assert "encrypted_content" in json.dumps(editor.wire(editor.requests[-1]))
+            assert json.loads(editor.requests[-1].content)["reasoning"]["effort"] == "high"
+            return
         if change == "draft":
             assert not any(e["kind"] == "context_baseline" for e in events)
             saved = editor.service.edits.context(editor.workspace["id"])
@@ -385,6 +398,39 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
             assert saved["version"] == 4 and "last_call_notice" not in str(saved["messages"])
     finally:
         await editor.service.close()
+
+
+def test_editor_unicode_reasoning_only_rolls_over_at_actual_text_pressure():
+    cfg = Settings()
+    cfg.context_tokens = 12000
+    owner = SimpleNamespace(
+        cfg=cfg,
+        definitions=[],
+        environment=None,
+        edits=SimpleNamespace(messages=lambda wid: []),
+        tools=SimpleNamespace(overview=lambda: {"cards": []}),
+        wid="context",
+        rid="run",
+        working={"cards": [], "state": {}},
+        current_refs=[],
+        trace=[],
+        pending_calls=None,
+        reads={},
+        request={},
+    )
+    context = EditorContext(None, owner)
+    reasoning = '我会保留完整原文，核对工具结果。"下一步"\n' * 300
+    context.messages.append({"role": "assistant", "content": "已读取", "reasoning_content": reasoning})
+    messages = context.prepare()
+    assert not context.must_rollover
+    assert "pressure" not in context.frames
+    assert messages[1]["reasoning_content"] == reasoning
+    # Genuine pressure must still require rollover; do not fix overcounting by
+    # ignoring the reasoning payload or dropping any of its text.
+    context.messages[1]["reasoning_content"] = reasoning * 5
+    messages = context.prepare()
+    assert context.must_rollover
+    assert messages[1]["reasoning_content"] == reasoning * 5
 
 
 async def test_editor_context_commits_atomically_and_survives_cleanup_backup(tmp_path):

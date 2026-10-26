@@ -223,6 +223,26 @@ def test_kemini_order_survives_projection_and_turn_replay():
     assert story.cfg.message_adapter.mappings["gemini"]["state"].role == "system"
 
 
+def test_reasoning_change_keeps_writer_prefix_and_native_reply():
+    story = Story("responses")
+    first = story.compile()
+    native = attachment(
+        reply("responses", blocks("responses", "正文")),
+        response_origin(story.cfg),
+        {"role": "assistant", "content": "正文"},
+    )
+    story.commit(first, native=native)
+    story.cfg.reasoning_effort = "low"
+    story.cfg.reasoning_format = "reasoning"
+    second = story.compile()
+    assert second["context_ledger"]["rebuild_reason"] is None
+    assert second["context_ledger"]["epoch"] == first["context_ledger"]["epoch"]
+    assert second["messages"][: len(first["messages"])] == first["messages"]
+    assert next(m for m in second["messages"] if m.get("_native_response"))["_native_response"] == native
+    story.cfg.system_prompt += "\n新的系统规则"
+    assert story.compile()["context_ledger"]["rebuild_reason"] == "context_prefix_changed"
+
+
 def test_dynamic_sources_retain_prefix_and_compare_current_versions():
     story = Story()
     first = story.compile()

@@ -24,7 +24,11 @@ import { usesChatGPT } from './lib/chatgptAccounts';
 import { canRetryTurn } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
-import { conversationCacheRate, conversationCacheRateTitle } from './lib/editorContextStats';
+import {
+  conversationCacheRate,
+  conversationCacheRateTitle,
+  type ConversationCacheUsage,
+} from './lib/editorContextStats';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -290,6 +294,7 @@ function closePanel() {
 const startupModels = ref<StartupModels | null>(null);
 const modelWarmup = useModelWarmup(() => panel.value === 'warmup');
 const contextStats = ref<StoryContextPreview | null>(null);
+const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
 let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -912,9 +917,7 @@ function usageValue(usage: any, paths: string[]) {
   }
   return null;
 }
-const cacheRateLabel = computed(() =>
-  conversationCacheRate(contextEstimateError.value ? null : contextStats.value?.cache_usage),
-);
+const cacheRateLabel = computed(() => conversationCacheRate(cacheUsage.value));
 const composerContextLabel = computed(() => {
   const current = contextEstimateError.value
     ? '—'
@@ -981,6 +984,7 @@ async function refreshContextStats() {
   const request = ++contextStatsRequest;
   const sid = openStory().id,
     token = viewScope.current();
+  const running = busy.value;
   try {
     const [stats, records] = await Promise.allSettled([
       api(`/sessions/${sid}/preview`, {
@@ -993,6 +997,7 @@ async function refreshContextStats() {
     if (!viewScope.owns(token) || request !== contextStatsRequest) return;
     if (stats.status === 'fulfilled') {
       contextStats.value = stats.value;
+      if (!running && !busy.value) cacheUsage.value = stats.value.cache_usage ?? null;
       contextEstimateError.value = '';
     } else contextEstimateError.value = String(stats.reason?.message || stats.reason);
     if (records.status === 'fulfilled') workCount.value = records.value.total;
@@ -1017,6 +1022,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
   sessionCard.value = null;
   activeTurn.value = null;
   contextStats.value = null;
+  cacheUsage.value = null;
   contextEstimateError.value = '';
   clearTimeout(contextRefreshTimer);
   workCount.value = 0;
@@ -1155,6 +1161,7 @@ async function deleteSession(item: SessionSummary) {
       draft.value = '';
       trace.value = [];
       contextStats.value = null;
+      cacheUsage.value = null;
     }
     await load();
   });
@@ -1608,6 +1615,8 @@ async function submitStoryTurn(request: TurnRequest): Promise<TurnRecord | false
   }
   const sid = openStory().id,
     token = viewScope.current();
+  ++contextStatsRequest;
+  clearTimeout(contextRefreshTimer);
   busy.value = true;
   error.value = '';
   pendingInput.value = null;
@@ -1945,6 +1954,7 @@ async function inspectContext() {
       allow_content_edit: allowEdit.value,
     });
     contextStats.value = preview.value;
+    if (!busy.value) cacheUsage.value = preview.value!.cache_usage;
     contextEstimateError.value = '';
     panel.value = 'context';
   });

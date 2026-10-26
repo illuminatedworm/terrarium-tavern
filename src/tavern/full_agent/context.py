@@ -16,7 +16,7 @@ from tavern.conversation.variable_rules import collect_variable_rules, variable_
 from tavern.core.cache_policy import fingerprint
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
-from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
+from tavern.core.tokens import counting_info, message_tokens, request_tokens
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
@@ -409,18 +409,6 @@ def compile_window(
         adapted, _, _ = adapt_messages(typed, settings, managed=True)
         return [{k: v for k, v in m.items() if k in allowed_fields} for m in adapted]
 
-    reasoning_cost = sum(
-        count_text(
-            json.dumps(
-                {k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m},
-                ensure_ascii=False,
-            ),
-            settings,
-        )
-        for m in items
-        if not m.get("_native_response")
-        and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning"))
-    )
     active_notes = sum(note.get("status", "active") == "active" for note in state["notes"].values())
     archived_notes = len(state["notes"]) - active_notes
     memory_status = f"长期笔记：有效 {active_notes} 条，已归档 {archived_notes} 条。"
@@ -435,7 +423,7 @@ def compile_window(
     )
     if not complete_source:
         update("context_status", status)
-    tokens = request_tokens(wire(), settings, tools) + reasoning_cost
+    tokens = request_tokens(wire(), settings, tools)
     rollover_required = not complete_source and (force_rollover or tokens >= settings.context_tokens)
     if not complete_source and (
         rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio
@@ -471,7 +459,7 @@ def compile_window(
             else:
                 budget_item["content"] = content
                 budget_item["_runtime_context"]["value"] = value
-            updated = request_tokens(wire(), settings, tools) + reasoning_cost
+            updated = request_tokens(wire(), settings, tools)
             if updated == tokens:
                 break
             tokens = updated
@@ -482,7 +470,7 @@ def compile_window(
         # forced-tool request even before the next compilation sees force_rollover.
         tools = [tool for tool in tools if tool.get("function", tool)["name"] != TOOL_NAME]
     messages = wire()
-    tokens = request_tokens(messages, settings, tools) + reasoning_cost
+    tokens = request_tokens(messages, settings, tools)
     rows = [*items, *request_tail]
     result = {
         "messages": messages,
@@ -513,7 +501,7 @@ def compile_window(
     }
     result["context_ledger"] = ledger.audit()
     result["context_additions"] = copy.deepcopy(ledger.additions)
-    project_context(result, settings, tools=tools, reasoning_cost=reasoning_cost, managed=True)
+    project_context(result, settings, tools=tools, managed=True)
     if complete_source:
         from tavern.conversation.compaction import canonical
         from tavern.scripting.native_response import portable

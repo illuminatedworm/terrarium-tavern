@@ -73,3 +73,15 @@ def test_tool_definition_and_native_continuation_costs_are_included():
     ]
     assert request_tokens(messages, tools=tool) > request_tokens(messages) + 200
     assert request_tokens(continued, tools=tool) > request_tokens(messages, tools=tool) + 200
+    reasoning = "核对完整原文，再继续处理。" * 100
+    thought = {"role": "assistant", "content": "已核对", "reasoning_content": reasoning}
+    delta = request_tokens([thought]) - request_tokens(
+        [{k: v for k, v in thought.items() if k != "reasoning_content"}]
+    )
+    # Missing reasoning undercounts capacity; counting ASCII escapes instead of
+    # Chinese causes premature rollover. Keep both errors outside these bounds.
+    assert 500 < delta < 1600
+    native = {"items": [{"type": "thinking", "thinking": reasoning}]}
+    assert request_tokens([{**thought, "_native_response": native}]) == request_tokens(
+        [{"role": "assistant", "content": "已核对", "_native_response": native}]
+    )

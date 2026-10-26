@@ -27,15 +27,13 @@ class ContextLedger:
         self.origin = response_origin(settings)
         self.input_id = input_id
         window = snapshot["full_agent"]["window"]
-        signature = fingerprint(
-            {
-                "fixed": fixed,
-                "tools": tools,
-                "document": document,
-                "reasoning": [settings.reasoning_effort, settings.reasoning_format],
-                "removed_lore": [r for r in snapshot.get("lore_injections", []) if r.get("manually_removed")],
-            }
-        )
+        sources = {
+            "fixed": fixed,
+            "tools": tools,
+            "document": document,
+            "removed_lore": [r for r in snapshot.get("lore_injections", []) if r.get("manually_removed")],
+        }
+        signature = fingerprint(sources)
         previous = next(
             (m["_context_baseline"] for m in reversed(records) if m.get("_context_baseline")), None
         )
