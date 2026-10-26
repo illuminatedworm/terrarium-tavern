@@ -526,6 +526,18 @@ const sentCacheLabel = computed(() => {
 });
 const sceneSubmitting = ref<'memory' | null>(null);
 const storyView = ref<'dialogue' | 'work'>('dialogue');
+// Phones fold the header tools into a menu so the header stays one row (story.css).
+const storyToolsOpen = ref(false);
+function closeStoryToolsOnOutside(event: PointerEvent) {
+  if (storyToolsOpen.value && !(event.target as Element).closest('.story-tools-menu'))
+    storyToolsOpen.value = false;
+}
+// The phone menu replaces the floating search button, which would cover the prose.
+async function openDialogueFind() {
+  storyView.value = 'dialogue';
+  await nextTick();
+  window.dispatchEvent(new Event('tavern-dialogue-find'));
+}
 const sceneUpdating = computed(
   () => sceneSubmitting.value || (busy.value ? activeTurn.value?.request?.scene_refresh : null),
 );
@@ -2229,6 +2241,7 @@ onMounted(() => {
   mobileSidebarQuery.addEventListener('change', syncMobileSidebar);
   rightOverlayQuery.addEventListener('change', syncRightOverlay);
   document.addEventListener('pointerdown', closeDeleteOnOutside);
+  document.addEventListener('pointerdown', closeStoryToolsOnOutside);
   document.addEventListener('scroll', closeDeleteOnViewportChange, true);
   window.addEventListener('resize', closeDeleteOnViewportChange);
   guarded(async () => {
@@ -2259,6 +2272,7 @@ onBeforeUnmount(() => {
   clearOptionsNotice();
   clearTimeout(contextRefreshTimer);
   document.removeEventListener('pointerdown', closeDeleteOnOutside);
+  document.removeEventListener('pointerdown', closeStoryToolsOnOutside);
   document.removeEventListener('scroll', closeDeleteOnViewportChange, true);
   window.removeEventListener('resize', closeDeleteOnViewportChange);
   events?.close();
@@ -2563,41 +2577,67 @@ useTimedError(error);
               :title="workCount ? `${workCount} 条工作记录` : undefined"
               @click="storyView = 'work'"
             >
-              {{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}
+              <span class="tab-label-full">{{ isFullAgent ? 'Agent 工作记录' : '后台工作记录' }}</span
+              ><span class="tab-label-short">记录</span>
               <span v-if="busy" class="work-live-dot" aria-label="任务运行中"></span
               ><span v-else-if="workCount" class="tab-count" aria-hidden="true">{{ workCount }}</span>
             </button>
           </nav>
-          <div class="story-tools">
+          <div class="story-tools-menu" @keydown.esc="storyToolsOpen = false">
             <button
-              v-if="isFullAgent"
-              aria-label="窗口与笔记"
-              title="窗口与笔记"
-              @click="panel = 'context-management'"
+              class="story-tools-toggle"
+              aria-label="更多工具"
+              title="更多工具"
+              aria-controls="story-tools"
+              :aria-expanded="storyToolsOpen"
+              @click="storyToolsOpen = !storyToolsOpen"
             >
-              <Icon name="notebook" /><span class="tool-label">窗口与笔记</span>
+              <Icon name="more" />
             </button>
-            <button aria-label="变量与记忆" title="变量与记忆" @click="panel = 'state'">
-              <Icon name="braces" /><span class="tool-label">变量与记忆</span></button
-            ><button aria-label="上下文" title="上下文预览" @click="inspectContext">
-              <Icon name="layers" /><span class="tool-label">上下文</span></button
-            ><button
-              aria-label="剧情分支"
-              title="剧情分支：继承某条回复的进度另开对话"
-              :disabled="storyLocked"
-              @click="showForkPoints"
+            <div
+              id="story-tools"
+              class="story-tools"
+              :class="{ open: storyToolsOpen }"
+              @click="storyToolsOpen = false"
             >
-              <Icon name="branch" /><span class="tool-label">剧情分支</span></button
-            ><button
-              :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次请求'"
-              :disabled="storyLocked || previewMessagesBusy"
-              title="导出按当前分支和输入编译的下次请求 messages；只读预览不运行神经召回"
-              @click="exportNextMessages"
-            >
-              <Icon name="eye" /><span class="tool-label">{{
-                previewMessagesBusy ? '正在预览…' : '预览下次请求'
-              }}</span>
-            </button>
+              <button
+                class="story-tool-find"
+                aria-label="搜索对话"
+                title="搜索全部对话"
+                @click="openDialogueFind"
+              >
+                <Icon name="search" /><span class="tool-label">搜索对话</span>
+              </button>
+              <button
+                v-if="isFullAgent"
+                aria-label="窗口与笔记"
+                title="窗口与笔记"
+                @click="panel = 'context-management'"
+              >
+                <Icon name="notebook" /><span class="tool-label">窗口与笔记</span>
+              </button>
+              <button aria-label="变量与记忆" title="变量与记忆" @click="panel = 'state'">
+                <Icon name="braces" /><span class="tool-label">变量与记忆</span></button
+              ><button aria-label="上下文" title="上下文预览" @click="inspectContext">
+                <Icon name="layers" /><span class="tool-label">上下文</span></button
+              ><button
+                aria-label="剧情分支"
+                title="剧情分支：继承某条回复的进度另开对话"
+                :disabled="storyLocked"
+                @click="showForkPoints"
+              >
+                <Icon name="branch" /><span class="tool-label">剧情分支</span></button
+              ><button
+                :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次请求'"
+                :disabled="storyLocked || previewMessagesBusy"
+                title="导出按当前分支和输入编译的下次请求 messages；只读预览不运行神经召回"
+                @click="exportNextMessages"
+              >
+                <Icon name="eye" /><span class="tool-label">{{
+                  previewMessagesBusy ? '正在预览…' : '预览下次请求'
+                }}</span>
+              </button>
+            </div>
           </div>
         </header>
         <div v-if="!session.channel_origin" class="channel-notice" role="status">

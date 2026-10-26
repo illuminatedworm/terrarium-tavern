@@ -858,8 +858,43 @@ main {
   .rail {
     width: 64px;
   }
+  /* The inspector drawer keeps a slimmer rail and padding so its pages get the
+     width; labels drop their tracking to fit the narrower tabs. */
+  .inspector-rail {
+    width: 56px;
+  }
+  .inspector-rail .rail-tab,
+  .inspector-rail .rail-button {
+    width: 48px;
+  }
+  .inspector-rail .rail-tab {
+    letter-spacing: 0;
+  }
   .inspector-rail .rail-tab.active::before {
-    right: -6px;
+    right: -4px;
+  }
+  .inspector-content {
+    padding: 12px;
+    scrollbar-width: none;
+  }
+  .inspector-content::-webkit-scrollbar {
+    display: none;
+  }
+  .inspector-options-heading {
+    top: -12px;
+  }
+  /* An open inspector takes the whole phone width, closed from its rail, and the
+     card status panel runs edge to edge: card layouts crowd below ~300px. */
+  .right-sidebar-scrim {
+    display: none;
+  }
+  .right-sidebar:not(.collapsed) {
+    width: 100vw;
+    padding-left: var(--safe-left);
+    border-radius: 0;
+  }
+  .right-sidebar section[aria-label='MVU 变量'] > .frame-shell {
+    margin-inline: -12px;
   }
   .sidebar-scrim {
     display: block;

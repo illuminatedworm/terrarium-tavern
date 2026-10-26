@@ -608,24 +608,25 @@
     font-size: var(--fs-xs);
   }
 }
+/* Same 12px inset as the other inspector pages in the phone drawer. */
 @media (max-width: 620px) {
   .advisor-heading {
-    padding: 18px 16px 14px;
+    padding: 14px 12px 12px;
   }
   .advisor-connection {
-    margin: 0 16px 14px;
+    margin: 0 12px 12px;
   }
   .advisor-context-bar {
-    margin: 0 16px;
+    margin: 0 12px;
   }
   .advisor-controls {
-    margin: 0 16px 10px;
+    margin: 0 12px 10px;
   }
   .advisor-messages {
-    padding: 10px 16px 18px;
+    padding: 10px 12px 18px;
   }
   .advisor-compose-area {
-    padding: 12px 16px max(14px, env(safe-area-inset-bottom));
+    padding: 12px 12px max(14px, env(safe-area-inset-bottom));
   }
 }
 @media (prefers-reduced-motion: reduce) {

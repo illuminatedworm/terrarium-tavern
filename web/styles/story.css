@@ -131,6 +131,16 @@
     box-shadow: 0 0 0 6px rgb(var(--moss-rgb) / 0);
   }
 }
+/* Phones fold the tools into a menu (see the 620px rule); elsewhere the wrapper is
+   transparent to the header grid and the phone-only items stay hidden. */
+.story-tools-menu {
+  display: contents;
+}
+.story-tools-toggle,
+.story-tools .story-tool-find,
+.tab-label-short {
+  display: none;
+}
 .story-tools {
   display: flex;
   align-items: center;
@@ -1196,20 +1206,105 @@
   }
 }
 @media (max-width: 620px) {
-  /* The floating navigation and inspector buttons sit beside the title row only. */
+  /* One header row between the floating navigation and inspector buttons: the
+     portrait repeats in the first message, the tools open from a menu. */
   .story-heading {
-    padding: 10px 12px;
+    display: flex;
+    gap: 6px;
+    min-height: 60px;
+    padding: 10px 60px;
   }
   .story-title {
+    flex: 1;
     min-height: 40px;
-    margin: 0 50px;
+    margin: 0;
+  }
+  .story-heading .story-title .character-portrait {
+    display: none;
+  }
+  .story-view-tabs button {
+    gap: 5px;
+    padding: 4px 9px;
+  }
+  .tab-label-full {
+    display: none;
+  }
+  .tab-label-short {
+    display: inline;
+  }
+  .story-tools-menu {
+    position: relative;
+    display: block;
+    flex: none;
+  }
+  .story-tools-toggle {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-secondary);
+  }
+  .story-tools-toggle[aria-expanded='true'] {
+    background: var(--hover-wash);
+    color: var(--text-primary);
+  }
+  .story-tools {
+    display: none;
+  }
+  .story-tools.open {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 184px;
+    padding: 6px;
+    border: 1px solid var(--glass-edge-strong);
+    border-radius: var(--radius-md);
+    background: var(--glass-sheen), var(--glass-float);
+    -webkit-backdrop-filter: var(--glass-blur-strong);
+    backdrop-filter: var(--glass-blur-strong);
+    box-shadow: var(--glass-highlight), var(--shadow-pop);
+  }
+  .story-tools.open button {
+    width: auto;
+    height: 40px;
+    padding: 0 12px;
+    justify-content: flex-start;
+    gap: 10px;
+    color: var(--text-primary);
+    font-size: var(--fs-md);
+  }
+  .story-tools .tool-label,
+  .story-tools .story-tool-find {
+    display: inline-flex;
+  }
+  /* The prose reaches the history rail; the jump capsule floats over it only while
+     scrolling (DialogueTools.vue). */
+  .dialogue-viewport {
+    --dialogue-right-gutter: 30px;
+  }
+  /* A light trim of the composer: a lower model chip and tighter input margins. */
+  .composer .model-controls .select-menu.compact .select-menu-trigger {
+    min-height: 36px;
+  }
+  .composer .conversation-compose-frame .expandable-textarea.is-compact > .prompt-field > textarea {
+    margin: 2px 0 4px;
   }
   .message {
     padding-left: 0;
   }
+  /* Under the message's end, in the gap before the next one, clear of the rail. */
   .message > .cache-breakpoint-dot {
     left: auto;
-    right: -26px;
+    right: 0;
+    bottom: -26px;
   }
   .message.user > .message-body {
     padding: 10px 14px 8px;

@@ -28,6 +28,15 @@ let resizeObserver: ResizeObserver | undefined;
 let observedRow: Element | undefined;
 let pinnedResult = false;
 let frame = 0;
+// Phones give the jump capsule's gutter to the prose and show it only while reading
+// moves (see the 620px rule); wider layouts ignore this flag.
+const scrolling = ref(false);
+let scrollIdle: ReturnType<typeof setTimeout>;
+function revealJumps() {
+  scrolling.value = true;
+  clearTimeout(scrollIdle);
+  scrollIdle = setTimeout(() => (scrolling.value = false), 2000);
+}
 const cache = new Map<string, { source: string; text: string }>();
 const indexed = computed(() => {
   if (!open.value) return [];
@@ -244,6 +253,8 @@ watch(
       previous?.removeEventListener(event, releaseSearchPosition);
       scroller?.addEventListener(event, releaseSearchPosition, { passive: true });
     }
+    previous?.removeEventListener('scroll', revealJumps);
+    scroller?.addEventListener('scroll', revealJumps, { passive: true });
     observer = new MutationObserver(refreshHighlights);
     resizeObserver = new ResizeObserver(refreshHighlights);
     if (scroller) {
@@ -262,11 +273,13 @@ watch(
 onBeforeUnmount(() => {
   version++;
   clearTimeout(timer);
+  clearTimeout(scrollIdle);
   cancelAnimationFrame(frame);
   observer?.disconnect();
   resizeObserver?.disconnect();
   for (const event of ['wheel', 'touchstart', 'keydown'])
     props.scroller?.removeEventListener(event, releaseSearchPosition);
+  props.scroller?.removeEventListener('scroll', revealJumps);
   clearHighlights();
   window.removeEventListener('keydown', keyboard);
   window.removeEventListener('tavern-dialogue-find', show);
@@ -275,7 +288,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="active" class="dialogue-tools">
+  <div v-if="active" class="dialogue-tools" :class="{ 'jumps-idle': !scrolling }">
     <button
       v-if="!open"
       class="find-trigger"
@@ -488,10 +501,20 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-2xs);
 }
 @media (max-width: 620px) {
-  /* 20px + the 44px capsule fills the 64px gutter, clear of the history rail and the prose. */
-  .message-jumps,
-  .find-trigger {
+  /* The prose runs up to the history rail here, so the capsule floats over its edge
+     only while the reading position moves, and search lives in the header tool menu. */
+  .message-jumps {
     right: 20px;
+    transition:
+      opacity 150ms,
+      visibility 150ms;
+  }
+  .jumps-idle .message-jumps {
+    visibility: hidden;
+    opacity: 0;
+  }
+  .dialogue-tools .find-trigger {
+    display: none;
   }
   .dialogue-tools button {
     width: 36px;
