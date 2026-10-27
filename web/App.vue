@@ -19,6 +19,7 @@ import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNoti
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import { saveDownload } from './lib/download';
+import { androidHost } from './lib/hostCapabilities';
 import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
@@ -472,6 +473,10 @@ watch(composer, (element, previous) => {
 });
 const followLatest = ref(true);
 const readingPinned = ref(false);
+// Android gives the composer's strip back to the prose while the reader is away from
+// the latest message; it returns at the end, with the rewrite panel, or while focused
+// (story.css). The jump-to-latest arrow stays, so reaching the input is one tap.
+const composerTucked = computed(() => androidHost && !followLatest.value && !rewriteExpanded.value);
 const pendingReplyStart = ref('');
 const pageMode = ref(''),
   regenerateNote = ref(''),
@@ -3007,7 +3012,12 @@ useTimedError(error);
               带上原 AI 回复作为重写参考
             </label>
           </section>
-          <div ref="composer" v-show="storyView === 'dialogue'" class="composer">
+          <div
+            ref="composer"
+            v-show="storyView === 'dialogue'"
+            class="composer"
+            :class="{ tucked: composerTucked }"
+          >
             <div class="composer-inner">
               <button
                 v-if="!followLatest && !rewriteExpanded"

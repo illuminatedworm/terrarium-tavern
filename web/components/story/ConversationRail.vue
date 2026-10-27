@@ -506,6 +506,16 @@ onBeforeUnmount(() => {
   color: var(--text-faint);
   font-size: var(--fs-2xs);
 }
+/* Android: fainter at rest beside the prose, full strength while touched or previewing. */
+.android-host .conversation-rail {
+  opacity: 0.6;
+  transition: opacity var(--dur);
+}
+.android-host .conversation-rail:active,
+.android-host .conversation-rail:focus-visible,
+.android-host .conversation-rail-wrap:has(.rail-preview) .conversation-rail {
+  opacity: 1;
+}
 @media (max-width: 620px) {
   .conversation-rail-wrap {
     right: 1px;

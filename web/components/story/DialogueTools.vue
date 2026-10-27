@@ -5,6 +5,7 @@ import DOMPurify from 'dompurify';
 import { textMatches } from '../../lib/dialogueSearch';
 import type { HistoryMessage } from '../../lib/storyHistory';
 import { snapshotMacros } from '../../../compat/variable-macros';
+import { androidHost } from '../../lib/hostCapabilities';
 const props = defineProps<{
   messages: HistoryMessage[];
   persona?: string;
@@ -29,13 +30,14 @@ let observedRow: Element | undefined;
 let pinnedResult = false;
 let frame = 0;
 // Phones give the jump capsule's gutter to the prose and show it only while reading
-// moves (see the 620px rule); wider layouts ignore this flag.
+// moves (see the 620px rule); wider layouts ignore this flag. Android, where the
+// capsule is also smaller and fainter, lets it go sooner.
 const scrolling = ref(false);
 let scrollIdle: ReturnType<typeof setTimeout>;
 function revealJumps() {
   scrolling.value = true;
   clearTimeout(scrollIdle);
-  scrollIdle = setTimeout(() => (scrolling.value = false), 2000);
+  scrollIdle = setTimeout(() => (scrolling.value = false), androidHost ? 1200 : 2000);
 }
 const cache = new Map<string, { source: string; text: string }>();
 const indexed = computed(() => {
@@ -508,6 +510,27 @@ onBeforeUnmount(() => {
     transition:
       opacity 150ms,
       visibility 150ms;
+  }
+  /* Android: a smaller, fainter capsule over the prose edge, centred on the same
+     line as the jump-to-latest arrow (story.css). Unblurred, so the prose shows
+     through clearly instead of doubling against a translucent blur. */
+  .android-host .message-jumps {
+    right: 23px;
+    gap: 2px;
+    opacity: 0.5;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .android-host .message-jumps:active {
+    opacity: 1;
+  }
+  .android-host .message-jumps button {
+    width: 30px;
+    height: 30px;
+  }
+  .android-host .message-jumps svg {
+    width: 15px;
+    height: 15px;
   }
   .jumps-idle .message-jumps {
     visibility: hidden;

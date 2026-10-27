@@ -790,6 +790,34 @@
 .jump-latest:hover:not(:disabled) {
   background: var(--glass-float);
 }
+/* Android only (main.ts marks <html>): away from the latest message the composer
+   slides below the reading area unless it holds focus. Visibility hides its card
+   but not the jump arrow it carries, which settles above the bottom edge. */
+.android-host .composer {
+  transition: transform var(--dur) var(--ease-out);
+}
+.android-host .composer-inner {
+  transition:
+    box-shadow var(--dur) var(--ease-out),
+    visibility var(--dur);
+}
+.android-host .composer.tucked:not(:focus-within) {
+  transform: translateY(calc(100% - var(--safe-bottom)));
+}
+.android-host .composer.tucked:not(:focus-within) .composer-inner {
+  visibility: hidden;
+}
+.android-host .jump-latest {
+  visibility: visible;
+  opacity: 0.6;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: opacity var(--dur);
+}
+.android-host .jump-latest:active,
+.android-host .jump-latest:focus-visible {
+  opacity: 1;
+}
 .regeneration-panel {
   position: absolute;
   bottom: calc(var(--composer-height, 0px) + 10px);

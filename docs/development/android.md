@@ -40,6 +40,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 | [`android/platform.py`](../../src/tavern/android/platform.py) `open_browser` | `webbrowser` | 系统浏览器 Intent |
 | [`web/lib/download.ts`](../../web/lib/download.ts) | 普通下载链接 | 系统保存对话框 |
 | [`web/lib/hostCapabilities.ts`](../../web/lib/hostCapabilities.ts) | 卡片脚本照常运行 | WebView 不能隔离网络时暂停卡片脚本 |
+| [`web/lib/hostCapabilities.ts`](../../web/lib/hostCapabilities.ts) `androidHost` | `<html>` 无标记 | 加 `android-host`：游玩页输入框离开底部时收起，跳转胶囊、历史轨与跳到最新箭头更淡 |
 | [`LocalResourceSettings.vue`](../../web/components/settings/LocalResourceSettings.vue) | 下载 CUDA 模型 | 导入 GGUF、选择运行设备 |
 | [`web/styles/tokens.css`](../../web/styles/tokens.css) `--safe-*` | 恒为 0 | 宿主写入状态栏、手势条和挖孔内边距 |
 
