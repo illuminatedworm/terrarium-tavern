@@ -55,7 +55,11 @@ class PlaywrightBackend:
                 self.playwright = await async_playwright().start()
                 try:
                     self.browser = await self.playwright.chromium.launch(
-                        **browser.launch_options, headless=True
+                        # Playwright adds --no-sandbox unless this is explicitly true;
+                        # card scripts are untrusted and need the OS renderer sandbox.
+                        **browser.launch_options,
+                        headless=True,
+                        chromium_sandbox=True,
                     )
                 except BaseException:
                     # A blocked system browser must not strand the Node driver;
