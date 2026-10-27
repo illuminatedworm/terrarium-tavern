@@ -139,7 +139,15 @@ async def test_cancel_and_setup_failure_close_contexts(runtime, monkeypatch):
 
     monkeypatch.setattr(runtime_module, "script_source", unavailable)
     with pytest.raises(OSError, match="unavailable"):
-        await runtime.open({"name": "卡"}, [], {"state": {}, "scopes": {}}, False, host)
+        await runtime.open({"name": "卡"}, [], {"state": {}, "scopes": {}}, False, host, eager=True)
+    assert runtime.backend.browser.contexts == []
+    # A deferred session starts its realm on the first JavaScript call; that setup
+    # failure must close the context just like an eager open.
+    deferred = await runtime.open({"name": "卡"}, [], {"state": {}, "scopes": {}}, False, host)
+    with pytest.raises(OSError, match="unavailable"):
+        await deferred.call(
+            "transform", "正文", [{"findRegex": "/正/g", "replaceString": "x"}], 2, "display", 0
+        )
     assert runtime.backend.browser.contexts == []
 
 

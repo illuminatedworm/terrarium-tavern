@@ -54,7 +54,14 @@ class ScriptRuntime:
         prepare_markup=None,
         persona="用户",
         opening=False,
+        eager=False,
     ):
+        """Open a script session for one turn or action.
+
+        A card with no scripts, message scripts or MVU initialization gets a deferred
+        session that starts the realm only when a call needs JavaScript. ``eager`` is
+        for callers that drive the realm page or context directly.
+        """
         if not SDK.exists():
             raise ValueError("兼容 SDK 尚未构建，请先运行 npm run build")
         prefix = f"https://tavern.invalid/{secrets.token_urlsafe(24)}/"
@@ -90,56 +97,6 @@ class ScriptRuntime:
             )
             return body, "application/json"
 
-        context = await self.backend.new_context(resource)
-        try:
-            return await self._open_context(
-                context,
-                prefix,
-                messages,
-                document,
-                history,
-                snapshot,
-                allowed,
-                host,
-                scripts_override,
-                prepare_markup,
-                persona,
-                opening,
-            )
-        except BaseException:
-            # Setup failures and cancellation before install have the same lifetime
-            # boundary as script failures. No orphan browser contexts may survive.
-            await context.close()
-            raise
-
-    async def _open_context(
-        self,
-        context,
-        prefix,
-        messages,
-        document,
-        history,
-        snapshot,
-        allowed,
-        host,
-        scripts_override,
-        prepare_markup,
-        persona,
-        opening,
-    ):
-        # The page runs no script until runtime is bound below, so boundary never sees it unset.
-        async def boundary(method, args):
-            if method == "event":
-                return await runtime.dispatch(args["name"], args["args"])
-            return await host(method, args)
-
-        page = await context.open_page(
-            "<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline' data:; connect-src 'none'\"></head><body></body></html>",
-            boundary,
-        )
-        runtime = RuntimeSession(context, page, prefix, len(messages), self)
-        await page.add_script(script_source(SDK))
-        await page.add_script(script_source(SDK.parent / "mvu-core.js"))
         ext = normalize(document).get("extensions", {})
         scopes = copy.deepcopy(snapshot.get("scopes", {}))
         helper = ext.get("tavern_helper", {})
@@ -165,21 +122,80 @@ class ScriptRuntime:
                     .replace("{{user}}", persona)
                     .replace("{{char}}", normalize(document).get("name", ""))
                 )
+        scripts = scripts_override if scripts_override is not None else card_scripts(document)
+        frames = None
+        if not eager and not scripts:
+            # Without card scripts nothing observable runs before message frames,
+            # so preparing their markup first matches the realm's own order.
+            frames = list(message_frames(history, prepare_markup)) if allowed else []
+            greeting = history[0]["raw"] if opening and history else ""
+            if not frames and initialize_without_realm(data, greeting):
+                return DeferredSession(self, data, resource, prefix, len(messages), host)
+        context = await self.backend.new_context(resource)
         try:
-            await runtime.call("install", data, install=True)
-            scripts = scripts_override if scripts_override is not None else card_scripts(document)
+            return await self._open_context(
+                context,
+                prefix,
+                len(messages),
+                data,
+                document,
+                history,
+                scripts,
+                frames,
+                allowed,
+                host,
+                prepare_markup,
+                persona,
+                opening,
+            )
+        except BaseException:
+            # Setup failures and cancellation before install have the same lifetime
+            # boundary as script failures. No orphan browser contexts may survive.
+            await context.close()
+            raise
+
+    async def _start(self, context, prefix, history_length, host, data):
+        # The page runs no script until runtime is bound below, so boundary never sees it unset.
+        async def boundary(method, args):
+            if method == "event":
+                return await runtime.dispatch(args["name"], args["args"])
+            return await host(method, args)
+
+        page = await context.open_page(
+            "<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline' data:; connect-src 'none'\"></head><body></body></html>",
+            boundary,
+        )
+        runtime = RuntimeSession(context, page, prefix, history_length, self)
+        await page.add_script(script_source(SDK))
+        await page.add_script(script_source(SDK.parent / "mvu-core.js"))
+        await runtime.call("install", data, install=True)
+        return runtime
+
+    async def _open_context(
+        self,
+        context,
+        prefix,
+        history_length,
+        data,
+        document,
+        history,
+        scripts,
+        frames,
+        allowed,
+        host,
+        prepare_markup,
+        persona,
+        opening,
+    ):
+        runtime = await self._start(context, prefix, history_length, host, data)
+        try:
             if scripts and not allowed:
                 raise ValueError("此卡包含角色脚本，请在角色资料中启用脚本权限")
             if allowed:
                 await runtime.call("runScripts", scripts)
                 # Render message-local callbacks in server-owned sandboxes as well.
                 # DOM closures stay in their original realm; mutable event arguments round-trip.
-                for index, message in enumerate(history):
-                    html = message.get("display", message.get("raw", ""))
-                    if prepare_markup and "<" in html:
-                        html = prepare_markup(html)
-                    if "<script" not in html.lower():
-                        continue
+                for index, html in frames if frames is not None else message_frames(history, prepare_markup):
                     await runtime.add_message_frame(
                         html,
                         {
@@ -198,6 +214,97 @@ class ScriptRuntime:
         except BaseException:
             await runtime.close()
             raise
+
+
+def message_frames(history, prepare_markup):
+    """Yield (index, html) for history messages that mount a server-side frame."""
+    for index, message in enumerate(history):
+        html = message.get("display", message.get("raw", ""))
+        if prepare_markup and "<" in html:
+            html = prepare_markup(html)
+        if "<script" in html.lower():
+            yield index, html
+
+
+# generateSchema({}) in vendor/mvu/schema.ts when no previous schema exists.
+EMPTY_SCHEMA = {"type": "object", "properties": {}, "extensible": False, "recursiveExtensible": False}
+INITVAR_TAG = re.compile(r"<initvar\b[^>]*>[\s\S]*?</initvar\s*>", re.I)
+
+
+def initialize_without_realm(data, greeting):
+    """Apply initMvu in place when it provably changes nothing but defaults.
+
+    Mirrors mvu.ts ``initialize`` for a card without InitVar entries or opening
+    tags and with empty MVU data. Returns False when the realm must run it.
+    """
+    state = data["state"]
+    if (
+        any(is_initvar(entry) for entry in data["lore"])
+        or INITVAR_TAG.search(greeting)
+        or state.get("stat_data") not in (None, {})
+        or not all(
+            isinstance(state.get(key), (dict, type(None))) for key in ("initialized_lorebooks", "schema")
+        )
+    ):
+        return False
+    # JavaScript ||= assigns in place, so missing keys append in the same order.
+    for key, default in (("stat_data", {}), ("initialized_lorebooks", {}), ("schema", EMPTY_SCHEMA)):
+        if state.get(key) is None:
+            state[key] = copy.deepcopy(default)
+    if data["messages"]:
+        data["messages"][-1]["variables"] = copy.deepcopy(state)
+    return True
+
+
+class DeferredSession:
+    """Realm-equivalent session for a card whose JavaScript has nothing to do yet.
+
+    snapshot/update and the identity cases of transform/process follow runtime.ts on a
+    Python mirror. Any other call starts the realm and installs the current mirror:
+    with no scripts, listeners or message frames, that is exactly the state an eager
+    realm would hold at this point.
+    """
+
+    def __init__(self, owner, mirror, resource, prefix, history_length, host):
+        self.owner, self.mirror, self.resource = owner, mirror, resource
+        self.prefix, self.history_length, self.host = prefix, history_length, host
+        self.realm = None
+
+    async def _realm(self):
+        if self.realm is None:
+            context = await self.owner.backend.new_context(self.resource)
+            try:
+                self.realm = await self.owner._start(
+                    context, self.prefix, self.history_length, self.host, self.mirror
+                )
+            except BaseException:
+                await context.close()
+                raise
+        return self.realm
+
+    async def call(self, name, *args):
+        if self.realm is None:
+            if name == "snapshot":
+                return copy.deepcopy(self.mirror)
+            if name == "update":
+                self.mirror = copy.deepcopy(args[0])
+                return None
+            if name == "transform" and isinstance(args[1], list):
+                if all(isinstance(rule, dict) and rule.get("disabled") for rule in args[1]):
+                    return args[0]
+            if name == "process" and len(args) >= 3 and args[1] == [] and args[2] == "":
+                # No operations keep the state; MESSAGE_RECEIVED has no listener.
+                if self.mirror["messages"]:
+                    self.mirror["messages"][-1]["variables"] = copy.deepcopy(self.mirror["state"])
+                return {"text": args[0], **copy.deepcopy(self.mirror)}
+        return await (await self._realm()).call(name, *args)
+
+    async def add_message_frame(self, html, data, host):
+        await (await self._realm()).add_message_frame(html, data, host)
+
+    async def close(self):
+        if self.realm is not None:
+            await self.realm.close()
 
 
 class RuntimeSession:

@@ -525,3 +525,48 @@ async def test_upstream_differential_for_common_operations():
         if session:
             await session.close()
         await runtime.close()
+
+
+async def test_cards_without_scripts_defer_the_realm_with_identical_results():
+    # Deferred sessions reproduce runtime.ts install/initMvu/transform/process in
+    # Python; compare them with a real realm so SDK changes cannot drift silently.
+    document = {"name": "无脚本卡"}
+    snapshot = {"state": {}, "scopes": {}}
+    history = [
+        {"id": "greeting", "role": "assistant", "raw": "开场", "display": "开场", "snapshot": snapshot},
+        {"id": "input", "role": "user", "raw": "你好", "snapshot": snapshot},
+    ]
+    disabled = [{"findRegex": "/开场/g", "replaceString": "X", "disabled": True}]
+    enabled = [{"findRegex": "/开场/g", "replaceString": "X"}]
+
+    async def host(method, args):
+        return None
+
+    async def run(runtime, eager):
+        session = await runtime.open(document, history, snapshot, True, host, eager=eager)
+        try:
+            mirror = await session.call("snapshot")
+            steps = [
+                copy.deepcopy(mirror),
+                await session.call("transform", "开场", disabled, 2, "display", 0),
+            ]
+            mirror["messages"].append(
+                {"message_id": 2, "id": "reply", "role": "assistant", "message": "回复"}
+            )
+            await session.call("update", mirror)
+            steps.append(await session.call("process", "回复", [], ""))
+            assert (runtime.backend.browser is None) is not eager
+            # A regex rule needs JavaScript semantics, so the deferred session starts its realm here.
+            steps.append(await session.call("transform", "开场", enabled, 2, "display", 0))
+            steps.append(await session.call("snapshot"))
+            return steps
+        finally:
+            await session.close()
+
+    eager, deferred = ScriptRuntime(), ScriptRuntime()
+    try:
+        assert await run(deferred, False) == await run(eager, True)
+        assert deferred.backend.browser is not None
+    finally:
+        await eager.close()
+        await deferred.close()

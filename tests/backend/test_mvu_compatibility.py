@@ -23,7 +23,7 @@ async def host(*args):
 
 async def test_helper_namespace_scope_precedence_and_array_assignment(runtime):
     session = await runtime.open(
-        {"name": "变量卡"}, [], {"state": {}, "scopes": {}}, False, host, persona="玩家"
+        {"name": "变量卡"}, [], {"state": {}, "scopes": {}}, False, host, persona="玩家", eager=True
     )
     try:
         data = {

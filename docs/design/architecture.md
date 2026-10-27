@@ -70,6 +70,8 @@ Writer 每回合建立无工具 Creature，关闭基座自动 compact；Tracker 
 ## 脚本与资源隔离
 
 角色 HTML 运行于不含 `allow-same-origin` 的 sandbox iframe，桥接检查来源窗口和随机通道。服务端脚本 realm 阻止网络，不接触 API 密钥，每回合重新建立；持久数据必须通过变量 API 保存。
+卡片没有角色脚本、消息脚本、InitVar 且 MVU 数据为空时，回合先由 Runtime 按 SDK 语义在内存中维护镜像，
+遇到启用的正则、变量补丁或消息脚本才建立 realm 并装入当前镜像；结果与始终建立 realm 一致，不用 MVU 的对话因此不启动后台浏览器。
 
 CSP 与请求拦截之外，桌面 realm 在每个文档（含新建子 frame）执行前禁用 WebRTC 连接构造器，防止 ICE 流量绕过资源回调；Android realm 沿用原生宿主的文档起始网络限制。
 

@@ -137,6 +137,8 @@ async def test_card(store, item, index=0, samples=(), display_assertions=(), sta
             lambda html: dependencies.markup(source, html),
             persona="测试用户",
             opening=True,
+            # Display checks open frames on the session's own realm context.
+            eager=True,
         )
         mirror = await session.call("snapshot")
         checks.append(
