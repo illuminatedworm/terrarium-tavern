@@ -575,6 +575,24 @@
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
+.retry-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+.retry-choice > span:first-child {
+  flex: 1 1 16em;
+}
+.retry-choice-actions {
+  display: flex;
+  gap: 6px;
+}
+.retry-choice-actions button {
+  white-space: nowrap;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
 .composer .conversation-compose-frame {
   border-color: transparent;
   border-radius: var(--radius-lg);

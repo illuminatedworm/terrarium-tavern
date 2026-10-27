@@ -23,19 +23,26 @@ export function canRetryTurn(turn: RetryTurn | null, session: RetrySession | nul
       (turn.retry_head != null && turn.retry_head === session.head))
   );
 }
-export function canResumeTurn(
+/**
+ * Why a failed turn cannot continue its saved Full Agent progress; null when it can.
+ * Continuing is only ever an explicit choice, so the page shows this reason
+ * instead of silently starting the turn over.
+ */
+export function resumeBlocker(
   turn: Pick<TurnRecord, 'request' | 'resumable'>,
   session: Pick<Session, 'agent_mode' | 'revision'>,
   options: Pick<TurnRequest, 'allow_content_edit' | 'update_variables' | 'regenerate_include_reply'>,
-): boolean {
-  return (
-    session.agent_mode === 'full_agent' &&
-    turn.resumable &&
-    turn.request.expected_revision === session.revision &&
-    !!options.allow_content_edit === !!turn.request.allow_content_edit &&
-    !!options.update_variables === !!turn.request.update_variables &&
-    !!options.regenerate_include_reply === !!turn.request.regenerate_include_reply
-  );
+): string | null {
+  if (session.agent_mode !== 'full_agent' || !turn.resumable) return '本轮没有可继续的进度';
+  if (turn.request.expected_revision !== session.revision) return '会话设置已变更，只能重新开始本轮';
+  if (
+    !!options.allow_content_edit !== !!turn.request.allow_content_edit ||
+    !!options.update_variables !== !!turn.request.update_variables
+  )
+    return '本轮的设定或变量授权已改变，只能重新开始本轮';
+  if (!!options.regenerate_include_reply !== !!turn.request.regenerate_include_reply)
+    return '“带上原 AI 回复”选项已改变，只能重新开始本轮';
+  return null;
 }
 
 /** The composer stays the only source of the next input, including edits during review. */

@@ -1496,9 +1496,18 @@ class Store(MessageAdapters):
             resumable = r["status"] in ("error", "cancelled", "interrupted") and bool(
                 db.execute("SELECT 1 FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()
             )
+            # Consecutive failed continuations replay the same saved context, so
+            # the page can suggest a fresh start. Only the latest failed turn can
+            # be resumed, hence every link of the chain is itself a failure.
+            resume_failures = 0
+            source = r
+            while resumable and (previous := json.loads(source["request"]).get("resume_turn_id")):
+                resume_failures += 1
+                source = db.execute("SELECT request FROM turns WHERE id=?", (previous,)).fetchone()
             anchor = retry_head(db, r)
         result = dict(r)
         result["resumable"] = resumable
+        result["resume_failures"] = resume_failures
         result["retry_head"] = anchor
         for key in ("request", "preview", "pending"):
             result[key] = json.loads(result[key]) if result[key] else None

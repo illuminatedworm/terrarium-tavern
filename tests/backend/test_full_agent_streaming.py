@@ -166,7 +166,7 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
         ]
         assert current_text(current["snapshot"]["full_agent"]) == "已确认的工具进度"
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
-        assert any("本轮已输出正文" in m.get("content", "") for m in sent[2]["messages"])
+        assert any("已接收，不要再输出正文" in m.get("content", "") for m in sent[2]["messages"])
         assert json.dumps(sent[2]["messages"], ensure_ascii=False).count("最终正文") == 1
         kemini = settings.shared.kemini
         prefix = [

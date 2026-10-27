@@ -23,7 +23,7 @@ import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
-import { canResumeTurn, canRetryTurn, createTurnContinuation } from './lib/turnRetry';
+import { canRetryTurn, createTurnContinuation, resumeBlocker } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import CacheRateStat from './components/common/CacheRateStat.vue';
@@ -739,6 +739,41 @@ const storyLocked = computed(
 const retryableTurn = computed(() =>
   canRetryTurn(activeTurn.value, session.value) ? activeTurn.value : null,
 );
+// Continuing and starting over are separate, explicit choices; continuing
+// replays the saved context and can keep failing the same way.
+const canOfferResume = computed(() => isFullAgent.value && !!retryableTurn.value?.resumable);
+const resumeBlocked = computed(() =>
+  retryableTurn.value
+    ? resumeBlocker(retryableTurn.value, openStory(), {
+        allow_content_edit: allowEdit.value,
+        update_variables: updateVariables.value,
+        regenerate_include_reply: retryIncludeReply.value,
+      })
+    : null,
+);
+const suggestRestart = computed(() => (retryableTurn.value?.resume_failures ?? 0) >= 2);
+// Sending a new message while a Full Agent turn is unfinished waits for the
+// user's choice; the chosen retry then sends it once the turn is saved.
+const sendAfterRetry = ref(false);
+watch(
+  () => retryableTurn.value?.id,
+  () => (sendAfterRetry.value = false),
+);
+const retryStatus = computed(() => {
+  const turn = retryableTurn.value;
+  if (!turn) return '';
+  const parts = [
+    turn.request.expected_revision !== openStory().revision
+      ? '会话设置已变更，需按当前设置重新开始本轮。'
+      : turn.status === 'cancelled'
+        ? '本次生成已停止，草稿未提交。'
+        : '本次生成失败，正文与状态未提交。',
+  ];
+  if (canOfferResume.value && suggestRestart.value)
+    parts.push(`已连续 ${turn.resume_failures} 次继续仍未完成，建议重新开始本轮。`);
+  if (sendAfterRetry.value) parts.push('请先选择如何完成上一轮，保存成功后会自动发送输入框中的新发言。');
+  return parts.join('');
+});
 watch(
   () => activeTurn.value?.status,
   (status) => {
@@ -1355,30 +1390,25 @@ async function regenerateReply() {
     activeTurn.value?.status === 'awaiting_review'
   )
     return;
-  if (retryableTurn.value) await retryTurn();
+  if (retryableTurn.value) await retryTurn(false);
   else if (latestReply.value) await send('regenerate', latestReply.value, '', regenerateNote.value);
 }
-async function retryTurn(continueWithInput = false) {
+/** Resume keeps the saved progress; otherwise the same input starts over from the pre-turn state. */
+async function retryTurn(resume: boolean) {
   if (!retryableTurn.value || busy.value || variablePreferenceSaving.value || editingMessageId.value) return;
+  if (resume && resumeBlocked.value) return;
   const turn = retryableTurn.value;
-  const resumeFullAgent = canResumeTurn(turn, openStory(), {
-    allow_content_edit: allowEdit.value,
-    update_variables: updateVariables.value,
-    regenerate_include_reply: retryIncludeReply.value,
-  });
-  if (continueWithInput && !resumeFullAgent) {
-    notify('上一轮无法直接续接，请先用“重新生成”或编辑待提交输入完成本轮；新发言仍保留在输入框。');
-    return;
-  }
+  const sendNext = sendAfterRetry.value && !!input.value.trim();
   await submitStoryTurn(
     {
       ...turn.request,
       ...storyTurnOptions(),
-      regenerate_note: retryNote.value.trim(),
+      // The rewrite note belongs to starting over; a continuation keeps its own.
+      regenerate_note: resume ? turn.request.regenerate_note : retryNote.value.trim(),
       regenerate_include_reply: retryIncludeReply.value,
-      resume_turn_id: resumeFullAgent ? turn.id : null,
+      resume_turn_id: resume ? turn.id : null,
     },
-    continueWithInput,
+    sendNext,
   );
 }
 // Imported and blank cards both open in the shelf editor once the library reloads.
@@ -1635,7 +1665,7 @@ async function send(
   if (mode === 'send' && !value.trim()) return;
   if (mode === 'send' && isFullAgent.value && retryableTurn.value) {
     input.value = value;
-    await retryTurn(true);
+    sendAfterRetry.value = true;
     return;
   }
   const submitted = await submitStoryTurn({
@@ -2995,16 +3025,28 @@ useTimedError(error);
                     : '正在继续上一轮，成功保存后会自动发送输入框中的新发言。'
                 }}
               </p>
-              <p v-else-if="retryableTurn" class="composer-notice">
-                {{
-                  retryableTurn.request.expected_revision !== session.revision
-                    ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
-                    : retryableTurn.status === 'cancelled'
-                      ? '本次生成已停止，草稿未提交。'
-                      : '本次生成失败，正文与状态未提交。'
-                }}
-                <template v-if="isFullAgent">发送新发言会先尝试继续本轮，成功保存后再发送新发言。</template>
-              </p>
+              <div v-else-if="retryableTurn" class="composer-notice retry-choice" role="status">
+                <span>{{ retryStatus }}</span>
+                <span class="retry-choice-actions">
+                  <button
+                    v-if="canOfferResume"
+                    :class="{ quiet: suggestRestart }"
+                    :disabled="storyLocked || variablePreferenceSaving || !!resumeBlocked"
+                    :title="resumeBlocked || '保留已接收的正文和成功的工具结果，从中断处继续请求模型'"
+                    @click="retryTurn(true)"
+                  >
+                    继续本轮
+                  </button>
+                  <button
+                    :class="{ quiet: canOfferResume && !suggestRestart && !resumeBlocked }"
+                    :disabled="storyLocked || variablePreferenceSaving"
+                    title="放弃本次进度，用同一输入从本轮开始前的状态重新生成"
+                    @click="retryTurn(false)"
+                  >
+                    重新开始本轮
+                  </button>
+                </span>
+              </div>
               <div class="compose-box conversation-compose-frame">
                 <ExpandableTextarea
                   v-model="input"

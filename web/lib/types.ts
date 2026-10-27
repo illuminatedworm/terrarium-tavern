@@ -126,6 +126,8 @@ export interface TurnRecord {
   error: string | null;
   pending: JsonObject | null;
   resumable: boolean;
+  /** How many failed continuations in a row led to this turn. */
+  resume_failures: number;
   retry_head: string | null;
 }
 

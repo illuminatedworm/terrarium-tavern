@@ -892,7 +892,7 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
                 part
                 for message in bodies[2]["messages"]
                 for part in message["content"]
-                if "本轮正文与全部草稿已提交。" in part.get("text", "")
+                if "以上回合已完成，正文为 H" in part.get("text", "")
             )
             assert boundary["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
             assert json.dumps(bodies[2]).count("FINAL_NARRATIVE") == 1
@@ -903,7 +903,7 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
                 part
                 for message in bodies[2]["input"]
                 for part in message.get("content", [])
-                if isinstance(part, dict) and part.get("text") == "本轮正文与全部草稿已提交。"
+                if isinstance(part, dict) and part.get("text", "").startswith("以上回合已完成，正文为 H")
             )
             assert boundary["prompt_cache_breakpoint"] == {"mode": "explicit"}
             assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[2]["input"])
@@ -1356,7 +1356,7 @@ def test_committed_story_replays_only_final_model_text_without_draft_revocation(
     )
     sent = json.dumps(compiled["messages"], ensure_ascii=False)
     assert "[隐藏]" not in sent and sent.count("门开了。") == 1
-    assert "本轮正文与全部草稿已提交。" in sent
+    assert "以上回合已完成，正文为 H" in sent
     # A previous turn's delivery is history, not a draft this turn revokes.
     assert not any(m.get("source") == "roleplay_draft" for m in compiled["context_additions"])
 

@@ -94,6 +94,7 @@ TYPES = {
             scopes=("background",),
         ),
         MessageType("custom", "自定义注入", "tavern_custom_context", True, True),
+        MessageType("turn_commit", "回合完成标记", "tavern_turn_completed", True, True),
         *[
             MessageType(name, label, "tavern_" + name, True, True)
             for name, label in (
@@ -101,7 +102,6 @@ TYPES = {
                 ("regenerate_instruction", "重生成要求"),
                 ("turn_variable_instruction", "本轮变量要求"),
                 ("roleplay_draft", "本轮正文草稿"),
-                ("turn_commit", "剧情回合提交结果"),
                 ("context_status", "上下文状态"),
                 ("context_budget", "窗口预算提醒"),
                 ("reply_correction", "回复纠正要求"),

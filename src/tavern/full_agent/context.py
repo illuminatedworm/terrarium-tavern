@@ -286,7 +286,14 @@ def compile_window(
         else:
             # A text boundary can carry every provider's cache marker without
             # inventing a field on function_call arguments or repeating prose.
-            add("system", "本轮正文与全部草稿已提交。", "turn_commit", message_id=message["id"])
+            # Name the finished reply instead of "this turn": the marker sits right
+            # before the next input and must not read as an order for that turn.
+            add(
+                "system",
+                f"以上回合已完成，正文为 {message_ref(history_index + 1)}。",
+                "turn_commit",
+                message_id=message["id"],
+            )
         final = next((m for m in records if m.get("_full_agent_final")), None)
         if not complete_source and final and items and items[-1].get("message_id") == message["id"]:
             items[-1].update(
@@ -323,7 +330,10 @@ def compile_window(
     )
     update(
         "roleplay_draft",
-        f"本轮已输出正文 {message_ref(len(history) + 2)}。"
+        # Tool continuations and resumed turns read this frame; a second story is
+        # rejected, so it says how to finish instead of only stating progress.
+        f"本轮正文 {message_ref(len(history) + 2)} 已接收，不要再输出正文；"
+        "如有未完成的工具调用就继续，否则直接结束本次回复。"
         + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
         if story is not None
         else "",

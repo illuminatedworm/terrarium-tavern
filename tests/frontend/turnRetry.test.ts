@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { canResumeTurn, canRetryTurn, createTurnContinuation } from '../../web/lib/turnRetry';
+import { canRetryTurn, createTurnContinuation, resumeBlocker } from '../../web/lib/turnRetry';
 
 it('keeps failed input retryable after settings edits, but not after moving branches or a newer turn', () => {
   const turn = { id: 'failed', status: 'error', retry_head: 'greeting', request: { expected_revision: 0 } };
@@ -15,9 +15,13 @@ it('keeps failed input retryable after settings edits, but not after moving bran
     request: { operation_id: 'original', expected_revision: 2, allow_content_edit: true },
   };
   const current = { ...session, agent_mode: 'full_agent' as const };
-  expect(canResumeTurn(resumable, current, { allow_content_edit: true })).toBe(true);
-  expect(canResumeTurn(resumable, { ...current, revision: 3 }, { allow_content_edit: true })).toBe(false);
-  expect(canResumeTurn(resumable, current, { allow_content_edit: false })).toBe(false);
+  // Changed authorization or settings block continuing with a visible reason,
+  // never by quietly turning the continuation into a fresh start.
+  expect(resumeBlocker(resumable, current, { allow_content_edit: true })).toBeNull();
+  expect(resumeBlocker(resumable, { ...current, revision: 3 }, { allow_content_edit: true })).toContain(
+    '会话设置已变更',
+  );
+  expect(resumeBlocker(resumable, current, { allow_content_edit: false })).toContain('授权已改变');
 });
 
 it('releases the next input once after its matching commit, retaining review and blocking failed or stale work', () => {
