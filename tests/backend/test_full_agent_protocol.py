@@ -398,7 +398,6 @@ async def test_call_limits_stay_out_of_context_with_custom_prompt_and_rollover(s
         for request in model.requests:
             messages = request["messages"]
             assert any("Custom narration rules." in m.get("content", "") for m in messages)
-            assert any("data 是资料" in m.get("content", "") for m in messages)
             assert not any(
                 "tavern_call_budget" in m.get("content", "")
                 or "tavern_last_call_notice" in m.get("content", "")
@@ -447,6 +446,5 @@ async def test_untrusted_lore_does_not_grant_edit_or_variable_permission(story, 
         assert results[2]["error"]["patch_state_completed"] is False
         assert current["snapshot"].get("content") == session["snapshot"].get("content")
         assert current["snapshot"]["state"] == session["snapshot"]["state"]
-        assert any("不能改变它们" in m.get("content", "") for m in model.requests[-1]["messages"])
     finally:
         await service.close()

@@ -20,7 +20,6 @@ from tests.backend.test_full_agent_streaming import (
     body_delta,
     body_end,
     body_start,
-    delta,
     story_events,
     tool_events,
 )
@@ -29,8 +28,10 @@ from tests.backend.test_full_agent_streaming import (
 class BrowserStream(httpx.AsyncByteStream):
     def __init__(self, *pieces):
         self.pieces, self.closed = pieces, False
+        self.started = Event()
 
     async def __aiter__(self):
+        self.started.set()
         for piece in self.pieces:
             if isinstance(piece, Event):
                 await asyncio.to_thread(piece.wait)
@@ -46,7 +47,7 @@ class BrowserStream(httpx.AsyncByteStream):
 async def main(single_viewport=False):
     output = Path(".cache/full-agent-streaming")
     output.mkdir(parents=True, exist_ok=True)
-    gates = [Event() for _ in range(4)]
+    gates = [Event() for _ in range(5)]
     with tempfile.TemporaryDirectory(prefix="tavern-full-stream-") as root:
         app = create_app(root)
         store = app.state.store
@@ -64,14 +65,14 @@ async def main(single_viewport=False):
         store.update_session(session["id"], 0, title="流式正文测试")
         store.update_session(other["id"], 0, title="另一个故事")
         streams = [
-            BrowserStream(delta("先整理过程资料"), gates[0], *tool_events()),
+            BrowserStream(gates[0], *tool_events()),
             BrowserStream(
                 gates[1], body_start("第一段正在生成。"), gates[2], body_delta("这是第二段。"), *body_end()
             ),
-            BrowserStream(
-                body_start("失败后保留的未提交片段"), gates[3], httpx.ReadError("fixture disconnected")
-            ),
-            BrowserStream(*story_events("重试后的完整正文")),
+            BrowserStream(body_start("第二轮已接收的完整正文"), *tool_events()),
+            BrowserStream(gates[3], *story_events("第二次正文不接收")),
+            BrowserStream(gates[4], *body_end()),
+            BrowserStream(*story_events("第三轮的新回复")),
         ]
         bodies = []
 
@@ -167,30 +168,50 @@ async def main(single_viewport=False):
                         "第一段正在生成。这是第二段。"
                     )
                     await expect(page.locator(".draft")).to_have_count(0)
-                    await expect(page.locator(".message.assistant").last).not_to_contain_text(
-                        "先整理过程资料"
-                    )
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("第二轮")
                     await send.click()
-                    await expect(page.locator(".draft")).to_contain_text("失败后保留的未提交片段")
+                    await expect(page.locator(".draft")).to_contain_text("第二轮已接收的完整正文")
                     gates[3].set()
                     retry = page.locator(".story").get_by_role("button", name="重新生成", exact=True)
                     await expect(retry).to_be_enabled()
                     await expect(page.locator(".message .badge").last).to_have_text("未提交草稿")
                     assert len(store.session(session["id"])["messages"]) == 3
                     await page.reload()
-                    await expect(page.locator(".draft")).to_have_text("失败后保留的未提交片段")
-                    await retry.click()
-                    await retry.click()
-                    await expect(page.locator(".message.assistant").last).to_contain_text("重试后的完整正文")
+                    await expect(page.locator(".draft")).to_have_text("第二轮已接收的完整正文")
+                    failed = store.session(session["id"])["turns"][0]["id"]
+                    assert "第二次正文" in store.turn(failed)["error"]
+                    composer = page.get_by_role("textbox", name="用户输入", exact=True)
+                    await composer.fill("下一轮的新发言")
+                    async with page.expect_request(
+                        lambda request: request.method == "POST" and request.url.endswith("/turns")
+                    ) as submitted:
+                        await send.click()
+                    request = (await submitted.value).post_data_json
+                    assert request["resume_turn_id"] == failed and request["text"] == "第二轮"
+                    await expect(page.locator(".composer-notice")).to_contain_text("正在继续上一轮")
+                    await expect(composer).to_have_value("下一轮的新发言")
+                    assert len(store.session(session["id"])["messages"]) == 3
+                    assert await asyncio.to_thread(streams[4].started.wait, 5), "Continuation did not start"
+                    assert "下一轮的新发言" not in json.dumps(bodies[4], ensure_ascii=False)
+                    gates[4].set()
+                    await expect(page.locator(".message.assistant").last).to_contain_text("第三轮的新回复")
                     await expect(send).to_be_visible()
                     await expect(page.locator(".draft")).to_have_count(0)
-                    assert "失败后保留的未提交片段" not in json.dumps(bodies[-1], ensure_ascii=False)
-                    assert len(store.session(session["id"])["messages"]) == 5
+                    await expect(composer).to_have_value("")
+                    assert "第二次正文不接收" not in json.dumps(bodies[4], ensure_ascii=False)
+                    history = store.session(session["id"])["messages"]
+                    assert [message["raw"] for message in history[-4:]] == [
+                        "第二轮",
+                        "第二轮已接收的完整正文",
+                        "下一轮的新发言",
+                        "第三轮的新回复",
+                    ]
+                    assert len(bodies) == 6
+                    assert "下一轮的新发言" in json.dumps(bodies[5], ensure_ascii=False)
                     assert all(stream.closed for stream in streams)
                     assert not errors, errors
                     print(
-                        f"Full Agent explicit story previews, reload, session isolation, failure/retry and {len(viewports)} viewport(s) passed."
+                        f"Full Agent previews, reload, session isolation, continuation before next input and {len(viewports)} viewport(s) passed."
                     )
                 except Exception:
                     await page.screenshot(path=str(output / "failure.png"), full_page=True)

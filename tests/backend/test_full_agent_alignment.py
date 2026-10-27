@@ -37,7 +37,7 @@ def reply(api, items=None):
         return {
             "id": "msg_fixture",
             "model": "claude-opus-5-5",
-            "stop_reason": "end_turn",
+            "stop_reason": "tool_use" if any(p.get("type") == "tool_use" for p in items or []) else "end_turn",
             "content": items if items is not None else [{"type": "text", "text": "done"}],
             "usage": {
                 "input_tokens": 2,
@@ -839,7 +839,7 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
     store, service, session = game(tmp_path, api)
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
     requests, responses = [], []
-    tool_items = native_blocks(api)
+    tool_items = [p for p in native_blocks(api) if p["type"] not in ("text", "message")]
     final_items = (
         [
             {"type": "thinking", "thinking": "final thought", "signature": "final-signature"},
@@ -885,7 +885,7 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
             final = next(
                 m["content"]
                 for m in bodies[2]["messages"]
-                if any(p.get("input", {}).get("content") == "FINAL_NARRATIVE" for p in m["content"])
+                if any(p.get("text") == "FINAL_NARRATIVE" for p in m["content"])
             )
             assert final[0] == final_items[0]
             boundary = next(
@@ -1402,7 +1402,7 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
     import tavern.full_agent.agent as agent_module
 
     store, service, session = game(tmp_path, api)
-    requests, original = [], native_blocks(api)
+    requests, original = [], [p for p in native_blocks(api) if p["type"] not in ("text", "message")]
 
     def route(request):
         requests.append(json.loads(request.content))

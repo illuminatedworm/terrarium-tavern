@@ -27,6 +27,10 @@ def compact_response(text="OK", number=1):
 def long_story(store):
     from tavern.core.models import SessionCreate
 
+    config = store.settings_document()
+    config.full_agent.official_model.context_tokens = 10000
+    config.full_agent.official_model.reply_tokens = 1024
+    store.save_settings(config)
     card = store.import_card(
         json.dumps({"name": "Long fixture", "first_mes": "完整开场原文。" * 6000}).encode(), "long.json"
     )
@@ -150,6 +154,10 @@ async def test_channel_boundary_is_enforced_in_settings_creation_and_origin_assi
 
 async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_executes_them(tmp_path):
     store, _, _ = connected_store(tmp_path)
+    config = store.settings_document()
+    config.full_agent.official_model.context_tokens = 10000
+    config.full_agent.official_model.reply_tokens = 1024
+    store.save_settings(config)
     _, session = story(store, "full_agent")
     service = runtime(store)
     initial = Model(
@@ -302,7 +310,7 @@ async def test_local_handoff_repairs_total_limit_once_without_applying_failed_ed
     from tavern.full_agent.compaction import make_handoff
     from tavern.full_agent.handoff import HandoffError, HandoffWrite, apply_write, check_limits, render_text
 
-    settings = Settings()
+    settings = Settings(full_agent_config={"chapters_total_tokens": 4096})
     history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(20)]
     ledger = {"chapters": [], "current": [], "revision": 0}
     point = {"text": "a " * 410}
@@ -720,6 +728,10 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
     from tavern.core.models import TurnRequest
 
     store, _, _ = connected_store(tmp_path)
+    config = store.settings_document()
+    config.full_agent.official_model.context_tokens = 10000
+    config.full_agent.official_model.reply_tokens = 1024
+    store.save_settings(config)
     _, session = story(store, "full_agent")
     service = runtime(store)
     requests = []

@@ -8,7 +8,7 @@ import pytest
 from tavern.core.models import PersonaEdit, SessionCreate, Settings
 from tavern.memories.memory_protocol import References
 from tavern.memories.memory_records import read_memory
-from tavern.storage.store import Store
+from tavern.storage.store import SCHEMA_VERSION, Store
 
 
 def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
@@ -24,7 +24,7 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     assert reopened.settings().tracker_system_prompt == cfg.tracker_system_prompt
     assert reopened.session(session["id"]) == store.session(session["id"])
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "11"
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(SCHEMA_VERSION)
         assert dict((r[1], r[3]) for r in db.execute("PRAGMA table_info(sessions)"))["card_data"] == 1
 
 

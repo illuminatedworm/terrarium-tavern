@@ -444,7 +444,7 @@ async def test_index_job_publishes_incremental_counts(tmp_path, monkeypatch):
         await app.state.service.close()
 
 
-async def test_archive_recall_admits_relevant_episodes_into_their_own_frame():
+async def test_archive_recall_admits_relevant_episodes_into_their_own_frame(tmp_path):
     key = Record(
         id="key",
         category="episode",
@@ -524,6 +524,9 @@ async def test_archive_recall_admits_relevant_episodes_into_their_own_frame():
     rows = [{k: r[k] for k in ("id", "content", "keys", "comment")} for r in retrieval_entries(entries)]
     engine = RetrievalEngine.__new__(RetrievalEngine)
     settings = Settings(local_models={"reranker_enabled": True})
+    from tavern.search.japanese_dictionary import JapaneseDictionary
+
+    engine.dictionary = JapaneseDictionary(tmp_path, lambda: settings.network)
     engine.models = Reranker([0.2])
     rejected = await engine.recall_archive(rows, query, settings)
     assert rejected["ids"] == [] and rejected["diagnostics"][0]["id"] == "key"
@@ -559,7 +562,9 @@ async def test_lore_and_archive_publish_complete_vector_indexes_independently(tm
             "CREATE TABLE turns(id TEXT, session TEXT, status TEXT, created REAL, request TEXT, preview TEXT, draft TEXT)"
         )
         models = Models()
-        engine = RetrievalEngine(SimpleNamespace(connection=lambda: db), models)
+        engine = RetrievalEngine(
+            SimpleNamespace(connection=lambda: db, root=tmp_path, settings=Settings), models
+        )
         settings = Settings(retrieval={"channels": ["embedding"]}, local_models={"reranker_enabled": False})
         document = {
             "character_book": {

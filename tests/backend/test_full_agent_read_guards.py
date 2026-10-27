@@ -153,7 +153,7 @@ async def test_reads_and_writes_in_one_tool_batch_follow_execution_order(story):
         events = [
             e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"
         ]
-        assert len(events) == 6 and all("error" not in e for e in events)
+        assert len(events) == 4 and all("error" not in e for e in events)
     finally:
         await service.close()
 

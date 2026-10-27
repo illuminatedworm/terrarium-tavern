@@ -1,6 +1,6 @@
 # Android 开发
 
-Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一应用，故事数据保存在手机应用私有目录，不连接电脑后端。当前产物是私人安装用的 debug 签名 APK，不是公开发行。
+Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一应用，故事数据保存在手机应用私有目录，不连接电脑后端。GitHub Release 提供 debug 签名的侧载 APK，供个人安装使用，不用于应用商店发行。
 
 ## 设备范围
 

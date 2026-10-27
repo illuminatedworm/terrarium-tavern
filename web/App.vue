@@ -23,7 +23,7 @@ import { loreTitle } from './lib/loreBook';
 import type { ConversationModelSelection, SettingsDocument, SettingsObject } from './lib/settingsDocument';
 import { conversationModelProfile } from './lib/modelConnections';
 import { usesChatGPT } from './lib/chatgptAccounts';
-import { canRetryTurn } from './lib/turnRetry';
+import { canResumeTurn, canRetryTurn, createTurnContinuation } from './lib/turnRetry';
 import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import CacheRateStat from './components/common/CacheRateStat.vue';
@@ -334,6 +334,13 @@ const updatingTracker = computed(
 );
 const retryNote = ref(''),
   retryIncludeReply = ref(false);
+const turnContinuation = createTurnContinuation();
+const pendingContinuation = turnContinuation.pending;
+watch(
+  () => session.value?.id,
+  () => turnContinuation.cancel(),
+  { flush: 'sync' },
+);
 const storyLoad = ref<{ id: string; creating: boolean; name: string; error: string } | null>(null);
 watch(
   () => [session.value?.id ?? storyLoad.value?.id, activeTurn.value?.id, activeTurn.value?.status],
@@ -1351,23 +1358,28 @@ async function regenerateReply() {
   if (retryableTurn.value) await retryTurn();
   else if (latestReply.value) await send('regenerate', latestReply.value, '', regenerateNote.value);
 }
-async function retryTurn() {
+async function retryTurn(continueWithInput = false) {
   if (!retryableTurn.value || busy.value || variablePreferenceSaving.value || editingMessageId.value) return;
   const turn = retryableTurn.value;
-  const resumeFullAgent =
-    session.value?.agent_mode === 'full_agent' &&
-    turn.resumable &&
-    turn.request.expected_revision === openStory().revision &&
-    allowEdit.value === !!turn.request.allow_content_edit &&
-    updateVariables.value === !!turn.request.update_variables &&
-    retryIncludeReply.value === !!turn.request.regenerate_include_reply;
-  await submitStoryTurn({
-    ...turn.request,
-    ...storyTurnOptions(),
-    regenerate_note: retryNote.value.trim(),
+  const resumeFullAgent = canResumeTurn(turn, openStory(), {
+    allow_content_edit: allowEdit.value,
+    update_variables: updateVariables.value,
     regenerate_include_reply: retryIncludeReply.value,
-    resume_turn_id: resumeFullAgent ? turn.id : null,
   });
+  if (continueWithInput && !resumeFullAgent) {
+    notify('上一轮无法直接续接，请先用“重新生成”或编辑待提交输入完成本轮；新发言仍保留在输入框。');
+    return;
+  }
+  await submitStoryTurn(
+    {
+      ...turn.request,
+      ...storyTurnOptions(),
+      regenerate_note: retryNote.value.trim(),
+      regenerate_include_reply: retryIncludeReply.value,
+      resume_turn_id: resumeFullAgent ? turn.id : null,
+    },
+    continueWithInput,
+  );
 }
 // Imported and blank cards both open in the shelf editor once the library reloads.
 async function addLibraryCard(request: () => Promise<CardRecord>) {
@@ -1618,9 +1630,14 @@ async function send(
   text?: string,
   note = '',
 ) {
-  if (!session.value) return;
+  if (!session.value || busy.value || activeTurn.value?.status === 'awaiting_review') return;
   const value = text ?? input.value;
   if (mode === 'send' && !value.trim()) return;
+  if (mode === 'send' && isFullAgent.value && retryableTurn.value) {
+    input.value = value;
+    await retryTurn(true);
+    return;
+  }
   const submitted = await submitStoryTurn({
     ...storyTurnOptions(),
     text: value,
@@ -1631,7 +1648,7 @@ async function send(
   });
   if (submitted && mode === 'send' && input.value === value) input.value = '';
 }
-async function submitStoryTurn(request: TurnRequest): Promise<TurnRecord | false> {
+async function submitStoryTurn(request: TurnRequest, continueWithInput = false): Promise<TurnRecord | false> {
   if (!session.value || busy.value || sceneSubmitting.value || variablePreferenceSaving.value) return false;
   if (modelSaving.value || contextBusy.value || !session.value.channel_origin || !channelModelsReady.value) {
     notify(
@@ -1662,6 +1679,7 @@ async function submitStoryTurn(request: TurnRequest): Promise<TurnRecord | false
     regenerateIncludeReply.value = false;
     rewriteExpanded.value = false;
     workCount.value += 1;
+    if (continueWithInput) turnContinuation.start(turn.id, token);
     void scroll(true);
     observe(turn.id);
     return turn;
@@ -1752,9 +1770,14 @@ function observe(id: string) {
           followLatest.value = false;
         }
         await load();
-        await refreshContextStats();
+        if (!ownsTurn()) return;
+        // Install the committed session/revision before treating the composer
+        // as the next turn. Failed continuations never consume its input.
+        if (turnContinuation.finish(turn, token)) await send();
+        else await refreshContextStats();
       } catch (e: any) {
         if (ownsTurn()) {
+          turnContinuation.cancel();
           error.value = e.message;
           busy.value = false;
         }
@@ -1845,14 +1868,20 @@ async function startSceneRefresh(kind: 'memory') {
   }
 }
 async function stop() {
+  turnContinuation.cancel();
   if (activeTurn.value) await guarded(() => api(`/turns/${currentTurn().id}/cancel`, {}));
 }
 async function review(accept: boolean) {
   const sid = openStory().id,
     token = viewScope.current();
   await guarded(async () => {
-    await api(`/turns/${currentTurn().id}/review`, { accept });
-    if (viewScope.owns(token)) await openSession(sid);
+    const turn: TurnRecord = await api(`/turns/${currentTurn().id}/review`, { accept });
+    if (!viewScope.owns(token)) return;
+    const sendNext = turnContinuation.finish(turn, token);
+    const opening = openSession(sid),
+      openingToken = viewScope.current();
+    await opening;
+    if (sendNext && viewScope.owns(openingToken) && session.value?.id === sid) await send();
   });
 }
 function beginPendingEdit() {
@@ -2959,7 +2988,14 @@ useTimedError(error);
               >
                 <Icon name="arrow-down" :size="18" />
               </button>
-              <p v-if="retryableTurn" class="composer-notice">
+              <p v-if="pendingContinuation" class="composer-notice" role="status">
+                {{
+                  activeTurn?.status === 'awaiting_review'
+                    ? '上一轮等待审核，接受并保存后会自动发送输入框中的新发言。'
+                    : '正在继续上一轮，成功保存后会自动发送输入框中的新发言。'
+                }}
+              </p>
+              <p v-else-if="retryableTurn" class="composer-notice">
                 {{
                   retryableTurn.request.expected_revision !== session.revision
                     ? '会话设置已变更，点击“重新生成”将按当前设置重新开始本轮。'
@@ -2967,6 +3003,7 @@ useTimedError(error);
                       ? '本次生成已停止，草稿未提交。'
                       : '本次生成失败，正文与状态未提交。'
                 }}
+                <template v-if="isFullAgent">发送新发言会先尝试继续本轮，成功保存后再发送新发言。</template>
               </p>
               <div class="compose-box conversation-compose-frame">
                 <ExpandableTextarea

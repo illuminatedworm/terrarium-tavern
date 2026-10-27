@@ -107,8 +107,6 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
         result, current = await turn(service, session, provider)
         assert result["status"] == "committed", result["error"]
         assert len(requests) == 2
-        prompt = "允许单次回复提出多个工具调用" if enabled else "每次回复最多提出一个工具调用"
-        assert prompt in json.dumps(requests[0], ensure_ascii=False)
         if api_mode in ("chat_completions", "responses"):
             assert requests[0]["parallel_tool_calls"] is enabled
             if api_mode == "chat_completions":

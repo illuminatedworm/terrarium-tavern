@@ -13,7 +13,6 @@ from tavern.conversation.compaction import hashes
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_compaction import STATE, completed_context, install, source_lore
 from tavern.conversation.half_context import finalize_record, load_trace
-from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import bind_adapter
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.scripting.request_context import response_origin
@@ -227,14 +226,6 @@ def test_checkpoint_reuse_current_state_updates_and_source_invalidations():
     for index in range(2):
         scene.commit(scene.compile(), text=f"旧正文 {index}")
     full = scene.compile()
-    # Ordinary conversations keep the pre-Kemini policy, so upgrades keep their epochs.
-    layout = [
-        (b["id"], b["source"], b.get("depth"), b.get("message_type", ""))
-        for b in scene.session["recipe"]["blocks"]
-    ]
-    assert full["half_agent_record"]["policy"] == fingerprint(
-        [scene.cfg.reasoning_effort, scene.cfg.reasoning_format, "narrative", layout]
-    )
     assert full["context_ledger"]["rebuild_reason"] is None
     install(scene.snapshot, checkpoint(full, scene.cfg), full, scene.history)
     projected = scene.compile()

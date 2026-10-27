@@ -44,7 +44,7 @@ def test_legacy_database_is_backed_up_before_additive_plot_migration(story):
     reopened = Store(store.root)
     assert not reopened.session(session["id"])["plot_enabled"]
     assert reopened.session(session["id"])["snapshot"] == original
-    assert reopened.settings_document().full_agent.tools.plot_tokens == 4096
+    assert reopened.settings_document().full_agent.tools.plot_tokens == Settings().full_agent_config.plot_tokens
     backups = list(store.root.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
@@ -292,7 +292,7 @@ async def test_plot_api_edits_pause_clear_catalog_and_conflicts(story):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             state = (await client.get(path)).json()
             assert not state["plot_enabled"] and state["plot"] == {"text": "", "revision": 0}
-            assert state["plot_tokens"] == 4096
+            assert state["plot_tokens"] == store.settings("full_agent").full_agent_config.plot_tokens
             response = await client.put(
                 path + "/plot", json={"expected_revision": 0, "enabled": True, "content": "玩家大纲"}
             )

@@ -1,5 +1,6 @@
 """Release UI acceptance against a fresh, disposable store and local model stub."""
 
+import argparse
 import asyncio
 import json
 import os
@@ -20,6 +21,7 @@ from tavern.scripting.network_guard import NETWORK_GUARD
 
 BASE = "http://127.0.0.1:8015"
 OUTPUT = Path(".cache/release-validation")
+VIEWPORTS = [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -79,12 +81,12 @@ async def assert_viewport(page, label):
     assert dimensions["bodyHeight"] <= dimensions["height"], (label, dimensions)
 
 
-async def main():
+async def main(viewports=VIEWPORTS):
     OUTPUT.mkdir(parents=True, exist_ok=True)
     errors, checked = [], []
     async with async_playwright() as p:
         browser = await p.chromium.launch(**system_browser().launch_options)
-        for width, height, scale in [(2560, 1440, 1), (1920, 1080, 1), (360, 792, 3), (960, 540, 2)]:
+        for width, height, scale in viewports:
             # CSS viewport plus DPR covers 1080x2376 mobile pixels and the layout
             # of a 1920x1080 desktop at 200%; this is not native browser zoom.
             context = await browser.new_context(
@@ -192,7 +194,9 @@ async def main():
             await page.get_by_label("重新生成补充要求", exact=True).fill("更简洁")
             await page.locator(".regenerate-bar").get_by_role("button", name="重新生成", exact=False).click()
             await page.get_by_role("button", name="发送", exact=True).wait_for(timeout=30000)
-            await page.get_by_role("button", name="后台工作记录", exact=False).click()
+            await page.get_by_role("navigation", name="游玩界面").get_by_role(
+                "button", name=re.compile("记录")
+            ).click()
             await page.locator(".work-turn").first.wait_for()
             await assert_viewport(page, label + ":work-records")
             await page.get_by_role("button", name="返回对话", exact=True).click()
@@ -201,7 +205,10 @@ async def main():
                 ("剧情分支", "新建对话"),
                 ("上下文", "上下文预览"),
             ]:
-                await page.get_by_role("button", name=button, exact=False).first.click()
+                tool = page.get_by_role("button", name=button, exact=False).first
+                if not await tool.is_visible():
+                    await page.get_by_role("button", name="更多工具", exact=True).click()
+                await tool.click()
                 modal = page.get_by_role("dialog")
                 await modal.get_by_role("heading", name=title, exact=True).wait_for()
                 if title == "上下文预览":
@@ -243,7 +250,8 @@ async def main():
         await browser.close()
     assert not errors, errors
     report = {
-        "viewports": 4,
+        "viewports": len(viewports),
+        "viewport_sizes": viewports,
         "settings_pages": len(checked),
         "page_errors": errors,
         "checks": checked,
@@ -257,6 +265,15 @@ if __name__ == "__main__":
     from tavern.core.models import SessionCreate
     from tavern.storage.store import Store
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--viewport",
+        action="append",
+        choices=[f"{w}x{h}-dpr{s}" for w, h, s in VIEWPORTS],
+        help="仅复查指定视口，可重复传入；默认检查全部视口",
+    )
+    args = parser.parse_args()
+    selected = [v for v in VIEWPORTS if not args.viewport or f"{v[0]}x{v[1]}-dpr{v[2]}" in args.viewport]
     OUTPUT.mkdir(parents=True, exist_ok=True)
     provider = ThreadingHTTPServer(("127.0.0.1", 8016), Provider)
     thread = Thread(target=provider.serve_forever, daemon=True)
@@ -288,7 +305,7 @@ if __name__ == "__main__":
                         if process.poll() is not None:
                             raise RuntimeError("Release test server failed to start")
                         time.sleep(0.1)
-                asyncio.run(main())
+                asyncio.run(main(selected))
             finally:
                 try:
                     httpx.post(BASE + "/api/shutdown", json={"confirm": True}, trust_env=False, timeout=3)
