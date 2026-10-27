@@ -96,23 +96,35 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 快速开始
 
-Android 调试包内嵌 Python 后端与现有界面，数据保存在手机本地。首包面向 Android 9+、ARM64、4 KiB 内存页设备；本地向量与重排以 CPU 或兼容设备上的 OpenCL GPU／实验性 Hexagon NPU 运行固定的 Q8_0 GGUF，模型文件需单独导入。构建、安装及已知限制见 [Android APK](docs/development/android.md)。
+三种方式使用同一应用版本，按需选择：
 
-### 环境要求
+| 方式 | 适用 | 需要准备 |
+|:--|:--|:--|
+| **Windows 便携包** | 直接游玩，无需开发环境 | Edge 或 Chrome 稳定版 |
+| **源码安装** | Windows 或 Linux，跟进开发分支或自行修改 | Edge 或 Chrome 稳定版；安装脚本准备其余依赖 |
+| **Android APK** | 在手机上本地游玩 | Android 9+、ARM64、4 KiB 内存页 |
+
+所有桌面方式都复用系统安装的 Microsoft Edge 或 Google Chrome 稳定版运行桌面窗口与卡片脚本，不再下载 Chromium；仅有 WebView2 Runtime 不够。
+
+### Windows 便携包
+
+1. 安装 Edge 或 Chrome 稳定版（Windows 10/11 通常已自带 Edge）。
+2. 从 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.5) 下载 `terrarium-tavern-0.8.5-windows-x64.zip`，可用同名 `.sha256` 校验完整性。
+3. 解压到一个可写的新目录，双击 `点击开始.cmd`。
+
+便携包已含独立 Python、锁定依赖与界面，无需运行安装脚本。基础包不含 CUDA 检索依赖与模型权重；升级时解压到新目录，再用 `.\start.ps1 -Data '<原数据目录>'` 指向原数据目录或恢复备份，不要覆盖旧程序目录。
+
+### 源码安装
 
 | 依赖 | 版本 | 说明 |
 |:--|:--|:--|
 | Python | — | 安装脚本通过 uv 自动准备 Python 3.13 与锁定依赖 |
-| Node.js | 22+ | 安装脚本默认下载固定版本二进制包（含 npm），也可使用系统 Node |
+| Node.js | 22+ | 安装脚本默认下载固定版本二进制包（含 npm）；已有系统 Node 可加 `-SkipNodeDownload` / `--skip-node-download` |
 | Git | — | 克隆仓库；也可直接下载并解压源码 |
-| Microsoft Edge / Google Chrome | 当前稳定版 | 桌面窗口和后台卡片脚本复用系统安装；不随包下载 Chromium |
+| Microsoft Edge / Google Chrome | 当前稳定版 | 需先自行安装；安装脚本只检查，不下载 |
 | NVIDIA GPU | 可选 | 仅本地向量检索与重排需要，须支持 CUDA |
 
-### 安装并启动
-
-先安装 Microsoft Edge 或 Google Chrome 稳定版，再在项目根目录运行安装脚本。脚本会准备 Python 环境与依赖、内置 Node.js 和前端，并检查系统浏览器；不下载 Chromium。
-开发工具链长期保存在 `desktop-dev/`，开发仍使用标准 `.venv`；已有系统 Node 可选择跳过下载。
-Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携包](docs/development/desktop.md)。
+在项目根目录运行安装脚本，再启动服务。开发工具链长期保存在 `desktop-dev/`，不要当作缓存清理；从旧版本升级后须重新运行安装脚本。
 
 <details open>
 <summary><b>Windows（PowerShell）</b></summary>
@@ -122,9 +134,7 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 .\点击开始.cmd
 ```
 
-以上命令使用直连。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
-
-省略 `-Proxy` 时沿用调用环境中的代理。应用内代理默认为空，需要时在通用设置中单独配置。
+以上命令使用直连下载。需要代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`；省略 `-Proxy` 时沿用调用环境中的代理。
 
 </details>
 
@@ -136,33 +146,41 @@ Windows/Linux 便携包的构建方式和平台要求见[桌面开发与便携�
 ./start.sh
 ```
 
-默认沿用环境中的代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定。Linux 需先使用浏览器官方安装包准备 Chrome 或 Edge 稳定版及其系统依赖。
+默认沿用环境中的代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定，`--proxy ''` 选择直连。需先使用浏览器官方安装包准备 Chrome 或 Edge 稳定版及其系统依赖。本次不提供 Linux 二进制包。
 
 </details>
 
-启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
-
-Windows 自动优先使用 Edge、其次 Chrome；Linux 优先 Chrome、其次 Edge。启动时显示实际浏览器路径。
-可用环境变量 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定；详见[浏览器选择](docs/development/desktop.md#系统浏览器)。
-
 > [!TIP]
-> 默认检索使用关键词与 BM25，CPU 即可运行。如需本地向量检索与重排，安装时添加 `-LocalRetrieval`（Windows）或 `--local-retrieval`（Linux），再到应用设置中下载并预热模型。模型 API 的代理在应用设置中单独配置。
+> 默认检索使用关键词与 BM25，CPU 即可运行。如需本地向量检索与重排，安装时添加 `-LocalRetrieval`（Windows）或 `--local-retrieval`（Linux），再到应用设置中下载并预热模型。
 
-端口、数据目录、备份与升级见[安装与维护](docs/guides/maintenance.md)；本地模型配置见[世界书检索](docs/guides/retrieval.md)。
+### Android APK
+
+从同一 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.5) 下载 `terrarium-tavern-0.8.5-android-arm64-build6.apk` 安装。APK 内嵌 Python 后端与现有界面，数据保存在手机本地；使用 debug 签名，覆盖升级需签名一致，更新前先导出个人备份。本地向量与重排需单独导入固定的 Q8_0 GGUF 模型，GPU/NPU 加速另需 Android 14+。设备范围、构建方式与已知限制见 [Android APK](docs/development/android.md)。
+
+### 启动之后
+
+桌面版启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**（默认端口自 v0.8.5 起改为 51273）。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
+
+- **浏览器选择**：Windows 优先 Edge、其次 Chrome；Linux 优先 Chrome、其次 Edge，启动时显示实际路径。可用环境变量 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定，见[系统浏览器](docs/development/desktop.md#系统浏览器)。
+- **日文词典**：中英文检索不需要。含日文的故事首次检索时自动联网下载；离线使用请提前在「设置 → 通用 → 本地资源」导入，见[日文词典](docs/guides/retrieval.md#日文词典)。
+- **代理**：安装脚本的代理只作用于安装过程。应用内代理默认为空，模型接口与资源下载的代理在「设置 → 通用 → 联网与代理」单独配置。
+
+端口、数据目录、备份与升级见[安装与维护](docs/guides/maintenance.md)；便携包构建与平台要求见[桌面开发与便携包](docs/development/desktop.md)；本地模型配置见[世界书检索](docs/guides/retrieval.md)。
 
 ## 上手指南
 
-1. **配置模型** — 在「设置 → 通用 → 提供商」添加连接，再到对应运行模式的「模型与生成」选择提供商和模型。Half Agent 的正文生成与后台整理分别配置；Full Agent 和 Tracker 的相关能力需要模型支持工具调用。普通参数自动保存，提示词通过绿色勾保存。
-2. **导入角色卡** — 从侧栏「角色卡」导入文件。仓库附带两张示例卡：
+1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或连接 ChatGPT 账号；再到对应运行模式的「模型与生成」选择提供商和模型。Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker；Full Agent 和 Tracker 需要模型支持工具调用。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
+2. **导入角色卡** — 从侧栏「角色卡」导入文件，或从空白卡开始编辑。仓库附带两张示例卡：
    - [雾港来信](samples/雾港来信.json)：体验文本故事
-   - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，使用前需启用该卡的脚本权限
-3. **开始故事** — 点击「开始新故事」，选择角色卡、运行模式、模型渠道、用户身份和开场，再按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。变量更新与设定修改按界面提示授权。
-4. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。
+   - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，进入故事前需启用该卡的脚本权限
+3. **开始故事** — 点击「开始新故事」，按三步完成：选择角色卡 → 在「用户与开场」中设定对话渠道、运行模式、用户身份并选择开场 → 按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。角色卡可预设新建对话默认使用的用户角色与世界书。
+4. **调整开场** — 在首次模型任务（生成、参谋 agent 咨询或上下文整理）开始前，可点击开场白旁的「编辑」修改开场原文；保存只影响当前对话，并重新初始化开场变量和脚本状态。任务开始后开场白永久锁定。
+5. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。变量更新与设定修改按界面提示授权。
 
-**模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 ChatGPT 订阅接入的操作见[设置指南](docs/guides/settings.md)。
+**模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 ChatGPT 订阅接入的操作见[设置指南](docs/guides/settings.md)；编辑与分支规则见[阅读、编辑与分支](docs/guides/story-history.md)。
 
 > [!IMPORTANT]
-> 剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前请先备份该目录；ChatGPT 账号在换机后需要重新连接。
+> 剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前请先备份该目录；v0.8.5 升级了数据库与设置格式，旧版程序不能直接打开升级后的数据。ChatGPT 账号在换机后需要重新连接。
 
 ## 当前局限
 
