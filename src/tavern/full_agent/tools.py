@@ -77,7 +77,7 @@ class Plot(Arguments):
     content: str = Field(
         min_length=1,
         max_length=64000,
-        description="Complete replacement author-level stage outline; future possibilities, not established story facts. Must contain non-whitespace text.",
+        description="Complete updated author-level stage outline, built on the current one; future possibilities, not established story facts. Must contain non-whitespace text.",
     )
 
 
@@ -104,7 +104,7 @@ class Note(Arguments):
     content: str = Field(
         min_length=1,
         max_length=64000,
-        description="Complete updated note text; must contain non-whitespace text.",
+        description="Complete updated note text, built on the current note when the key exists; must contain non-whitespace text.",
     )
     kind: Literal["fact", "hypothesis", "plan"] = Field(
         description="fact: backed by H sources. hypothesis: uncertain. plan: a character's in-story intention, not an author outline."
@@ -264,8 +264,9 @@ SPECS = {
     ),
     "write_note": (
         Note,
-        "Create a note or fully replace one by key. Keep information that is still valid, and record how things happened "
-        "and changed, not just the current state. Attribute claims to whoever made them, keep uncertainty visible, and "
+        "Create a note or fully replace one by key. Updates are cumulative: start from the note's current text, keep "
+        "information that is still valid, and record how things happened and changed, not just the current state. "
+        "Attribute claims to whoever made them, keep uncertainty visible, and "
         "treat retracted information as no longer valid.\n"
         "kind: fact needs H sources from this branch; hypothesis marks uncertainty; plan records a character's own "
         "intentions inside the story. Author-level outlines belong in write_plot.\n"
@@ -275,6 +276,9 @@ SPECS = {
         Plot,
         "Create or fully replace this branch's author-level stage outline. The current outline is in <tavern_plot>; "
         "no read is needed.\n"
+        "Updates are cumulative: revise the current outline instead of starting over. Keep stages, foreshadowing and "
+        "conditions that still hold, change what progress has affected, and condense finished stages without dropping "
+        "unresolved foreshadowing.\n"
         "Keep near stages concrete and distant stages broad: possible events, turning points, foreshadowing and the "
         "conditions that trigger them. These are revisable possibilities, not established facts, things characters "
         "know, or actions decided for the user.",

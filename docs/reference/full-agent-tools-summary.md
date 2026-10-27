@@ -21,9 +21,9 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型与 H 来源；引用指向对应版本的不可变原文。 |
-| `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；已有键须有当前全文上下文依据，否则先 read_note。新 key 无需读取，覆盖归档键会激活。 |
+| `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；已有键须有当前全文上下文依据，否则先 read_note，并在当前版本上积累修订（语义要求，不做程序校验）。新 key 无需读取，覆盖归档键会激活。 |
 | `archive_note` | 归档笔记 | `key: string` | 当前全文须已在上下文，否则先 read_note；归档项从普通搜索中退出，仍可按键读取或重新激活。 |
-| `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后按需更新。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
+| `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后在当前大纲上积累修订（语义要求，不做程序校验）。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "mvu"或"full"或"other"="mvu"` | mvu 读 stat_data；full 读全部模型可见状态；other 排除顶层 stat_data。路径相对所选范围，空串读完整范围；所有范围都隐藏内部数据，other 不提供变量补丁依据。 |
 | `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时收尾前至少成功一次，可据最新状态继续修正；非空须有完整当前变量的上下文依据，否则读取；空数组免读取且不触发补丁脚本回调。 |
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
@@ -239,7 +239,7 @@ Read a note in full by key, including archived notes. Metadata may include kind 
 ### `write_note`
 
 ```text
-Create a note or fully replace one by key. Keep information that is still valid, and record how things happened and changed, not just the current state. Attribute claims to whoever made them, keep uncertainty visible, and treat retracted information as no longer valid.
+Create a note or fully replace one by key. Updates are cumulative: start from the note's current text, keep information that is still valid, and record how things happened and changed, not just the current state. Attribute claims to whoever made them, keep uncertainty visible, and treat retracted information as no longer valid.
 kind: fact needs H sources from this branch; hypothesis marks uncertainty; plan records a character's own intentions inside the story. Author-level outlines belong in write_plot.
 Writing to an archived key reactivates it.
 ```
@@ -260,6 +260,7 @@ Writing to an archived key reactivates it.
 
 ```text
 Create or fully replace this branch's author-level stage outline. The current outline is in <tavern_plot>; no read is needed.
+Updates are cumulative: revise the current outline instead of starting over. Keep stages, foreshadowing and conditions that still hold, change what progress has affected, and condense finished stages without dropping unresolved foreshadowing.
 Keep near stages concrete and distant stages broad: possible events, turning points, foreshadowing and the conditions that trigger them. These are revisable possibilities, not established facts, things characters know, or actions decided for the user.
 ```
 
