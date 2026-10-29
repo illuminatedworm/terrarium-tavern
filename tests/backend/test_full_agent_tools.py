@@ -626,6 +626,7 @@ async def test_new_context_reuses_handoff_and_checks_only_exiting_history():
     owner = SimpleNamespace(
         state=new_state(),
         history=history,
+        user_message={"id": "input", "role": "user", "raw": "继续"},
         settings=Settings(),
         definitions=tool_definitions(request, {}),
         model_view=ModelView({}),

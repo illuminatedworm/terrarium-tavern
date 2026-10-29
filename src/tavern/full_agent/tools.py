@@ -491,7 +491,8 @@ class AgentTools:
             ]
             return {"messages": selected} if span[0] < span[1] else selected[0]
         if name in ("write_handoff", "new_context"):
-            # Handoff cites committed originals; the current input is citable after this turn.
+            # Chapters and rollover use committed history; current may also
+            # cite this turn's user input, but not the assistant draft.
             history = owner.history
             archive_through = (
                 rollover_start(state, history, args.keep_recent) if name == "new_context" else len(history)
@@ -500,8 +501,20 @@ class AgentTools:
             handoff = state["handoff"]
             try:
                 if write is not None:
-                    handoff = apply_write(handoff, write, history, archive_through=archive_through)
-                    check_limits(handoff, history, owner.settings.full_agent_config, owner.settings)
+                    handoff = apply_write(
+                        handoff,
+                        write,
+                        history,
+                        archive_through=archive_through,
+                        current_input_id=owner.user_message["id"],
+                    )
+                    check_limits(
+                        handoff,
+                        history,
+                        owner.settings.full_agent_config,
+                        owner.settings,
+                        current_input_id=owner.user_message["id"],
+                    )
                 if name == "new_context":
                     require_coverage(handoff, history, archive_through)
             except HandoffError as error:

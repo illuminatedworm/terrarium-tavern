@@ -385,7 +385,7 @@ def compile_window(
                 + "\n</tavern_memory>",
                 value=chapters,
             )
-        current = render_current(handoff, history)
+        current = render_current(handoff, history, current_input_id=input_id)
         if current or "handoff" in ledger.seen:
             update(
                 "handoff",

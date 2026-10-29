@@ -59,6 +59,7 @@ async def test_documented_minimal_results_match_execution(name):
         snapshot={"state": {"stat_data": {"hp": 8}}, "scopes": {}},
         # One committed message: handoff examples cite it as H1.
         history=[{"id": "source", "role": "user", "raw": "我明天去港口。"}],
+        user_message={"id": "input", "role": "user", "raw": "继续。"},
         source_history=[{"id": "source", "role": "user", "raw": "我明天去港口。"}],
         settings=settings,
         request=request,

@@ -504,16 +504,37 @@ async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen
 async def test_failed_request_after_rollover_resumes_new_window_without_replaying_tool(story):
     store, session = story
     service = runtime(store)
+    current_point = {"text": "钟楼约定来自本轮输入", "refs": ["H2", "H1-H2"]}
+    proposal = {
+        "chapters": [{"op": "add", "title": "开场", "points": [{"text": "开场剧情", "refs": ["H1"]}]}],
+        "current": [current_point],
+    }
     try:
-        failed, _ = await turn(
+        failed, unchanged = await turn(
             service,
             session,
             Model(
-                ("new_context", {"handoff": handoff("钟楼约定已经发生"), "keep_recent": 0}),
+                ("write_handoff", {"current": [current_point]}),
+                ("new_context", {"handoff": proposal, "keep_recent": 0}),
                 RuntimeError("model disconnected"),
             ),
         )
-        assert failed["status"] == "error"
+        assert failed["status"] == "error" and "model disconnected" in failed["error"]
+        assert unchanged["snapshot"] == session["snapshot"]
+        progress = store.full_agent_progress(failed["id"])
+        assert [
+            json.loads(item["message"]["content"])["ok"]
+            for item in progress["new_trace"]
+            if item["message"]["role"] == "tool"
+        ] == [True, True]
+        input_id = progress["user"]["id"]
+        saved = progress["snapshot"]["full_agent"]
+        assert saved["window"]["start"] == 1
+        assert saved["handoff"]["chapters"][0]["end"] == session["messages"][0]["id"]
+        assert saved["handoff"]["current"][0]["refs"] == [
+            {"start": input_id, "end": input_id},
+            {"start": session["messages"][0]["id"], "end": input_id},
+        ]
         model = Model("第二天，她如约而至。")
         service.full.provider_factory = lambda: model
         resumed = service.submit(
@@ -529,10 +550,20 @@ async def test_failed_request_after_rollover_resumes_new_window_without_replayin
         assert store.turn(resumed["id"])["status"] == "committed"
         sent = model.requests[0]["messages"]
         assert not any(m.get("tool_calls") or m["role"] == "tool" for m in sent)
-        assert any("钟楼约定已经发生" in m.get("content", "") for m in sent)
+        rendered_point = "钟楼约定来自本轮输入 [H2, H1-H2]"
+        assert any(rendered_point in m.get("content", "") for m in sent)
+        assert any(m["role"] == "user" and m["content"].startswith("[H2]\n") for m in sent)
         current = store.session(session["id"])
+        assert current["messages"][1]["id"] == input_id
         assert current["snapshot"]["full_agent"]["window"]["number"] == 2
-        assert len(tool_exchanges(load_trace(store, session["id"], current["messages"]))) == 2
+        assert current["snapshot"]["full_agent"]["handoff"] == saved["handoff"]
+        assert render_text(saved["handoff"], current["messages"]).endswith(rendered_point)
+        assert len(tool_exchanges(load_trace(store, session["id"], current["messages"]))) == 4
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        assert fork["snapshot"]["full_agent"]["handoff"]["current"][0]["refs"] == [
+            {"start": fork["messages"][1]["id"], "end": fork["messages"][1]["id"]},
+            {"start": fork["messages"][0]["id"], "end": fork["messages"][1]["id"]},
+        ]
     finally:
         await service.close()
 
