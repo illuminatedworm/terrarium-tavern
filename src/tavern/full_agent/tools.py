@@ -8,7 +8,7 @@ import jsonpatch
 import jsonpointer
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from tavern.core.history_refs import message_at, message_ref, parse_span_ref
+from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT, message_at, message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
@@ -111,7 +111,7 @@ class Note(Arguments):
     )
     sources: list[str] = Field(
         default_factory=list,
-        max_length=20,
+        max_length=SOURCE_REFERENCE_LIMIT,
         description="H references from this branch, including the current user input. Required for kind=fact.",
     )
 

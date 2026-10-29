@@ -3,11 +3,13 @@ import re
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.full_agent.activity import turn_items
 from tavern.full_agent.agent import FullAgent
+from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.handoff import (
     HandoffError,
     HandoffWrite,
@@ -66,7 +68,7 @@ async def test_tool_comment_contract_repairs_old_arguments_and_preserves_activit
         assert feedback["error"]["code"] == "INVALID_ARGUMENTS"
         assert "缺少必填参数 comment" in feedback["error"]["message"]
         assert "不接受参数 reason" in feedback["error"]["message"]
-        assert set(feedback["expected_parameters"]["properties"]) == {"operations", "comment"}
+        assert "expected_parameters" not in feedback
         assert successful["ok"] and successful["data"]["saved_to_draft"]
         if name == "revise_content":
             content = current["snapshot"]["content"]
@@ -126,11 +128,7 @@ async def test_argument_errors_explain_repairs_without_executing_or_echoing_inpu
         )
         assert feedback["error"]["message"].startswith(f"{name} 参数错误，工具未执行：")
         assert all(text in feedback["error"]["message"] for text in expected)
-        schema = feedback["expected_parameters"]
-        original = SPECS[name][0].model_json_schema()
-        assert set(schema["properties"]) == set(original["properties"])
-        assert schema.get("required", []) == original.get("required", [])
-        assert schema["additionalProperties"] is False
+        assert "expected_parameters" not in feedback
         encoded = json.dumps(feedback, ensure_ascii=False)
         assert all(
             text not in encoded
@@ -164,14 +162,105 @@ async def test_read_history_can_correct_missing_ref_after_actionable_feedback(st
         assert result["status"] == "committed", result["error"]
         returned = [json.loads(m["content"]) for m in model.requests[-1]["messages"] if m["role"] == "tool"]
         assert "缺少必填参数 ref" in returned[0]["error"]["message"]
-        assert returned[0]["expected_parameters"]["required"] == ["ref"]
-        assert set(returned[0]["expected_parameters"]["properties"]) == {"ref"}
-        assert returned[0]["expected_parameters"]["properties"]["ref"]["type"] == "string"
+        assert "expected_parameters" not in returned[0]
         assert "error" not in returned[1] and returned[1]["data"]["ref"] == "H2"
         assert returned[1]["data"]["text"] == "我答应明天在钟楼见面。"
         assert current["messages"][-1]["raw"] == "核对后继续正文"
     finally:
         await service.close()
+
+
+def test_source_reference_limit_matches_tool_and_stored_memory_without_dropping_sources():
+    from tavern.full_agent.handoff import Point
+    from tavern.full_agent.tools import Note
+    from tavern.memories.memory_records import Record
+    from tavern.tracker.tools import MemoryRecord
+
+    refs = [f"H{i}" for i in range(1, 51)]
+    evidence = [{"message_id": ref, "excerpt": "原文"} for ref in refs]
+    point = Point(text="约定", refs=refs)
+    note = Note(key="promises", content="约定", kind="fact", sources=refs)
+    memory = MemoryRecord(content="约定", sources=refs, setting_refs=[f"E{i}" for i in range(1, 51)])
+    stored = Record(
+        category="open", content=memory.content, sources=evidence, setting_refs=memory.setting_refs
+    )
+    assert point.refs == note.sources == memory.sources == refs
+    assert [source.message_id for source in stored.sources] == refs
+    assert stored.setting_refs == memory.setting_refs
+    for model, value, field in (
+        (Point, point, "refs"),
+        (Note, note, "sources"),
+        (MemoryRecord, memory, "sources"),
+        (MemoryRecord, memory, "setting_refs"),
+        (Record, stored, "sources"),
+        (Record, stored, "setting_refs"),
+    ):
+        data = value.model_dump()
+        data[field].append(data[field][0])
+        with pytest.raises(ValidationError) as invalid:
+            model.model_validate(data)
+        assert invalid.value.errors()[0]["type"] == "too_long"
+    proposal = {
+        "chapters": [{"op": "add", "title": "约定", "points": [{"text": "约定", "refs": refs + ["H51"]}]}],
+        "current": [{"text": "待兑现"}],
+    }
+    with pytest.raises(ValidationError) as invalid:
+        HandoffWrite.model_validate(proposal)
+    feedback = ToolArgumentError("write_handoff", HandoffWrite, invalid.value).result
+    assert "chapters[0].points[0].refs 最多允许 50 项，本次 51 项" in feedback["error"]["message"]
+    assert "expected_parameters" not in feedback
+
+
+def test_structural_argument_feedback_includes_only_actionable_schema_without_input():
+    model = SPECS["revise_content"][0]
+    private = "PRIVATE_INPUT_48c2515daf9742308a8b50777d39dd75"
+    with pytest.raises(ValidationError) as invalid:
+        model.model_validate({"comment": "新增条目", "operations": [{"op": "add_lore", "entry": private}]})
+    feedback = ToolArgumentError("revise_content", model, invalid.value).result
+    assert "operations[0].entry 必须是对象" in feedback["error"]["message"]
+    assert set(feedback["expected_parameters"]) == {"operations[0].entry"}
+    assert feedback["expected_parameters"]["operations[0].entry"]["required"] == ["title", "content"]
+    encoded = json.dumps(feedback, ensure_ascii=False)
+    assert private not in encoded and '"$ref"' not in encoded and '"$defs"' not in encoded
+    assert '"comment"' not in encoded and '"ChapterMerge"' not in encoded
+
+    model = SPECS["patch_state"][0]
+    with pytest.raises(ValidationError) as invalid:
+        model.model_validate({"comment": "修正", "operations": [{"op": private, "path": "/hp"}]})
+    feedback = ToolArgumentError("patch_state", model, invalid.value).result
+    assert "'op' 必须取允许值" in feedback["error"]["message"]
+    assert set(feedback["expected_parameters"]) == {"operations[0]"}
+    branches = feedback["expected_parameters"]["operations[0]"]["oneOf"]
+    assert [branch["required"] for branch in branches] == [
+        ["op", "path", "value"],
+        ["op", "path", "from"],
+        ["op", "path"],
+    ]
+    assert private not in json.dumps(feedback)
+
+
+def test_business_argument_feedback_reports_rules_without_schema_or_input_echo():
+    model = SPECS["revise_content"][0]
+    with pytest.raises(ValidationError) as invalid:
+        model.model_validate(
+            {
+                "comment": "新增",
+                "operations": [{"op": "add_lore", "entry": {"title": " ", "content": "PRIVATE_INPUT"}}],
+            }
+        )
+    feedback = ToolArgumentError("revise_content", model, invalid.value).result
+    assert "operations[0].entry 条目标题和正文不能为空白" in feedback["error"]["message"]
+    assert "expected_parameters" not in feedback and "PRIVATE_INPUT" not in json.dumps(feedback)
+    with pytest.raises(ValidationError) as invalid:
+        model.model_validate(
+            {
+                "comment": "修改",
+                "operations": [{"op": "update_lore", "ref": "L1", "changes": {"title": None}}],
+            }
+        )
+    feedback = ToolArgumentError("revise_content", model, invalid.value).result
+    assert "必须提供至少一个非 null 的设定字段" in feedback["error"]["message"]
+    assert "expected_parameters" not in feedback
 
 
 @pytest.mark.parametrize("name", ["search_lore", "search_read_lore", "search_lore_entries", "unknown_tool"])

@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT
+
 # v3: user snapshots are pre-turn baselines, including before Tracker maintenance.
 # Retired episodes remain per-message archive deltas. Earlier stories are rejected.
 MEMORY_VERSION = 3
@@ -62,8 +64,8 @@ class Record(BaseModel):
     story_time: str = "未知"
     known_to: list[str] = Field(default_factory=list, max_length=20)
     status: Literal["active", "completed", "superseded", "deleted"] = "active"
-    sources: list[Evidence] = Field(default_factory=list, max_length=8)
-    setting_refs: list[str] = Field(default_factory=list, max_length=8)
+    sources: list[Evidence] = Field(default_factory=list, max_length=SOURCE_REFERENCE_LIMIT)
+    setting_refs: list[str] = Field(default_factory=list, max_length=SOURCE_REFERENCE_LIMIT)
     manual: bool = False
     callback: bool = False
 

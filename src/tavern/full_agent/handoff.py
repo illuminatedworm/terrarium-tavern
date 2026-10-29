@@ -17,6 +17,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from tavern.core.history_refs import (
+    SOURCE_REFERENCE_LIMIT,
     message_positions,
     message_ref,
     parse_message_ref,
@@ -42,8 +43,8 @@ class Point(_Arguments):
     text: str = Field(min_length=1, max_length=2000, description="One concise statement.")
     refs: list[str] = Field(
         default_factory=list,
-        max_length=4,
-        description="Optional, at most 4 known supporting H references or closed spans. Omit when unnecessary or the information comes from instructions, character material or the current input. Do not guess references; chapter citations must stay inside the chapter.",
+        max_length=SOURCE_REFERENCE_LIMIT,
+        description="Optional known supporting H references or closed spans. Omit when unnecessary or the information comes from instructions, character material or the current input. Do not guess references; chapter citations must stay inside the chapter.",
     )
     kind: Literal["fact", "inference"] = Field(
         default="fact", description="fact for established information; inference for your judgement."

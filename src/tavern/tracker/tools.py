@@ -3,7 +3,9 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
+from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT
 from tavern.memories.history_recall import HISTORY_TOOL
 
 
@@ -54,11 +56,13 @@ class MemoryRecord(Arguments):
     callback: bool | None = None
     sources: list[str] = Field(
         min_length=1,
-        max_length=8,
+        max_length=SOURCE_REFERENCE_LIMIT,
         description="Passage refs such as H52#3 shown for this batch, in its input or recall results; at least one inside batch_range. Message refs such as H52 are not sources.",
     )
     setting_refs: list[str] = Field(
-        default_factory=list, max_length=8, description="Optional E refs for provided setting evidence."
+        default_factory=list,
+        max_length=SOURCE_REFERENCE_LIMIT,
+        description="Optional E refs for provided setting evidence.",
     )
 
 
@@ -75,9 +79,9 @@ class MemoryOperation(Arguments):
     @model_validator(mode="after")
     def identity(self):
         if self.op == "add" and self.id is not None and not self.id.startswith("N"):
-            raise ValueError("新增记忆只允许省略 id 或使用 N 编号")
+            raise PydanticCustomError("invalid_memory_identity", "新增记忆只允许省略 id 或使用 N 编号")
         if self.op != "add" and (self.id is None or not self.id.startswith("R")):
-            raise ValueError("修改记忆必须使用已有 R 编号")
+            raise PydanticCustomError("invalid_memory_identity", "修改记忆必须使用已有 R 编号")
         return self
 
 

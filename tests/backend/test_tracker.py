@@ -211,6 +211,8 @@ async def test_comment_argument_recovers_from_old_name_in_tracker_loop(story, na
         if message["role"] == "tool"
     ]
     assert "comment" in outputs[-2]["error"] and "reason" in outputs[-2]["error"]
+    assert "errors.pydantic.dev" not in outputs[-2]["error"]
+    assert "旧参数备注" not in outputs[-2]["error"] and "expected_parameters" not in outputs[-2]
     assert outputs[-1]["saved_to_draft"] and work.completed
     if name == "patch_state":
         assert work.patch == operations and work.variables["hp"] == 3

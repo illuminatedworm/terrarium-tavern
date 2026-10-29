@@ -8,6 +8,7 @@ from typing import Annotated, Literal, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from tavern.character.card_workflow import validate_document
 from tavern.character.cards import is_initvar, lore_entries, lore_title
@@ -55,7 +56,7 @@ class EntryValues(ContentArguments):
     @model_validator(mode="after")
     def meaningful(self):
         if not self.title.strip() or not self.content.strip():
-            raise ValueError("条目标题和正文不能为空白")
+            raise PydanticCustomError("blank_lore_entry", "条目标题和正文不能为空白")
         return self
 
 
@@ -74,9 +75,9 @@ class EntryChanges(ContentArguments):
     def nonempty(self):
         values = self.model_dump(exclude_unset=True)
         if not values or any(value is None for value in values.values()):
-            raise ValueError("changes 必须提供至少一个非 null 的设定字段")
+            raise PydanticCustomError("empty_lore_changes", "changes 必须提供至少一个非 null 的设定字段")
         if any(not value.strip() for key, value in values.items() if key in {"title", "content"}):
-            raise ValueError("条目标题和正文不能为空白")
+            raise PydanticCustomError("blank_lore_entry", "条目标题和正文不能为空白")
         return self
 
 

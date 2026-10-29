@@ -16,6 +16,9 @@ versions can occupy the same H, so H is a branch-local locator, never stored ide
 import re
 from collections.abc import Iterable, Mapping, Sequence
 
+# Per-array source/evidence limit shared by memory tools and stored records.
+SOURCE_REFERENCE_LIMIT = 50
+
 _MESSAGE_REF = re.compile(r"H([1-9]\d*)")
 
 

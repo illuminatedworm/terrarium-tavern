@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import jsonpatch
 import jsonpointer
+from pydantic import ValidationError
 
 from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.context import get_path, search
@@ -20,6 +21,7 @@ from tavern.core.context_usage import context_tokens
 from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
 from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.provider import make_provider
+from tavern.core.tool_arguments import argument_feedback
 from tavern.memories.history_recall import HistoryBudget, HistoryRecall, MemoryText
 from tavern.memories.memory_engine import apply_operations, consolidate
 from tavern.memories.memory_protocol import References
@@ -349,6 +351,15 @@ class TrackerTask:
                     # Recall returns its own validation/quota failures. Other
                     # read tools may legitimately return a user field named error.
                     tool_error = call.name == "tavern_recall_history" and "error" in result
+                except ValidationError as error:
+                    feedback = argument_feedback(SPECS[call.name][0], error)
+                    result = self.view.expose(
+                        {
+                            "error": f"{call.name} 参数错误，工具未执行：{feedback.pop('message')}。",
+                            **feedback,
+                        }
+                    )
+                    tool_error = True
                 except (
                     ValueError,
                     TypeError,

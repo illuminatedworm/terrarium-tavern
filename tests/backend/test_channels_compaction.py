@@ -380,6 +380,18 @@ async def test_local_handoff_repairs_total_limit_once_without_applying_failed_ed
         await make_handoff(compiled, settings, stubborn, ledger, history, 20)
     assert len(stubborn.requests) == 2 and ledger == before
 
+    # A malformed proposal must identify the fix without echoing its arbitrary
+    # field name or replaying the rejected write into the correction request.
+    private = "48c2515daf9742308a8b50777d39dd75"
+    malformed = {**corrected, private: "PRIVATE_INPUT"}
+    model = Model(("prepare_handoff", malformed), ("prepare_handoff", corrected))
+    result, usage = await make_handoff(compiled, settings, model, ledger, history, 20)
+    feedback = model.requests[1]["messages"][-1]["content"]
+    assert "不接受参数 @D1" in feedback and "请删除" in feedback
+    assert private not in feedback and "PRIVATE_INPUT" not in feedback
+    assert "expected_parameters" not in feedback
+    assert len(usage) == 2 and ledger == before
+
 
 def test_compaction_boundary_does_not_hide_pending_calls_and_groups_remain_whole():
     call = {"type": "function_call", "call_id": "c1", "name": "read_state", "arguments": "{}"}

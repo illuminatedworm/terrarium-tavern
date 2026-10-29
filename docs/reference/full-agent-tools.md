@@ -24,7 +24,7 @@
 
 query 为 1–1000 字符，仅 set_retrieval_query 允许空串；limit 为 1–10，默认 5。历史 ref 与笔记 key 为 1–80 字符；read_history 的 ref 可为单条 H 或闭区间 `H52-H58`，区间最多 8 条、两端都须在当前分支。read_state.path 最长 200 字符。笔记正文为 1–64000 字符，不能为空白，另受 note_tokens 约束；handoff 的限额见下文；comment 为必填的简短操作备注，1–1000 字符。新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
 
-patch_state 和 revise_content 的备注参数统一使用 comment，替代旧参数 reason；旧调用记录保留原样，新调用传 reason 会返回参数错误及当前参数定义。
+patch_state 和 revise_content 的备注参数统一使用 comment，替代旧参数 reason；旧调用记录保留原样，新调用传 reason 会指出缺少 comment 并要求删除 reason。
 
 ## 叙事检索与编辑定位
 
@@ -75,7 +75,7 @@ revise_content 接受 1–100 项受限动作及 comment：
 
 ## 记忆与换窗
 
-write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入及已交付的正文草稿；最多 20 个，无需预先搜索或读取。程序校验来源属于当前分支，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。来源存储不可变消息身份，修改输入后的整轮重试与版本切换采用各自的笔记快照。
+write_note.kind 为 fact、hypothesis 或 plan。事实须给当前分支有效 H 来源，包括当前输入及已交付的正文草稿；最多 50 个，无需预先搜索或读取。程序校验来源属于当前分支，语义是否支持结论由模型判断。其他类型可省略来源，提供时同样校验。来源存储不可变消息身份，修改输入后的整轮重试与版本切换采用各自的笔记快照。
 
 write_note 完整替换内容；覆盖已有键或 archive_note 归档前，当前完整正文须已在上下文，否则先 read_note。工具参数中的完整当前正文也算，成功写入后不必重复读取。新 key 无需读取，覆盖归档键重新激活。目录和搜索摘要不算完整正文。archive_note 只从普通搜索中隐藏，不删除笔记、历史或旧分支；read_note 仍能读取归档项。模型结果不携带笔记 revision。
 
@@ -85,7 +85,7 @@ handoff 使用最新运行时记忆或最近成功写入中较新的内容，失
 
 - `chapters`：0–10 个按顺序执行的操作，C 编号指本次调用前的编号。`add` 通常只给标题和要点，起点自动接在上一章之后；省略 `through` 时，new_context 自动覆盖到最后一条退出消息，write_handoff 自动覆盖到最后一条已提交消息。只有主动语义分章时才用已知 H 填写 `through`，一次调用中省略终点的 add 应放在其他 add 之后。`revise` 改写一章的标题与要点，范围不变；`merge` 把 2–10 个相邻章节合并为一章，范围取并集。title 为 1–80 字符，每章 1–20 条要点。
 - `current`：1–30 条要点，整体替换当前交接。
-- 要点：`text` 1–2000 字符；`refs` 可省略、默认 `[]`，最多 4 个 H 引用或闭区间；`kind` 为 fact（默认）或 inference。章节引用仅限已提交原文，且须落在本章范围内；`current` 还可引用本轮最新用户输入，或以该输入为终点的闭区间，不接受本轮 AI 正文草稿。引用只用于精确回查，不为文风、角色资料或指令拼凑 H；这些内容直接写入交接即可。assistant 正文不带位置标记，精确 H 从历史工具取得，不要求推算。
+- 要点：`text` 1–2000 字符；`refs` 可省略、默认 `[]`，最多 50 个 H 引用或闭区间；`kind` 为 fact（默认）或 inference。章节引用仅限已提交原文，且须落在本章范围内；`current` 还可引用本轮最新用户输入，或以该输入为终点的闭区间，不接受本轮 AI 正文草稿。引用只用于精确回查，不为文风、角色资料或指令拼凑 H；这些内容直接写入交接即可。assistant 正文不带位置标记，精确 H 从历史工具取得，不要求推算。
 - 限额：当前交接 handoff_tokens（默认 8192），单章 chapter_tokens（默认 2048），全部章节 chapters_total_tokens（默认 16384），均按渲染后的文本计数。章节总量超限时返回 CONTENT_LIMIT，提示合并最旧的相邻章节。
 - new_context 先根据模型选择的 `keep_recent` 将保留边界扩展到完整交流，只要求章节覆盖最终保留起点之前的原文。保留的最近消息和当前输入不要求提前归档；全部历史保留时允许沿用空交接。实际退出范围未覆盖时返回 HANDOFF_COVERAGE，模型可补齐交接，或增加 keep_recent 保留尚未归档的交流。
 
@@ -113,7 +113,7 @@ new_context 必须单独调用。任何包含它的多工具批次都在执行�
 {"ok":false,"error":{"code":"READ_REQUIRED","message":"非空补丁前须完整读取最新变量","retryable":true,"next_action":"调用 read_state，使用默认作用域及空 path。","patch_state_completed":false}}
 ```
 
-参数错误在顶层额外返回 expected_parameters；patch_state 的错误在 error 内额外返回 patch_state_completed，明确失败是否发生在已有一次成功提交之后。错误与结果都先做模型数据投影，不暴露真实身份和指纹；分类来自显式异常，不解析报错文案。
+参数错误直接指出实际字段位置和修正要求；集合超限同时报告实际项数。只有需要了解对象或操作结构才能修正时，才在顶层返回 expected_parameters，以出错字段路径为键，附对应结构的自包含 schema，不重复无关字段或整个工具定义。业务校验直接说明规则，不回显输入或校验器内部信息。patch_state 的错误在 error 内额外返回 patch_state_completed，明确失败是否发生在已有一次成功提交之后。错误与结果都先做模型数据投影，不暴露真实身份和指纹；分类来自显式异常，不解析报错文案。
 
 非法 JSON、非法工具序列或单次超过 32 个调用是 TOOL_PROTOCOL_INVALID，正文回调或最终校验失败是 STORY_FINALIZATION_FAILED，调用额度耗尽是 BUDGET_EXHAUSTED，总时限耗尽是 TIME_BUDGET_EXHAUSTED，提供商异常为 PROVIDER_ERROR，不完整回复为 PROVIDER_INCOMPLETE，脚本恢复失败为 SCRIPT_RESTORE_FAILED。它们是终止回合的诊断事件，不返回可重试工具结果；其他运行异常记录为 RUNTIME_FAILURE。
 

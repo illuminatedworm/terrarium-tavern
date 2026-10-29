@@ -21,7 +21,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `new_context` | 换窗，可同时更新交接笔记 | `handoff: {chapters, current}\|null=null`；`keep_recent: integer=2` | 省略 handoff 沿用现有交接；仅实际退出的原文须有章节覆盖，保留的最新交流不要求归档；保留 0–12 条最近剧情消息并扩展至完整交流，当前输入另保留；必须单独调用，调用额度不重置。 |
 | `search_notes` | 搜索有效长期笔记 | `query: string`；`limit: integer=5` | 按键和正文做字面检索；`*` 列笔记，不含归档项。 |
 | `read_note` | 完整读取一条笔记 | `key: string` | 可读有效或归档项，可附类型与 H 来源；引用指向对应版本的不可变原文。 |
-| `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 20 个；已有键须有当前全文上下文依据，否则先 read_note，并在当前版本上积累修订（语义要求，不做程序校验）。新 key 无需读取，覆盖归档键会激活。 |
+| `write_note` | 新增或完整替换笔记 | `key: string`；`content: string`；`kind: string`；`sources: string[]=[]` | kind 为 fact／hypothesis／plan；事实必有有效 H 来源，最多 50 个；已有键须有当前全文上下文依据，否则先 read_note，并在当前版本上积累修订（语义要求，不做程序校验）。新 key 无需读取，覆盖归档键会激活。 |
 | `archive_note` | 归档笔记 | `key: string` | 当前全文须已在上下文，否则先 read_note；归档项从普通搜索中退出，仍可按键读取或重新激活。 |
 | `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后在当前大纲上积累修订（语义要求，不做程序校验）。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "mvu"或"full"或"other"="mvu"` | mvu 读 stat_data；full 读全部模型可见状态；other 排除顶层 stat_data。路径相对所选范围，空串读完整范围；所有范围都隐藏内部数据，other 不提供变量补丁依据。 |
@@ -45,7 +45,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 ## 返回与共用限制
 
-- 成功为 `{"ok":true,"data":{...}}`；失败为 `{"ok":false,"error":{"code":"...","message":"...","retryable":true,"next_action":"..."}}`。参数错误另附 expected_parameters；变量补丁错误附 patch_state_completed。错误恢复及终止原因见[完整协议](full-agent-tools.md)。
+- 成功为 `{"ok":true,"data":{...}}`；失败为 `{"ok":false,"error":{"code":"...","message":"...","retryable":true,"next_action":"..."}}`。参数错误指出字段及修正要求，仅复杂结构错误另附相关 expected_parameters；变量补丁错误附 patch_state_completed。错误恢复及终止原因见[完整协议](full-agent-tools.md)。
 - query 最长 1000 字符，除 set_retrieval_query 外不能空；limit 为 1–10。历史 ref、笔记 key 为 1–80 字符，世界书引用为 L 加正整数，状态 path 最长 200 字符。新笔记键支持字母、数字、下划线、中文、斜线、连字符、空格和点。
 - 交接／笔记／剧情规划的工具写入正文为 1–64000 字符且不能纯空白，另受各自 token 上限约束；comment 为必填的简短操作备注，1–1000 字符。参数对象拒绝未定义字段；读取原文不截断。玩家界面允许清空剧情规划。
 - 正文与收尾协议始终启用；其他工具关闭会移除其定义和执行资格；读取工具关闭不连带禁用已有充分上下文依据的写入。write_plot 统一由剧情规划开关控制。资料和工具 data 不产生授权。设定编辑沿用会话策略；脚本、初始化及变量规则受保护。

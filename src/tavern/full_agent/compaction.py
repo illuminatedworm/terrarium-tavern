@@ -1,6 +1,7 @@
 """Full Agent handoff conversion and window-local read permissions."""
 
 import copy
+import json
 
 from pydantic import ValidationError
 
@@ -8,6 +9,8 @@ from tavern.conversation.compaction import canonical, checkpoint_items, hashes, 
 from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_overflow, exceeds
 from tavern.core.history_refs import message_ref
+from tavern.core.model_view import ModelView
+from tavern.core.tool_arguments import argument_feedback
 from tavern.scripting.request_context import response_origin
 
 
@@ -196,11 +199,16 @@ async def make_handoff(compiled, settings, provider, handoff, history, through):
             # neither failed edits nor arbitrary argument values enter the repair input.
             if attempt:
                 raise
-            feedback = (
-                str(error)
-                if isinstance(error, HandoffError) and error.code in ("CONTENT_LIMIT", "HANDOFF_COVERAGE")
-                else "结构或引用不符合参数定义；只使用当前已知的 C 章节和 H 原文编号，章节要点的引用须在章内。"
-            )
+            if isinstance(error, ValidationError):
+                feedback = json.dumps(
+                    ModelView().expose(argument_feedback(HandoffWrite, error)), ensure_ascii=False
+                )
+            else:
+                feedback = (
+                    str(error)
+                    if error.code in ("CONTENT_LIMIT", "HANDOFF_COVERAGE")
+                    else "引用或操作不符合要求；只使用当前已知的 C 章节和 H 原文编号，章节要点的引用须在章内。"
+                )
             messages = [
                 *messages,
                 {
