@@ -260,6 +260,12 @@
   background: var(--context-color);
   box-shadow: inset -1px 0 0 rgb(0 0 0 / 0.35);
 }
+.context-meter-bar + .context-meter-head {
+  margin-top: 10px;
+}
+.context-meter-head + .context-meter-legend {
+  margin-top: 6px;
+}
 .context-meter-legend {
   display: flex;
   flex-wrap: wrap;
@@ -524,6 +530,9 @@ p.context-footnote {
 }
 .context-session {
   --context-color: var(--accent);
+}
+.context-other {
+  --context-color: var(--text-muted);
 }
 /* ---------- Variables & memory dialog ---------- */
 .modal.state-modal {
