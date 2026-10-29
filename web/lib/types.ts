@@ -202,14 +202,14 @@ export interface MemoryRebuildEstimate {
 export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
   Partial<Pick<StoryMessageRecord, 'id' | 'display'>>;
 
-/** `POST /sessions/{id}/preview`: the compiled next request, its token estimate and usage. */
+/** `POST /sessions/{id}/preview`: complete next-request sources and the latest provider observation. */
 export type StoryContextPreview = JsonObject & {
   trace: JsonObject[];
   /** Half Agent only; Full Agent previews have no activated-lore list. */
   lore?: JsonObject[];
-  estimated_tokens: number | null;
-  budget_sources?: Record<string, number> | null;
-  token_counting?: { tokenizer: string; source: string };
+  context_usage?: import('./contextUsage').ContextUsage;
+  /** Only when the explicit context panel requests it; a reference, never a mechanism input. */
+  local_estimate?: import('./localEstimate').LocalEstimate;
   compaction_opaque?: boolean;
   /** The planned cache breakpoint of this request. */
   cache?: { scope: string; revision: number; message_id: string | null };

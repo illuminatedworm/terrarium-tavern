@@ -33,20 +33,6 @@ def test_unknown_model_is_explicit_reference_estimate_and_roles_are_independent(
     assert counting_info(Settings(model="gpt-4o"))["source"] == "model_mapping"
 
 
-def test_compile_budget_uses_tokens_and_breakdown_matches_final_wire():
-    cfg = Settings(context_tokens=4096, reply_tokens=128, chunk_mode="off", system_prompt="规则")
-    session = {"id": "s", "persona": "人", "recipe": ContextRecipe().model_dump()}
-    text = "界" * 1000  # 3,000 UTF-8 bytes but 1,000 o200k tokens.
-    context = compile_context(
-        {}, session, [], {}, text, cfg, "t", retrieval={"ids": [], "query": "", "diagnostics": []}
-    )
-    assert context["estimated_tokens"] < 1920 < len(text.encode())
-    assert context["estimated_tokens"] == request_tokens(context["messages"], cfg)
-    assert sum(context["budget_sources"].values()) == context["estimated_tokens"]
-    assert context["token_counting"]["unit"] == "tokens"
-    assert all(row["unit"] == "tokens" for row in context["trace"])
-
-
 def test_recipe_token_warning_counts_expanded_macros_without_omission():
     recipe = ContextRecipe().model_dump()
     recipe["blocks"].append({"id": "bounded", "source": "custom", "content": "{{user}}", "budget": 20})
@@ -85,3 +71,84 @@ def test_tool_definition_and_native_continuation_costs_are_included():
     assert request_tokens([{**thought, "_native_response": native}]) == request_tokens(
         [{"role": "assistant", "content": "已核对", "_native_response": native}]
     )
+    # Native Gemini parts are the wire input; portable text/calls are shadows.
+    gemini = Settings(api_mode="gemini")
+    parts = [
+        {"thought": True, "text": reasoning},
+        {"text": "已核对", "thoughtSignature": "short-signature"},
+        {"functionCall": {"name": "read", "args": {"key": "完整原文"}}},
+    ]
+    replay = {
+        **thought,
+        "tool_calls": continued[1]["tool_calls"],
+        "reasoning_details": [{"provider": "gemini", "parts": parts}],
+    }
+    original = json.dumps(replay, ensure_ascii=False)
+    native_cost = request_tokens([replay], gemini)
+    assert native_cost == request_tokens(
+        [{"role": "assistant", "reasoning_details": replay["reasoning_details"]}], gemini
+    )
+    longer_signature = json.loads(original)
+    longer_signature["reasoning_details"][0]["parts"][1]["thoughtSignature"] *= 1000
+    assert request_tokens([longer_signature], gemini) == native_cost
+    business_signature = json.loads(original)
+    business_signature["reasoning_details"][0]["parts"][2]["functionCall"]["args"]["signature"] = (
+        "用户的完整合同签名" * 100
+    )
+    assert request_tokens([business_signature], gemini) > native_cost + 100
+    assert json.dumps(replay, ensure_ascii=False) == original
+
+    anthropic = Settings(api_mode="anthropic")
+    encrypted = {
+        "role": "assistant",
+        "content": "已核对",
+        "_native_response": {
+            "items": [
+                {"type": "thinking", "thinking": reasoning, "signature": "short-signature"},
+                {"type": "redacted_thinking", "data": "short-encrypted-data"},
+                {"type": "text", "text": "已核对"},
+            ]
+        },
+    }
+    original_encrypted = json.dumps(encrypted, ensure_ascii=False)
+    encrypted_cost = request_tokens([encrypted], anthropic)
+    longer_encrypted = json.loads(original_encrypted)
+    longer_encrypted["_native_response"]["items"][0]["signature"] *= 1000
+    longer_encrypted["_native_response"]["items"][1]["data"] *= 1000
+    assert request_tokens([longer_encrypted], anthropic) == encrypted_cost
+    assert json.dumps(encrypted, ensure_ascii=False) == original_encrypted
+
+    # Chat drops provider-native reasoning details and Responses reasoning items.
+    chat = Settings(api_mode="chat_completions")
+    chat_text = {"role": "assistant", "content": "已核对"}
+    assert request_tokens(
+        [{**chat_text, "reasoning_details": replay["reasoning_details"], "reasoning": parts}], chat
+    ) == request_tokens([chat_text], chat)
+
+    from tavern.scripting.protocols import openai_messages
+
+    # Relays carry encrypted reasoning in data, alongside ordinary tool data
+    # with the same name. Only the protocol block is opaque.
+    relayed = {
+        **chat_text,
+        "reasoning_details": [
+            {"type": "reasoning.encrypted", "data": "YWJjZGVm", "format": "anthropic-claude-v1"}
+        ],
+    }
+    relayed_long = json.loads(json.dumps(relayed))
+    relayed_long["reasoning_details"][0]["data"] *= 4000
+    assert request_tokens([relayed], chat) == request_tokens([relayed_long], chat)
+    assert openai_messages([relayed_long]) == [relayed_long]
+    business = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "data",
+                "function": {
+                    "name": "read",
+                    "arguments": json.dumps({"type": "reasoning.encrypted", "data": "完整合同" * 100}),
+                },
+            }
+        ],
+    }
+    assert request_tokens([business], chat) > request_tokens([relayed_long], chat) + 100

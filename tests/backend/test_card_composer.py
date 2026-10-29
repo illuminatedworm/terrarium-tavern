@@ -51,9 +51,9 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
             options = {"model": "selected-model", "reasoning_effort": "high"}
             stats = (await client.post(base + "/stats", json={**options, "text": "查看资料"})).json()
             preview = (await client.post(base + "/preview", json={**options, "text": "查看资料"})).json()
-            assert stats["estimated_tokens"] == preview["estimated_tokens"] > 0
+            assert stats["context_usage"]["tokens"] is preview["context_usage"]["tokens"] is None
             assert stats["context_limit"] == 131072 and stats["model"] == "selected-model"
-            assert stats["usage"] is None and stats["token_counting"]["estimated"]
+            assert stats["usage"] is None
             assert stats["cache_usage"] is None
             assert editor.edits.messages(wid) == []
             run = (
@@ -79,7 +79,6 @@ async def test_model_effort_and_context_stats_follow_execution_and_resume(tmp_pa
                 if event["kind"] == "context_stats"
             ]
             assert len(call_stats) == 3 and call_stats[1]["usage"] == provider.last_usage
-            assert call_stats[-1]["estimated_tokens"] > call_stats[0]["estimated_tokens"]
             # The SSE snapshot is absolute, so reconnect/replay cannot add usage twice.
             stream = (await client.get(f"/api/card-edit-runs/{run['id']}/events")).text
             snapshots = [

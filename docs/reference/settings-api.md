@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 13、数据库 schema 为 14、个人数据包格式为 6。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 13、数据库 schema 为 15、个人数据包格式为 6。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -180,11 +180,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 14**，设置文档为 **version 13**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 16**，设置文档为 **version 14**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
-存储层接受 schema 1–14，先只读核对版本与设置。数据库版本低于 14、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 14；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
+存储层接受 schema 1–16，先只读核对版本与设置。数据库版本低于 16、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 16；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
 
 schema 10 新增 `worldbooks`、`card_defaults`、`card_default_worldbooks` 三张表和剧情快照的可选字段 `worldbooks`（见[世界书库与挂载](#世界书库与挂载)）。schema 9 的剧情对话照常升级，升级前同样先备份；已有快照缺少该字段即没有挂载，无需改写。
 
@@ -232,3 +232,8 @@ schema 13 为 `full_agent_progress.payload` 引入 version 3：保存稳定的 `
 设置 version 9 → 10 增加 `full_agent.tools.max_duration_seconds`，整数秒、含边界 30–7200，默认 900。Full Agent 范围修订号增加，其他设置与用户保存的提示词原样保留。字段在“工具与记忆”页可编辑，参与范围保存、撤回和个人设置导入导出；运行中的回合继续使用开始时的快照。总时限覆盖模型、工具、自动整理和正文回调，等待用户审核不计入；显式继续取得新时限。
 
 schema 14 增加 `sessions.opening_locked`：新对话首次生成、咨询或上下文整理任务被接收时，在同一事务中永久锁定开场白，失败或取消不回退。手工设定和卡片本地交互不锁定。旧会话默认锁定，分支继承原状态；个人数据包 version 6 保留该字段，旧包导入时锁定。`PUT /api/sessions/{sid}/opening` 接受 `text` 与 `expected_revision`，只允许未锁定且当前仅有开场的对话；隔离初始化成功后复核修订号与锁定状态，原子保存原文、model、display、快照并增加修订号。`GET /api/sessions/{sid}` 的 `opening_editable` 表示当前可编辑性。
+
+
+schema 15 引入的 `context_token_samples` 在 schema 16 改存最新请求观测：按所属会话／工作区与用途隔离，保存来源、内容指纹、真实输入、输出、思考及接口返回的可选分项，不复制提示词正文。旧校准样本在备份后失效，旧待续任务中的估值强制换窗标记同步失效，正文草稿和已完成工具保留，等待新请求；剧情及已有逐次用量不变，不从日志猜测补造关联。详细日志清理保留观测，删除所属会话／工作区时一并删除。取消、审核拒绝不抹去已发生的用量；改写的请求快照不能驱动当前剧情窗口。字段见 [Token 计数](../guides/token-counting.md#查看实测与完整预览)。
+
+设置 version 13 → 14 移除 `half_agent.chunk_max_tokens` 和 `context_pressure_target`，旧 `chunk_mode=tokens` 迁移为 `messages`，`off` 保持关闭，消息 cap 与批量大小保留。升级沿用写入前整库备份，half_agent 范围修订号增加一次；保存、导入和恢复时使用相同配置规则，当前格式中的未知旧字段会明确报错。设置页展示迁移结果与“每次实测只触发一批”的生效规则，不提升应用版本。

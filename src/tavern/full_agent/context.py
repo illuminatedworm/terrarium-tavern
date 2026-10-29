@@ -14,9 +14,9 @@ from tavern.conversation.context import (
 from tavern.conversation.regeneration import regeneration_reference
 from tavern.conversation.variable_rules import collect_variable_rules, variable_rules_message
 from tavern.core.cache_policy import fingerprint
+from tavern.core.context_usage import context_tokens
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
-from tavern.core.tokens import counting_info, message_tokens, request_tokens
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
@@ -70,6 +70,12 @@ def compile_window(
     tools = transport_tools(tools, settings.kemini, "required" if force_rollover else "auto")
     compact = settings.context_strategy == "openai_compact"
     window = state["window"]
+    compaction = state.get("compaction") or {}
+    # Leave the encrypted items out: a usable checkpoint is itself a request
+    # block, so describe() already fingerprints them once per compilation.
+    settings._context_generation = fingerprint(
+        [window["id"], {key: value for key, value in compaction.items() if key != "items"}]
+    )
     card = normalize(document)
     complete_source = compact or replay_all
     visible = history if complete_source else history[window["start"] :]
@@ -116,9 +122,9 @@ def compile_window(
     if not compact:
         add(
             "system",
-            f"本次上下文窗口上限为 {settings.context_tokens} tokens，占用由运行时估算，不需要你自己计算。"
+            f"本次上下文窗口上限为 {settings.context_tokens} tokens，水位依据上次接口实测输入，不需要你自己计算；新增内容尚未计量。"
             f"占用达到 {settings.full_agent_config.pressure_ratio * 100:g}% 时会追加窗口预算提醒，"
-            "显示估算 tokens 与占用比例；达到上限时提醒会改为强制换窗。没有提醒就不必换窗。",
+            "显示上次实测输入与对应比例；实测达到上限时提醒会改为强制换窗。没有提醒就不必换窗。",
             "context_policy",
         )
     if session.get("turn_preference"):
@@ -146,13 +152,6 @@ def compile_window(
         "persona",
     )
     add("system", expand(wrap_card_field("mes_example", card.get("mes_example", ""))), "examples")
-    if complete_source or window["number"] >= 2:
-        # Keep the current directory after fixed settings so key changes preserve
-        # their cache prefix. Note bodies and metadata remain tool-only.
-        note_keys = "\n".join(
-            key for key, note in state["notes"].items() if note.get("status", "active") == "active"
-        )
-        add("system", "<tavern_note_list>\n" + note_keys + "\n</tavern_note_list>", "note_list")
     handoff = state["handoff"]
     fixed_count = len(items)
 
@@ -313,9 +312,12 @@ def compile_window(
                 }
             )
             items[-1] = ledger.native_message(items[-1])
-    pending_offset = len(items) - fixed_count if user_input or continuation or input_id != "pending" else None
-    if pending_offset is not None and len(items) > fixed_count:
-        replay_starts.append({"offset": len(items) - fixed_count, "history_start": len(history)})
+    # Maintenance also compiles with no pending input. Its fresh directory and
+    # other dynamic frames still belong after history, not inside the saved
+    # coverage: the next user input will precede those frames.
+    completed_offset = len(items) - fixed_count
+    if (user_input or continuation or input_id != "pending") and completed_offset:
+        replay_starts.append({"offset": completed_offset, "history_start": len(history)})
     anchored(input_id)
     add(
         "user",
@@ -372,6 +374,20 @@ def compile_window(
     # versions still need explicit updates when cleared or disabled.
     if planning["enabled"] or state["plot"]["text"] or "plot" in ledger.seen:
         update("plot", plan_message(planning), value=planning)
+    if complete_source or window["number"] >= 2:
+        # The directory is live state, not a fixed rule: adding or archiving a
+        # note must preserve the previous request prefix and cloud checkpoint.
+        # Reassert it once after compaction, just like the current outline.
+        note_keys = "\n".join(
+            key for key, note in state["notes"].items() if note.get("status", "active") == "active"
+        )
+        update(
+            "note_list",
+            "<tavern_note_list>\n当前有效笔记目录（取代此前目录；正文仍须按需读取）：\n"
+            + (note_keys or "当前没有有效笔记。")
+            + "\n</tavern_note_list>",
+            value={"keys": note_keys, "checkpoint": planning["checkpoint"]},
+        )
     if not complete_source:
         # Chapters and the current handoff are separate frames: a mid-window
         # current update does not resend the whole chapter ledger.
@@ -433,46 +449,39 @@ def compile_window(
     )
     if not complete_source:
         update("context_status", status)
-    tokens = request_tokens(wire(), settings, tools)
-    rollover_required = not complete_source and (force_rollover or tokens >= settings.context_tokens)
+    tokens = context_tokens(wire(), settings, tools)
+    rollover_required = not complete_source and (
+        force_rollover or tokens is not None and tokens >= settings.context_tokens
+    )
     if not complete_source and (
-        rollover_required or tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio
+        rollover_required
+        or tokens is not None
+        and tokens >= settings.context_tokens * settings.full_agent_config.pressure_ratio
     ):
-        budget_item = None
-        # Compare actionable pressure states, not the changing token estimate.
-        # Include a new notice itself when checking whether it forces rollover.
-        for _ in range(6):
-            rollover_required |= tokens >= settings.context_tokens
-            value = {
-                "level": "rollover" if rollover_required else "pressure",
-                "context_tokens": settings.context_tokens,
-                "reply_tokens": settings.reply_tokens,
-            }
-            content = (
-                f"本次提醒时上下文估算 {tokens} / {settings.context_tokens} tokens"
-                f"（{tokens / settings.context_tokens:.1%}，含工具定义）；"
-                f"本轮回复额度 {settings.reply_tokens} tokens。\n"
-                + (
-                    "当前进入强制换窗状态：当前上下文已达到或超过窗口上限。"
-                    "必须单独调用 new_context 换窗；可省略 handoff 沿用现有交接，"
-                    "仅实际退出的历史须有章节覆盖，保留的最新完整交流不要求归档。"
-                    "运行时否决其他一切工具调用和正文回复。"
-                    "换窗成功后继续当前用户请求。"
-                    if rollover_required
-                    else "窗口预算提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。"
-                )
+        # A notice cannot change an already measured input. Keep its original
+        # observation text stable until the actionable pressure state changes.
+        value = {
+            "level": "rollover" if rollover_required else "pressure",
+            "context_tokens": settings.context_tokens,
+            "reply_tokens": settings.reply_tokens,
+        }
+        measured = (
+            f"本次提醒依据上次实测输入 {tokens} / {settings.context_tokens} tokens（{tokens / settings.context_tokens:.1%}）"
+            if tokens is not None
+            else "此前已要求换窗；当前请求没有可复用的实测输入"
+        )
+        content = (
+            measured
+            + f"；新增内容尚未计量，本轮回复额度 {settings.reply_tokens} tokens。\n"
+            + (
+                "当前进入强制换窗状态。必须单独调用 new_context 换窗；可省略 handoff 沿用现有交接，"
+                "仅实际退出的历史须有章节覆盖，保留的最新完整交流不要求归档。"
+                "运行时否决其他一切工具调用和正文回复。换窗成功后继续当前用户请求。"
+                if rollover_required
+                else "窗口水位提醒，供安排交接与换窗时机；当前仍可正常调用工具和回复。"
             )
-            if budget_item is None:
-                budget_item = update("context_budget", content, value=value)
-                if budget_item is None:
-                    break
-            else:
-                budget_item["content"] = content
-                budget_item["_runtime_context"]["value"] = value
-            updated = request_tokens(wire(), settings, tools)
-            if updated == tokens:
-                break
-            tokens = updated
+        )
+        update("context_budget", content, value=value)
     elif not complete_source:
         update("context_budget", "")
     if rollover_required:
@@ -480,33 +489,20 @@ def compile_window(
         # forced-tool request even before the next compilation sees force_rollover.
         tools = [tool for tool in tools if tool.get("function", tool)["name"] != TOOL_NAME]
     messages = wire()
-    tokens = request_tokens(messages, settings, tools)
     rows = [*items, *request_tail]
     result = {
         "messages": messages,
-        "trace": [
-            {**m, "position": i, "estimated_tokens": message_tokens(m, settings)} for i, m in enumerate(rows)
-        ],
-        "estimated_tokens": tokens,
-        "tokens": tokens,
+        "trace": [{**m, "position": i} for i, m in enumerate(rows)],
         "available_tokens": available,
         "rollover_required": rollover_required,
         "context_limit": settings.context_tokens,
         "budget": available,
-        "token_counting": counting_info(settings),
         "diagnostics": [],
         "tools": tools,
         "agent_mode": "full_agent",
         "window": {k: v for k, v in window.items() if k != "id"},
         "daily_context_budget": available,
         "window_message_count": len(visible) + bool(user_input),
-        "budget_sources": {
-            **{
-                source: sum(message_tokens(m, settings) for m in rows if m["source"] == source)
-                for source in dict.fromkeys(m["source"] for m in rows)
-            },
-            "tool_definitions": request_tokens([], settings, tools) - 3,
-        },
         "next_lore_injections": copy.deepcopy(snapshot.get("lore_injections", [])),
     }
     result["context_ledger"] = ledger.audit()
@@ -521,7 +517,7 @@ def compile_window(
             _replay_header=complete[:fixed_count],
             _replay_body=complete[fixed_count:],
             _replay_starts=replay_starts,
-            _replay_complete=pending_offset if pending_offset is not None else len(complete) - fixed_count,
+            _replay_complete=completed_offset,
         )
     if compact:
         from tavern.conversation.compaction import project_compact

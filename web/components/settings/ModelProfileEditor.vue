@@ -290,7 +290,7 @@ async function action(check: boolean) {
         @validity="cacheValid = $event"
       />
       <p v-if="!subscription" class="muted">
-        可用的采样参数留空即不发送。未知模型采用参考分词器估算，服务商实际用量单独显示。显式缓存断点需要模型支持。
+        可用的采样参数留空即不发送。独立文本限额使用所选分词器，未知模型采用参考分词器；上下文只显示接口实测。显式缓存断点需要模型支持。
       </p>
     </details>
     <details class="settings-advanced">

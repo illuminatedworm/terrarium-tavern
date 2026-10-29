@@ -114,7 +114,9 @@ Full Agent、Tracker、记忆历史补查和 制卡 agent 在生成工具结果�
 | Gemini | 输出合计包含候选文本和思考量；缓存读取取 `cachedContentTokenCount` |
 | Chat／Responses | 读取原生输入输出字段，兼容已支持的缓存读取／创建别名 |
 
-实际费用需要结合服务商账单；本地 token 估算只用于编排与提示，见[Token 计数](../guides/token-counting.md)。
+上下文快照另行保留服务商原始计数，不使用计费归一化中的补零或合计值：Gemini 分开候选输出和思考，并保留总用量与模态明细；Responses 保留返回的 `reasoning.context`；Anthropic 若返回 `usage.iterations`，窗口观测取最后一个 `message` 采样的三个输入桶，排除累计量、压缩和参谋子调用，输出仍表示整个响应。`context_management.applied_edits` 与 `input_transformations` 只保存已报告的清除计数和类型摘要。所有可选字段缺失保持未知，不自动启用 beta 或改变请求行为。
+
+实际费用需要结合服务商账单；上下文只展示上次有效接口实测输入、输出、思考与原始总用量；缺失项保持未知，不推算响应后的本地长度，见[Token 计数](../guides/token-counting.md)。
 
 ## 实现入口
 

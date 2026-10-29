@@ -14,6 +14,7 @@ import type { CardReferenceOption } from '../../lib/cardReferences';
 import type { ConversationModelSelection, ModelProfile, Provider } from '../../lib/settingsDocument';
 import { conversationModelProfile } from '../../lib/modelConnections';
 import { type ConversationCacheUsage, type EditorContextStats } from '../../lib/editorContextStats';
+import { contextTokens, contextUsageDetails, contextUsageLabel } from '../../lib/contextUsage';
 import { useCardReferencePicker } from '../../composables/useCardReferencePicker';
 import { mergeEditorEvents, type EditorEvent } from '../../lib/cardAgentActivity';
 import { appendSkillRequest, type EditorSkillPreset } from '../../lib/cardAuthorSkills';
@@ -89,12 +90,12 @@ const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const statsError = ref('');
 const contextLabel = computed(
   () =>
-    `${contextStats.value?.estimated_tokens?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens${contextStats.value?.image_count ? ` · ${contextStats.value.image_count} 张图片未计入` : ''}`,
+    `${contextTokens(contextStats.value)?.toLocaleString() ?? '—'} / ${(contextStats.value?.context_limit ?? props.modelProfile.context_tokens).toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${busy.value ? ' · 进行中，显示此前快照' : ''}`,
 );
 const contextTitle = computed(
   () =>
     statsError.value ||
-    `${contextStats.value?.token_counting?.source === 'reference_fallback' ? '参考分词器' : '计数分词器'} ${contextStats.value?.token_counting?.tokenizer || ''}；当前上下文含文本输入与工具的本地估算${contextStats.value?.image_count ? '，图片 tokens 未计入' : ''}，实际用量以服务商为准。`,
+    `${contextUsageDetails(contextStats.value)}${contextStats.value?.image_count ? `当前包含 ${contextStats.value.image_count} 张图片。` : ''}`,
 );
 const error = ref(''),
   notice = ref(''),

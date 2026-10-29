@@ -818,10 +818,17 @@ async def test_full_api_preview_recovery_and_mode_boundaries(story):
             assert preview.status_code == 200
             assert preview.json()["agent_mode"] == "full_agent"
             requested = await client.post(
-                f"/api/sessions/{session['id']}/preview", json={"text": "继续", "update_variables": True}
+                f"/api/sessions/{session['id']}/preview",
+                json={"text": "继续", "update_variables": True, "local_estimate": True},
             )
             assert requested.status_code == 200
+            # The local reference is opt-in for the context panel only; the
+            # provider observation is never replaced or filled by it.
+            assert "local_estimate" not in preview.json()
+            assert requested.json()["local_estimate"]["tokens"] > 0
+            assert requested.json()["context_usage"]["tokens"] is None
             trace = requested.json()["trace"]
+            assert all("local_tokens" in item for item in trace)
             input_index = next(i for i, item in enumerate(trace) if item["source"] == "input")
             assert trace[input_index + 1]["source"] == "turn_variable_instruction"
             assert trace[-1]["source"] == "context_status"
@@ -919,59 +926,67 @@ def test_notes_and_runtime_metadata_are_not_implicitly_in_context(story):
         assert hidden not in wire
 
 
-@pytest.mark.parametrize("window_number, empty", [(1, False), (2, False), (3, False), (2, True)])
-def test_note_list_at_header_end_contains_all_active_keys_only(story, window_number, empty):
-    store, session = story
-    snapshot = copy.deepcopy(session["snapshot"])
-    state = snapshot["full_agent"]
-    state["window"]["number"] = window_number
-    keys = [f"线索/人物{i}" for i in range(12)] + ["约定/钟楼"]
-    state["notes"] = (
-        {}
-        if empty
-        else {
-            key: {
-                "key": key,
-                "content": "正文不能自动注入",
-                "kind": "hypothesis",
-                "status": "active",
-                "revision": 42,
-                "sources": [{"message_id": "opaque-source", "hash": "source-fingerprint"}],
-            }
-            for key in keys
-        }
-    )
-    state["notes"]["归档/旧计划"] = {"status": "archived", "content": "归档正文"}
+def test_cloud_checkpoint_survives_directory_and_ineffective_variable_changes():
+    from tavern.conversation.compaction import completed_context, hashes
+    from tavern.core.models import Settings
+    from tavern.full_agent.state import full_state
+    from tavern.scripting.request_context import response_origin
+
+    cfg = Settings(model="fixture", api_mode="responses", context_strategy="openai_compact")
+    session = {"id": "directory", "revision": 0, "persona": "玩家"}
+    snapshot = {"state": {"place": 1, "unreferenced": 0}, "scopes": {}}
+    state = full_state(snapshot)
+    document = {"name": "向导", "description": "固定位置 {{getvar::place}}"}
+    records = []
+    history = [
+        {"id": "old-user", "role": "user", "raw": "此前输入"},
+        {"id": "old-reply", "role": "assistant", "raw": "此前正文"},
+    ]
+    user_input = ""
+
+    def compile_current():
+        return compile_window(document, session, history, snapshot, user_input, cfg, [], continuation=records)
+
+    first = compile_current()
+    completed = completed_context(first)
+    assert len(completed["_compact_body"]) == 2
+    records.extend(first["context_additions"])
+    state["compaction"] = {
+        "version": 1,
+        "origin": response_origin(cfg),
+        "signature": first["_compact_signature"],
+        "covered": hashes(completed["_compact_body"]),
+        "items": [{"type": "compaction", "encrypted_content": "old-directory"}],
+    }
+    user_input = "继续"
+    restored = compile_current()
+    assert restored["compaction_opaque"]
+    assert any(row["source"] == "note_list" for row in restored["context_additions"])
+    records.extend(restored["context_additions"])
+    assert compile_current()["messages"] == restored["messages"]
+
+    state["notes"]["线索"] = {"content": "笔记正文不自动注入", "status": "active"}
+    snapshot["state"].update(place="1", unreferenced=999)
+    added = compile_current()
+    assert added["compaction_opaque"] and not added["_compact_stale"]
+    assert added["messages"][: len(restored["messages"])] == restored["messages"]
+    directory = next(row for row in added["context_additions"] if row["source"] == "note_list")
+    assert "线索" in directory["content"] and "取代此前目录" in directory["content"]
+    assert "笔记正文不自动注入" not in json.dumps(added["messages"], ensure_ascii=False)
+    records.extend(added["context_additions"])
+    state["notes"]["线索"]["status"] = "archived"
+    archived = compile_current()
+    assert archived["compaction_opaque"]
+    assert archived["messages"][: len(added["messages"])] == added["messages"]
+    assert "当前没有有效笔记" in archived["context_additions"][-1]["content"]
+    records.extend(archived["context_additions"])
+
+    snapshot["state"]["place"] = 2
     before = copy.deepcopy(snapshot)
-    result = compile_window(
-        {"name": "向导", "mes_example": "示例原文"},
-        session,
-        session["messages"],
-        snapshot,
-        "继续",
-        store.settings().for_role("full_agent"),
-        [],
-    )
-    sources = [m["source"] for m in result["trace"]]
-    wire = json.dumps(result["messages"], ensure_ascii=False)
-    assert snapshot == before  # Preview must not write an injection or alter note state.
-    for hidden in ("正文不能自动注入", "归档/旧计划", "归档正文", "opaque-source", "source-fingerprint"):
-        assert hidden not in wire
-    if window_number == 1:
-        assert "note_list" not in sources
-        assert "<tavern_note_list>" not in wire
-        return
-    at = sources.index("note_list")
-    assert sources.count("note_list") == 1
-    assert sources[at - 1 : at + 2] == ["examples", "note_list", "history"]
-    directory = result["messages"][at]
-    assert directory["role"] == "system"
-    assert (
-        directory["content"]
-        == "<tavern_note_list>\n" + "\n".join([] if empty else keys) + "\n</tavern_note_list>"
-    )
-    assert result["trace"][at]["runtime_phase"] == "header"
-    assert result["budget_sources"]["note_list"] > 0
+    changed = compile_current()
+    assert changed["_compact_stale"] and not changed["compaction_opaque"]
+    assert "固定位置 2" in json.dumps(changed["messages"], ensure_ascii=False)
+    assert snapshot == before, "compilation/preview must not rebuild or change the saved state"
 
 
 async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplicate_injection(tmp_path):
@@ -1704,51 +1719,7 @@ def test_explicit_window_and_memory_inventory(story, window_number, notes, expec
     assert [m["position"] for m in result["trace"]] == list(range(len(result["messages"])))
 
 
-def test_budget_signal_only_after_configured_pressure_near_memory(story):
-    store, session = story
-    settings = store.settings().for_role("full_agent")
-    settings.full_agent_config.pressure_ratio = 0.7
-    settings.reply_tokens = 1024
-    settings.context_tokens = 20000
-    document = {"name": "向导"}
-    history = [{**session["messages"][0], "raw": "场景", "model": "场景"}]
-
-    def compile_current():
-        return compile_window(
-            document, session, history, copy.deepcopy(session["snapshot"]), "继续", settings, []
-        )
-
-    low = compile_current()
-    assert [m["source"] for m in low["trace"][:3]] == ["rules", "tool_protocol", "context_policy"]
-    assert "20000 tokens" in low["messages"][2]["content"] and "70%" in low["messages"][2]["content"]
-    assert not low["rollover_required"]
-    assert not any(m["source"] == "context_budget" for m in low["trace"])
-    base = low["estimated_tokens"]
-    settings.context_tokens = int(base / 0.72)
-    settings.reply_tokens = 128
-    warning = compile_current()
-    assert not warning["rollover_required"]
-    sources = [m["source"] for m in warning["trace"]]
-    assert sources.index("context_budget") == sources.index("context_status") + 1
-    assert "当前仍可正常调用工具和回复" in warning["trace"][sources.index("context_budget")]["content"]
-    warning_text = warning["trace"][sources.index("context_budget")]["content"]
-    assert f"{warning['estimated_tokens']} / {settings.context_tokens} tokens" in warning_text
-    assert f"{warning['estimated_tokens'] / settings.context_tokens:.1%}" in warning_text
-    settings.reply_tokens = settings.context_tokens
-    near_full = compile_current()
-    assert near_full["estimated_tokens"] + settings.reply_tokens > settings.context_tokens
-    assert not near_full["rollover_required"]
-    assert near_full["available_tokens"] == settings.context_tokens
-    settings.context_tokens = base + 1  # The notice itself crosses the window boundary.
-    full = compile_current()
-    assert full["rollover_required"]
-    notice = next(m for m in full["trace"] if m["source"] == "context_budget")
-    assert notice["_runtime_context"]["value"]["level"] == "rollover"
-    assert any(m.get("content") == "场景" for m in full["messages"])  # No local truncation.
-    assert full["estimated_tokens"] > full["available_tokens"]
-
-
-def test_pressure_notice_changes_only_with_actionable_state(story):
+def test_pressure_notice_changes_only_with_actionable_state(story, monkeypatch):
     store, session = story
     settings = store.settings().for_role("full_agent")
     settings.full_agent_config.pressure_ratio = 0.7
@@ -1758,7 +1729,9 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
     snapshot = copy.deepcopy(session["snapshot"])
     args = (document, session, [], snapshot, "继续", settings, [])
     probe = compile_window(*args, input_id="current-input")
-    settings.context_tokens = int(probe["estimated_tokens"] / 0.72)
+    assert not probe["rollover_required"]
+    measured = [14400]
+    monkeypatch.setattr("tavern.full_agent.context.context_tokens", lambda *_: measured[0])
     continuation = []
 
     def compile_current():
@@ -1792,12 +1765,12 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
     assert not pressure["rollover_required"]
     read_result("short-read", "读取状态")
     continued = compile_current()
-    assert continued["estimated_tokens"] > pressure["estimated_tokens"]
     assert pressure["messages"] == continued["messages"][: len(pressure["messages"])]
     assert not continued["context_additions"]
 
     complete_text = "完整资料。" * 2000 + "必须保留的结尾"
     read_result("long-read", complete_text)
+    measured[0] = 20100
     overflow = compile_current()
     assert overflow["rollover_required"]
     assert continued["messages"] == overflow["messages"][: len(continued["messages"])]
@@ -1807,7 +1780,8 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
         m["content"] for m in overflow["messages"] if m.get("tool_call_id") == "long-read"
     )
 
-    settings.context_tokens = overflow["estimated_tokens"] * 3
+    settings.context_tokens = 60000
+    measured[0] = None
     cleared = compile_current()
     assert not cleared["rollover_required"]
     # Capacity is now declared in the fixed window header. Updating it rebuilds
@@ -1820,22 +1794,29 @@ def test_pressure_notice_changes_only_with_actionable_state(story):
     )
     assert compile_current()["messages"] == cleared["messages"]
 
-    settings.context_tokens = int(cleared["estimated_tokens"] / 0.72)
+    settings.context_tokens = 20000
+    measured[0] = 14400
     pressure_again = compile_current()
     assert not pressure_again["rollover_required"]
     assert pressure_again["context_ledger"]["rebuild_reason"] == "context_sources_changed"
     notices = [m for m in pressure_again["context_additions"] if m.get("source") == "context_budget"]
-    assert len(notices) == 1 and "窗口预算提醒" in notices[0]["content"]
+    assert len(notices) == 1 and "窗口水位提醒" in notices[0]["content"]
     assert compile_current()["messages"] == pressure_again["messages"]
 
 
-async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
+async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story, monkeypatch):
     store, session = story
     settings = store.settings()
     settings.full_agent.context_tokens = 16000
     settings.full_agent.reply_tokens = 1024
     store.save_settings(settings)
     large = "旧场景细节。" * 6000
+    # The real observation lifecycle is covered in test_domain; this fixture
+    # drives the tool veto contract with an explicit previous measurement.
+    monkeypatch.setattr(
+        "tavern.full_agent.context.context_tokens",
+        lambda messages, *_: 16000 if any(large in (m.get("content") or "") for m in messages) else None,
+    )
     with store.connection() as db:
         db.execute("UPDATE messages SET raw=?,model=? WHERE id=?", (large, large, session["head"]))
     session = store.session(session["id"])
@@ -1887,7 +1868,7 @@ async def test_forced_rollover_vetoes_reply_and_mutations_then_resumes(story):
         await service.close()
 
 
-async def test_provider_sends_complete_request_over_estimated_budget(story, monkeypatch):
+async def test_provider_sends_complete_request_without_preflight_estimate(story, monkeypatch):
     import tavern.core.provider as provider_module
 
     store, _ = story
@@ -1929,7 +1910,6 @@ async def test_provider_sends_complete_request_over_estimated_budget(story, monk
         response = await provider.chat_complete(messages)
         assert response.content == "ok"
         assert requests[0]["messages"] == messages
-        assert captured[0]["context_warning"]
     finally:
         await provider.close()
 
@@ -1963,44 +1943,3 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
         assert not provider._kemini.transport
     finally:
         await provider.close()
-
-
-async def test_reply_may_fill_window_and_rollover_is_required_on_next_turn(story):
-    store, session = story
-    settings = store.settings()
-    settings.full_agent.context_tokens = 16000
-    settings.full_agent.reply_tokens = 12000
-    store.save_settings(settings)
-    service = runtime(store)
-    reply = "继续描写场景。" * 4000
-    first = Model(reply)
-    try:
-        result, current = await turn(service, session, first)
-        assert result["status"] == "committed", result["error"]
-        assert first.requests[0]["extra_body"]["tool_choice"] == "auto"
-        assert current["messages"][-1]["raw"] == reply
-        assert current["snapshot"]["full_agent"]["window"]["number"] == 1
-        kemini = store.settings().for_role("full_agent")
-        kemini.kemini.enabled = True
-        preview = compile_window(
-            store.session_card(current["id"])["document"],
-            current,
-            current["messages"],
-            current["snapshot"],
-            "继续",
-            kemini,
-            [{"type": "function", "function": {"name": "new_context", "parameters": {"type": "object"}}}],
-        )
-        assert preview["rollover_required"]
-        assert all(tool["function"]["name"] != "kemini_emit_story" for tool in preview["tools"])
-        follow = Model(
-            ("new_context", {"handoff": handoff("上一轮场景发展已记录"), "keep_recent": 0}), "继续新的对话。"
-        )
-        result, current = await turn(service, current, follow)
-        assert result["status"] == "committed", result["error"]
-        assert follow.requests[0]["extra_body"]["tool_choice"]["function"]["name"] == "new_context"
-        assert follow.requests[1]["extra_body"]["tool_choice"] == "auto"
-        assert current["snapshot"]["full_agent"]["window"]["number"] == 2
-        assert current["messages"][-3]["raw"] == reply
-    finally:
-        await service.close()

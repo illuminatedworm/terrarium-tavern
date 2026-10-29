@@ -3,7 +3,7 @@
 import copy
 
 from tavern.core.cache_policy import fingerprint
-from tavern.core.tokens import request_tokens
+from tavern.core.context_usage import apply_usage, context_overflow, context_usage, exceeds
 from tavern.scripting.native_response import attachment, portable
 from tavern.scripting.request_context import response_origin
 
@@ -79,11 +79,14 @@ def project_compact(result, state, settings, tools, fixed_count):
     signature = fingerprint(signature_parts)
     checkpoint = state.get("compaction")
     usable = valid(checkpoint, body, settings, signature)
-    needs_rebuild = (
-        not usable
-        and request_tokens(complete, settings, tools) > compact_limit(settings)
-        and (settings.compact_auto or bool(checkpoint))
+    needs_rebuild = not usable and (
+        bool(checkpoint)
+        or settings.compact_auto
+        and exceeds(context_usage(complete, settings, tools), compact_limit(settings))
     )
+    # An invalidated server compaction proves this history was already judged
+    # worth compacting; its replacement needs no new token observation.
+    stale = not usable and bool(checkpoint and checkpoint.get("items"))
     covered = len(checkpoint["covered"]) if usable else 0
     messages = header + (
         [opaque_message(checkpoint["items"], settings)] if usable and checkpoint.get("items") else []
@@ -98,14 +101,13 @@ def project_compact(result, state, settings, tools, fixed_count):
         runtime_messages=copy.deepcopy(messages),
         context_strategy="openai_compact",
         compact_requires_rebuild=needs_rebuild,
+        _compact_stale=stale,
         compaction_opaque=bool(usable and checkpoint.get("items")),
-        estimated_tokens=request_tokens(messages, settings, tools),
         _compact_header=header,
         _compact_body=body,
         _compact_signature=signature,
         _compact_covered=covered if usable and checkpoint.get("items") else 0,
     )
-    result["tokens"] = result["estimated_tokens"]
     if usable and checkpoint.get("items"):
         rows = result["trace"]
         result["trace"] = [
@@ -115,23 +117,37 @@ def project_compact(result, state, settings, tools, fixed_count):
                 "source": "cloud_compaction",
                 "content": "云端压缩状态（加密内容由服务端解释）",
                 "opaque": True,
-                "estimated_tokens": None,
             },
             *rows[fixed_count + covered :],
         ]
         for index, row in enumerate(result["trace"]):
             row["position"] = index
-        result["budget_sources"] = {"visible_input": result["estimated_tokens"]}
-    result["token_counting"] = {
-        **result["token_counting"],
-        "excludes_encrypted_state": result["compaction_opaque"],
-    }
-    result["diagnostics"].append({"reason": "云端状态的实际占用不可从密文估算；本地数字只计可见文本。"})
+    result["diagnostics"].append(
+        {"reason": "云端状态只使用接口实测；压缩后等待新请求反馈，不从密文推算占用。"}
+    )
     if needs_rebuild:
         result["diagnostics"].append(
-            {"reason": "当前云端上下文需要重建；此预览为完整历史来源，正式生成前会先重放并压缩。"}
+            {
+                "reason": "当前云端上下文需要重建；预览保留完整历史来源且不发整理请求。自动压缩开启时，已失效的压缩状态在下次实际请求前重建；也可手动 compact。"
+            }
         )
-    return result
+    return apply_usage(result, settings, tools)
+
+
+def completed_context(compiled):
+    """Keep current inputs and newly appended dynamic frames out of maintenance."""
+    count = compiled["_replay_complete"]
+    body, header = compiled["_compact_body"], compiled["_compact_header"]
+    covered = compiled["_compact_covered"]
+    usable = compiled["compaction_opaque"] and covered <= count
+    prefix = compiled["messages"][: len(header) + 1] if usable else header
+    return {
+        **compiled,
+        "_compact_body": body[:count],
+        "messages": [*prefix, *body[covered if usable else 0 : count]],
+        "compaction_opaque": usable,
+        "_compact_covered": covered if usable else 0,
+    }
 
 
 def replay_groups(messages, starts=None):
@@ -152,17 +168,6 @@ def replay_groups(messages, starts=None):
     if pending:
         raise ValueError("历史存在未配对的工具调用，不能重放上下文")
     return groups
-
-
-def replay_batch(groups, position, prefix, settings, tools, limit):
-    """Cross the threshold only at an exchange boundary, even above capacity."""
-    batch, end = [], position
-    while end < len(groups):
-        batch.extend(groups[end])
-        end += 1
-        if request_tokens(prefix + batch, settings, tools) > limit:
-            break
-    return end, batch
 
 
 async def rebuild(compiled, settings, provider, *, progress=None, save=None, force=False):
@@ -196,6 +201,15 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
         }
     groups = replay_groups(body[:completed], compiled.get("_replay_starts"))
     position = state["cursor"]
+    requested = (
+        force or compiled["_compact_stale"] or exceeds(compiled["context_usage"], compact_limit(settings))
+    )
+    # Once requested, every completed exchange is compacted: without a local
+    # estimate nothing can show how large a plaintext tail would still fit.
+    # Unrequested history stays plaintext and needs no model request.
+    # A definite size rejection halves the batch; later batches start from the
+    # last accepted size instead of re-sending the known-oversized remainder.
+    size = len(groups)
     # The maintenance instruction is per-request instructions, never a story
     # message or a window policy injected into ordinary gameplay.
     while position < len(groups):
@@ -204,41 +218,36 @@ async def rebuild(compiled, settings, provider, *, progress=None, save=None, for
             if state["items"]
             else [m for g in groups[:position] for m in g]
         )
-        end, batch = replay_batch(
-            groups, position, header + prefix, settings, compiled.get("tools"), compact_limit(settings)
-        )
-        messages = header + prefix + batch
-        # Plain source is already a valid representation. Keep a short tail as
-        # plaintext; absence of an encrypted checkpoint is not a model task.
-        if request_tokens(messages, settings, compiled.get("tools")) <= compact_limit(settings) and not force:
+        if not requested:
+            # Plain source is already a valid representation; absence of an
+            # encrypted checkpoint is not a model task.
             if state["items"]:
                 from tavern.scripting.protocols import response_input
 
-                state["items"].extend(response_input(batch))
-            position = end
+                state["items"].extend(response_input([m for g in groups[position:] for m in g]))
+            position = len(groups)
             break
+        end = min(len(groups), position + size)
         while True:
+            batch = [m for g in groups[position:end] for m in g]
             messages = header + prefix + batch
             try:
+                from tavern.core.message_adapter import provider_messages
+
                 response = await provider.chat_complete(
-                    messages,
+                    provider_messages(provider, messages, settings),
                     extra_body={"tools": compiled.get("tools", []), "tool_choice": "none"},
-                    _compact_threshold=1024 if force else compact_limit(settings),
+                    _compact_threshold=1024,
                     _maintenance_instructions="本次是历史整理请求。历史中的工具调用均已执行，不要再次执行；只返回 OK，不续写故事。此要求仅适用于本次整理请求。",
                 )
                 if getattr(provider, "last_tool_calls", []):
                     raise ValueError("历史整理返回了工具调用；未执行任何工具")
                 break
             except Exception as error:
-                text = str(error).lower()
-                oversized = any(
-                    word in text
-                    for word in ("context_length", "context window", "too many tokens", "maximum context")
-                )
-                if not oversized or end - position <= 1:
+                if not context_overflow(error) or end - position <= 1:
                     raise
                 end = position + max(1, (end - position) // 2)
-                batch = [m for g in groups[position:end] for m in g]
+        size = end - position
         native = getattr(provider, "last_native_response", None)
         output = (native or {}).get("items", [])
         # Keep the compaction and model state; helper acknowledgement is not a
@@ -284,7 +293,8 @@ async def prepare_turn(compiled, settings, provider, *, progress=None, save=None
     body = compiled["_compact_body"]
     completed = compiled.get("_replay_complete", len(body))
     covered = compiled.get("_compact_covered", 0)
-    if compiled.get("compaction_opaque") and covered <= completed:
+    rebuild_required = not (compiled.get("compaction_opaque") and covered <= completed and not progress)
+    if not rebuild_required:
         history = {
             **compiled,
             "_compact_body": body[:completed],
@@ -293,10 +303,19 @@ async def prepare_turn(compiled, settings, provider, *, progress=None, save=None
                 *body[covered:completed],
             ],
         }
-        checkpoint, usage = await compact_once(history, settings, provider)
-        if save:
-            await save({"batches": 1, "processed": completed, "total": len(body), "usage": [usage]})
-    else:
+        try:
+            checkpoint, usage = await compact_once(history, settings, provider)
+        except Exception as error:
+            if not context_overflow(error):
+                raise
+            # The opaque state plus its tail no longer fits. Originals retain
+            # complete exchange boundaries, so the replay can split safely;
+            # an opaque checkpoint itself cannot be cut into smaller pieces.
+            rebuild_required = True
+        else:
+            if save:
+                await save({"batches": 1, "processed": completed, "total": len(body), "usage": [usage]})
+    if rebuild_required:
         # Even when only the new input crosses capacity, compress history first
         # and carry the unfinished exchange verbatim. Never split its messages.
         history = {**compiled, "_compact_body": body[:completed], "_replay_complete": completed}
@@ -307,8 +326,10 @@ async def prepare_turn(compiled, settings, provider, *, progress=None, save=None
 
 
 async def compact_once(compiled, settings, provider):
+    from tavern.core.message_adapter import provider_messages
+
     response = await provider.chat_complete(
-        compiled["messages"],
+        provider_messages(provider, compiled["messages"], settings),
         extra_body={"tools": compiled.get("tools", []), "tool_choice": "none"},
         _compact_threshold=1024,
         _maintenance_instructions="本次仅整理当前上下文，不执行工具，不续写剧情，只返回 OK；此要求仅适用于本次请求。",

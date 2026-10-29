@@ -1,29 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contextMessageContent, groupContext, summarizeBudgetSources } from '../../web/lib/contextPreview';
-
-describe('context preview budget summary', () => {
-  it('combines sources with the same visible category before rounding percentages', () => {
-    const sources = {
-      'lore:first': 3,
-      history: 20,
-      'lore:second': 2,
-      chat_framing: 1,
-    };
-    const summary = summarizeBudgetSources(sources, 26, (source) =>
-      source.startsWith('lore:') ? '世界书（按设定位置）' : source,
-    );
-    expect(summary).toEqual([
-      { label: '世界书（按设定位置）', kind: 'lore', tokens: 5, percent: 19.23 },
-      { label: 'history', kind: 'history', tokens: 20, percent: 76.92 },
-      { label: 'chat_framing', kind: 'chat', tokens: 1, percent: 3.85 },
-    ]);
-  });
-  it('keeps small nonzero percentages and rounds to two decimal places', () => {
-    const summary = summarizeBudgetSources({ small: 1, rest: 799 }, 800, (source) => source);
-    expect(summary[0].percent).toBe(0.13);
-    expect(summary[0].percent.toFixed(2)).toBe('0.13');
-  });
-});
+import { contextMessageContent, groupContext } from '../../web/lib/contextPreview';
 
 describe('context preview categories', () => {
   it('shows the entire constant region as one top lore group', () => {
@@ -60,12 +36,7 @@ describe('context preview categories', () => {
   });
   it('preserves order when lore blocks are separated by another source', () => {
     const groups = groupContext(
-      [
-        { source: 'lore:1', estimated_tokens: 10 },
-        { source: 'persona', estimated_tokens: 5 },
-        { source: 'lore:2', estimated_tokens: 20 },
-        { source: 'lore_before', estimated_tokens: 30 },
-      ],
+      [{ source: 'lore:1' }, { source: 'persona' }, { source: 'lore:2' }, { source: 'lore_before' }],
       (source) => source,
     );
     const lore = groups.filter((group) => group.kind === 'lore');
@@ -73,7 +44,6 @@ describe('context preview categories', () => {
     expect(lore).toHaveLength(2);
     expect(lore[0].items).toHaveLength(1);
     expect(lore[1].items).toHaveLength(2);
-    expect(lore.reduce((total, group) => total + group.tokens, 0)).toBe(60);
   });
   it('counts distinct entries rather than aggregated message blocks', () => {
     const groups = groupContext(

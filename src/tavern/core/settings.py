@@ -110,14 +110,12 @@ class HalfSettings(AgentSettings):
     tracker_max_steps: int = Field(default=12, ge=2, le=100, strict=True)
     lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
-    chunk_mode: Literal["messages", "tokens", "off"] = "tokens"
+    chunk_mode: Literal["messages", "off"] = "messages"
     chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
     history_message_cap: int = Field(default=200, ge=8, le=1000, strict=True)
     memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
     context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
-    context_pressure_target: float = Field(default=0.70, ge=0.05, le=0.98)
     daily_context_budget: int = Field(default=98304, ge=2048, le=2000000, strict=True)
-    chunk_max_tokens: int = Field(default=65536, ge=512, le=2000000, strict=True)
     memory_timeout: int = Field(default=180, ge=5, le=180, strict=True)
     memory_input_tokens: int = Field(default=65536, ge=2048, le=2000000, strict=True)
     memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
@@ -150,13 +148,6 @@ class HalfSettings(AgentSettings):
             raise ValueError("上下文块标识不能重复")
         if self.memory_output_tokens + 2048 >= self.background.context_tokens:
             raise ValueError("记忆输出上限必须为后台模型输入留出安全余量")
-        if self.context_pressure_target >= self.context_pressure_trigger:
-            raise ValueError("压力裁剪目标必须小于压力触发阈值")
-        if (
-            self.chunk_mode == "tokens"
-            and self.chunk_max_tokens > self.foreground.context_tokens - self.foreground.reply_tokens - 2048
-        ):
-            raise ValueError("历史预算不能超过正文模型的可用输入容量")
         return self
 
 
@@ -200,7 +191,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[13] = 13
+    version: Literal[14] = 14
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -403,6 +394,14 @@ def rename_card_author(raw):
     return False
 
 
+def migrate_context_window_settings(raw):
+    """Migrate saved/legacy configuration, never override a current user edit."""
+    if raw.get("chunk_mode") == "tokens":
+        raw["chunk_mode"] = "messages"
+    raw.pop("chunk_max_tokens", None)
+    raw.pop("context_pressure_target", None)
+
+
 def migrate_settings(raw: dict) -> SettingsDocument:
     raw = deepcopy(raw)
     renamed = rename_card_author(raw)
@@ -480,6 +479,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             raw["version"] = 13
             if migrate_interleaving_prompts(raw.setdefault("shared", {}).setdefault("kemini", {})):
                 changed_scopes.add("shared")
+        if raw["version"] == 13:
+            raw["version"] = 14
+            migrate_context_window_settings(raw.setdefault("half_agent", {}))
+            changed_scopes.add("half_agent")
         if renamed:
             changed_scopes.add("shared")
         if migrate_web_settings(raw.setdefault("shared", {})):
@@ -565,6 +568,7 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             revisions[scope] = revisions.get(scope, 0) + 1
         return SettingsDocument.model_validate(raw)
     migrate_tracker_settings(raw)
+    migrate_context_window_settings(raw)
     old = Settings.model_validate(raw)
     if fingerprint(old.full_agent_system_prompt) in LEGACY_FULL_AGENT_PROMPT_HASHES:
         old.full_agent_system_prompt = FULL_AGENT_PROMPT

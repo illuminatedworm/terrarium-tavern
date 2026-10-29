@@ -7,6 +7,7 @@ from tavern.conversation.cache_breakpoint import model_messages, prepare_context
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_context import load_trace
 from tavern.conversation.regeneration import reply_for_regeneration
+from tavern.core.context_usage import exceeds
 from tavern.core.message_adapter import provider_messages
 from tavern.core.provider import make_provider
 from tavern.scripting.request_context import OperationContexts, configure_operation
@@ -63,14 +64,16 @@ class TurnAgent:
             replay_records=load_trace(self.store, self.session["id"], self.history),
         )
         prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
-        if (
-            self.compiled["estimated_tokens"]
-            > self.settings.context_tokens - self.settings.reply_tokens - 2048
+        if exceeds(
+            self.compiled["context_usage"], self.settings.context_tokens - self.settings.reply_tokens - 2048
         ):
             self.store.event(
                 self.tid,
                 "context_warning",
-                {"purpose": "writer", "message": "正文请求估算超出模型上下文，仍完整发送"},
+                {
+                    "purpose": "writer",
+                    "message": "正文上次实测输入超过可用输入容量；新增内容尚未计量，仍完整发送",
+                },
             )
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
@@ -119,7 +122,10 @@ class TurnAgent:
                         owner.compact_checked = True
                         if (
                             owner.settings.compact_auto
-                            and context["estimated_tokens"] > owner.settings.context_tokens
+                            and (
+                                context["_compact_stale"]
+                                or exceeds(context["context_usage"], owner.settings.context_tokens)
+                            )
                             and context["_replay_complete"]
                         ):
                             from tavern.conversation.compaction import prepare_turn

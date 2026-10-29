@@ -511,7 +511,6 @@ def test_new_rolling_lore_remains_complete_when_total_budget_is_full():
         Settings(context_tokens=4608, reply_tokens=1024, system_prompt="规则" * 100),
         "seed",
     )
-    assert out["estimated_tokens"] > 1536
     assert out["next_lore_injections"][0]["content"] == "界" * 2000
     assert out["next_lore"]["e"]["present"]
 

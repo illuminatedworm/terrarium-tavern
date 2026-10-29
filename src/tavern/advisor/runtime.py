@@ -19,11 +19,11 @@ from tavern.advisor.context import (
 )
 from tavern.advisor.storage import AdvisorStore
 from tavern.advisor.tools import AdvisorTools, definitions
+from tavern.core.context_usage import context_overflow, exceeds
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.provider import make_provider, require_model_connection
-from tavern.core.tokens import request_tokens
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation, response_origin
 from tavern.storage.store import Conflict, dump, uid
@@ -93,11 +93,11 @@ class AdvisorService:
         }
         return state
 
-    def preview(self, sid):
+    def preview(self, sid, *, local_estimate=False):
         state, session = self.data.get(sid), self.store.session(sid)
         cfg, config = runtime_config(self.store, session, state["options"])
         web = WebSession(config.web.mode, cfg, "advisor")
-        return compile_context(
+        result = compile_context(
             freeze_story(self.store, session),
             config,
             cfg,
@@ -106,6 +106,11 @@ class AdvisorService:
             [],
             web.definitions(definitions(session["agent_mode"])),
         )
+        if local_estimate:
+            from tavern.core.local_estimate import attach_local_estimate
+
+            attach_local_estimate(result, cfg)
+        return result
 
     def options(self, sid, request):
         state, session = self.data.get(sid), self.store.session(sid)
@@ -355,12 +360,16 @@ class AdvisorRun:
         self.calls += 1
 
     async def prepare_context(self, provider):
-        if self.context_prepared:
-            return
         compiled = self.compiled()
+        usage = compiled["context_usage"]
+        # A resumed consultation may have been checked before its last request
+        # was rejected. Reconsider that new evidence without repeating a
+        # successful compaction or re-running any of its pending tools.
+        if self.context_prepared and not (usage["overflow"] and not usage["pending"]):
+            return
         force = self.request.get("compact", False)
         if not force and (
-            not self.config.auto_compact or compiled["estimated_tokens"] <= self.cfg.context_tokens
+            not self.config.auto_compact or not exceeds(compiled["context_usage"], self.cfg.context_tokens)
         ):
             self.context_prepared = True
             return
@@ -385,7 +394,6 @@ class AdvisorRun:
                 "content": "整理用户与参谋 agent 的旧咨询，保留用户要求、已查证结论及来源、方案取舍和未完成问题。明确这只是咨询摘要，不是已发生剧情。仅返回摘要，不调用工具。",
             }
         ]
-        batch = []
 
         def save_partial(summary_value, checkpoint_value, through_value):
             self.context = {
@@ -407,7 +415,8 @@ class AdvisorRun:
             )
             self.request_slot()
             response = await provider.chat_complete(
-                self.view.messages(messages), extra_body={"tool_choice": "none"}
+                provider_messages(provider, self.view.messages(messages), self.cfg),
+                extra_body={"tool_choice": "none"},
             )
             if getattr(response, "finish_reason", None) in ("length", "content_filter"):
                 raise ValueError(
@@ -426,46 +435,49 @@ class AdvisorRun:
             save_partial(text, [], rows[-1]["seq"])
             return text
 
-        if self.config.context_strategy == "openai_compact":
-            from tavern.conversation.compaction import checkpoint_items, opaque_message
+        from tavern.conversation.compaction import checkpoint_items, opaque_message
 
-            for exchange in old:
-                messages = (
-                    base
-                    + ([opaque_message(checkpoint, self.cfg)] if checkpoint else [])
-                    + self.view.messages(consultation_body([exchange], self.story))
-                )
-                self.request_slot()
-                await provider.chat_complete(
-                    messages,
-                    extra_body={"tool_choice": "none"},
-                    _compact_threshold=1024,
-                    _maintenance_instructions="仅整理已完成咨询，不执行历史工具，返回 OK。",
-                )
-                if getattr(provider, "last_tool_calls", []):
-                    raise ValueError("咨询整理返回工具调用，未执行")
-                checkpoint = checkpoint_items(
-                    (getattr(provider, "last_native_response", None) or {}).get("items", [])
-                )
-                if not checkpoint:
-                    raise ValueError("服务端未返回有效参谋 agent 压缩状态，未继续咨询")
-                checkpoint = [item for item in checkpoint if item.get("type") != "message"]
-                save_partial("", checkpoint, exchange["seq"])
-        else:
-            for exchange in old:
-                candidate = batch + [exchange]
-                estimate = request_tokens(
-                    base
-                    + [{"role": "system", "content": summary}]
-                    + consultation_body(candidate, self.story),
-                    self.cfg,
-                )
-                if batch and estimate > self.cfg.context_tokens:
-                    summary = await summarize(batch, summary)
-                    batch = []
-                batch.append(exchange)
-            if batch:
-                summary = await summarize(batch, summary)
+        position = 0
+        # Later batches start from the last size the provider accepted.
+        size = len(old)
+        while position < len(old):
+            end = min(len(old), position + size)
+            while True:
+                rows = old[position:end]
+                try:
+                    if self.config.context_strategy == "openai_compact":
+                        messages = (
+                            base
+                            + ([opaque_message(checkpoint, self.cfg)] if checkpoint else [])
+                            + self.view.messages(consultation_body(rows, self.story))
+                        )
+                        self.request_slot()
+                        await provider.chat_complete(
+                            provider_messages(provider, messages, self.cfg),
+                            extra_body={"tool_choice": "none"},
+                            _compact_threshold=1024,
+                            _maintenance_instructions="仅整理已完成咨询，不执行历史工具，返回 OK。",
+                        )
+                        if getattr(provider, "last_tool_calls", []):
+                            raise ValueError("咨询整理返回工具调用，未执行")
+                        next_checkpoint = checkpoint_items(
+                            (getattr(provider, "last_native_response", None) or {}).get("items", [])
+                        )
+                        if not next_checkpoint:
+                            raise ValueError("服务端未返回有效参谋 agent 压缩状态，未继续咨询")
+                        checkpoint = [item for item in next_checkpoint if item.get("type") != "message"]
+                        save_partial("", checkpoint, rows[-1]["seq"])
+                    else:
+                        summary = await summarize(rows, summary)
+                    break
+                except Exception as error:
+                    # Only a definite size rejection can split whole exchanges;
+                    # transport, validation and cancellation keep their errors.
+                    if not context_overflow(error) or end - position <= 1:
+                        raise
+                    end = position + max(1, (end - position) // 2)
+            size = end - position
+            position = end
         save_partial(summary, checkpoint, old[-1]["seq"])
         self.context_prepared = True
         self.save()
@@ -581,7 +593,12 @@ class AdvisorRun:
         configure_operation(provider, self.request_context, self.event, "advisor")
         self.event("started", {})
         previous_through = self.context.get("through")
-        await self.prepare_context(provider)
+        previous_purpose = getattr(provider, "operation_purpose", "advisor")
+        provider.operation_purpose = "advisor_maintenance"
+        try:
+            await self.prepare_context(provider)
+        finally:
+            provider.operation_purpose = previous_purpose
         if self.request.get("compact"):
             self.commit(
                 "咨询上下文整理完成。"
@@ -599,13 +616,18 @@ class AdvisorRun:
                 "context_stats",
                 {
                     k: compiled[k]
-                    for k in ("estimated_tokens", "context_limit", "recent_refs", "token_counting", "opaque")
+                    for k in (
+                        "context_usage",
+                        "context_limit",
+                        "recent_refs",
+                        "opaque",
+                    )
                 },
             )
-            if compiled["estimated_tokens"] > self.cfg.context_tokens:
+            if exceeds(compiled["context_usage"], self.cfg.context_tokens):
                 self.event(
                     "context_warning",
-                    {"message": "请求估算超出模型容量，仍完整发送已选资料；可调整近期剧情范围或上下文容量。"},
+                    {"message": "上次实测输入超过窗口上限；新增内容尚未计量，仍完整发送已选资料。"},
                 )
             self.save()
             self.event("response_started", {"reply": self.view.restore(self.reply())})
@@ -660,6 +682,19 @@ class AdvisorRun:
                 self.pending = assistant
                 self.save()
                 await self.execute_pending()
+            updated = self.compiled()
+            self.event(
+                "context_stats",
+                {
+                    key: updated[key]
+                    for key in (
+                        "context_usage",
+                        "context_limit",
+                        "recent_refs",
+                        "opaque",
+                    )
+                },
+            )
             if ended:
                 return self.finish()
         raise ValueError("本次调用额度已用完，可继续咨询；待保存偏好尚未生效")

@@ -87,6 +87,9 @@ class StreamState:
             elif kind == "message_delta":
                 self.result.update(event.get("delta", {}))
                 self.result.setdefault("usage", {}).update(event.get("usage", {}))
+                for key in ("context_management", "input_transformations", "diagnostics"):
+                    if key in event:
+                        self.result[key] = copy.deepcopy(event[key])
             elif kind == "message_stop":
                 self.completion_seen = True
             return ""
@@ -108,6 +111,8 @@ class StreamState:
         if candidate.get("finishReason"):
             self.completion_seen = True
             self.result["finishReason"] = candidate["finishReason"]
+            if "tokenCount" in candidate:
+                self.result["candidateTokenCount"] = candidate["tokenCount"]
         if candidate.get("finishMessage"):
             self.result["finishMessage"] = candidate["finishMessage"]
         return "".join(p.get("text", "") for p in pieces if not p.get("thought"))
@@ -146,6 +151,11 @@ class StreamState:
                 {
                     "content": {"role": "model", "parts": self.parts},
                     "finishReason": self.result["finishReason"],
+                    **(
+                        {"tokenCount": self.result["candidateTokenCount"]}
+                        if "candidateTokenCount" in self.result
+                        else {}
+                    ),
                     **(
                         {"finishMessage": self.result["finishMessage"]}
                         if "finishMessage" in self.result

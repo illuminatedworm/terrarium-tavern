@@ -8,7 +8,6 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.kemini import TURN_SOURCES as KEMINI_TRANSIENT
 from tavern.core.kemini import control_text, prefix_frames
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
-from tavern.core.tokens import count_text, counting_info, message_tokens, request_tokens
 from tavern.scripting.native_response import message_digest, native_items
 from tavern.scripting.request_context import response_origin
 from tavern.search.retrieval_text import split_retrieval
@@ -221,6 +220,7 @@ def apply_context(
     elif current_base[: len(previous["base"])] != previous["base"]:
         reason = "context_prefix_changed"
     epoch = fingerprint([origin, policy, window, current_base, input_id]) if reason else previous["epoch"]
+    settings._context_generation = fingerprint([window, epoch, generation])
     native_epoch = previous["native_epoch"] if previous and previous.get("origin") == origin else epoch
     retired = set(previous.get("retired_native", [])) if previous else set()
     updates, invalidations, seen = [], [], {}
@@ -348,25 +348,12 @@ def apply_context(
         if wire.get("_native_response"):
             wire["content"] = native_text(wire["_native_response"])
         messages.append(wire)
-    total = request_tokens(messages, settings)
-    for index, (item, message) in enumerate(zip(items, messages, strict=True)):
-        item.update(
-            position=index,
-            estimated_tokens=message_tokens(message, settings),
-            content_tokens=count_text(item["content"], settings),
-            unit="tokens",
-        )
+    for index, item in enumerate(items):
+        item["position"] = index
     context.update(
         messages=messages,
         trace=items,
-        estimated_tokens=total,
-        token_counting=counting_info(settings),
-        budget_sources={
-            source: sum(m["estimated_tokens"] for m in items if m["source"] == source)
-            for source in dict.fromkeys(m["source"] for m in items)
-        },
     )
-    context["budget_sources"]["chat_framing"] = total - sum(m["estimated_tokens"] for m in items)
     if reason:
         context.setdefault("diagnostics", []).append({"reason": "上下文重建：" + REASONS[reason]})
     for invalid in invalidations:

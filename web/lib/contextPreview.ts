@@ -22,6 +22,7 @@ export function contextMessageContent(item: any): string {
   return parts.join('\n\n') || '（无文本内容）';
 }
 
+/** Category shares of the preview-only local tokenizer reference. */
 export function summarizeBudgetSources(
   sources: Record<string, number> | null | undefined,
   total: number,
@@ -70,6 +71,7 @@ export function groupContext(items: any[], labelFor: (source: string) => string)
     label: string;
     anchor: string;
     items: any[];
+    /** Sum of the preview-only local reference; 0 when it was not requested. */
     tokens: number;
     count: number;
   }> = [];
@@ -106,7 +108,7 @@ export function groupContext(items: any[], labelFor: (source: string) => string)
       groups.push(group);
     }
     group.items.push(item);
-    group.tokens += Number(item.estimated_tokens || 0);
+    group.tokens += Number(item.local_tokens || 0);
   }
   for (const group of groups) {
     group.count =

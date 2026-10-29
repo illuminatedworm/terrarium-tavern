@@ -251,6 +251,15 @@ class EditorRun:
         if assistant:  # A closing tool batch is already in the context and trace.
             self.context.messages.append(assistant)
             self.trace.append(assistant)
+        self.event(
+            "context_stats",
+            {
+                "context_usage": self.context.usage(),
+                "context_limit": self.cfg.context_tokens,
+                "model": self.cfg.model,
+                **self.context.image_stats(),
+            },
+        )
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             workspace = self.edits.check(db, self.wid, self.request["expected_revision"], idle=False)
@@ -316,12 +325,11 @@ class EditorRun:
             if self.context.must_rollover:
                 self.event("context_warning", {"message": "编辑上下文达到窗口上限，要求换窗；原文仍完整保留"})
             self.save()
-            tokens = self.context.tokens()
             self.event("model_call", {"call": self.requests, "model": self.cfg.model})
             self.event(
                 "context_stats",
                 {
-                    "estimated_tokens": tokens,
+                    "context_usage": self.context.last_usage,
                     "context_limit": self.cfg.context_tokens,
                     "model": self.cfg.model,
                     **self.context.image_stats(),
@@ -347,7 +355,7 @@ class EditorRun:
             self.event(
                 "context_stats",
                 {
-                    "estimated_tokens": tokens,
+                    "context_usage": self.context.usage(),
                     "context_limit": self.cfg.context_tokens,
                     "model": self.cfg.model,
                     "usage": self.usage(provider),

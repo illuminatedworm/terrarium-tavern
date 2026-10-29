@@ -18,6 +18,20 @@ DATA = Path(__file__).parents[1] / "tokenizer_data"
 SUPPORTED = {"o200k_base", "cl100k_base"}
 REPLY_PRIMING = 3
 MESSAGE_FRAMING = 4
+# Kept on both the durable editor message and its hydrated request copy. These
+# references are immutable within their owning conversation, unlike base64 wire
+# encoding; protocol adapters never send this local metadata to the model.
+IMAGE_REFS = "_editor_image_refs"
+OPAQUE_TYPES = {
+    "compaction",
+    "redacted_thinking",
+    "reasoning.encrypted",
+    "image_url",
+    "input_image",
+    "image",
+}
+OPAQUE_FIELDS = {"encrypted_content", "thoughtSignature", "thought_signature", "signature", "inlineData"}
+BUSINESS_FIELDS = {"args", "arguments", "input", "response"}
 
 
 def counting_info(settings=None):
@@ -71,21 +85,76 @@ def count_text(text, settings=None):
     return _short_count(value, name) if len(value) <= 16384 else len(encoding(name).encode_ordinary(value))
 
 
-def message_tokens(message, settings=None):
+def visible_payload(value):
+    """Counting projection only: opaque state must still be replayed unchanged."""
+    if isinstance(value, list):
+        return [visible_payload(item) for item in value]
+    if isinstance(value, dict):
+        if value.get("type") in OPAQUE_TYPES:
+            return {"type": value["type"]}
+        return {
+            # These are model/tool business data, not provider metadata. A user
+            # is allowed to have a field named signature or encrypted_content.
+            key: item if key in BUSINESS_FIELDS else visible_payload(item)
+            for key, item in value.items()
+            if key not in OPAQUE_FIELDS
+        }
+    return value
+
+
+def counting_payload(message, settings=None):
+    """Select the protocol's actual content, without its portable shadow copies."""
     native = message.get("_native_response")
     if native:
-        # Ciphertext length is not the model's rendered context length.
-        visible = [
-            {k: v for k, v in item.items() if k != "encrypted_content"}
-            for item in native["items"]
-            if item.get("type") != "compaction"
+        return {"role": message.get("role", ""), "native": native["items"]}
+    api = getattr(settings, "api_mode", "chat_completions")
+    details = message.get("reasoning_details") or []
+    native = next((d for d in details if isinstance(d, dict) and d.get("provider") == api), None)
+    if native and api == "gemini" and message.get("role") == "assistant":
+        return {"role": "assistant", "native": native["parts"]}
+    keys = ["role", "content", "name", "tool_calls", "tool_call_id", "function_call"]
+    if api == "chat_completions":
+        keys.append("reasoning_content")
+        if not any(d.get("provider") in ("gemini", "anthropic") for d in details if isinstance(d, dict)):
+            keys.append("reasoning_details")
+    elif api == "responses":
+        keys.append("reasoning")
+    result = {key: message[key] for key in keys if key in message}
+    if refs := message.get(IMAGE_REFS):
+        # materialize_images appends the original images to the user text;
+        # wrapping may add text parts on either side. Count their complete text
+        # once and identify the images by the same immutable references in both
+        # preview and transport, without loading blobs during a stats refresh.
+        content = result["content"]
+        text = (
+            content
+            if isinstance(content, str)
+            else "".join(p["text"] for p in content if p.get("type") == "text")
+        )
+        result["content"] = [
+            {"type": "text", "text": text},
+            *({"type": "image", "ref": ref} for ref in refs),
         ]
+    if native and api == "anthropic":
+        result["thinking"] = native.get("thinking", [])
+    if api == "anthropic" and message.get("_tool_error"):
+        result["is_error"] = True
+    return result
+
+
+def message_tokens(message, settings=None):
+    return payload_tokens(counting_payload(message, settings), settings)
+
+
+def payload_tokens(payload, settings=None):
+    payload = visible_payload(payload)
+    if "native" in payload:
         return (
-            count_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":")), settings)
-            + count_text(message.get("role", ""), settings)
+            count_text(json.dumps(payload["native"], ensure_ascii=False, separators=(",", ":")), settings)
+            + count_text(payload["role"], settings)
             + MESSAGE_FRAMING
         )
-    content = message.get("content") or ""
+    content = payload.get("content") or ""
     if isinstance(content, list):
         # Base64 is transport encoding, not rendered model text. Vision usage
         # is unknown locally and is reported separately from this text estimate.
@@ -98,15 +167,19 @@ def message_tokens(message, settings=None):
         ]
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
-    cost = count_text(content, settings) + count_text(message.get("role", ""), settings) + MESSAGE_FRAMING
+    cost = count_text(content, settings) + count_text(payload.get("role", ""), settings) + MESSAGE_FRAMING
     # Context tracing fields are local metadata, never part of the model input.
     extra = {
-        key: message[key] for key in ("name", "tool_calls", "tool_call_id", "function_call") if key in message
+        key: payload[key]
+        for key in ("name", "tool_calls", "tool_call_id", "function_call", "is_error")
+        if key in payload
     }
     if extra:
         cost += count_text(json.dumps(extra, ensure_ascii=False, separators=(",", ":")), settings)
     reasoning = {
-        key: message[key] for key in ("reasoning_content", "reasoning_details", "reasoning") if key in message
+        key: payload[key]
+        for key in ("reasoning_content", "reasoning_details", "reasoning", "thinking")
+        if key in payload
     }
     if reasoning:
         # Count Unicode text rather than JSON's ASCII escape representation.
@@ -116,7 +189,13 @@ def message_tokens(message, settings=None):
 
 
 def request_tokens(messages, settings=None, tools=None):
-    cost = REPLY_PRIMING + sum(message_tokens(message, settings) for message in messages)
+    return request_payload_tokens(
+        (counting_payload(message, settings) for message in messages), settings, tools
+    )
+
+
+def request_payload_tokens(payloads, settings=None, tools=None):
+    cost = REPLY_PRIMING + sum(payload_tokens(payload, settings) for payload in payloads)
     if tools:
         cost += count_text(json.dumps(tools, ensure_ascii=False, separators=(",", ":")), settings)
     return cost

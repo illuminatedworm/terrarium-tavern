@@ -1,7 +1,9 @@
 """Official checkpoints stay local to Advisor and are invalidated by model changes."""
 
 import copy
+import json
 
+import httpx
 import pytest
 from kohakuterrarium.llm.base import ChatResponse
 from kohakuterrarium.testing.llm import ScriptedLLM
@@ -12,6 +14,59 @@ from tavern.search.retrieval_config import ModelProfile, Provider
 from tavern.storage.store import dump, uid
 from tests.backend.test_advisor import ask, setup
 from tests.backend.test_card_author import ToolLLM
+
+
+async def test_resume_after_context_rejection_compacts_before_repeating_consultation(tmp_path):
+    from tavern.advisor.context import runtime_config
+    from tavern.scripting.model_transport import ModelTransport
+
+    _, store, session, advisor = setup(tmp_path)
+    settings = store.settings_document()
+    settings.shared.advisor.keep_recent = 1
+    store.save_settings(settings)
+    for index in range(3):
+        result = await ask(advisor, session["id"], ToolLLM([]), f"旧咨询{index}")
+        assert result["status"] == "completed", result
+    original = copy.deepcopy(store.session(session["id"])["snapshot"])
+    cfg, _ = runtime_config(store, session, advisor.data.get(session["id"])["options"])
+    requests = []
+
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if len(requests) == 1:
+            return httpx.Response(
+                400, json={"error": {"code": "context_length_exceeded", "message": "prompt is too long"}}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "完整咨询摘要或回答"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 10},
+            },
+        )
+
+    def provider():
+        return ModelTransport(
+            cfg, "test-key", http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))
+        )
+
+    cfg.model_request_mode = "non_stream"
+    failed = await ask(advisor, session["id"], provider(), "继续讨论")
+    assert failed["status"] == "error"
+    assert advisor.data.run(failed["id"], private=True)["progress"]["context_prepared"]
+    resumed = await ask(advisor, session["id"], provider(), "", resume=failed["id"])
+    assert resumed["status"] == "completed", resumed
+    assert len(requests) == 3
+    assert "整理用户与参谋 agent 的旧咨询" in requests[1]["messages"][0]["content"]
+    assert "旧咨询0" not in dump(requests[2]) and "旧咨询2" in dump(requests[2])
+    assert advisor.data.get(session["id"])["context"]["through"] > 0
+    assert store.session(session["id"])["snapshot"] == original
 
 
 class Cloud(ScriptedLLM):

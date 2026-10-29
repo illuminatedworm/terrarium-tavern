@@ -14,6 +14,7 @@ from tavern.conversation.context import macros, wrap_lorebook
 from tavern.conversation.regeneration import reply_for_regeneration
 from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.cache_policy import fingerprint
+from tavern.core.context_usage import exceeds
 from tavern.core.history_refs import message_ref
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
@@ -398,8 +399,11 @@ class FullAgent:
             self.append(message, self.state["window"]["id"])
         if result["context_ledger"]["rebuild_reason"]:
             self.event("context_baseline", result["context_ledger"])
-        if result["estimated_tokens"] > self.settings.context_tokens:
-            self.event("context_warning", {"message": "Full Agent 请求估算超出模型上下文，仍保留完整文本"})
+        if exceeds(result["context_usage"], self.settings.context_tokens):
+            self.event(
+                "context_warning",
+                {"message": "Full Agent 上次实测输入超过窗口上限；新增内容尚未计量，仍保留完整文本"},
+            )
         self.store.set_turn(self.tid, preview=encoded(result))
         return result
 
@@ -456,11 +460,17 @@ class FullAgent:
             for step in range(self.settings.full_agent_config.max_steps):
                 compiled = self.compile()
                 if (
-                    step == 0
-                    and self.settings.context_strategy == "openai_compact"
+                    self.settings.context_strategy == "openai_compact"
                     and self.settings.compact_auto
-                    and compiled["estimated_tokens"] > self.settings.context_tokens
+                    and (
+                        compiled["_compact_stale"]
+                        or step == 0
+                        and exceeds(compiled["context_usage"], self.settings.context_tokens)
+                    )
                 ):
+                    # Tools may change fixed sources mid-turn. Repair stale
+                    # checkpoints before the next actual request, while keeping
+                    # pressure-based compaction at the existing turn boundary.
                     from tavern.conversation.compaction import prepare_turn
 
                     async def save_replay(value):

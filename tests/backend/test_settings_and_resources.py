@@ -163,7 +163,7 @@ async def test_proxy_defaults_are_direct_and_explicit_settings_survive(monkeypat
     doc.shared.send_shortcut = "enter"
     # Saved values from an earlier installation remain authoritative after defaults change.
     doc.half_agent.foreground.context_tokens, doc.half_agent.foreground.reply_tokens = 32768, 2048
-    doc.half_agent.chunk_mode, doc.half_agent.chunk_max_tokens = "messages", 6000
+    doc.half_agent.chunk_mode = "messages"
     doc.half_agent.memory_output_tokens, doc.half_agent.memory_capacity_tokens = 4096, 4096
     assert migrate_settings(doc.model_dump()) == doc
     assert doc.runtime().use_proxy and doc.runtime().reply_tokens == 2048

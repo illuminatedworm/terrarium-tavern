@@ -21,7 +21,12 @@ def register_routes(app, advisor):
 
     @app.get("/api/sessions/{sid}/advisor/preview")
     async def preview(sid: str):
-        return advisor.preview(sid)
+        return advisor.preview(sid, local_estimate=True)
+
+    @app.get("/api/sessions/{sid}/advisor/stats")
+    async def stats(sid: str):
+        preview = advisor.preview(sid)
+        return {key: preview[key] for key in ("context_usage", "context_limit")}
 
     @app.post("/api/sessions/{sid}/advisor/runs")
     async def submit(sid: str, payload: ConsultationRequest):

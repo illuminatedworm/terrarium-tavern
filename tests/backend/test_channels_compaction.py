@@ -24,6 +24,32 @@ def compact_response(text="OK", number=1):
     return response
 
 
+def reported_pressure(monkeypatch, tokens=1000000):
+    """Supply prior pressure until the fixture starts its next real request.
+
+    These lifecycle tests isolate cancellation/review from request matching;
+    real identity, generation and ordering are exercised in test_domain.
+    """
+    from tavern.core.context_usage import ContextMeter
+
+    original_usage, original_begin = ContextMeter.usage, ContextMeter.begin
+    started = set()
+
+    def usage(meter, current, lane):
+        value = original_usage(meter, current, lane)
+        if lane in ("foreground", "full_agent") and meter.owner not in started:
+            return {**value, "tokens": tokens, "source": "provider", "coverage": "exact", "pending": False}
+        return value
+
+    def begin(meter, current, lane):
+        started.add(meter.owner)
+        return original_begin(meter, current, lane)
+
+    monkeypatch.setattr(ContextMeter, "usage", usage)
+    monkeypatch.setattr(ContextMeter, "begin", begin)
+    return started.clear
+
+
 def long_story(store):
     from tavern.core.models import SessionCreate
 
@@ -152,7 +178,9 @@ async def test_channel_boundary_is_enforced_in_settings_creation_and_origin_assi
         await app.state.editor.close()
 
 
-async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_executes_them(tmp_path):
+async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_executes_them(
+    tmp_path, monkeypatch
+):
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
     config.full_agent.official_model.context_tokens = 10000
@@ -200,15 +228,13 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
             return sse(response)
 
         store.chatgpt.http_transport = httpx.MockTransport(route)
+        reset_observation = reported_pressure(monkeypatch)
         result, session = await operate(service, session, "enable_compact")
         assert result["compacted"] and session["context_strategy"] == "openai_compact"
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
         assert [m["raw"] for m in session["messages"]] == [m["raw"] for m in before_history]
         first = wire[0]
-        settings = store.session_settings(session)
-        assert first["context_management"] == [
-            {"type": "compaction", "compact_threshold": settings.context_tokens}
-        ]
+        assert first["context_management"] == [{"type": "compaction", "compact_threshold": 1024}]
         assert first["input"][0]["role"] == "developer"
         assert "当前有效 handoff" not in json.dumps(first["input"], ensure_ascii=False)
         assert any(
@@ -222,6 +248,7 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         assert any(i.get("type") == "compaction" for i in wire[-1]["input"])
         assert "context_management" not in wire[-1]
         assert session["snapshot"]["full_agent"]["notes"] == before_notes
+        reset_observation()
         _, session = await operate(service, session, "enable_local")
         assert session["context_strategy"] == "new_context"
         assert current_text(session["snapshot"]["full_agent"]).startswith("NEW HANDOFF")
@@ -246,11 +273,12 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
 
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
+        _, session = await operate(service, session, "enable_compact")
         operations = service.context_operations
         op = operations.start(
             session["id"],
             ContextOperationRequest(
-                kind="enable_compact", operation_id="cancel", expected_revision=session["revision"]
+                kind="compact", operation_id="cancel", expected_revision=session["revision"]
             ),
         )
         await asyncio.wait_for(entered.wait(), 3)
@@ -262,7 +290,7 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
                 TurnRequest(operation_id="blocked", expected_revision=session["revision"], text="Continue"),
             )
         await operations.cancel(op["id"])
-        assert store.session(session["id"])["context_strategy"] == "new_context"
+        assert store.session(session["id"])["context_strategy"] == "openai_compact"
         release.set()
         operations.resume(op["id"])
         await operations.tasks[op["id"]]
@@ -271,7 +299,7 @@ async def test_cancelled_replay_is_resumable_and_blocks_story_requests(tmp_path)
         await service.close()
 
 
-async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path):
+async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     session = long_story(store)
     service = runtime(store)
@@ -287,6 +315,7 @@ async def test_plain_acknowledgement_cannot_be_committed_as_handoff(tmp_path):
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
+        reported_pressure(monkeypatch)
         operations = service.context_operations
         op = operations.start(
             session["id"],
@@ -381,7 +410,7 @@ def test_compaction_source_identity_includes_tool_failure_status():
 
 
 async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_change():
-    from tavern.conversation.compaction import hashes, rebuild, valid
+    from tavern.conversation.compaction import hashes, opaque_message, prepare_turn, valid
     from tavern.core.models import Settings
     from tavern.scripting.request_context import response_origin
 
@@ -405,8 +434,23 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
         "_compact_header": [{"role": "system", "content": "Rules"}],
         "_compact_body": body,
         "_compact_signature": "fixture-header",
+        "_compact_stale": False,
         "tools": [],
+        "context_usage": {"tokens": 20000, "coverage": "exact", "pending": False, "overflow": False},
     }
+    pending = {"role": "user", "content": "Current unfinished exchange must stay verbatim"}
+    compiled.update(
+        _compact_body=[*body, pending],
+        _replay_complete=len(body),
+        _compact_covered=2,
+        compaction_opaque=True,
+        messages=[
+            *compiled["_compact_header"],
+            opaque_message([{"type": "compaction", "encrypted_content": "old-checkpoint"}], settings),
+            *body[2:],
+            pending,
+        ],
+    )
 
     class ReplayProvider:
         last_tool_calls = []
@@ -414,8 +458,13 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
 
         def __init__(self):
             self.requests = []
+            self.attempts = []
 
         async def chat_complete(self, messages, **kwargs):
+            self.attempts.append(copy.deepcopy(messages))
+            assert pending not in messages
+            if sum(m["role"] == "user" for m in messages) > 2:
+                raise ValueError("maximum context length exceeded")
             self.requests.append(copy.deepcopy(messages))
             self.last_native_response = {
                 "items": [{"type": "compaction", "encrypted_content": f"opaque-{len(self.requests)}"}]
@@ -430,11 +479,14 @@ async def test_long_replay_resumes_at_complete_batch_and_rebuilds_after_model_ch
 
     provider = ReplayProvider()
     with pytest.raises(asyncio.CancelledError):
-        await rebuild(compiled, settings, provider, save=stop_after_batch)
+        await prepare_turn(compiled, settings, provider, save=stop_after_batch)
+    assert "old-checkpoint" in json.dumps(provider.attempts[0])
+    assert body[0] in provider.attempts[1]
     assert 0 < saved[-1]["processed"] < len(body)
     resume_provider = ReplayProvider()
-    checkpoint, progress = await rebuild(compiled, settings, resume_provider, progress=saved[-1])
-    assert progress["processed"] == len(body) and checkpoint["covered"] == hashes(body)
+    checkpoint = await prepare_turn(compiled, settings, resume_provider, progress=saved[-1])
+    assert checkpoint["covered"] == hashes(body)
+    assert "old-checkpoint" not in json.dumps(resume_provider.attempts)
     assert body[0]["content"] not in json.dumps(resume_provider.requests)
     assert valid(checkpoint, body, settings, "fixture-header")
     assert not valid(checkpoint, body, settings.model_copy(update={"model": "other"}), "fixture-header")
@@ -582,14 +634,19 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
         "_compact_header": [],
         "_compact_body": body,
         "_compact_signature": "fixture",
+        "_compact_stale": False,
         "_replay_header": [],
         "_replay_body": body,
         "_replay_starts": starts,
         "tools": [],
+        "context_usage": {"tokens": 20000, "coverage": "exact", "pending": False, "overflow": False},
     }
 
     class Provider(Model):
         async def chat_complete(self, messages, **kwargs):
+            originals = sum(m.get("content", "").startswith("User ") for m in messages)
+            if originals > (1 if strategy == "openai_compact" else 2):
+                raise ValueError("maximum context length exceeded")
             self.requests.append(copy.deepcopy(messages))
             assert request_tokens(messages, settings) > settings.context_tokens
             if strategy == "new_context":
@@ -638,8 +695,8 @@ async def test_replay_preserves_oversized_whole_exchanges_and_resumes(strategy):
         assert not any(item.get("_native_response") for request in resumed.requests for item in request)
 
 
-def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoint_special_cases():
-    from tavern.conversation.compaction import compact_limit, project_compact
+def test_compact_observation_and_auto_setting_decide_rebuild():
+    from tavern.conversation.compaction import project_compact
     from tavern.core.models import Settings
 
     settings = Settings(
@@ -649,12 +706,13 @@ def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoin
         chunk_mode="off",
         context_strategy="openai_compact",
     )
+    measured = {"tokens": None, "coverage": "unavailable", "pending": False, "overflow": False}
+    settings._context_meter = SimpleNamespace(usage=lambda *_: measured)
 
-    def projection(text, state=None):
+    def projection(state=None):
         return project_compact(
             {
-                "messages": [{"role": "user", "content": text}],
-                "token_counting": {},
+                "messages": [{"role": "user", "content": "Complete source. " * 3000}],
                 "diagnostics": [],
                 "trace": [],
             },
@@ -664,22 +722,26 @@ def test_compact_source_length_and_auto_setting_decide_rebuild_without_checkpoin
             0,
         )
 
-    assert not projection("Short source")["compact_requires_rebuild"]
-    long_text = "Complete source. " * 3000
-    assert projection(long_text)["compact_requires_rebuild"]
-    assert projection(long_text)["estimated_tokens"] >= compact_limit(settings)
-    exact = projection(long_text)["estimated_tokens"]
-    settings.context_tokens = exact
-    assert not projection(long_text)["compact_requires_rebuild"]
-    settings.context_tokens = exact - 1
-    assert projection(long_text)["compact_requires_rebuild"]
+    assert not projection()["compact_requires_rebuild"]
+    measured.update(tokens=8192, coverage="exact")
+    assert not projection()["compact_requires_rebuild"]
+    measured["tokens"] = 8193
+    assert projection()["compact_requires_rebuild"]
+    # A definite size rejection carries no count but still proves the overflow.
+    measured.update(tokens=None, coverage="unavailable", overflow=True)
+    assert projection()["compact_requires_rebuild"]
     settings.compact_auto = False
-    assert not projection(long_text)["compact_requires_rebuild"]
-    assert projection(long_text, {"compaction": {"version": 0}})["compact_requires_rebuild"]
+    assert not projection()["compact_requires_rebuild"]
+    assert projection({"compaction": {"version": 0}})["compact_requires_rebuild"]
+    # Only a stale server compaction, not a stale plain baseline, re-compacts.
+    assert not projection({"compaction": {"version": 0}})["_compact_stale"]
+    assert projection({"compaction": {"version": 0, "items": [{"type": "compaction"}]}})["_compact_stale"]
 
 
 @pytest.mark.parametrize("automatic", [True, False])
-async def test_user_turn_compacts_before_story_only_when_enabled_and_never_during_tools(tmp_path, automatic):
+async def test_user_turn_compacts_before_story_only_when_enabled_and_never_during_tools(
+    tmp_path, automatic, monkeypatch
+):
     from tavern.core.models import TurnRequest
 
     store, _, _ = connected_store(tmp_path)
@@ -711,6 +773,7 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         _, session = await operate(service, session, "enable_compact")
         assert wire == []
         session = store.update_session(session["id"], session["revision"], compact_auto=int(automatic))
+        reported_pressure(monkeypatch)
         started = service.submit(
             session["id"],
             TurnRequest(text=text, operation_id="long-user-input", expected_revision=session["revision"]),
@@ -724,7 +787,7 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         await service.close()
 
 
-async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_path):
+async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_path, monkeypatch):
     from tavern.core.models import TurnRequest
 
     store, _, _ = connected_store(tmp_path)
@@ -746,6 +809,7 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
+        reported_pressure(monkeypatch)
         started = service.submit(
             session["id"],
             TurnRequest(
@@ -761,6 +825,74 @@ async def test_failed_pre_turn_compaction_does_not_generate_or_commit_story(tmp_
         assert len(requests) == 1
         current = store.session(session["id"])
         assert current["head"] == session["head"] and current["snapshot"] == before
+    finally:
+        await service.close()
+
+
+async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_replaying_tools(
+    tmp_path, monkeypatch
+):
+    from tavern.character.cards import normalize
+    from tavern.core.models import TurnRequest
+
+    store, _, _ = connected_store(tmp_path)
+    _, session = story(store, "full_agent")
+    service = runtime(store)
+    stages = []
+    current_input = "本轮正在修改设定，必须完整保留这个输入。"
+
+    def route(request):
+        body = json.loads(request.content)
+        if body.get("instructions"):
+            stages.append("maintenance")
+            assert current_input not in json.dumps(body["input"], ensure_ascii=False)
+            assert not any(item.get("type") == "function_call" for item in body["input"])
+            return sse(compact_response(number=len(stages)))
+        stages.append("story")
+        assert "context_management" not in body
+        assert current_input in json.dumps(body["input"], ensure_ascii=False)
+        if stages.count("story") == 1:
+            return sse(
+                completed(
+                    "",
+                    [
+                        (
+                            "revise_content",
+                            {
+                                "operations": [
+                                    {"op": "set_character", "field": "description", "value": "新的固定设定"}
+                                ],
+                                "comment": "用户明确要求修改设定",
+                            },
+                        )
+                    ],
+                )
+            )
+        assert stages == ["maintenance", "story", "maintenance", "story"]
+        assert "新的固定设定" in json.dumps(body["input"], ensure_ascii=False)
+        assert sum(item.get("type") == "function_call" for item in body["input"]) == 1
+        return sse(completed("修改设定后的完整正文。"))
+
+    store.chatgpt.http_transport = httpx.MockTransport(route)
+    try:
+        _, session = await operate(service, session, "enable_compact")
+        reported_pressure(monkeypatch)
+        started = service.submit(
+            session["id"],
+            TurnRequest(
+                text=current_input,
+                operation_id="edit-fixed-source",
+                expected_revision=session["revision"],
+                allow_content_edit=True,
+            ),
+        )
+        await service.tasks[started["id"]]
+        saved = store.turn(started["id"])
+        assert saved["status"] == "committed", saved.get("error")
+        assert stages == ["maintenance", "story", "maintenance", "story"]
+        current = store.session(session["id"])
+        assert current["messages"][-1]["raw"] == "修改设定后的完整正文。"
+        assert normalize(current["snapshot"]["content"]["document"])["description"] == "新的固定设定"
     finally:
         await service.close()
 
@@ -781,7 +913,6 @@ async def test_pre_turn_recompaction_keeps_the_pending_exchange_outside_the_chec
         return project_compact(
             {
                 "messages": history + [pending],
-                "token_counting": {},
                 "diagnostics": [],
                 "trace": [],
                 "_replay_complete": 2,

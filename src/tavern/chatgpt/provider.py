@@ -80,9 +80,9 @@ class ChatGPTProvider(ModelTransport):
         if effort != "default":
             body["reasoning"] = {"effort": effort}
         threshold = kwargs.get("_compact_threshold")
-        # The runtime checks capacity once before a user-initiated turn. Only
-        # dedicated maintenance requests may compress; story/tool continuations
-        # must not trigger a second, server-side threshold policy mid-turn.
+        # Capacity is checked before a user-initiated turn; invalidated state
+        # may also need repair before a tool continuation. Only dedicated
+        # maintenance requests compress, never a normal story/tool response.
         if threshold is not None and not kwargs.get("_compact_disabled"):
             if cfg.runtime_mode not in ("full_agent", "half_agent"):
                 raise ValueError("云端 compact 仅适用于官方渠道的剧情上下文")
@@ -158,7 +158,7 @@ class ChatGPTProvider(ModelTransport):
         request = self.http.build_request(
             "POST", API_ROOT + "/responses", json=body, headers={"Authorization": "Bearer " + self.key}
         )
-        self._capture(messages, tools, body, diagnostic, str(request.url), request)
+        await self._capture(messages, tools, body, diagnostic, str(request.url), request)
         response = await self._failure_debug.send(self.http, request, stream=True, follow_redirects=False)
         self._response_headers = {
             key: response.headers[key] for key in ("x-request-id", "request-id") if key in response.headers
@@ -187,7 +187,7 @@ class ChatGPTProvider(ModelTransport):
         if self.response_capture:
             self.response_capture(copy.deepcopy(self.last_response_record))
 
-    def _finish(self, payload):
+    async def _finish(self, payload):
         self.accounts.require_account(self.account_id, self.generation)
         if payload.get("status") != "completed":
             raise response_error(payload, request_id=self._request_id(), secrets=(self.key,))
@@ -205,7 +205,7 @@ class ChatGPTProvider(ModelTransport):
         # authentication material. Only diagnostic metadata is subject to token-pattern redaction.
         if payload.get("diagnostics") is not None:
             payload = {**payload, "diagnostics": redact(payload["diagnostics"], (self.key,))}
-        result = super()._finish(payload)
+        result = await super()._finish(payload)
         sources = source_links(payload)
         if sources:
             self._last_assistant_extra_fields["web_sources"] = sources
@@ -275,7 +275,7 @@ class ChatGPTProvider(ModelTransport):
                 payload = state.finish()
             except ValueError as error:
                 raise ChatGPTError(str(error), code="invalid_stream", request_id=self._request_id()) from None
-            self._completed_response = self._finish(payload)
+            self._completed_response = await self._finish(payload)
             if self._last_assistant_extra_fields.get("web_sources"):
                 event_sink("web_sources", {"sources": self._last_assistant_extra_fields["web_sources"]})
         except ChatGPTError as error:

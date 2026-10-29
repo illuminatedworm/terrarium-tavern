@@ -8,8 +8,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tavern.conversation.compaction import compact_once, rebuild
+from tavern.conversation.compaction import compact_once, completed_context, rebuild
 from tavern.core.cache_policy import fingerprint
+from tavern.core.context_usage import context_overflow, exceeds
 from tavern.core.errors import NotFound
 from tavern.core.message_adapter import adapter_snapshot, bind_adapter
 from tavern.core.models import TurnRequest
@@ -163,7 +164,10 @@ class ContextOperations:
             if op["kind"] != "compact":
                 # Both directions derive fresh state from the same durable
                 # originals. Old opaque state and handoff are not inputs.
-                state.pop("compaction", None)
+                previous = state.pop("compaction", None)
+                # Only whether server compaction had happened carries over: it
+                # is the evidence that the originals need a handoff on return.
+                payload.setdefault("source_compacted", bool(previous and previous.get("items")))
                 state.pop("compact_replay", None)
             document = (snapshot.get("content") or {}).get(
                 "document", self.store.session_card(session["id"])["document"]
@@ -195,9 +199,7 @@ class ContextOperations:
                 )
 
             compiled = compile_current()
-            if half and strategy == "openai_compact":
-                from tavern.conversation.half_compaction import completed_context
-
+            if strategy == "openai_compact":
                 compiled = completed_context(compiled)
             self.save(oid, payload)
 
@@ -258,6 +260,7 @@ class ContextOperations:
                     session["messages"],
                     progress=payload.get("replay"),
                     save=save_progress,
+                    compacted=payload["source_compacted"],
                 )
                 state["handoff"] = {**replay["handoff"], "revision": state["handoff"]["revision"] + 1}
                 state["window"] = {
@@ -271,6 +274,7 @@ class ContextOperations:
             elif (
                 compiled["compact_requires_rebuild"]
                 or op["kind"] == "enable_compact"
+                or payload.get("replay")
                 or half
                 and not compiled["compaction_opaque"]
             ):
@@ -284,7 +288,7 @@ class ContextOperations:
                     save=save_progress,
                     force=op["kind"] == "compact"
                     or half
-                    and compiled["estimated_tokens"] > settings.context_tokens,
+                    and exceeds(compiled["context_usage"], settings.context_tokens),
                 )
                 state["compaction"] = checkpoint
                 if half:
@@ -295,22 +299,36 @@ class ContextOperations:
                 if (
                     half
                     and compiled["_replay_complete"]
-                    and compiled["estimated_tokens"] > settings.context_tokens
+                    and exceeds(compiled["context_usage"], settings.context_tokens)
                     and not payload["compacted"]
                 ):
                     raise ValueError("历史超过窗口上限，但服务端未生成压缩状态；原上下文保持不变")
             elif op["kind"] == "compact":
-                checkpoint, usage = (
-                    await compact_once(compiled, settings, lazy_provider)
-                    if not half or compiled["_replay_complete"]
-                    else (None, {})
-                )
+                try:
+                    checkpoint, usage = (
+                        await compact_once(compiled, settings, lazy_provider)
+                        if not half or compiled["_replay_complete"]
+                        else (None, {})
+                    )
+                except Exception as error:
+                    if not context_overflow(error):
+                        raise
+                    # The old checkpoint plus plaintext tail may itself be too
+                    # large. Replay originals at whole-exchange boundaries,
+                    # keeping successful batches resumable just like rebuilds.
+                    checkpoint, replay = await rebuild(
+                        compiled, settings, lazy_provider, save=save_progress, force=True
+                    )
+                    payload["usage"] = replay["usage"]
+                else:
+                    payload["usage"] = [usage]
                 if checkpoint:
                     state["compaction"] = checkpoint
                     if half:
                         install(snapshot, checkpoint, compiled, session["messages"])
-                payload["compacted"] = checkpoint is not None
-                payload["usage"] = [usage]
+                payload["compacted"] = bool(
+                    checkpoint and any(item.get("type") == "compaction" for item in checkpoint["items"])
+                )
                 payload["converted"] = True
             if hasattr(provider, "usage_history"):
                 payload["usage"] = prior_usage + copy.deepcopy(provider.usage_history)

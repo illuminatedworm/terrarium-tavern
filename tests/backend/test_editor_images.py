@@ -109,14 +109,13 @@ async def test_preview_stats_and_upload_size_are_truthful(tmp_path, monkeypatch)
             preview = await client.post(base + "/preview", json={"text": "参考图片"})
             assert preview.status_code == 200, preview.text
             body = preview.json()
-            assert body["image_count"] == 1 and body["estimated_tokens_complete"] is False
-            assert body["image_tokens_included"] is False
+            assert body["image_count"] == 1
             item = next(m for m in body["messages"] if m.get("attachments"))
             assert item["attachments"][0]["width"] == 24
             assert encoded not in preview.text and str(tmp_path) not in preview.text
             assert "实际请求发送原图" in body["note"]
             stats = (await client.post(base + "/stats", json={"text": "参考图片"})).json()
-            assert stats["image_count"] == 1 and stats["estimated_tokens"] == body["estimated_tokens"]
+            assert stats["image_count"] == 1
             # Only a real user message binds pending files; previews stay read-only.
             assert editor.edits.conversation(wid)["files"][0]["message_ref"] is None
             monkeypatch.setattr("tavern.character.editor_files.MAX_FILE_BYTES", len(data) - 1)

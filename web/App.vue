@@ -29,6 +29,7 @@ import { effortOptions } from './lib/reasoningEffort';
 import ChatGPTUsage from './components/common/ChatGPTUsage.vue';
 import CacheRateStat from './components/common/CacheRateStat.vue';
 import { conversationCacheRate, type ConversationCacheUsage } from './lib/editorContextStats';
+import { contextTokens, contextUsageDetails, contextUsageLabel } from './lib/contextUsage';
 import { cacheRetention } from './lib/cachePolicy';
 import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
@@ -81,6 +82,7 @@ import StartupWarmup from './components/story/StartupWarmup.vue';
 import { observeTurn, turnDraft, type TraceEvent } from './lib/turnStream';
 import { createSessionController, StaleView } from './lib/sessionController';
 import { contextKind, groupContext, summarizeBudgetSources } from './lib/contextPreview';
+import { localEstimateSources } from './lib/localEstimate';
 import type {
   BranchMessage,
   CardConversationSummary,
@@ -885,6 +887,7 @@ const contextLabels: Record<string, string> = {
   handoff: '交接笔记',
   note_list: '长期笔记目录',
   agent_tools: '当前窗口工具记录',
+  turn_commit: '回合完成标记',
   context_status: '窗口与记忆状态',
   context_policy: '上下文窗口机制',
   cloud_compaction: '云端压缩状态',
@@ -946,8 +949,10 @@ async function removeLore(record: LoreRecord) {
 const contextGroups = computed(() => groupContext(preview.value?.trace || [], contextLabel));
 const budgetSourceSummary = computed(() =>
   summarizeBudgetSources(
-    preview.value?.budget_sources,
-    Number(preview.value?.estimated_tokens || 0),
+    localEstimateSources(preview.value?.trace || [], preview.value?.local_estimate, (row) =>
+      String(row.source || 'other'),
+    ),
+    Number(preview.value?.local_estimate?.tokens || 0),
     contextLabel,
   ),
 );
@@ -986,43 +991,17 @@ function contextItemTitle(item: JsonObject) {
   if (source === 'history') return `${item.role === 'user' ? session.value?.persona : name.value} · 历史消息`;
   return contextLabel(source);
 }
-function usageValue(usage: any, paths: string[]) {
-  for (const path of paths) {
-    let value = usage;
-    for (const key of path.split('.')) value = value?.[key];
-    if (typeof value === 'number') return value;
-  }
-  return null;
-}
 const cacheRateLabel = computed(() => conversationCacheRate(cacheUsage.value));
 const composerContextLabel = computed(() => {
   const current = contextEstimateError.value
     ? '—'
-    : (contextStats.value?.estimated_tokens?.toLocaleString() ?? '—');
-  return `${current} / ${activeModel.value.context_tokens.toLocaleString()} tokens`;
+    : (contextTokens(contextStats.value)?.toLocaleString() ?? '—');
+  return `${current} / ${activeModel.value.context_tokens.toLocaleString()} tokens · ${contextUsageLabel(contextStats.value)}${busy.value ? ' · 进行中，显示此前快照' : ''}`;
 });
 const composerContextTitle = computed(
   () =>
-    contextEstimateError.value ||
-    `当前上下文 / 上下文窗口上限；${tokenizerLabel.value || '当前上下文为本地估算，实际用量以服务商为准。'}${contextStats.value?.compaction_opaque ? '当前仅估算可见文本，不含云端加密压缩状态。' : ''}`,
+    contextEstimateError.value || `上次实测输入 / 上下文窗口上限；${contextUsageDetails(contextStats.value)}`,
 );
-const contextLengthLabel = computed(() =>
-  contextEstimateError.value
-    ? '本次 token 计数不可用'
-    : contextStats.value?.estimated_tokens == null
-      ? '计算中'
-      : `${contextStats.value.compaction_opaque ? '可见文本估算' : '本次预计输入'} ${Number(contextStats.value.estimated_tokens).toLocaleString()} tokens${contextStats.value.compaction_opaque ? '（不含加密状态）' : ''}`,
-);
-const tokenizerLabel = computed(() => {
-  if (contextEstimateError.value) return contextEstimateError.value;
-  const info = contextStats.value?.token_counting;
-  if (!info) return '';
-  return `${info.source === 'reference_fallback' ? '参考分词器' : '计数分词器'} ${info.tokenizer}；包含消息封装估算，实际用量以服务商为准。`;
-});
-const actualInputLabel = computed(() => {
-  const value = usageValue(contextStats.value?.usage, ['prompt_tokens', 'input_tokens', 'promptTokenCount']);
-  return value == null ? '上次实际输入：暂无数据' : `上次实际输入 ${value.toLocaleString()} tokens`;
-});
 async function guarded(fn: () => Promise<any>) {
   error.value = '';
   try {
@@ -2068,6 +2047,7 @@ async function inspectContext() {
       text: input.value,
       update_variables: updateVariables.value,
       allow_content_edit: allowEdit.value,
+      local_estimate: true,
     });
     contextStats.value = preview.value;
     if (!busy.value) cacheUsage.value = preview.value!.cache_usage;
@@ -3521,9 +3501,6 @@ useTimedError(error);
             :groups="contextGroups"
             :budget-sources="budgetSourceSummary"
             :context-tokens="Number(activeModel?.context_tokens || 0)"
-            :actual-input-label="actualInputLabel"
-            :length-label="contextLengthLabel"
-            :tokenizer-label="tokenizerLabel"
             :cache-rate="cacheRateLabel"
             :item-title="contextItemTitle"
             :rounds="messageRounds"

@@ -504,7 +504,11 @@ onMounted(async () => {
             <template v-else
               ><h4>历史窗口</h4>
               <p class="muted">
-                以下裁剪设置仅适用于本地滚动窗口；云端 compact 按 Writer 的上下文 token 上限触发。
+                本地窗口按消息上限或上次实测水位退出完整交流；实测压力每次只触发一个批次，之后等待新实测。
+                云端 compact 同样依据有效实测输入触发；服务端明确的超限拒绝或已失效的压缩状态也触发一次整理。
+                没有这些依据时不按 tokens 自动整理。
+                旧版“按历史预算”已迁移为“按消息批次”，消息上限与每批移除量保持原值；旧历史 token
+                预算和裁剪目标比例已移除。
               </p>
               <SettingsFields :value="values" :fields="historyFields" />
               <h4>Tracker 与记忆整理</h4>

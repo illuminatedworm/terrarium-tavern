@@ -2,6 +2,13 @@
 import { computed, onMounted, ref } from 'vue';
 import { rawApi } from '../../lib/api';
 import { contextExcerpt, contextMessageContent } from '../../lib/contextPreview';
+import {
+  contextTokens,
+  contextUsageDetails,
+  contextUsageLabel,
+  contextUsageRows,
+} from '../../lib/contextUsage';
+import { localEstimateLabel, localEstimateNote, localTokensLabel } from '../../lib/localEstimate';
 import AdvisorIcon from './AdvisorIcon.vue';
 import ContextMeter from './ContextMeter.vue';
 import ContextRows, { type ContextRow, type ContextRowGroup } from './ContextRows.vue';
@@ -31,11 +38,6 @@ const referenceFields: Record<string, string> = {
   system_prompt: '系统提示',
   post_history_instructions: '后置指令',
   mes_example: '示例对话',
-};
-const sourceLabels: Record<string, [string, string]> = {
-  null: ['咨询上下文', 'session'],
-  tool_definitions: ['工具定义', 'tool'],
-  chat_framing: ['请求封装', 'chat'],
 };
 // Advisor messages carry no source field; the category follows the runtime
 // message type and the wrapper tag the backend writes (advisor/context.py).
@@ -88,11 +90,24 @@ function classify(message: any, meta: any, tag: string, attrs: Record<string, st
     return { key: 'consult', kind: 'session', label: '咨询记录', title: '用户提问' };
   return { key: 'other', kind: 'other', label: '其他' };
 }
+// Rows follow `messages`; the preview-only local reference sits on the
+// matching `trace` row (same order), never on the request message itself.
+const categorized = computed(() =>
+  ((preview.value?.messages || []) as any[]).map((message: any, index: number) => {
+    const excerpt = contextExcerpt(message);
+    return {
+      message,
+      index,
+      excerpt,
+      local: preview.value.trace?.[index],
+      category: classify(message, preview.value.runtime_trace?.[index], excerpt.tag, excerpt.attrs),
+    };
+  }),
+);
 const groups = computed<ContextRowGroup[]>(() => {
   const result: ContextRowGroup[] = [];
-  (preview.value?.messages || []).forEach((message: any, index: number) => {
-    const excerpt = contextExcerpt(message);
-    const category = classify(message, preview.value.runtime_trace?.[index], excerpt.tag, excerpt.attrs);
+  const sums = new Map<ContextRowGroup, number>();
+  categorized.value.forEach(({ message, index, excerpt, local, category }) => {
     const row: ContextRow = {
       key: index,
       round: category.round,
@@ -101,41 +116,57 @@ const groups = computed<ContextRowGroup[]>(() => {
       excerpt: message._native_response ? '加密内容由服务端解释' : excerpt.text,
       role: message.role,
       position: index,
+      tokens: localTokensLabel(local),
       content: message._native_response
         ? '云端压缩状态（加密内容由服务端解释）'
         : contextMessageContent(message),
     };
-    const last = result.at(-1);
-    if (last?.id.startsWith(`${category.key}:`)) last.rows.push(row);
-    else
-      result.push({
+    let group = result.at(-1);
+    if (group?.id.startsWith(`${category.key}:`)) group.rows.push(row);
+    else {
+      group = {
         id: `${category.key}:${result.length}`,
         kind: category.kind,
         label: category.label,
         anchored: category.anchored,
         rows: [row],
-      });
+      };
+      result.push(group);
+    }
+    sums.set(group, (sums.get(group) ?? 0) + Number(local?.local_tokens || 0));
   });
-  for (const group of result) if (group.rows.length > 1) group.meta = `${group.rows.length} 块`;
+  for (const group of result) {
+    if (group.rows.length > 1) group.meta = `${group.rows.length} 块`;
+    if (preview.value?.local_estimate) group.tokens = `≈ ${sums.get(group)!.toLocaleString()} tokens`;
+  }
   return result;
 });
 const sources = computed(() => {
-  const total = Number(preview.value?.estimated_tokens || 0);
-  return Object.entries((preview.value?.budget_sources || {}) as Record<string, number>).map(
-    ([source, tokens]) => {
-      const [label, kind] = sourceLabels[source] || [source, 'other'];
-      return { label, kind, tokens, percent: Math.round((tokens / Math.max(1, total)) * 10000) / 100 };
-    },
-  );
+  const estimate = preview.value?.local_estimate;
+  if (!estimate) return [];
+  const totals = new Map<string, { kind: string; tokens: number }>();
+  const add = (label: string, kind: string, tokens: number) => {
+    const entry = totals.get(label) || { kind, tokens: 0 };
+    entry.tokens += tokens;
+    totals.set(label, entry);
+  };
+  for (const { local, category } of categorized.value)
+    if (local?.local_tokens != null) add(category.label, category.kind, local.local_tokens);
+  if (estimate.tool_definitions) add('工具定义', 'tool', estimate.tool_definitions);
+  return Array.from(totals, ([label, { kind, tokens }]) => ({
+    label,
+    kind,
+    tokens,
+    percent: Math.round((tokens / Math.max(1, estimate.tokens)) * 10000) / 100,
+  }));
 });
 const footnote = computed(() => {
   const p = preview.value;
   return [
     '下次咨询的背景预览，不含尚未发送的问题；运行中的咨询使用开始时冻结的剧情。',
-    p.token_counting.source === 'reference_fallback'
-      ? `未知模型使用参考分词器 ${p.token_counting.tokenizer}；估算不等同于服务商实际用量。`
-      : '',
-    p.opaque ? '包含参谋 agent 独立的云端压缩状态；本地估算不包含密文占用。' : '',
+    contextUsageDetails(p, { rows: false }),
+    localEstimateNote(p.local_estimate),
+    p.opaque ? '包含参谋 agent 独立的云端压缩状态；压缩后的占用等待新实测。' : '',
     p.summary ? '已包含旧咨询摘要。摘要不属于故事记忆。' : '',
   ].join('');
 });
@@ -161,15 +192,17 @@ const footnote = computed(() => {
         <template v-else>
           <ContextMeter
             :scale="preview.context_limit"
-            :estimated="preview.estimated_tokens"
+            :tokens="contextTokens(preview)"
             :scale-label="`参谋 agent 上下文窗口 ${preview.context_limit.toLocaleString()} tokens`"
             aside="只读预览"
-            :caption="`估算输入 ${preview.estimated_tokens.toLocaleString()} tokens`"
+            :caption="`${contextUsageLabel(preview)}${contextTokens(preview) == null ? '' : ` ${contextTokens(preview)!.toLocaleString()} tokens`}`"
             :sources="sources"
+            :sources-label="localEstimateLabel(preview.local_estimate)"
             :stats="[
               { label: '剧情原文', value: `${preview.recent_refs.length} 条` },
               { label: '内容块', value: String(preview.messages.length) },
               { label: '可用工具', value: String(preview.tools.length) },
+              ...contextUsageRows(preview),
             ]"
             :footnote="footnote"
           />

@@ -6,10 +6,11 @@ import json
 import re
 
 from tavern.character.cards import is_initvar, lore_entries, lore_title, normalize
+from tavern.core.context_usage import exceeds
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
-from tavern.core.tokens import REPLY_PRIMING, count_text, counting_info, message_tokens, request_tokens
+from tavern.core.tokens import count_text
 from tavern.core.variable_macros import replace_variable_macros
 
 
@@ -1036,11 +1037,6 @@ def compile_context(
     experiment_tools = transport_tools([], settings.kemini) if story_turn else []
     if story_turn:
         messages = inject_half(messages, settings.kemini)
-    total = request_tokens(messages, settings, experiment_tools)
-    if enforce_budget and total > available:
-        diagnostics.append(
-            {"reason": f"上下文估算 {total} tokens，超过参考预算 {available} tokens；内容仍完整发送"}
-        )
     lore_by_id = {entry["id"]: entry for entry in entries}
     for message in messages:
         source = message.get("context_source", message["source"])
@@ -1089,9 +1085,6 @@ def compile_context(
             {
                 **m,
                 "position": i,
-                "estimated_tokens": message_tokens(m, settings),
-                "content_tokens": count_text(m["content"], settings),
-                "unit": "tokens",
             }
             for i, m in enumerate(messages)
         ],
@@ -1105,16 +1098,7 @@ def compile_context(
             if (r["anchor_id"], r["id"]) not in retired
             and (r["id"] in injected_ids or r["id"] in suppressed_ids)
         ],
-        "estimated_tokens": total,
-        "token_counting": counting_info(settings),
         "daily_context_budget": min(settings.daily_context_budget, available),
-        "budget_sources": {
-            **{
-                source: sum(message_tokens(m, settings) for m in messages if m["source"] == source)
-                for source in dict.fromkeys(m["source"] for m in messages)
-            },
-            "chat_framing": REPLY_PRIMING,
-        },
         "window_message_count": sum(
             m["role"] in ("user", "assistant") and (m["source"] == "history" or m["source"] in input_sources)
             for m in messages
@@ -1134,4 +1118,8 @@ def compile_context(
 
         result["_source_lore_keys"] = list(existing_lore_keys)
         project(result, session, history, snapshot, settings)
+    if enforce_budget and exceeds(result["context_usage"], available):
+        diagnostics.append(
+            {"reason": f"上次实测输入超过参考预算 {available} tokens；新增内容尚未计量，仍完整发送"}
+        )
     return result

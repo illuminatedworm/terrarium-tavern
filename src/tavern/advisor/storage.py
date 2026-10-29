@@ -175,6 +175,7 @@ class AdvisorStore:
                 raise Conflict("请先停止参谋 agent，再清空对话")
             db.execute("DELETE FROM advisor_exchanges WHERE session=?", (sid,))
             db.execute("DELETE FROM advisor_runs WHERE session=?", (sid,))
+            db.execute("DELETE FROM context_token_samples WHERE owner=?", ("advisor:" + sid,))
             # Keep the row and advance its revision to reject stale tabs and requests.
             db.execute(
                 "UPDATE advisor_conversations SET context='{}',revision=revision+1 WHERE session=?", (sid,)

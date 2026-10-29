@@ -107,6 +107,8 @@ class Settings(BaseModel):
     _settings_mode: str = PrivateAttr(default="half_agent")
     _settings_channel: str = PrivateAttr(default="standard")
     _adapter_loader: Any = PrivateAttr(default=None)
+    _context_meter: Any = PrivateAttr(default=None)
+    _context_generation: str = PrivateAttr(default="")
     _data_root: Any = PrivateAttr(default=None)
     _adapter_lane: str = PrivateAttr(default="foreground")
     _chatgpt: Any = PrivateAttr(default=None)
@@ -243,17 +245,15 @@ class Settings(BaseModel):
     capability_key: str = ""
     reasoning_effort: ReasoningEffort = "default"
     reasoning_format: Literal["reasoning_effort", "reasoning"] = "reasoning_effort"
-    chunk_mode: Literal["messages", "tokens", "off"] = "tokens"
+    chunk_mode: Literal["messages", "off"] = "messages"
     chunk_size: int = Field(default=10, ge=2, le=100, strict=True)
     history_message_cap: int = Field(default=200, ge=8, le=1000, strict=True)
     memory_interval_turns: int = Field(default=5, ge=1, le=100, strict=True)
     context_pressure_trigger: float = Field(default=0.85, ge=0.1, le=0.99)
-    context_pressure_target: float = Field(default=0.70, ge=0.05, le=0.98)
     daily_context_budget: int = Field(default=98304, ge=2048, le=2000000, strict=True)
     log_retention_days: int = Field(default=14, ge=1, le=365, strict=True)
     log_max_mib: int = Field(default=512, ge=1, le=16384, strict=True)
     retrieval_cache_max_mib: int = Field(default=256, ge=1, le=16384, strict=True)
-    chunk_max_tokens: int = Field(default=65536, ge=512, le=2000000, strict=True)
     memory_timeout: int = Field(default=180, ge=5, le=180, strict=True)
     memory_input_tokens: int = Field(default=65536, ge=2048, le=2000000, strict=True)
     memory_evidence_tokens: int = Field(default=4096, ge=0, le=32768, strict=True)
@@ -284,15 +284,6 @@ class Settings(BaseModel):
                 raise ValueError("所选模型引用了不存在的提供商")
         if self.context_tokens <= self.reply_tokens + 2048:
             raise ValueError("模型上下文窗口必须大于单次输出上限/维护输出预算加 2048 tokens 的安全余量")
-        if self.context_pressure_target >= self.context_pressure_trigger:
-            raise ValueError("压力裁剪目标必须小于压力触发阈值")
-        # Lore messages share the window. Batch parity and timer arithmetic can
-        # no longer prove coverage; the planner checks actual exchange boundaries.
-        if (
-            self.chunk_mode == "tokens"
-            and self.chunk_max_tokens > self.context_tokens - self.reply_tokens - 2048
-        ):
-            raise ValueError("历史预算不能超过模型上下文窗口减单次输出上限及 2048 tokens 安全余量")
         return self
 
 

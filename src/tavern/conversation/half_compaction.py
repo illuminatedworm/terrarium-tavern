@@ -197,22 +197,6 @@ def install(snapshot, checkpoint, compiled, history):
             old["removed_at"] = max(old.get("removed_at", 0), removed_at)
 
 
-def completed_context(compiled):
-    """Keep current dynamic frames out of a maintenance checkpoint as well."""
-    count = compiled["_replay_complete"]
-    body, header = compiled["_compact_body"], compiled["_compact_header"]
-    covered = compiled["_compact_covered"]
-    usable = compiled["compaction_opaque"] and covered <= count
-    prefix = compiled["messages"][: len(header) + 1] if usable else header
-    return {
-        **compiled,
-        "_compact_body": body[:count],
-        "messages": [*prefix, *body[covered if usable else 0 : count]],
-        "compaction_opaque": usable,
-        "_compact_covered": covered if usable else 0,
-    }
-
-
 def valid_source_lore(document, records):
     allowed = {entry["id"] for entry in lore_entries(document, "writer") if entry.get("enabled", True)}
     return [row for row in records if row["id"] in allowed]

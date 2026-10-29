@@ -42,7 +42,7 @@ defineProps<{
       <p class="muted">{{ field.help }}</p>
       <p v-if="field.path === 'kemini.filler_text'" class="muted">
         {{ Array.from(textValue(field.path)).length }} 字符；实际请求的 token
-        估算见上下文预览。填充不会自动补写或截断。
+        发送后的实测输入见上下文预览。填充不会自动补写或截断。
       </p>
     </div>
   </details>

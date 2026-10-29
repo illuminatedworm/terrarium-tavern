@@ -9,9 +9,9 @@ from tavern.character.editor_environment import environment_message
 from tavern.character.editor_images import IMAGE_REFS, image_refs, image_stats
 from tavern.character.editor_reads import reconcile
 from tavern.core.cache_policy import fingerprint
+from tavern.core.context_usage import context_usage, pressure_tokens
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
-from tavern.core.tokens import request_tokens
 from tavern.scripting.native_response import portable
 from tavern.scripting.request_context import response_origin
 
@@ -251,20 +251,37 @@ class EditorContext:
             self.update("adapt", True, "本轮用户要求适配工作流：先读取 SKILL.md，按其中的顺序读取后续资料。")
         else:
             self.update("adapt", False, "本轮无额外适配要求：")
-        tokens = self.tokens()
-        self.must_rollover = tokens >= owner.cfg.context_tokens
-        if tokens >= owner.cfg.context_tokens * owner.cfg.card_author_config.pressure_ratio:
+        measured = len(self.messages)
+        self.last_usage = self.usage()
+        tokens = pressure_tokens(self.last_usage)
+        previous = self.frames.get("pressure") or {}
+        self.must_rollover = (
+            previous.get("forced", False)
+            and previous.get("limit") == owner.cfg.context_tokens
+            or tokens is not None
+            and tokens >= owner.cfg.context_tokens
+        )
+        if (
+            self.must_rollover
+            or tokens is not None
+            and tokens >= owner.cfg.context_tokens * owner.cfg.card_author_config.pressure_ratio
+        ):
             self.update(
                 "pressure",
                 {"tokens": tokens, "limit": owner.cfg.context_tokens, "forced": self.must_rollover},
-                "上下文压力（含工具）；forced=true 时只能单独调用 new_context，完成后继续：",
+                "窗口依据上次实测输入触发；tokens=null 表示当前无可用实测，新增内容尚未计量。forced=true 时只能单独调用 new_context，完成后继续：",
             )
         elif self.frames.get("pressure"):
             self.update("pressure", None, "此前窗口压力提醒已解除：")
+        if len(self.messages) != measured:
+            # A pressure frame changes the request about to be sent; the stats
+            # event reports that request rather than the one measured above.
+            self.last_usage = self.usage()
         return runtime_messages(self.messages, "card_author")
 
-    def tokens(self):
-        return request_tokens(
+    def usage(self):
+        self.owner.cfg._context_generation = self.epoch
+        return context_usage(
             adapt_messages(runtime_messages(self.messages, "card_author"), self.owner.cfg)[0],
             self.owner.cfg,
             self.owner.definitions,

@@ -93,7 +93,6 @@ def test_rules_are_complete_authorized_and_independent_of_lore_admission(object_
     assert "RULE_A Reader " + long_rule in rules and "HP_AT_START=8" in rules
     assert all(value not in rules for value in ("NARRATIVE_ONLY", "DISABLED_RULE", "hp: 8"))
     assert snapshot == before  # preview compilation must not persist injection state
-    assert loaded["budget_sources"]["mvu_rules"] > 0
 
 
 async def test_delayed_injection_deduplicates_across_tools_and_turns_without_granting_permission(tmp_path):

@@ -7,9 +7,9 @@ import json
 from tavern.character.cards import card_view, variable_rule_entries
 from tavern.conversation.context import macros
 from tavern.conversation.variable_rules import wrap_mvu_rules
-from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
+from tavern.core.message_adapter import provider_messages, runtime_messages
 from tavern.core.model_view import state_for_model
-from tavern.core.tokens import count_text, request_tokens
+from tavern.core.tokens import count_text
 from tavern.scripting.agent import make_provider
 
 RECENT_MESSAGES = 6
@@ -80,20 +80,9 @@ async def analyze_variables(
         },
     ]
     messages = runtime_messages(messages, "background")
-    input_tokens = (
-        request_tokens(adapt_messages(messages, cfg)[0], cfg) if hasattr(cfg, "context_tokens") else None
-    )
-    store.event(
-        tid,
-        "variable_rules",
-        {"purpose": "variables", "entries": rules, "estimated_input_tokens": input_tokens},
-    )
-    if input_tokens is not None and input_tokens + cfg.reply_tokens + 2048 > cfg.context_tokens:
-        store.event(
-            tid,
-            "context_warning",
-            {"purpose": "variables", "message": "MVU 请求估算超出模型上下文，仍完整发送"},
-        )
+    # No window warning here: MVU sends one request per turn and its recent
+    # history slides each turn, so no earlier observation can cover this input.
+    store.event(tid, "variable_rules", {"purpose": "variables", "entries": rules})
     store.event(tid, "variable_update_started", {"purpose": "variables"})
     provider = (
         provider_factory()
@@ -103,6 +92,7 @@ async def analyze_variables(
             lambda payload: store.event(tid, "provider_request", {**payload, "purpose": "variables"}),
         )
     )
+    provider.operation_purpose = "variables"
     if request_context:
         from tavern.scripting.request_context import configure_operation
 

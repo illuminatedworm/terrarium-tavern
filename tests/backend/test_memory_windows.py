@@ -159,37 +159,43 @@ async def test_cap_forces_memory_coverage_before_period(tmp_path):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("mode", ["messages", "tokens"])
-async def test_both_enabled_modes_obey_cap(tmp_path, mode):
-    snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
-    await Tracker(Store(tmp_path)).prepare(
-        "t", {}, session(), history(13), snap, request(), config(chunk_mode=mode), archiver([])
-    )
-    assert len(window_history(history(13), snap)[0]) + 1 < 12
-
-
 async def test_token_pressure_trims_early_and_window_off_retains_everything(tmp_path):
-    manager = Tracker(Store(tmp_path))
+    from tavern.conversation.window import plan_window
+    from tavern.core.context_usage import bind_meter, describe
+
+    store = Store(tmp_path)
+    manager = Tracker(store)
     cfg = Settings(
         context_tokens=10000,
         reply_tokens=128,
         chunk_mode="messages",
         background={"context_tokens": 32768, "reply_tokens": 1024},
         history_message_cap=40,
-        chunk_size=10,
+        chunk_size=4,
         memory_interval_turns=5,
     )
-    messages = history(11, size=800)
+    messages = history(21, size=800)
     snap = {"state": {}, "memory_document": {"version": 3, "records": []}, "lore": {}}
+    bind_meter(cfg, store, "story", "s")
+    count, compiled = plan_window({}, session(), messages, snap, request().text, cfg, "t", replay_records={})
+    assert count == 0  # Length alone cannot invent a pressure measurement.
+    measure = describe(compiled["messages"], cfg)
+    sequence, _ = cfg._context_meter.begin(measure, "foreground")
+    cfg._context_meter.finish(measure, "foreground", sequence, {"prompt_tokens": 50000})
     await manager.prepare("t", {}, session(), messages, snap, request(), cfg, archiver([]))
-    assert snap["context_window"]["covered_count"] == 7
+    assert snap["context_window"]["covered_count"] == 5
+    # One observation retires one batch. The new window requires a new sample.
+    next_count, compiled = plan_window(
+        {}, session(), messages, snap, request().text, cfg, "t", replay_records={}
+    )
+    assert next_count == 5 and compiled["context_usage"]["tokens"] is None
     cfg = cfg.model_copy(update={"chunk_mode": "off"})
     calls = []
     await manager.prepare("t", {}, session(), messages, snap, request(), cfg, archiver(calls))
     visible, _ = window_history(messages, snap, enabled=False)
     assert visible == messages
     compiled = compile_context({}, session(), messages, snap, "当前", cfg, "seed", enforce_budget=False)
-    assert len([m for m in compiled["trace"] if m["source"] == "history"]) == 11
+    assert len([m for m in compiled["trace"] if m["source"] == "history"]) == 21
 
 
 def test_trimmed_history_keeps_memory_even_when_recipe_block_disabled():

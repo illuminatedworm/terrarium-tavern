@@ -699,6 +699,7 @@ class Conversations:
                 db.execute(f"DELETE FROM {table} WHERE workspace=?", (wid,))
             db.execute("DELETE FROM card_author_conversations WHERE id=?", (wid,))
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (wid,))
+            db.execute("DELETE FROM context_token_samples WHERE owner=?", ("editor:" + wid,))
         for source in sources:
             self.store.prune_card_assets({**source, "id": wid}, source.get("dependencies", {}))
         from tavern.character.editor_attachments import remove_files

@@ -4,10 +4,10 @@ import copy
 
 from pydantic import ValidationError
 
-from tavern.conversation.compaction import canonical, checkpoint_items, hashes, replay_batch, replay_groups
+from tavern.conversation.compaction import canonical, checkpoint_items, hashes, replay_groups
 from tavern.core.cache_policy import fingerprint
+from tavern.core.context_usage import context_overflow, exceeds
 from tavern.core.history_refs import message_ref
-from tavern.core.tokens import request_tokens
 from tavern.scripting.request_context import response_origin
 
 
@@ -32,7 +32,7 @@ def capture_checkpoint(state, compiled, settings, provider, assistant):
     return True
 
 
-async def rebuild_local(compiled, settings, provider, history, *, progress=None, save=None):
+async def rebuild_local(compiled, settings, provider, history, *, progress=None, save=None, compacted=False):
     """Derive local windows from originals, never from an old cloud checkpoint.
 
     Each overflowing batch adds the chapter(s) for the exchanges it retires and
@@ -66,6 +66,18 @@ async def rebuild_local(compiled, settings, provider, history, *, progress=None,
             "usage": [],
         }
     position = state["cursor"]
+    if (
+        not state["batches"]
+        and not compacted
+        and not exceeds(compiled["context_usage"], settings.context_tokens, inclusive=True)
+    ):
+        # Mode conversion restores originals unless server compaction or a
+        # comparable observation shows they need a handoff. The cloud meter
+        # measured the compacted request, never the originals restored here.
+        state.update(cursor=len(groups), processed=len(body), total=len(body), history_start=0)
+        return state
+    # Later batches start from the last size the provider accepted.
+    size = len(groups)
     while position < len(groups):
         rendered = render_text(state["handoff"], history)
         memory = (
@@ -75,23 +87,25 @@ async def rebuild_local(compiled, settings, provider, history, *, progress=None,
         )
         retained = [m for g in groups[state["retained"] : position] for m in g]
         prefix = header + memory + retained
-        end, batch = replay_batch(
-            groups, position, prefix, settings, compiled["tools"], settings.context_tokens
-        )
-        messages = prefix + batch
-        if request_tokens(messages, settings, compiled["tools"]) < settings.context_tokens:
-            position = end
-            break
-        # Keep the last whole exchange, including its tools and anchored lore.
-        kept = max(0, end - 1)
-        handoff, usage = await make_handoff(
-            {"messages": messages},
-            settings,
-            provider,
-            state["handoff"],
-            history,
-            starts[kept]["history_start"],
-        )
+        end = min(len(groups), position + size)
+        while True:
+            batch = [message for group in groups[position:end] for message in group]
+            kept = max(0, end - 1)
+            try:
+                handoff, usage = await make_handoff(
+                    {"messages": prefix + batch},
+                    settings,
+                    provider,
+                    state["handoff"],
+                    history,
+                    starts[kept]["history_start"],
+                )
+                break
+            except Exception as error:
+                if not context_overflow(error) or end - position <= 1:
+                    raise
+                end = position + max(1, (end - position) // 2)
+        size = end - position
         position = end
         state.update(
             cursor=position,
@@ -153,8 +167,10 @@ async def make_handoff(compiled, settings, provider, handoff, history, through):
     messages = [*compiled["messages"], {"role": "developer", "content": instruction}]
     usage = []
     for attempt in range(2):
+        from tavern.core.message_adapter import provider_messages
+
         response = await provider.chat_complete(
-            messages,
+            provider_messages(provider, messages, settings),
             extra_body={
                 "tools": [definition],
                 "tool_choice": {"type": "function", "function": {"name": "prepare_handoff"}},

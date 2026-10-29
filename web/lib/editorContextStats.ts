@@ -1,18 +1,17 @@
+import type { ContextUsage } from './contextUsage';
+
 export interface ConversationCacheUsage {
   prompt_tokens: number | null;
   cached_tokens: number | null;
 }
 
 export interface EditorContextStats {
-  estimated_tokens: number;
+  context_usage?: ContextUsage;
   context_limit: number;
   model: string;
   usage?: Record<string, any> | null;
   cache_usage?: ConversationCacheUsage | null;
-  token_counting?: { tokenizer: string; source: string };
   image_count?: number;
-  image_tokens_included?: boolean;
-  estimated_tokens_complete?: boolean;
 }
 
 export const conversationCacheRateTitle =

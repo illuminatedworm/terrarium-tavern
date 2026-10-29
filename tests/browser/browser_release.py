@@ -161,22 +161,7 @@ async def main(viewports=VIEWPORTS):
             await page.get_by_role("tab", name="会话", exact=True).click()
             await page.locator(".session-open").first.click()
             await page.locator(".messages").wait_for()
-            async with page.expect_response(
-                lambda response: (
-                    response.url.endswith("/preview")
-                    and response.request.method == "POST"
-                    and response.request.post_data_json.get("text") == "前往灯塔"
-                )
-            ) as counted:
-                await page.get_by_placeholder("说些什么，或描述你的行动…").fill("前往灯塔")
-            stats = await (await counted.value).json()
-            assert stats["token_counting"]["unit"] == "tokens"
-            # Composer shows "current / context window tokens" for the counted draft.
-            await (
-                page.locator(".composer-meta")
-                .get_by_text(re.compile(rf"^{stats['estimated_tokens']:,} / [\d,]+ tokens$"))
-                .wait_for()
-            )
+            await page.get_by_placeholder("说些什么，或描述你的行动…").fill("前往灯塔")
             await page.get_by_role("button", name="发送", exact=True).click()
             await page.locator(".message.assistant").nth(1).wait_for(timeout=30000)
             await page.get_by_role("button", name="发送", exact=True).wait_for()
@@ -194,9 +179,11 @@ async def main(viewports=VIEWPORTS):
             await page.get_by_label("重新生成补充要求", exact=True).fill("更简洁")
             await page.locator(".regenerate-bar").get_by_role("button", name="重新生成", exact=False).click()
             await page.get_by_role("button", name="发送", exact=True).wait_for(timeout=30000)
-            await page.get_by_role("navigation", name="游玩界面").get_by_role(
-                "button", name=re.compile("记录")
-            ).click()
+            await (
+                page.get_by_role("navigation", name="游玩界面")
+                .get_by_role("button", name=re.compile("记录"))
+                .click()
+            )
             await page.locator(".work-turn").first.wait_for()
             await assert_viewport(page, label + ":work-records")
             await page.get_by_role("button", name="返回对话", exact=True).click()
@@ -211,10 +198,6 @@ async def main(viewports=VIEWPORTS):
                 await tool.click()
                 modal = page.get_by_role("dialog")
                 await modal.get_by_role("heading", name=title, exact=True).wait_for()
-                if title == "上下文预览":
-                    await modal.get_by_text(re.compile(r"^本次预计输入 [\d,]+ tokens$")).wait_for()
-                    await modal.get_by_text("参考分词器 o200k_base", exact=False).wait_for()
-                    assert "UTF-8 字节" not in await modal.inner_text()
                 await assert_viewport(page, label + ":" + title)
                 await modal.get_by_role("button", name="关闭", exact=True).click()
             # Clicking the open rail page collapses the inspector, so only expand it.

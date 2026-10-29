@@ -6,7 +6,7 @@ serialized request and closes streams even when the SDK iterator is cancelled.
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import aclosing, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -24,7 +24,7 @@ from tavern.scripting.sse import stream_error, stream_events
 
 @dataclass
 class _Operation:
-    capture: Callable | None = None
+    capture: Callable[[httpx.Request], Awaitable[None]] | None = None
     responses: list[httpx.Response] = field(default_factory=list)
     raw_event: dict | None = None
 
@@ -68,7 +68,7 @@ class _RuntimeHTTP(httpx.AsyncBaseTransport):
         if operation and len(operation.responses) >= 100:
             raise ValueError("模型列表超过 100 页，未更新本地列表")
         if operation and operation.capture:
-            operation.capture(request)
+            await operation.capture(request)
         response = (
             await self.debug.send(self.http, request, stream=True)
             if self.debug is not None

@@ -876,7 +876,7 @@ def create_app(data_dir=None):
                 require_state_patch=update_variables,
                 allow_content_edit=allow_content_edit,
             )
-            return result, s
+            return result, s, full_settings
         from tavern.conversation.half_context import load_trace as load_half_trace
         from tavern.core.message_adapter import bind_adapter
 
@@ -895,19 +895,25 @@ def create_app(data_dir=None):
         from tavern.conversation.cache_breakpoint import prepare_context
 
         prepare_context(result, s, s["messages"], s["snapshot"], writer_settings)
-        return result, s
+        return result, s, writer_settings
 
     @app.post("/api/sessions/{sid}/preview")
     def preview(sid: str, payload: dict):
         from tavern.search.japanese_dictionary import dictionary_read_only
 
         with dictionary_read_only():
-            result, s = compile_preview(
+            result, s, settings = compile_preview(
                 sid,
                 payload.get("text", ""),
                 payload.get("update_variables") is True,
                 payload.get("allow_content_edit") is True,
             )
+            if payload.get("local_estimate") is True:
+                # Only the explicit context panel asks; composer stats refreshes
+                # share this route and skip the tokenizer pass.
+                from tavern.core.local_estimate import attach_local_estimate
+
+                attach_local_estimate(result, settings)
         result["usage"] = store.latest_usage(sid)
         result["cache_usage"] = store.session_cache_usage(sid)
         result["memory_warning"] = s["snapshot"].get("memory_warning")
@@ -918,7 +924,7 @@ def create_app(data_dir=None):
         from tavern.search.japanese_dictionary import dictionary_read_only
 
         with dictionary_read_only():
-            result, _ = compile_preview(
+            result, _, _ = compile_preview(
                 sid,
                 payload.get("text", ""),
                 payload.get("update_variables") is True,

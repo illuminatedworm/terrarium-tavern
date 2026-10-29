@@ -192,7 +192,7 @@ export const fullFields: SettingField[] = [
   number('tools.max_duration_seconds', '每次发送或继续的总时限（秒，默认 900）', 30, 7200),
   {
     ...number('tools.pressure_ratio', '上下文占用提醒阈值（比例）', 0.25, 0.9, 0.05),
-    help: '上下文估算 token 数达到窗口容量的此比例时，提醒模型准备换窗。0.7 表示 70%；提醒本身不强制换窗。',
+    help: '有效的上次实测输入达到窗口容量的此比例时，提醒模型准备换窗。0.7 表示 70%；新增内容尚未计量，提醒本身不强制换窗。',
   },
   number('tools.handoff_tokens', '当前交接上限（tokens）', 128, 16384),
   number('tools.chapter_tokens', '交接单章上限（tokens）', 64, 4096),
@@ -206,7 +206,6 @@ export const historyFields: SettingField[] = [
     label: '窗口模式',
     options: [
       { value: 'messages', label: '按消息批次' },
-      { value: 'tokens', label: '按历史预算' },
       { value: 'off', label: '关闭，保留全部原文' },
     ],
   },
@@ -214,9 +213,7 @@ export const historyFields: SettingField[] = [
   number('chunk_size', '每批移除量', 2, 100),
   number('memory_interval_turns', '记忆整理周期（轮）', 1, 100),
   number('daily_context_budget', '日常上下文预算（tokens）', 2048, 2000000),
-  number('chunk_max_tokens', '历史预算（tokens）', 512, 2000000),
   number('context_pressure_trigger', '压力触发比例', 0.1, 0.99, 0.01),
-  number('context_pressure_target', '压力裁剪目标比例', 0.05, 0.98, 0.01),
 ];
 export const memoryFields: SettingField[] = [
   number('tracker_max_steps', 'Tracker 每次任务模型调用上限', 2, 100),

@@ -305,13 +305,11 @@ def test_card_layout_survives_final_api_projection(mode, api):
         )
     )
     assert (document, history) == original
-    # Separate full-agent fields retain identities in preview/token accounting.
+    # Separate full-agent fields retain their visible source identities.
     if mode == "full_agent":
-        assert "character" not in out["budget_sources"]
-        assert all(
-            out["budget_sources"][field] > 0
-            for field in ("system_prompt", "description", "personality", "scenario")
-        )
+        sources = {row["source"] for row in out["trace"]}
+        assert "character" not in sources
+        assert {"system_prompt", "description", "personality", "scenario"} <= sources
 
 
 @pytest.mark.parametrize("mode", ["half_agent", "full_agent"])
@@ -327,7 +325,6 @@ def test_card_fields_are_complete_over_budget_and_empty_fields_emit_nothing(mode
     out = compile_mode(mode, document, context_tokens=4096, reply_tokens=128)
     text = "\n".join(m["content"] for m in out["messages"])
     assert f"<card_description>\n{document['description']}\n</card_description>" in text
-    assert out["estimated_tokens"] > 4096
     assert "<card_personality>" not in text and "<card_scenario>" not in text
     assert "NOT_RUNTIME" not in text
     assert document == original

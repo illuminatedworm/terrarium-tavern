@@ -423,6 +423,9 @@ def adapter_snapshot(settings):
 
 
 def bind_adapter(settings, store, owner_kind, owner_id, lane=None):
+    from tavern.core.context_usage import bind_meter
+
+    bind_meter(settings, store, owner_kind, owner_id)
     settings._adapter_loader = lambda current: store.message_adapter(owner_kind, owner_id, current)
     if lane:
         settings._adapter_lane = lane
@@ -541,11 +544,16 @@ WIRE_FIELDS = {
 
 
 def project_context(context, settings, *, tools=None, managed=None):
-    from tavern.core.tokens import count_text, message_tokens, request_tokens
-
     if tools is None:
         tools = context.get("tools")
-    rows = context.get("runtime_trace", context["trace"])
+    rows = [
+        {
+            key: value
+            for key, value in row.items()
+            if key not in {"estimated_tokens", "content_tokens", "unit"}
+        }
+        for row in context.get("runtime_trace", context["trace"])
+    ]
     canonical = runtime_messages(rows, getattr(settings, "_adapter_lane", "foreground"))
     snapshot = adapter_snapshot(settings)
     adapted, ordered, warnings = adapt_messages(canonical, settings, snapshot, managed=managed)
@@ -565,30 +573,17 @@ def project_context(context, settings, *, tools=None, managed=None):
         {
             **row,
             "position": i,
-            "estimated_tokens": message_tokens(row, settings),
-            "content_tokens": count_text(row.get("content", ""), settings),
         }
         for i, row in enumerate(adapted)
     ]
     for row, raw in zip(context["trace"], ordered, strict=True):
         if raw.get("native_replay"):
             row["content"] = raw["content"]
-    context["estimated_tokens"] = request_tokens(context["messages"], settings, tools)
-    if "tokens" in context:
-        context["tokens"] = context["estimated_tokens"]
-    context["budget_sources"] = {
-        source: sum(row["estimated_tokens"] for row in context["trace"] if row.get("source") == source)
-        for source in dict.fromkeys(row.get("source") for row in context["trace"])
-    }
-    tool_cost = request_tokens([], settings, tools) - 3 if tools else 0
-    if tools:
-        context["budget_sources"]["tool_definitions"] = tool_cost
-    context["budget_sources"]["chat_framing"] = (
-        context["estimated_tokens"] - tool_cost - sum(row["estimated_tokens"] for row in context["trace"])
-    )
     context["adapter_revision"] = snapshot["revision"]
     context.setdefault("diagnostics", []).extend({"reason": warning} for warning in warnings)
-    return context
+    from tavern.core.context_usage import apply_usage
+
+    return apply_usage(context, settings, tools)
 
 
 def provider_messages(provider, messages, settings):
@@ -596,6 +591,10 @@ def provider_messages(provider, messages, settings):
     from tavern.scripting.model_transport import ModelTransport
 
     if isinstance(provider, ModelTransport):
+        # Subscription providers copy Settings for auth. Counting identity must
+        # follow this request's freshly compiled window, not that earlier copy.
+        provider.settings._context_generation = settings._context_generation
+        provider.settings._context_meter = settings._context_meter
         return messages
     projected, _, _ = adapt_messages(messages, settings)
     return [

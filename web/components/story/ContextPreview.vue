@@ -5,6 +5,13 @@ import ContextMeter from './ContextMeter.vue';
 import ContextRows, { type ContextRowGroup } from './ContextRows.vue';
 import { contextExcerpt, contextMessageContent } from '../../lib/contextPreview';
 import { conversationCacheRateTitle } from '../../lib/editorContextStats';
+import {
+  contextTokens as currentContextTokens,
+  contextUsageDetails,
+  contextUsageLabel,
+  contextUsageRows,
+} from '../../lib/contextUsage';
+import { localEstimateLabel, localEstimateNote, localTokensLabel } from '../../lib/localEstimate';
 
 const props = defineProps<{
   preview: any;
@@ -18,11 +25,9 @@ const props = defineProps<{
     tokens: number;
     count: number;
   }>;
+  /** Preview-only local tokenizer reference by category. */
   budgetSources: Array<{ label: string; kind: string; tokens: number; percent: number }>;
   contextTokens: number;
-  actualInputLabel: string;
-  lengthLabel: string;
-  tokenizerLabel: string;
   cacheRate: string;
   itemTitle: (item: any) => string;
   /** Message id → 1-based round (0 for the opening before the first user turn). */
@@ -41,7 +46,7 @@ const rows = computed<ContextRowGroup[]>(() =>
     label: group.label,
     hint: group.source,
     meta: `${group.count} 条 · ${group.items.length} 块`,
-    tokens: `${group.tokens.toLocaleString()} tokens`,
+    tokens: props.preview?.local_estimate ? `≈ ${group.tokens.toLocaleString()} tokens` : undefined,
     anchored: group.kind === 'lore' && !!group.anchor,
     rows: group.items.map((item, index) => {
       const excerpt = contextExcerpt(item);
@@ -53,9 +58,7 @@ const rows = computed<ContextRowGroup[]>(() =>
         excerpt: excerpt.text,
         role: item.role,
         position: item.position,
-        tokens: item.opaque
-          ? '加密状态 · 占用未知'
-          : `${Number(item.estimated_tokens || 0).toLocaleString()} tokens`,
+        tokens: localTokensLabel(item),
         content: contextMessageContent(item),
       };
     }),
@@ -68,17 +71,19 @@ const rows = computed<ContextRowGroup[]>(() =>
     <h2 class="panel-title"><Icon name="layers" :size="19" />上下文预览</h2>
     <ContextMeter
       :scale="budget"
-      :estimated="Number(preview?.estimated_tokens || 0)"
+      :tokens="currentContextTokens(preview)"
       :scale-label="`日常输入预算 ${budget.toLocaleString()} tokens`"
-      :aside="actualInputLabel"
-      :caption="lengthLabel"
+      aside="只读预览"
+      :caption="`${contextUsageLabel(preview)}${currentContextTokens(preview) == null ? '' : ` ${currentContextTokens(preview)!.toLocaleString()} tokens`}`"
       :sources="budgetSources"
+      :sources-label="localEstimateLabel(preview?.local_estimate)"
       :stats="[
-        { label: '模型上下文窗口', value: `${contextTokens.toLocaleString()} tokens` },
+        { label: '模型上下文窗口', value: `${props.contextTokens.toLocaleString()} tokens` },
         { label: '内容块', value: String(preview?.trace?.length || 0) },
         { label: '会话累计缓存命中率', value: cacheRate },
+        ...contextUsageRows(preview),
       ]"
-      :footnote="`${tokenizerLabel}${conversationCacheRateTitle}预览不会加载神经模型，下方诊断会注明不完整的召回。`"
+      :footnote="`${contextUsageDetails(preview, { rows: false })}${localEstimateNote(preview?.local_estimate)}${conversationCacheRateTitle}预览不会加载神经模型，下方诊断会注明不完整的召回。`"
     />
     <ContextRows :groups="rows" />
     <details class="context-diagnostics">

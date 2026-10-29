@@ -59,7 +59,7 @@ function create() {
       </div>
       <p class="muted">按完整交流选取，0 关闭剧情自动注入。故事内可以覆盖默认轮数；选中的原文不会截断。</p>
       <label class="settings-check"
-        ><span>超过参谋 agent 上下文容量时自动整理旧咨询</span
+        ><span>上次有效实测输入超过参谋 agent 容量时自动整理旧咨询</span
         ><input v-model="value.auto_compact" type="checkbox"
       /></label>
       <label

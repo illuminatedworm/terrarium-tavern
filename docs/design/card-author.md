@@ -44,7 +44,7 @@
 
 PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另含经 Pillow 校验的 `mime_type`、`width`、`height`。验证完整解码、扩展名与实际格式一致，并拒绝动画和解码像素超限。图片内容仍只存于附件文件；持久上下文保存 `_editor_image_refs`，在模型调用前从当前对话已发送附件加载原字节。模型输入中的文字经过原有投影，图片不经过文字替换。图片跟随所属消息与换窗边界，`read_history` 回读时在整批工具结果后追加尚未处于上下文中的原图，待恢复引用与工具结果一起保存，取消续接不重复读取已完成工具。切换模型或规则重建上下文时保留当前窗口明确回读的图片，已退出且未回读的历史不会被当作新输入重新加入。图片缺失、损坏或服务商拒绝时保留进度，不静默丢图。
 
-各接口分别构造图片块：Chat Completions 使用 `image_url` data URL，Responses 使用 `input_image`，Anthropic 使用 `image.source` 的 Base64 与 MIME 类型，Gemini 的现有 `generateContent` 使用 `parts[].inlineData`；ChatGPT 订阅走独立 provider 的 Responses 路线，并保留认证和工具命名空间约束。仅在传输请求副本中展开 Base64；预览返回图片元数据，请求事件保留图片位置与类型并明确标记二进制省略，实际 HTTP 请求不受影响。本地计数排除图片编码，统计接口与事件返回 `image_count`、`image_tokens_included=false` 及 `estimated_tokens_complete`，有图时不把文本估算冒充完整输入用量。
+各接口分别构造图片块：Chat Completions 使用 `image_url` data URL，Responses 使用 `input_image`，Anthropic 使用 `image.source` 的 Base64 与 MIME 类型，Gemini 的现有 `generateContent` 使用 `parts[].inlineData`；ChatGPT 订阅走独立 provider 的 Responses 路线，并保留认证和工具命名空间约束。仅在传输请求副本中展开 Base64；预览返回图片元数据，请求事件保留图片位置与类型并明确标记二进制省略，实际 HTTP 请求不受影响。统计接口与事件返回 `image_count` 及接口实测快照；图片以稳定附件引用匹配请求，未发送图片的占用保持未知，不以编码文本估算。
 
 系统说明和严格 schema 由固定目录维护，动态卡片概览、确认方案、handoff 只在变化时追加。工具说明、只读预览和模型请求使用同一注册表。读取结果完整投影后发送；日志摘要长度不影响模型正文。制卡 agent 的工具日志分别在被省略的调用参数或工具返回下方提示“仅省略展示”，说明工具收到的参数或模型收到的本次返回保持完整。
 
@@ -58,7 +58,7 @@ PNG、JPEG、静态 WebP 与文档共用 `/files` 和 F 引用，图片记录另
 
 ## 长对话
 
-上下文按 token 占用管理，默认达到容量的 80% 时提醒，达到上限后要求单独调用 `new_context`。混合换窗批次返回错误，估算包含工具定义和原生续答。
+窗口依据上次有效接口实测输入，默认达到容量的 80% 时提醒，达到上限后要求单独调用 `new_context`。混合换窗批次返回错误；新增内容不做本地总量估算，无有效实测时不按 tokens 触发。换窗后等待新实测。
 
 换窗保存 handoff，保留确认方案、卡片目录、当前任务输入和最近两轮完整用户/最终回复，旧工具交换一起退出。原文仍可通过 history 工具读取。模型或协议变化重建兼容上下文；恢复时维持卡片和文档引用含义。单个已选角色卡或内部原文不截断、分页或摘要替代；外部资料按工具协议有界读取，每次返回的片段完整保留。
 

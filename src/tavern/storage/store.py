@@ -96,8 +96,8 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 14
-SETTINGS_VERSIONS = range(2, 14)
+SCHEMA_VERSION = 16
+SETTINGS_VERSIONS = range(2, 15)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -176,6 +176,9 @@ class Store(MessageAdapters):
             db.executescript("""
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS context_token_samples(
+                    owner TEXT NOT NULL, lane TEXT NOT NULL, sequence INTEGER NOT NULL,
+                    payload TEXT NOT NULL, PRIMARY KEY(owner,lane));
                 CREATE TABLE IF NOT EXISTS cards(id TEXT PRIMARY KEY,
                     name TEXT NOT NULL, original TEXT NOT NULL, container TEXT NOT NULL,
                     resources TEXT NOT NULL, permission INTEGER NOT NULL DEFAULT 0,
@@ -209,6 +212,12 @@ class Store(MessageAdapters):
             db.execute(
                 "INSERT OR IGNORE INTO meta VALUES ('settings',?)", (SettingsDocument().model_dump_json(),)
             )
+            previous_schema = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+            if previous_schema is not None and int(previous_schema[0]) < 16:
+                # Schema 15 samples calibrated local estimates. Their opaque
+                # identities cannot be backfilled into provider observations.
+                # inspect_existing has already made the pre-upgrade backup.
+                db.execute("DELETE FROM context_token_samples")
             if migrated is not None:
                 db.execute("UPDATE meta SET value=? WHERE key='settings'", (migrated.model_dump_json(),))
             db.execute("""CREATE TABLE IF NOT EXISTS context_operations (
@@ -272,6 +281,10 @@ class Store(MessageAdapters):
         self.initialize_message_adapters()
         # Every step above is idempotent, so an interrupted upgrade simply reruns.
         with self.connection() as db:
+            if previous_schema is not None and int(previous_schema[0]) < 16:
+                from tavern.core.context_usage import retire_estimated_pressure
+
+                retire_estimated_pressure(db)
             db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version',?)", (str(SCHEMA_VERSION),))
 
     @contextmanager
@@ -322,7 +335,10 @@ class Store(MessageAdapters):
         return SentBreakpoints(load, save)
 
     def recover(self):
+        from tavern.core.context_usage import recover_samples
+
         with self.connection() as db:
+            recover_samples(db)
             db.execute(
                 "UPDATE advisor_runs SET status='error',error='应用已重启，可继续或丢弃咨询' WHERE status IN ('queued','running')"
             )
@@ -965,6 +981,9 @@ class Store(MessageAdapters):
             db.execute("DELETE FROM messages WHERE session=?", (sid,))
             db.execute("DELETE FROM sessions WHERE id=?", (sid,))
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (sid,))
+            db.execute(
+                "DELETE FROM context_token_samples WHERE owner IN (?,?)", ("story:" + sid, "advisor:" + sid)
+            )
             from tavern.storage.retrieval_cleanup import prune_orphan_retrieval
 
             prune_orphan_retrieval(db)
@@ -1161,6 +1180,10 @@ class Store(MessageAdapters):
                 raise Conflict("会话已改变，请刷新后重试")
             if fields.get("head"):
                 self._update_cache_follow(db, sid, fields["head"])
+                db.execute(
+                    "DELETE FROM context_token_samples WHERE owner IN (?,?)",
+                    ("story:" + sid, "advisor:" + sid),
+                )
         return self.session(sid)
 
     def set_cache_breakpoint(

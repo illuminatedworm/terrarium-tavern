@@ -18,6 +18,7 @@ import AdvisorPreview from './AdvisorPreview.vue';
 import WebSources from '../common/WebSources.vue';
 import { webActivityLabel, webSources } from '../../lib/webSearch';
 import { handleComposerKeydown, sendShortcutHint } from '../../lib/composerShortcut';
+import { contextTokens, contextUsageDetails, contextUsageLabel } from '../../lib/contextUsage';
 
 const props = defineProps<{
   sessionId: string;
@@ -43,6 +44,8 @@ const {
   streaming,
   events,
   notice,
+  stats,
+  statsError,
   initialize,
   load,
   send,
@@ -120,8 +123,10 @@ const liveSources = computed(() =>
     events.value.filter((e) => e.kind === 'web_sources').map((e) => ({ web_sources: e.payload.sources })),
   ),
 );
-const lastStats = computed(
-  () => [...events.value].reverse().find((e) => e.kind === 'context_stats')?.payload,
+const lastStats = computed(() =>
+  running.value
+    ? ([...events.value].reverse().find((e) => e.kind === 'context_stats')?.payload ?? stats.value)
+    : stats.value,
 );
 const activeQuestion = computed(() =>
   state.value?.run && (advisorRunning(state.value.run) || pending.value) && !state.value.run.request.compact
@@ -604,14 +609,9 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
         <span>{{ sendShortcutHint(settings.shared.send_shortcut) }}</span
         ><span title="只有明确要求保存的本轮偏好会影响正文">讨论不会推进故事</span>
       </div>
-      <span v-if="lastStats" class="advisor-token-note"
-        >{{ lastStats.estimated_tokens.toLocaleString() }} 估算 tokens{{
-          lastStats.opaque ? '（不含云端密文）' : ''
-        }}{{
-          lastStats.token_counting?.source === 'reference_fallback'
-            ? ' · 参考分词器 ' + lastStats.token_counting.tokenizer
-            : ''
-        }}</span
+      <span class="advisor-token-note" :title="statsError || contextUsageDetails(lastStats)"
+        >{{ contextTokens(lastStats)?.toLocaleString() ?? '—' }} tokens · {{ contextUsageLabel(lastStats)
+        }}{{ running ? ' · 咨询中，显示此前快照' : '' }}</span
       >
     </div>
     <AdvisorPreview

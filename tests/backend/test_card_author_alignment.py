@@ -400,9 +400,11 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
         await editor.service.close()
 
 
-def test_editor_unicode_reasoning_only_rolls_over_at_actual_text_pressure():
+def test_editor_rollover_uses_observed_input_and_preserves_reasoning():
     cfg = Settings()
     cfg.context_tokens = 12000
+    usage = {"tokens": None, "coverage": "unavailable", "pending": False, "overflow": False}
+    cfg._context_meter = SimpleNamespace(usage=lambda *_: usage)
     owner = SimpleNamespace(
         cfg=cfg,
         definitions=[],
@@ -425,9 +427,12 @@ def test_editor_unicode_reasoning_only_rolls_over_at_actual_text_pressure():
     assert not context.must_rollover
     assert "pressure" not in context.frames
     assert messages[1]["reasoning_content"] == reasoning
-    # Genuine pressure must still require rollover; do not fix overcounting by
-    # ignoring the reasoning payload or dropping any of its text.
+    # Appending unmeasured reasoning preserves the original observation state.
     context.messages[1]["reasoning_content"] = reasoning * 5
+    messages = context.prepare()
+    assert not context.must_rollover
+    assert messages[1]["reasoning_content"] == reasoning * 5
+    usage.update(tokens=12000, coverage="exact")
     messages = context.prepare()
     assert context.must_rollover
     assert messages[1]["reasoning_content"] == reasoning * 5

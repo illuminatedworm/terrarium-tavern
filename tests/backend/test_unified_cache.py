@@ -432,7 +432,7 @@ async def test_gemini_create_failure_uses_complete_context():
     assert len(seen) == 2 and events[-1]["cache"]["status"] == "fallback"
 
 
-def test_native_tool_signatures_survive_replay():
+async def test_native_tool_signatures_survive_replay():
     cfg = config("gemini")
     p = ModelTransport(cfg, "test")
     raw_parts = [
@@ -441,7 +441,7 @@ def test_native_tool_signatures_survive_replay():
             "thoughtSignature": "opaque-signature",
         }
     ]
-    p._finish({"candidates": [{"content": {"parts": raw_parts}, "finishReason": "STOP"}]})
+    await p._finish({"candidates": [{"content": {"parts": raw_parts}, "finishReason": "STOP"}]})
     call = p.last_tool_calls[0]
     messages = [
         {

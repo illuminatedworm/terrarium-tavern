@@ -9,16 +9,16 @@ import pytest
 
 from tavern.application.context_operations import ContextOperationRequest
 from tavern.application.modes import ModeRuntime
-from tavern.conversation.compaction import hashes
+from tavern.conversation.compaction import completed_context, hashes
 from tavern.conversation.context import compile_context
-from tavern.conversation.half_compaction import STATE, completed_context, install, source_lore
+from tavern.conversation.half_compaction import STATE, install, source_lore
 from tavern.conversation.half_context import finalize_record, load_trace
 from tavern.core.message_adapter import bind_adapter
 from tavern.core.models import SessionCreate, TurnRequest
 from tavern.scripting.request_context import response_origin
 from tavern.storage.store import Conflict, uid
 from tests.backend.chatgpt_fixtures import completed, sse
-from tests.backend.test_channels_compaction import compact_response
+from tests.backend.test_channels_compaction import compact_response, reported_pressure
 from tests.backend.test_chatgpt_integration import connected_store, story
 from tests.backend.test_half_agent_alignment import Story
 from tests.support.history_labels import strip_label
@@ -123,7 +123,7 @@ async def test_short_half_switches_do_not_create_provider_or_full_agent_state(tm
 
 
 @pytest.mark.parametrize("automatic", [True, False])
-async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, automatic):
+async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, automatic, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
     config.half_agent.chunk_mode = "messages"
@@ -164,6 +164,7 @@ async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, 
         result, session = await operate(service, session, "enable_compact")
         assert result["status"] == "completed" and not wire
         session = store.update_session(session["id"], session["revision"], compact_auto=int(automatic))
+        reported_pressure(monkeypatch)
         turn = service.submit(
             session["id"], TurnRequest(text=text, operation_id=uid(), expected_revision=session["revision"])
         )
@@ -186,7 +187,7 @@ async def test_writer_compacts_once_before_story_without_local_popout(tmp_path, 
         await service.close()
 
 
-async def test_failed_auto_compaction_never_sends_writer_or_commits(tmp_path):
+async def test_failed_auto_compaction_never_sends_writer_or_commits(tmp_path, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     _, session = story(store)
     service = ModeRuntime(store)
@@ -202,6 +203,7 @@ async def test_failed_auto_compaction_never_sends_writer_or_commits(tmp_path):
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
+        reported_pressure(monkeypatch)
         turn = service.submit(
             session["id"],
             TurnRequest(
@@ -623,7 +625,9 @@ async def test_fork_import_and_log_cleanup_keep_replay_sources(tmp_path):
 
 
 @pytest.mark.parametrize("accept", [False, True])
-async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(tmp_path, accept):
+async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(
+    tmp_path, accept, monkeypatch
+):
     store, _, _ = connected_store(tmp_path)
     config = store.settings_document()
     config.half_agent.chunk_mode = "messages"
@@ -666,6 +670,7 @@ async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
+        reported_pressure(monkeypatch)
         turn = service.submit(
             session["id"],
             TurnRequest(
@@ -740,7 +745,7 @@ async def test_setting_change_during_compact_prevents_publish_and_stale_resume(t
         await service.close()
 
 
-async def test_cancel_during_automatic_compaction_keeps_committed_snapshot(tmp_path):
+async def test_cancel_during_automatic_compaction_keeps_committed_snapshot(tmp_path, monkeypatch):
     store, _, _ = connected_store(tmp_path)
     _, session = story(store)
     service = ModeRuntime(store)
@@ -755,6 +760,7 @@ async def test_cancel_during_automatic_compaction_keeps_committed_snapshot(tmp_p
     try:
         _, session = await operate(service, session, "enable_compact")
         before = copy.deepcopy(session["snapshot"])
+        reported_pressure(monkeypatch)
         turn = service.submit(
             session["id"],
             TurnRequest(

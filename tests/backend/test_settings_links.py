@@ -11,7 +11,6 @@ from tavern.core.models import Settings
     [
         {"history_message_cap": 7},
         {"context_pressure_trigger": 0.05},
-        {"chunk_mode": "tokens", "chunk_max_tokens": 131072},
     ],
 )
 def test_invalid_linked_settings_are_rejected(changes):

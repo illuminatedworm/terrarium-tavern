@@ -8,6 +8,7 @@ import copy
 
 from tavern.conversation.context import compile_context
 from tavern.conversation.half_compaction import local_window_enabled
+from tavern.core.context_usage import exceeds
 
 
 def plan_window(
@@ -31,7 +32,6 @@ def plan_window(
     inputs = [i for i, m in enumerate(history) if m["role"] == "user"]
     protected = inputs[-2] if len(inputs) >= 2 else 0
     capacity = min(settings.daily_context_budget, settings.context_tokens - settings.reply_tokens - 2048)
-    pressure = False
     while True:
         draft = copy.deepcopy(snapshot)
         if count:
@@ -49,17 +49,11 @@ def plan_window(
             replay_records=replay_records,
             read_only=read_only,
         )
-        total = context["estimated_tokens"]
-        pressure |= total > capacity * settings.context_pressure_trigger
-        history_cost = sum(
-            m["estimated_tokens"] for m in context["trace"] if m["source"] == "history" or m.get("anchor_id")
-        )
-        over = (
-            context["window_message_count"] >= settings.history_message_cap
-            or settings.chunk_mode == "tokens"
-            and history_cost > settings.chunk_max_tokens
-            or pressure
-            and total > capacity * settings.context_pressure_target
+        # One provider sample or rejection justifies a single pressure batch:
+        # removing history changes the request prefix, so resolve() no longer
+        # treats that old observation as covering the next compilation.
+        over = context["window_message_count"] >= settings.history_message_cap or exceeds(
+            context["context_usage"], capacity * settings.context_pressure_trigger
         )
         if not local_window_enabled(settings) or not over or count >= protected:
             return count, context

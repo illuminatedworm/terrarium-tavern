@@ -15,7 +15,6 @@ from tavern.character.editor_sandbox import test_card
 from tavern.character.editor_tools import EditorTools, tool_definitions
 from tavern.character.editor_worldbook import reject_worldbook
 from tavern.core.models import CardAuthorModelOptions, CardAuthorRequest
-from tavern.core.tokens import counting_info
 
 
 class Body(BaseModel):
@@ -274,10 +273,9 @@ def register_conversation_routes(app, editor):
                 (wid,),
             ).fetchone()
         return {
-            "estimated_tokens": owner.context.tokens(),
+            "context_usage": owner.context.usage(),
             "context_limit": owner.cfg.context_tokens,
             "model": owner.cfg.model,
-            "token_counting": counting_info(owner.cfg),
             **owner.context.image_stats(),
             "usage": json.loads(row[0]).get("usage") if row else None,
             "cache_usage": editor.edits.conversation_cache_usage(wid),
@@ -315,7 +313,7 @@ def register_conversation_routes(app, editor):
             "messages": messages,
             "adapter_revision": adapter_snapshot(owner.cfg)["revision"],
             "tools": tools,
-            "estimated_tokens": owner.context.tokens(),
+            "context_usage": owner.context.usage(),
             "context_limit": owner.cfg.context_tokens,
             "preview_only": True,
             **owner.context.image_stats(),

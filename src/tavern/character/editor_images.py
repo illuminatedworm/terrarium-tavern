@@ -9,10 +9,10 @@ from typing import TypedDict
 from PIL import Image, UnidentifiedImageError
 
 from tavern.character.editor_files import MAX_FILE_BYTES
+from tavern.core.tokens import IMAGE_REFS as IMAGE_REFS
 
 IMAGE_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}
 MIME_TYPES = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
-IMAGE_REFS = "_editor_image_refs"
 
 
 class ImageMetadata(TypedDict):
@@ -52,7 +52,7 @@ def image_refs(files: list[dict]) -> list[str]:
 
 def image_stats(messages: list[dict]) -> dict:
     count = sum(len(message.get(IMAGE_REFS, [])) for message in messages)
-    return {"image_count": count, "image_tokens_included": False, "estimated_tokens_complete": count == 0}
+    return {"image_count": count}
 
 
 def request_preview(value):
@@ -86,7 +86,9 @@ def materialize_images(messages: list[dict], store, wid: str, files: list[dict])
     result = []
     for message in messages:
         item = copy.deepcopy(message)
-        refs = item.pop(IMAGE_REFS, [])
+        # Keep the immutable local identity through hydration for request
+        # accounting. The protocol adapters allowlist the actual wire fields.
+        refs = item.get(IMAGE_REFS, [])
         if refs:
             if item["role"] != "user" or not isinstance(item.get("content"), str):
                 raise ValueError("图片附件只能属于用户文本消息。")

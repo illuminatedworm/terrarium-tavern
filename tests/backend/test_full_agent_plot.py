@@ -44,7 +44,9 @@ def test_legacy_database_is_backed_up_before_additive_plot_migration(story):
     reopened = Store(store.root)
     assert not reopened.session(session["id"])["plot_enabled"]
     assert reopened.session(session["id"])["snapshot"] == original
-    assert reopened.settings_document().full_agent.tools.plot_tokens == Settings().full_agent_config.plot_tokens
+    assert (
+        reopened.settings_document().full_agent.tools.plot_tokens == Settings().full_agent_config.plot_tokens
+    )
     backups = list(store.root.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
@@ -485,7 +487,6 @@ def test_long_plot_remains_complete_and_supports_message_adaptation(api):
     assert plot["role"] == "user" and plot["content"].endswith(text)
     assert "<tavern_plot>" not in plot["content"]
     assert plot["content"] in [m["content"] for m in result["messages"]]
-    assert result["budget_sources"]["plot"] > 128
 
 
 async def test_player_changes_replace_old_effective_plot_after_real_trace_replay(story):

@@ -6,11 +6,11 @@ from tavern.character.cards import card_view, is_initvar, lore_entries, normaliz
 from tavern.conversation.context import macros
 from tavern.core.cache_policy import fingerprint
 from tavern.core.channels import require_channel
+from tavern.core.context_usage import bind_meter
 from tavern.core.history_refs import message_positions, message_ref
 from tavern.core.message_adapter import project_context
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
-from tavern.core.tokens import counting_info, request_tokens
 from tavern.full_agent.state import read_full_state
 from tavern.memories.memory_records import read_memory, render_document, source_hash, with_source_status
 from tavern.scripting.request_context import response_origin
@@ -40,6 +40,7 @@ def runtime_config(store, session, options):
     if channel != "chatgpt":
         config.context_strategy = "local"
     cfg.context_strategy = "openai_compact" if config.context_strategy == "openai_compact" else "new_context"
+    bind_meter(cfg, store, "advisor", session["id"])
     cfg.compact_auto = config.auto_compact
     return cfg, config
 
@@ -226,6 +227,9 @@ def consultation_body(exchanges, story):
 
 
 def compile_context(story, config, cfg, exchanges, context, pending, definitions, view=None):
+    cfg._context_generation = fingerprint(
+        [context.get("through", 0), context.get("checkpoint", []), context.get("created")]
+    )
     if view is None:
         import json
 
@@ -264,13 +268,10 @@ def compile_context(story, config, cfg, exchanges, context, pending, definitions
             + [opaque_message(context["checkpoint"], cfg)]
             + view.messages(body + pending)
         )
-    tokens = request_tokens(portable_messages, cfg, definitions)
     result = {
         "messages": portable_messages,
         "trace": portable_messages,
-        "estimated_tokens": tokens,
         "context_limit": cfg.context_tokens,
-        "token_counting": counting_info(cfg),
         "recent_refs": refs,
         "recent_exchanges": config.recent_exchanges,
         "summary": context.get("summary", "") if usable else "",

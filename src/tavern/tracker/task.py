@@ -16,10 +16,10 @@ import jsonpointer
 
 from tavern.character.cards import lore_entries, lore_title, normalize
 from tavern.conversation.context import get_path, search
+from tavern.core.context_usage import context_tokens
 from tavern.core.message_adapter import adapt_messages, provider_messages, runtime_messages
 from tavern.core.model_view import ModelView, state_for_model
 from tavern.core.provider import make_provider
-from tavern.core.tokens import request_tokens
 from tavern.memories.history_recall import HistoryBudget, HistoryRecall, MemoryText
 from tavern.memories.memory_engine import apply_operations, consolidate
 from tavern.memories.memory_protocol import References
@@ -73,6 +73,7 @@ class TrackerTask:
         self.history = copy.deepcopy(history)
         self.committed_history = copy.deepcopy(history if committed_history is None else committed_history)
         self.phase, self.purpose = phase, "tracker_" + phase
+        self.settings._context_generation = tid
         self.user_input, self.narrative = user_input, narrative
         self.memory_enabled, self.variables_enabled, self.content_enabled = memory, variables, content
         self.memory = with_source_status(read_memory(snapshot), history)
@@ -266,9 +267,14 @@ class TrackerTask:
             self.budget.reserve()
             self.total_calls += 1
             typed = runtime_messages(self.thread, "background")
-            tokens = request_tokens(adapt_messages(typed, self.settings)[0], self.settings, self.definitions)
-            if tokens + self.output_tokens > self.settings.context_tokens:
-                self.event("context_warning", {"message": "Tracker 请求估算超出上下文，仍完整发送"})
+            tokens = context_tokens(
+                adapt_messages(typed, self.settings)[0], self.settings, self.definitions, purpose=self.purpose
+            )
+            if tokens is not None and tokens + self.output_tokens > self.settings.context_tokens:
+                self.event(
+                    "context_warning",
+                    {"message": "Tracker 上次实测输入超过可用容量；新增内容尚未计量，仍完整发送"},
+                )
             begun = time.perf_counter()
             self.sent_count = len(self.thread)
             response = await asyncio.wait_for(

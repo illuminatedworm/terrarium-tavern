@@ -37,7 +37,9 @@ def reply(api, items=None):
         return {
             "id": "msg_fixture",
             "model": "claude-opus-5-5",
-            "stop_reason": "tool_use" if any(p.get("type") == "tool_use" for p in items or []) else "end_turn",
+            "stop_reason": "tool_use"
+            if any(p.get("type") == "tool_use" for p in items or [])
+            else "end_turn",
             "content": items if items is not None else [{"type": "text", "text": "done"}],
             "usage": {
                 "input_tokens": 2,
@@ -580,7 +582,6 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
             "线索/钟楼\n计划/港口",
             "线索/钟楼\n计划/港口",
         ]
-        fixed_prefix = None
         for request, keys in zip(model.requests, expected, strict=True):
             messages = request["messages"]
             directories = [
@@ -589,21 +590,17 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
             if keys is None:
                 assert directories == []
                 continue
-            assert len(directories) == 1
-            at = directories[0]
+            at = directories[-1]
             assert messages[at]["role"] == "system"
-            assert messages[at]["content"] == f"<tavern_note_list>\n{keys}\n</tavern_note_list>"
-            prefix = strip_local(messages[:at])
-            if fixed_prefix is None:
-                fixed_prefix = prefix
-            assert prefix == fixed_prefix
-            assert messages[at + 1]["role"] == "user"
-        # Editing contents with the same key keeps the entire previously sent prefix.
-        before_edit, after_edit = [strip_local(r["messages"]) for r in model.requests[3:5]]
-        assert after_edit[: len(before_edit)] == before_edit
+            assert messages[at]["content"].endswith(f"\n{keys}\n</tavern_note_list>")
+        # Directory edits, as well as body-only edits, append without rewriting
+        # the already sent prefix. Rollover intentionally starts another prefix.
+        for before_edit, after_edit in zip(model.requests[2:8], model.requests[3:9], strict=True):
+            before_messages = strip_local(before_edit["messages"])
+            assert strip_local(after_edit["messages"])[: len(before_messages)] == before_messages
         assert current["snapshot"]["full_agent"]["window"]["number"] == 3
         directory_trace = next(m for m in result["preview"]["trace"] if m["source"] == "note_list")
-        assert directory_trace["runtime_phase"] == "header"
+        assert directory_trace["runtime_phase"] == "body"
         assert not any(m.get("tool_calls") or m["role"] == "tool" for m in model.requests[-1]["messages"])
         follow = Model("next narrative")
         follow_result, _ = await turn(service, current, follow)
@@ -613,7 +610,7 @@ async def test_note_list_updates_on_key_changes_and_survives_rollover_without_se
             for m in follow.requests[0]["messages"]
             if m.get("content", "").startswith("<tavern_note_list>\n")
         )
-        assert directory["content"] == model.requests[-1]["messages"][len(fixed_prefix)]["content"]
+        assert directory["content"] == directory_trace["content"]
     finally:
         await service.close()
 

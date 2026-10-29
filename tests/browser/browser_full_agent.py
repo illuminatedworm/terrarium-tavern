@@ -275,7 +275,9 @@ async def main():
                 await page.get_by_role("button", name="设置", exact=True).click()
                 modal = page.get_by_role("dialog", name="设置")
                 await modal.get_by_role("button", name="full agent 工具与记忆", exact=True).click()
-                await expect(modal.get_by_label("每回合模型调用上限", exact=True)).to_have_value("24")
+                await expect(modal.get_by_label("每次发送或继续的模型调用上限", exact=True)).to_have_value(
+                    "24"
+                )
                 await page.screenshot(path=str(output / "settings.png"))
                 await modal.get_by_role("button", name="关闭", exact=True).click()
                 app.state.service.full.provider_factory = lambda: Model(
@@ -296,7 +298,6 @@ async def main():
                 await entries.nth(3).locator("summary").click()
                 await expect(entries.nth(3).locator("pre")).to_contain_text("read_note")
                 await expect(entries.nth(3).locator("pre")).to_contain_text("约定/钟楼")
-                await expect(entries.nth(3).locator("pre")).to_contain_text("工作过程不会混入正文")
                 await entries.nth(4).locator("summary").click()
                 await expect(entries.nth(4).locator("pre")).to_contain_text("玩家答应明天见面")
                 assert await entries.locator(".context-entry-position").all_text_contents() != ["位置 "] * 6

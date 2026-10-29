@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { rawApi } from '../lib/api';
+import type { ContextUsage } from '../lib/contextUsage';
 import {
   advisorRunning,
   eventCursor,
@@ -17,9 +18,12 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
   const streaming = ref(''),
     events = ref<AdvisorEvent[]>([]),
     notice = ref('');
+  const stats = ref<{ context_usage: ContextUsage; context_limit: number } | null>(null),
+    statsError = ref('');
   let source: EventSource | null = null,
     disposed = false,
-    generation = 0;
+    generation = 0,
+    statsVersion = 0;
   const running = computed(() => sending.value || clearing.value || advisorRunning(state.value?.run));
   const pending = computed(() => !!state.value?.run?.resumable);
   function stopObserving() {
@@ -27,12 +31,26 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     source?.close();
     source = null;
   }
+  async function refreshStats() {
+    const token = generation,
+      version = ++statsVersion;
+    stats.value = null;
+    statsError.value = '';
+    if (!state.value?.effective.model_selection?.model || advisorRunning(state.value.run)) return;
+    try {
+      const value = await rawApi(`/sessions/${sid}/advisor/stats`);
+      if (!disposed && token === generation && version === statsVersion) stats.value = value;
+    } catch (e) {
+      if (!disposed && token === generation && version === statsVersion) statsError.value = String(e);
+    }
+  }
   async function load(observe = true) {
     const token = generation;
     const value = (await rawApi(`/sessions/${sid}/advisor`)) as AdvisorState;
     if (disposed || token !== generation || clearing.value) return;
     state.value = value;
     if (observe && advisorRunning(value.run)) watchRun(value.run!);
+    else await refreshStats();
   }
   function watchRun(run: AdvisorRun) {
     stopObserving();
@@ -112,7 +130,10 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
         { expected_revision: state.value.revision, ...changes },
         'PATCH',
       );
-      if (!disposed && token === generation) state.value = value;
+      if (!disposed && token === generation) {
+        state.value = value;
+        await refreshStats();
+      }
     } catch (e) {
       error.value = String(e);
     }
@@ -132,6 +153,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
       error.value = '';
       streaming.value = '';
       events.value = [];
+      await refreshStats();
     } catch (e) {
       error.value = String(e);
     }
@@ -160,6 +182,7 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
       events.value = [];
       notice.value = '';
       error.value = '';
+      await refreshStats();
       return true;
     } catch (e) {
       if (!disposed) error.value = String(e);
@@ -181,6 +204,8 @@ export function useAdvisor(sid: string, preferenceSaved: () => void, started: ()
     streaming,
     events,
     notice,
+    stats,
+    statsError,
     load,
     initialize,
     send,

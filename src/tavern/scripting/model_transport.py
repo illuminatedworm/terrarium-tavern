@@ -1,5 +1,6 @@
 """Four HTTP protocols behind the same Terrarium chat/tool contract."""
 
+import asyncio
 import copy
 import hashlib
 import json
@@ -22,7 +23,7 @@ from tavern.core.cache_policy import (
 from tavern.core.gemini_capabilities import gemini_controls
 from tavern.core.kemini import transport_tools
 from tavern.core.message_adapter import adapt_messages, adapter_snapshot
-from tavern.core.tokens import counting_info, request_tokens
+from tavern.core.usage import observed_usage
 from tavern.scripting.cloud_cache import (
     DISABLED,
     cache_rejection,
@@ -53,6 +54,23 @@ from tavern.scripting.reasoning import anthropic_thinking, gemini_effort, gemini
 from tavern.scripting.request_context import identity_headers, response_origin
 from tavern.scripting.sent_breakpoints import APIS, FIELD, SentBreakpoints, marked_boundaries
 from tavern.scripting.sse import stream_events
+
+
+async def _meter_write(operation, *args, **kwargs):
+    """Finish one worker-owned transaction before propagating cancellation.
+
+    Cancelling to_thread cannot stop its SQLite transaction. The caller must
+    install the returned sequence or clear its completed sample before raising
+    the deferred cancellation, including when stop is requested more than once.
+    """
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    cancelled = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as error:
+            cancelled = error
+    return task.result(), cancelled
 
 
 class ModelTransport(BaseLLMProvider):
@@ -108,16 +126,48 @@ class ModelTransport(BaseLLMProvider):
 
     async def chat_complete(self, messages, **kwargs):
         with self._failure_debug.operation(self) as capture:
-            result = await super().chat_complete(messages, **kwargs)
-            if capture is not None and result.finish_reason in ("length", "content_filter"):
-                capture.error_type = "IncompleteResponse"
-            return result
+            try:
+                result = await super().chat_complete(messages, **kwargs)
+                if capture is not None and result.finish_reason in ("length", "content_filter"):
+                    capture.error_type = "IncompleteResponse"
+                return result
+            except Exception as error:
+                await self._finish_unobserved_request(error)
+                raise
+            finally:
+                await self._finish_unobserved_request(cancelled=True)
 
     async def chat(self, messages, **kwargs):
         with self._failure_debug.operation(self):
-            async with aclosing(super().chat(messages, **kwargs)) as chunks:
-                async for chunk in chunks:
-                    yield chunk
+            try:
+                async with aclosing(super().chat(messages, **kwargs)) as chunks:
+                    async for chunk in chunks:
+                        yield chunk
+            except Exception as error:
+                await self._finish_unobserved_request(error)
+                raise
+            finally:
+                await self._finish_unobserved_request(cancelled=True)
+
+    async def _finish_unobserved_request(self, error=None, *, cancelled=False):
+        sample = getattr(self, "_context_sample", None)
+        if sample:
+            from tavern.core.context_usage import context_overflow
+
+            self._context_sample = None
+            meter, current, lane, sequence = sample
+            # A definite size rejection stays usable as window pressure;
+            # cancellation and other failures restore the previous record.
+            _, cancellation = await _meter_write(
+                meter.fail,
+                current,
+                lane,
+                sequence,
+                overflow=error is not None and context_overflow(error),
+                cancelled=cancelled,
+            )
+            if cancellation is not None:
+                raise cancellation
 
     async def _recover_from_overflow(self, current, state):
         return None
@@ -167,6 +217,7 @@ class ModelTransport(BaseLLMProvider):
         )
         clone.last_native_response, clone.last_response_record, clone._response_headers = None, {}, {}
         clone.last_completion = None
+        clone._context_sample = None
         clone.request_context = copy.deepcopy(self.request_context)
         clone._sent_breakpoints = copy.deepcopy(self._sent_breakpoints)
         if clone.request_context:
@@ -465,15 +516,60 @@ class ModelTransport(BaseLLMProvider):
         diagnostic["prefix_sha256"] = fingerprint(messages[: planned + 1]) if planned is not None else None
         return body, diagnostic, resource
 
-    def _capture(self, messages, tools, body, diagnostic, url, request=None):
+    async def _capture(self, messages, tools, body, diagnostic, url, request=None):
+        from tavern.core.context_usage import describe, exceeds, meter_lane
+
+        meter = self.settings._context_meter
+        request_usage = None
+        effective_tools = definitions(tools)
+        if self.settings.api_mode == "anthropic":
+            # Some Claude models implement a forced call by sending only that
+            # schema. Its smaller measured input must not calibrate the full set.
+            names = {tool["name"] for tool in body.get("tools", [])}
+            effective_tools = [
+                tool for tool in effective_tools if tool.get("function", tool).get("name") in names
+            ]
+        if meter:
+            effective, _ = prepare_messages(messages, response_origin(self.settings, self.key))
+            if self.settings.auth_mode == "chatgpt_subscription":
+                # The subscription route wraps functions in a namespace and can
+                # select a forced subset or add a hosted tool outside that namespace.
+                actual = body.get("tools", [])
+                names = {
+                    tool["name"]
+                    for group in actual
+                    if group.get("type") == "namespace"
+                    for tool in group["tools"]
+                }
+                effective_tools = [
+                    tool for tool in effective_tools if tool.get("function", tool).get("name") in names
+                ]
+                effective_tools += [tool for tool in actual if tool.get("type") != "namespace"]
+            sample = describe(
+                effective, self.settings, effective_tools, instructions=body.get("instructions", "")
+            )
+            # Capture the actual per-call override as well as profile settings.
+            sample["output_limit"] = (
+                body.get("generationConfig", {}).get("maxOutputTokens")
+                if self.settings.api_mode == "gemini"
+                else body.get("max_output_tokens", body.get("max_completion_tokens", body.get("max_tokens")))
+            )
+            purpose = getattr(self, "operation_purpose", "narrative")
+            if body.get("instructions"):
+                purpose = "context_maintenance"
+            lane = meter_lane(self.settings, purpose)
+            # One short transaction per request: begin() also reports the
+            # observation it replaces, so no separate read precedes the send.
+            (sequence, request_usage), cancellation = await _meter_write(meter.begin, sample, lane)
+            self._context_sample = (meter, sample, lane, sequence)
+            if cancellation is not None:
+                raise cancellation
         if request is not None and self.request_observer is not None:
             self.request_observer(request)
         if not self.capture:
             return
         cfg = self.settings
         wire_messages = body.get("messages", body.get("input", body.get("contents", [])))
-        effective_messages, _ = prepare_messages(messages, response_origin(cfg, self.key))
-        cost = request_tokens(effective_messages, cfg, definitions(tools))
         payload = {
             "model": cfg.model,
             "api_mode": cfg.api_mode,
@@ -484,11 +580,11 @@ class ModelTransport(BaseLLMProvider):
             "tools": [t.get("function", t).get("name") for t in definitions(tools)],
             "tools_sha256": fingerprint(definitions(tools)),
             "reasoning": cfg.reasoning_effort,
-            "estimated_input_tokens": cost,
-            "context_warning": "估算超出模型上下文，完整发送"
-            if cost + cfg.reply_tokens + 2048 > cfg.context_tokens
+            "context_usage": request_usage,
+            "context_warning": "上次实测输入已超过可用输入容量；当前新增内容尚未计量，完整发送"
+            if request_usage is not None
+            and exceeds(request_usage, cfg.context_tokens - cfg.reply_tokens - 2048)
             else None,
-            "token_counting": counting_info(cfg),
         }
         if request is not None:
             payload.update(
@@ -538,7 +634,7 @@ class ModelTransport(BaseLLMProvider):
                     remember_sent()
 
             request.extensions["trace"] = trace
-            self._capture(messages, tools, body, diagnostic, url, request)
+            await self._capture(messages, tools, body, diagnostic, url, request)
             response = await self._failure_debug.send(self.http, request, stream=stream)
             # Custom transports may not expose HTTPcore tracing. Receiving a
             # response still proves dispatch, regardless of status or parsing.
@@ -589,8 +685,8 @@ class ModelTransport(BaseLLMProvider):
                 adapter_revision=snapshot["revision"], adapter_warnings=warnings, transport="google-genai"
             )
 
-            def capture(request):
-                self._capture(
+            async def capture(request):
+                await self._capture(
                     messages, tools, json.loads(request.content), diagnostic, str(request.url), request
                 )
 
@@ -654,9 +750,9 @@ class ModelTransport(BaseLLMProvider):
             return transport_tools(tools, config, choice)
         return tools
 
-    def _finish(self, payload):
+    async def _finish(self, payload):
         try:
-            return self._finish_payload(payload)
+            return await self._finish_payload(payload)
         except ValueError as error:
             if self._kemini:
                 self.last_response_record = {
@@ -668,7 +764,7 @@ class ModelTransport(BaseLLMProvider):
                     self.response_capture(copy.deepcopy(self.last_response_record))
             raise
 
-    def _finish_payload(self, payload):
+    async def _finish_payload(self, payload):
         api = self.settings.api_mode
         if payload.get("error") or payload.get("type") == "error":
             raise ValueError(upstream_message("模型返回错误，本回合未提交", payload, secret=self.key))
@@ -760,6 +856,16 @@ class ModelTransport(BaseLLMProvider):
             if not reason:
                 raise ValueError(upstream_message("Gemini 响应未完整结束", payload, secret=self.key))
         self._last_usage = normalize_usage(raw, api)
+        sample = getattr(self, "_context_sample", None)
+        cancellation = None
+        if sample:
+            meter, current, lane, sequence = sample
+            observation, cancellation = await _meter_write(
+                meter.finish, current, lane, sequence, self._last_usage, payload
+            )
+            self._context_sample = None
+        else:
+            observation = observed_usage(self._last_usage, api, payload)
         self.usage_history.append(copy.deepcopy(self._last_usage))
         self.last_completion = response_completion(api, payload, self._last_tool_calls, secret=self.key)
         original_text, rewritten = text, False
@@ -805,6 +911,7 @@ class ModelTransport(BaseLLMProvider):
             "model": model,
             "headers": dict(self._response_headers),
             "raw_usage": copy.deepcopy(raw),
+            "context_observation": observation,
             "diagnostics": copy.deepcopy(payload.get("diagnostics")),
             "native": copy.deepcopy(self.last_native_response),
             "completion": {"action": self.last_completion.action, "reason": self.last_completion.reason},
@@ -826,6 +933,10 @@ class ModelTransport(BaseLLMProvider):
             )
         if self.response_capture:
             self.response_capture(copy.deepcopy(self.last_response_record))
+        if cancellation is not None:
+            # The provider already returned this usage. Keep its accounting
+            # even when cancellation arrived while persisting the observation.
+            raise cancellation
         return ChatResponse(content=text, usage=self._last_usage, finish_reason=finish, model=model)
 
     async def chat_complete_with_preview(
@@ -854,10 +965,10 @@ class ModelTransport(BaseLLMProvider):
         if self.settings.api_mode == "gemini":
             async with aclosing(self._gemini_events(messages, tools, False, kwargs)) as events:
                 async for payload in events:
-                    return self._finish(payload)
+                    return await self._finish(payload)
         response = await self._send(messages, tools, False, kwargs)
         try:
-            return self._finish(response.json())
+            return await self._finish(response.json())
         finally:
             await response.aclose()
 
@@ -888,7 +999,7 @@ class ModelTransport(BaseLLMProvider):
                         delta = self._kemini.feed(event, delta, self.settings.api_mode)
                     if delta:
                         yield delta
-                result = self._finish(state.finish())
+                result = await self._finish(state.finish())
                 if result.finish_reason in ("length", "content_filter"):
                     raise ValueError(
                         completion_message("模型流未完整结束，本回合未提交", self.last_completion)
@@ -905,7 +1016,7 @@ class ModelTransport(BaseLLMProvider):
                     delta = self._kemini.feed(event, delta, self.settings.api_mode)
                 if delta:
                     yield delta
-            result = self._finish(state.finish())
+            result = await self._finish(state.finish())
             if result.finish_reason in ("length", "content_filter"):
                 raise ValueError(completion_message("模型流未完整结束，本回合未提交", self.last_completion))
             self._completed_response = result
