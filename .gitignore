@@ -96,6 +96,7 @@ Desktop.ini
 .codex/
 .claude/
 .chatgpt/
+.agents/skills/
 auth.json
 tokens.json
 *.safetensors
