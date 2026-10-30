@@ -790,7 +790,10 @@ async def test_anthropic_failed_tool_status_survives_committed_history_and_resta
             if len(requests) == 1
             else story_reply("anthropic", "继续故事")["content"]
         )
-        return httpx.Response(200, json=reply("anthropic", items))
+        payload = reply("anthropic", items)
+        if len(requests) > 1:
+            payload["stop_reason"] = "end_turn"
+        return httpx.Response(200, json=payload)
 
     async def factory(settings, capture=None, *, request_context=None):
         return transport(settings, route, request_context, capture)
@@ -851,7 +854,9 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
 
     def route(request):
         requests.append(request)
-        payload = reply(api, tool_items if len(requests) == 1 else final_items)
+        payload = reply(
+            api, tool_items if len(requests) == 1 else final_items if len(requests) in (2, 4) else None
+        )
         responses.append(payload)
         return httpx.Response(200, json=payload, headers={"x-codex-turn-state": "route-state"})
 
@@ -870,7 +875,7 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
             assert result["status"] == "committed", result["error"]
             session = store.session(session["id"])
         bodies = [json.loads(r.content) for r in requests]
-        assert len(bodies) == 3
+        assert len(bodies) == 5
         assert all(not b.get("stream") for b in bodies)
         if api == "anthropic":
             echoed = next(
@@ -881,31 +886,31 @@ async def test_native_full_agent_http_replay_final_reply_and_cache_anchor(tmp_pa
             assert echoed == tool_items
             final = next(
                 m["content"]
-                for m in bodies[2]["messages"]
-                if any(p.get("text") == "FINAL_NARRATIVE" for p in m["content"])
+                for m in bodies[3]["messages"]
+                if any(p.get("input", {}).get("content") == "FINAL_NARRATIVE" for p in m["content"])
             )
             assert final[0] == final_items[0]
             boundary = next(
                 part
-                for message in bodies[2]["messages"]
+                for message in bodies[3]["messages"]
                 for part in message["content"]
                 if "以上回合已完成，正文为 H" in part.get("text", "")
             )
             assert boundary["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-            assert json.dumps(bodies[2]).count("FINAL_NARRATIVE") == 1
+            assert json.dumps(bodies[3]).count("FINAL_NARRATIVE") == 1
         else:
             at = next(i for i, m in enumerate(bodies[1]["input"]) if m.get("id") == "rs_1")
             assert bodies[1]["input"][at : at + len(tool_items)] == tool_items
             boundary = next(
                 part
-                for message in bodies[2]["input"]
+                for message in bodies[3]["input"]
                 for part in message.get("content", [])
                 if isinstance(part, dict) and part.get("text", "").startswith("以上回合已完成，正文为 H")
             )
             assert boundary["prompt_cache_breakpoint"] == {"mode": "explicit"}
-            assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[2]["input"])
+            assert any(m.get("encrypted_content") == "final-encrypted" for m in bodies[3]["input"])
             assert requests[1].headers["x-codex-turn-state"] == "route-state"
-            assert "x-codex-turn-state" not in requests[2].headers
+            assert "x-codex-turn-state" not in requests[3].headers
         events = store.events(result["id"])
         assert next(e for e in events if e["kind"] == "provider_request")["payload"]["headers"]
         assert next(e for e in events if e["kind"] == "full_agent_response")["payload"]["provider_response"][
@@ -973,6 +978,7 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
 
     async def factory(settings, capture=None, *, request_context=None):
         def route(request):
+            finishing = bool(requests) and len(requests) % 2 == 1
             requests.append(request)
             api = settings.api_mode
             items = (
@@ -991,7 +997,11 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
                     *story_reply("responses", "portable narrative")["output"],
                 ]
             )
-            return httpx.Response(200, json=reply(api, items), headers={"x-codex-turn-state": "old-route"})
+            return httpx.Response(
+                200,
+                json=reply(api, None if finishing else items),
+                headers={"x-codex-turn-state": "old-route"},
+            )
 
         return transport(settings, route, request_context, capture)
 
@@ -1024,9 +1034,13 @@ async def test_model_switch_rebuilds_portable_history_and_does_not_resurrect_old
             epochs.append(audit["epoch"])
             assert len(handoff_frames(result["preview"]["messages"])) == 1
             assert current_text(session["snapshot"]["full_agent"]) == "MEMORY_A"
-            assert "MODEL_PRIVATE_SIGNATURE" not in requests[-1].content.decode()
+            assert "MODEL_PRIVATE_SIGNATURE" not in requests[-2].content.decode()
             if len(epochs) > 1:
-                assert audit["rebuild_reason"] == "provider_or_model_changed"
+                assert any(
+                    e["kind"] == "context_baseline"
+                    and e["payload"]["rebuild_reason"] == "provider_or_model_changed"
+                    for e in store.events(pending["id"])
+                )
                 assert "portable narrative" in requests[-1].content.decode()
         assert len(set(epochs)) == 4
         assert (
@@ -1114,6 +1128,8 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
             ]
             if len(requests) == 1
             else story_reply("responses", "done")["output"]
+            if len(requests) == 3
+            else None
         )
         return httpx.Response(
             200, json=reply("responses", items), headers={"x-codex-turn-state": "persisted-route"}
@@ -1146,7 +1162,7 @@ async def test_responses_routing_state_and_successful_memory_survive_failed_requ
         await service.tasks[resumed["id"]]
         result = store.turn(resumed["id"])
         assert result["status"] == "committed", result["error"]
-        assert len(requests) == 3
+        assert len(requests) == 4
         assert requests[2].headers["session-id"] == requests[0].headers["session-id"]
         assert requests[2].headers["x-codex-turn-state"] == "persisted-route"
         state = store.session(session["id"])["snapshot"]["full_agent"]
@@ -1409,7 +1425,9 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
                 api,
                 original
                 if len(requests) == 1
-                else story_reply(api, "done")["content" if api == "anthropic" else "output"],
+                else story_reply(api, "done")["content" if api == "anthropic" else "output"]
+                if len(requests) in (2, 4)
+                else None,
             ),
         )
 
@@ -1432,7 +1450,10 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
             result = store.turn(pending["id"])
             assert result["status"] == "committed", result["error"]
             session = store.session(session["id"])
-        assert result["preview"]["context_ledger"]["rebuild_reason"] == "context_sources_changed"
+        assert any(
+            e["kind"] == "context_baseline" and e["payload"]["rebuild_reason"] == "context_sources_changed"
+            for e in store.events(pending["id"])
+        )
         if api == "anthropic":
             echoed = next(
                 m["content"]
@@ -1447,7 +1468,7 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
         await service.close()
 
 
-async def test_duplicate_story_stops_without_replacing_body_or_running_its_tools(tmp_path):
+async def test_duplicate_story_rejects_delivery_without_replacing_body(tmp_path):
     store, service, session = game(tmp_path)
     doc = store.settings_document()
     doc.full_agent.tools.max_steps = 2
@@ -1459,10 +1480,18 @@ async def test_duplicate_story_stops_without_replacing_body_or_running_its_tools
         )
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and current["revision"] == 0
-        assert "第二次正文" in result["error"] and len(model.requests) == 2
+        assert len(model.requests) == 2
         progress = store.full_agent_progress(result["id"])
         assert progress["story"]["content"] == "accepted one"
-        assert not current_text(progress["snapshot"]["full_agent"])
+        assert current_text(progress["snapshot"]["full_agent"]) == "must not run"
+        duplicate = next(
+            e["payload"]["result"]
+            for e in store.events(result["id"])
+            if e["kind"] == "full_agent_tool"
+            and e["payload"]["name"] == "submit_story"
+            and not e["payload"]["result"]["ok"]
+        )
+        assert duplicate["error"]["code"] == "STORY_ALREADY_RECEIVED"
         assert not progress["model_completed"]
     finally:
         await service.close()
@@ -1474,7 +1503,9 @@ async def test_native_pause_then_empty_end_preserves_the_one_story(tmp_path):
 
     def route(request):
         requests.append(json.loads(request.content))
-        payload = reply("anthropic", [{"type": "text", "text": "唯一正文"}] if len(requests) == 1 else [])
+        payload = reply(
+            "anthropic", story_reply("anthropic", "唯一正文")["content"] if len(requests) == 1 else []
+        )
         if len(requests) == 1:
             payload["stop_reason"] = "pause_turn"
         return httpx.Response(200, json=payload)

@@ -873,7 +873,7 @@ def test_anthropic_parallel_results_keep_batches_content_and_cache_markers(marke
 @pytest.mark.parametrize("api", ["anthropic", "gemini"])
 @pytest.mark.parametrize("call_count", [1, 2])
 async def test_full_runtime_persists_native_signature_and_returns_tool_result(tmp_path, api, call_count):
-    from tests.backend.test_full_agent import runtime, story_reply, turn
+    from tests.backend.test_full_agent import native_reply, runtime, story_reply, turn
 
     store = Store(tmp_path)
     card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
@@ -947,20 +947,25 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
             results = messages[at + 1]
             assert results["role"] == "user"
             assert [b["tool_use_id"] for b in results["content"]] == calls
-        return httpx.Response(200, json=story_reply(api, "OK"))
+        payload = (
+            native_reply(api, text="收尾完成。")
+            if api == "gemini" and len(seen) in (3, 5)
+            else story_reply(api, "OK")
+        )
+        return httpx.Response(200, json=payload)
 
     service = runtime(store)
     try:
         async with provider(store.settings().for_role("full_agent"), route) as model:
             result, _ = await turn(service, session, model)
         assert result["status"] == "committed", result["error"]
-        assert len(seen) == 2
+        assert len(seen) == (3 if api == "gemini" else 2)
         with store.connection() as db:
             payload = " ".join(row[0] for row in db.execute("SELECT payload FROM full_agent_trace"))
         assert "opaque-signature" in payload
         async with provider(store.settings().for_role("full_agent"), route) as model:
             result, _ = await turn(service, store.session(session["id"]), model)
         assert result["status"] == "committed", result["error"]
-        assert len(seen) == 3
+        assert len(seen) == (5 if api == "gemini" else 3)
     finally:
         await service.close()

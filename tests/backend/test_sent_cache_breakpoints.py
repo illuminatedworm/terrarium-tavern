@@ -330,7 +330,11 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
     def route(request):
         body = json.loads(request.content)
         seen.append(body)
-        payload = story_reply(api, "OK") if mode == "full_agent" else reply(api)
+        payload = (
+            story_reply(api, "OK")
+            if mode == "full_agent" and (api != "responses" or len(seen) % 2 == 1)
+            else reply(api)
+        )
         if not body.get("stream"):
             return httpx.Response(200, json=payload)
         if api == "responses":
@@ -373,7 +377,8 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
             result = store.turn(turn["id"])
             assert result["status"] == "committed", result["error"]
             session = store.session(session["id"])
-        assert [len(marked(body, api)) for body in seen] == [1, 2, 3]
+        story_requests = seen[::2] if mode == "full_agent" and api == "responses" else seen
+        assert [len(marked(body, api)) for body in story_requests] == [1, 2, 3]
         assert marked(seen[0], api)[0] == marked(seen[-1], api)[0]
     finally:
         await service.close()

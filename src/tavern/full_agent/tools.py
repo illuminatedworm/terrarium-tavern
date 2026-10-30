@@ -34,6 +34,20 @@ class Arguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class Story(Arguments):
+    content: str = Field(
+        min_length=1,
+        description="Complete story prose for this turn, without process commentary. Must contain non-whitespace text.",
+    )
+
+    @field_validator("content")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("正文不能为空白")
+        return value
+
+
 class Query(Arguments):
     query: str = Field(min_length=1, max_length=1000, description="Search text or retrieval clues.")
 
@@ -329,6 +343,12 @@ SPECS = {
 
 
 SPECS.update(MAIN_SPECS)
+SPECS["submit_story"] = (
+    Story,
+    "Deliver the complete story prose to this turn's draft exactly once. Ordinary assistant text is commentary, "
+    "not story prose. You may use necessary tools before or after delivery. Success does not commit the turn; "
+    "finish the remaining work and end your reply normally. Do not resubmit an accepted story.",
+)
 
 
 def tool_definitions(request, session, config=None, *, settings=None, catalog=False, document=None):
@@ -345,6 +365,11 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
             names.add("write_plot")
         else:
             names.discard("write_plot")
+    # Story delivery is required by the ordinary protocol, not an optional capability.
+    if settings is not None and settings.kemini.enabled:
+        names.discard("submit_story")
+    else:
+        names.add("submit_story")
     if not catalog and not request.allow_content_edit:
         names.discard("revise_content")
     limits = {
@@ -443,6 +468,9 @@ class AgentTools:
         except ValidationError as error:
             raise ToolArgumentError(name, model, error) from None
         state = owner.state
+        if name == "submit_story":
+            await owner.receive_story(args.content, [])
+            return {"saved_to_draft": True, "message": "本轮正文已接收并保存到草稿，请勿再次提交正文。"}
         if name in MAIN_SPECS:
             if owner.novel is None:
                 raise ToolError("PERMISSION_DENIED", "原著调查服务不可用")

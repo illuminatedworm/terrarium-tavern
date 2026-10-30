@@ -44,7 +44,7 @@ def tool_item(key, order, name, arguments):
     )
     if name == "write_plot":
         summary = "包含未来剧情，展开查看"
-    elif name in ("roleplay", "kemini_emit_story"):
+    elif name in ("roleplay", "submit_story", "kemini_emit_story"):
         summary = "正文交付；展开查看原始参数"
     elif name == "finish_turn":
         summary = "申请正文回调与统一校验"
@@ -99,13 +99,19 @@ def from_trace(rows):
         if message.get("_full_agent_final") or message.get("_full_agent_rejected"):
             continue
         if message.get("role") == "assistant":
-            if message.get("content") and not message.get("_story_call_id"):
+            if message.get("content") and (
+                not message.get("_story_call_id")
+                or any(
+                    c["id"] == message["_story_call_id"] and c["function"]["name"] == "submit_story"
+                    for c in message.get("tool_calls", [])
+                )
+            ):
                 items.append(
                     text_item(
                         f"text-{seq}",
                         seq * 10,
                         message["content"],
-                        is_story=bool(message.get("_story_received")),
+                        is_story=bool(message.get("_story_received")) and not message.get("_story_call_id"),
                     )
                 )
             for index, call in enumerate(message.get("tool_calls", [])):

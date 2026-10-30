@@ -730,12 +730,17 @@ class ModelTransport(BaseLLMProvider):
 
     def _reset_kemini(self):
         self._kemini, self.last_auxiliary, self._story_tool = None, [], False
+        self._submit_preview, self._submit_preview_stopped = None, False
 
     def _begin_kemini(self, tools, kwargs):
         # Full Agent accepts ordinary prose itself and keeps the opt-in Kemini
         # transport call paired with its native result, including mixed batches.
         self._reset_kemini()
         self._story_tool = kwargs.get("_full_agent_story", False)
+        if kwargs.get("_submit_story"):
+            from tavern.scripting.kemini import ToolArguments
+
+            self._submit_preview = ToolArguments({"submit_story"})
         config = self.settings.kemini
         if (
             getattr(self, "operation_purpose", None) == "narrative"
@@ -749,6 +754,21 @@ class ModelTransport(BaseLLMProvider):
                 self.auxiliary_capture([])
             return transport_tools(tools, config, choice)
         return tools
+
+    def _preview_delta(self, event, plain, api):
+        if self._kemini:
+            return self._kemini.feed(event, plain, api)
+        if self._submit_preview is not None:
+            if self._submit_preview_stopped:
+                return ""
+            try:
+                return self._submit_preview.feed(event, api)
+            except ValueError:
+                # Preview is provisional. The full response must still reach
+                # JSON/schema validation and retain its provider diagnostics.
+                self._submit_preview_stopped = True
+                return ""
+        return plain
 
     async def _finish(self, payload):
         try:
@@ -995,8 +1015,7 @@ class ModelTransport(BaseLLMProvider):
             async with aclosing(self._gemini_events(messages, tools, True, kwargs)) as events:
                 async for event in events:
                     delta = state.feed(event)
-                    if self._kemini:
-                        delta = self._kemini.feed(event, delta, self.settings.api_mode)
+                    delta = self._preview_delta(event, delta, self.settings.api_mode)
                     if delta:
                         yield delta
                 result = await self._finish(state.finish())
@@ -1012,8 +1031,7 @@ class ModelTransport(BaseLLMProvider):
         try:
             async for event in stream_events(response):
                 delta = state.feed(event)
-                if self._kemini:
-                    delta = self._kemini.feed(event, delta, self.settings.api_mode)
+                delta = self._preview_delta(event, delta, self.settings.api_mode)
                 if delta:
                     yield delta
             result = await self._finish(state.finish())

@@ -143,6 +143,9 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
       <p v-if="tool.controlled_by === 'plot_enabled'" class="inspector-note">
         由记忆面板中的“剧情规划”开关统一控制。
       </p>
+      <p v-if="tool.controlled_by === 'story_protocol'" class="inspector-note">
+        用于提交本轮完整正文，始终启用。普通文本回复仅记录为备注。
+      </p>
       <p v-if="tool.controlled_by === 'novel_enabled'" class="inspector-note">
         由原著面板的文件绑定及明确授权统一控制；主 agent 不能直接读取原文。
       </p>

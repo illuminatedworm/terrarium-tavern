@@ -29,6 +29,10 @@ ENTRY = {
 NOTE_META = {"key": NOTE_KEY, "kind": "plan", "status": "active", "sources": []}
 NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
+    "submit_story": (
+        {"content": "她在港口的灯塔下等你。"},
+        {"saved_to_draft": True, "message": "本轮正文已接收并保存到草稿，请勿再次提交正文。"},
+    ),
     "find_lore_for_edit": (
         {"query": "港口"},
         {

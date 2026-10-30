@@ -10,7 +10,7 @@ from tavern.scripting.native_response import portable
 def load_progress(progress):
     """Read the persisted envelope before any of its draft fields are used."""
     version = progress.get("version", 1)
-    if type(version) is not int or version not in (1, 2, 3):
+    if type(version) is not int or version not in (1, 2, 3, 4):
         raise ValueError("Full Agent 回合进度格式不受支持；原进度未修改")
     if version >= 2 and (not isinstance(progress.get("output_id"), str) or not progress["output_id"]):
         raise ValueError("Full Agent 回合进度缺少有效的正文身份；原进度未修改")

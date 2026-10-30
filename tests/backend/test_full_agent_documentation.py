@@ -3,12 +3,13 @@
 import copy
 import json
 import re
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
 from tavern.core.model_view import ModelView
 from tavern.core.models import Settings, TurnRequest
+from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.protocol import success
 from tavern.full_agent.state import new_state
 from tavern.full_agent.tools import SPECS, AgentTools, tool_definitions
@@ -69,6 +70,7 @@ async def test_documented_minimal_results_match_execution(name):
         output_id="draft-body",
         patch_state_done=False,
         story=None,
+        must_rollover=False,
         preview=SimpleNamespace(replace=lambda text: None),
         definitions=tool_definitions(request, {"policy_effective": "directed", "plot_enabled": True}),
     )
@@ -79,6 +81,7 @@ async def test_documented_minimal_results_match_execution(name):
 
     owner.retrieve = retrieve
     owner.script = Script([{"id": "draft-body", "role": "assistant", "raw": ""}], owner.snapshot)
+    owner.receive_story = MethodType(FullAgent.receive_story, owner)
     tools = AgentTools(owner)
     if name == "revise_content":
         await tools.execute("read_character", '{"ref":"description"}')

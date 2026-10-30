@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-PROTOCOL_INTRO = """# Full Agent 工具协议
+KEMINI_PROTOCOL_INTRO = """# Full Agent 工具协议
 
 每一轮你要做两件事：写出本轮的故事正文，并用工具查证资料、维护记忆与变量。
 
@@ -17,6 +17,12 @@ PROTOCOL_INTRO = """# Full Agent 工具协议
 3. **收尾**：
    - 本轮授权更新变量时，`patch_state` 至少要成功一次；失败可以修正后重试。变量没有变化就提交空的 `operations`，无需先读取。
    - 有值得长期记住的事，更新笔记。"""
+
+PROTOCOL_INTRO = KEMINI_PROTOCOL_INTRO.replace(
+    "- 你直接输出的普通文字就是本轮正文。每轮只写一次，一次写完整。",
+    "- 用 `submit_story` 的 `content` 参数提交本轮完整故事正文。每轮只成功提交一次，不分段提交。\n"
+    "- 普通文本回复仅作过程备注或对 agent 的说明，不是故事正文，也不会代替正文提交。",
+).replace("2. **写正文。**", "2. **用 `submit_story` 提交正文。**")
 
 PROTOCOL_PLOT_STEP = "   - 剧情规划为空时，结束本轮前必须用 `write_plot` 建纲。"
 
@@ -108,10 +114,12 @@ class FullAgentConfig(BaseModel):
     plot_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
 
 
-def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False):
+def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False, kemini=False):
     # Gemini has no native single-call switch. Keep the instruction and runtime
     # guard consistent for every provider, including relays ignoring API flags.
-    intro = PROTOCOL_INTRO + ("\n" + PROTOCOL_PLOT_STEP if plot_enabled else "")
+    intro = (KEMINI_PROTOCOL_INTRO if kemini else PROTOCOL_INTRO) + (
+        "\n" + PROTOCOL_PLOT_STEP if plot_enabled else ""
+    )
     # Cloud compaction has no handoff or window switching to describe.
     memory = [PROTOCOL_NOTE, *([] if compact else [PROTOCOL_HANDOFF])]
     memory += [PROTOCOL_PLOT_ON if plot_enabled else PROTOCOL_PLOT_OFF, PROTOCOL_RETRIEVAL]

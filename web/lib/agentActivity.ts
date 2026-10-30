@@ -112,6 +112,7 @@ export const toolLabels: Record<string, string> = {
   read_state: '读取状态',
   patch_state: '修改状态',
   roleplay: '交付正文',
+  submit_story: '正文交付',
   finish_turn: '申请收尾',
   kemini_emit_story: '交付实验正文',
   read_character: '读取角色资料',

@@ -113,13 +113,18 @@ def register_full_agent_routes(app, store, context_operations=None):
                 {
                     **t["function"],
                     "enabled": (
-                        session["plot_enabled"]
+                        True
+                        if t["function"]["name"] == "submit_story"
+                        else session["plot_enabled"]
                         if t["function"]["name"] == "write_plot"
                         else session["novel_enabled"]
                         if t["function"]["name"] in MAIN_SPECS
                         else t["function"]["name"] not in session["disabled_tools"]
                     ),
                     **({"controlled_by": "plot_enabled"} if t["function"]["name"] == "write_plot" else {}),
+                    **(
+                        {"controlled_by": "story_protocol"} if t["function"]["name"] == "submit_story" else {}
+                    ),
                     **({"controlled_by": "novel_enabled"} if t["function"]["name"] in MAIN_SPECS else {}),
                     "available": t["function"]["name"] in available,
                     **(
@@ -143,6 +148,8 @@ def register_full_agent_routes(app, store, context_operations=None):
             raise ValueError("未知的 Full Agent 工具")
         if "write_plot" in edit.disabled_tools:
             raise ValueError("write_plot 由剧情规划开关统一控制，请在记忆面板调整")
+        if "submit_story" in edit.disabled_tools:
+            raise ValueError("submit_story 是本轮正文交付工具，不能关闭")
         if set(edit.disabled_tools) & MAIN_SPECS.keys():
             raise ValueError("原著调查工具由原著面板的授权开关统一控制")
         session = require_full(store, sid)

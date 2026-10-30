@@ -111,7 +111,10 @@ def compile_window(
 
     add("system", settings.full_agent_system_prompt, "rules")
     protocol = tool_protocol(
-        settings.full_agent_config, compact=compact, plot_enabled=session.get("plot_enabled", False)
+        settings.full_agent_config,
+        compact=compact,
+        plot_enabled=session.get("plot_enabled", False),
+        kemini=settings.kemini.enabled,
     )
     if session.get("novel_enabled"):
         from tavern.novel.config import MAIN_PROTOCOL
@@ -339,8 +342,12 @@ def compile_window(
         "roleplay_draft",
         # Tool continuations and resumed turns read this frame; a second story is
         # rejected, so it says how to finish instead of only stating progress.
-        f"本轮正文 {message_ref(len(history) + 2)} 已接收，不要再输出正文；"
-        "如有未完成的工具调用就继续，否则直接结束本次回复。"
+        (
+            f"本轮正文 {message_ref(len(history) + 2)} 已接收，不要再输出正文；"
+            if settings.kemini.enabled
+            else f"本轮正文 {message_ref(len(history) + 2)} 已接收并保存到草稿，请勿再次调用 submit_story。普通文本仅作备注；"
+        )
+        + "如有未完成的工具调用就继续，否则直接结束本次回复。"
         + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
         if story is not None
         else "",
@@ -348,6 +355,7 @@ def compile_window(
             "input_id": input_id,
             "content_hash": fingerprint(story["content"]),
             "in_response": story_in_context,
+            **({} if settings.kemini.enabled else {"delivery": "submit_story"}),
         }
         if story is not None
         else False,

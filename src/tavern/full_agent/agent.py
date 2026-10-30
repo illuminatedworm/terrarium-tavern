@@ -150,7 +150,7 @@ class FullAgent:
         self.store.save_full_agent_progress(
             self.tid,
             {
-                "version": 3,
+                "version": 4,
                 "user": self.user_message,
                 "output_id": self.output_id,
                 "snapshot": self.snapshot,
@@ -184,7 +184,11 @@ class FullAgent:
     async def finished_text(self, *, batch_failed=False):
         missing = []
         if self.story is None:
-            missing.append("模型已结束，但本轮尚未输出非空白正文")
+            missing.append(
+                "模型已结束，但本轮尚未提交非空白正文；请调用 submit_story"
+                if not self.settings.kemini.enabled
+                else "模型已结束，但本轮尚未输出非空白正文"
+            )
         if self.must_rollover:
             missing.append("当前上下文须先完成 new_context 换窗")
         if self.request.update_variables and not self.patch_state_done:
@@ -227,6 +231,8 @@ class FullAgent:
 
     async def receive_story(self, text, auxiliary):
         if self.story is not None:
+            if not self.settings.kemini.enabled:
+                raise ToolError("STORY_ALREADY_RECEIVED", "本轮正文已接收，不允许再次提交")
             await self.stop_for_user("STORY_ALREADY_RECEIVED", "本轮已输出正文，第二次正文未接收")
         if self.must_rollover:
             await self.stop_for_user("CONTEXT_ROLLOVER_REQUIRED", "当前须先换窗，本次正文未接收")
@@ -531,11 +537,15 @@ class FullAgent:
                             messages,
                             self.preview.append if self.story is None else None,
                             _full_agent_story=True,
+                            _submit_story=not self.settings.kemini.enabled,
                             extra_body=tool_options,
                         )
                     else:
                         response = await provider.chat_complete(
-                            messages, extra_body=tool_options, _full_agent_story=True
+                            messages,
+                            extra_body=tool_options,
+                            _full_agent_story=True,
+                            _submit_story=not self.settings.kemini.enabled,
                         )
                 except Exception as error:
                     record = getattr(provider, "last_response_record", {})
@@ -585,8 +595,11 @@ class FullAgent:
                         ) from None
                 assistant_seq = len(self.new_trace) + 1
                 assistant = self.response_message(response, provider, calls)
-                text, auxiliary, transport_id = self.story_candidate(response.content or "", calls)
-                if text.strip():
+                text = response.content or ""
+                auxiliary, transport_id = [], None
+                if self.settings.kemini.enabled:
+                    text, auxiliary, transport_id = self.story_candidate(text, calls)
+                if text.strip() and self.settings.kemini.enabled:
                     receipt = await self.receive_story(text, auxiliary)
                     assistant["_story_received"] = receipt
                     if transport_id:
@@ -613,7 +626,7 @@ class FullAgent:
                             "activity_id": f"text-{assistant_seq}",
                             "order": assistant_seq * 10,
                             "content": text,
-                            "is_story": True,
+                            "is_story": self.settings.kemini.enabled,
                         },
                     )
                 # Save the response before executing a batch, then checkpoint each
@@ -739,6 +752,26 @@ class FullAgent:
                 else:
                     self.novel_operation = self.request_context.turn_id + ":" + call["id"]
                     result = await self.tools.execute(name, arguments)
+                    if name == "submit_story":
+                        # Attach the receipt to both saved copies of the calling response.
+                        # Its ordinary text remains commentary; only the argument is prose.
+                        receipt = {
+                            "input_id": self.user_message["id"],
+                            "content_hash": fingerprint(self.story["content"]),
+                        }
+                        records = [assistant, self.new_trace[assistant_seq - 1]["message"]]
+                        # Call IDs may be reused by later responses from a relay.
+                        records.append(
+                            next(
+                                m
+                                for m in reversed(self.continuation)
+                                if m.get("role") == "assistant"
+                                and any(c["id"] == call["id"] for c in m.get("tool_calls", []))
+                            )
+                        )
+                        for record in records:
+                            record["_story_received"] = receipt
+                            record["_story_call_id"] = call["id"]
             except TurnError:
                 raise
             except ToolError as error:

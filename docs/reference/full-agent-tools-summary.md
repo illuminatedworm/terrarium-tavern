@@ -1,10 +1,10 @@
 # Full Agent 工具速查
 
-当前共 **23 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **24 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作、为何这样设计
 
-Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型，普通文本输出一次完整正文，并按模型原生协议自然结束。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。
+Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型。普通对话以 `submit_story` 交付一次完整正文，普通文本仅作备注，并按模型原生协议自然结束。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。Kemini 实验对话维持独立传输协议。
 
 设计目的是让模型按需取得完整资料，用交接笔记和长期笔记延续故事，并在授权下维护变量与设定。模型负责语义判断，程序负责身份定位、来源校验和一致性：H 引用定位剧情，L 引用定位世界书，真实 ID、版本和指纹留在后端。换窗降低上下文占用，原始剧情仍可查询；长期笔记按需读取，不自动全文注入。
 
@@ -12,6 +12,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
+| `submit_story` | 接收本轮完整故事正文到草稿 | `content: string` | 必须非空白；始终启用，每轮只成功一次，不覆盖正文；普通文本仅作备注。 |
 | `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
 | `message_novel_research` | 发送追问或回答 | `ref: string`；`message: string` | 在调查者下一请求前送达，复用原上下文与剩余额度，已暂停或失败的会重新运行；额度耗尽时拒绝。 |
@@ -502,6 +503,24 @@ Cancel an investigator and free its slot; delivered reports and history are kept
 
 ```json
 {"ok":true,"data":{"ref":"R1","status":"destroyed"}}
+```
+
+### `submit_story`
+
+```text
+Deliver the complete story prose to this turn's draft exactly once. Ordinary assistant text is commentary, not story prose. You may use necessary tools before or after delivery. Success does not commit the turn; finish the remaining work and end your reply normally. Do not resubmit an accepted story.
+```
+
+请求：
+
+```json
+{"content":"她在港口的灯塔下等你。"}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"message":"本轮正文已接收并保存到草稿，请勿再次提交正文。"}}
 ```
 
 ### 运行时追加的描述

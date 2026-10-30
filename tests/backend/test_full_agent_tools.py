@@ -539,6 +539,16 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             catalog = (await client.get(url)).json()["tools"]
+            delivery = next(t for t in catalog if t["name"] == "submit_story")
+            assert (
+                delivery["enabled"]
+                and delivery["available"]
+                and delivery["controlled_by"] == "story_protocol"
+            )
+            rejected = await client.put(
+                url, json={"expected_revision": 0, "disabled_tools": ["submit_story"]}
+            )
+            assert rejected.status_code == 400 and store.session(session["id"])["disabled_tools"] == []
             preview_url = f"/api/sessions/{session['id']}/preview"
             original_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
             assert {t["name"] for t in catalog} == set(SPECS)
@@ -592,15 +602,19 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 url,
                 json={
                     "expected_revision": session["revision"],
-                    "disabled_tools": [name for name in SPECS if name not in {"write_plot", *MAIN_SPECS}],
+                    "disabled_tools": [
+                        name for name in SPECS if name not in {"submit_story", "write_plot", *MAIN_SPECS}
+                    ],
                 },
             )
             assert response.status_code == 200, response.text
             session = response.json()
-            no_tools = Model("不使用工具的正文")
+            no_tools = Model("仅提交正文")
             result, session = await turn(service, session, no_tools)
             assert result["status"] == "committed", result["error"]
-            assert "tools" not in no_tools.requests[0]["extra_body"]
+            assert [t["function"]["name"] for t in no_tools.requests[0]["extra_body"]["tools"]] == [
+                "submit_story"
+            ]
             response = await client.put(
                 url, json={"expected_revision": session["revision"], "disabled_tools": []}
             )

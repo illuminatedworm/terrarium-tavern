@@ -17,6 +17,7 @@ const pages = ref<Partial<Record<Part, Page>>>({});
 const errors = ref<Partial<Record<Part, string>>>({});
 const loading = ref(new Set<Part>());
 let generation = 0;
+const isStoryDelivery = computed(() => props.item.name === 'submit_story');
 const parts = computed<Part[]>(() => (props.item.kind === 'tool' ? ['arguments', 'result'] : ['content']));
 const title = computed(
   () =>
@@ -94,10 +95,10 @@ onBeforeUnmount(() => {
   >
     <summary>
       <span class="activity-title">{{ title }}</span>
-      <code v-if="item.name" class="activity-name">{{ item.name }}</code>
-      <span class="activity-preview" :title="item.summary">{{ item.summary }}</span>
+      <code v-if="item.name && !isStoryDelivery" class="activity-name">{{ item.name }}</code>
+      <span v-if="!isStoryDelivery" class="activity-preview" :title="item.summary">{{ item.summary }}</span>
       <span
-        v-if="item.kind === 'tool'"
+        v-if="item.kind === 'tool' && (!isStoryDelivery || item.status !== 'returned')"
         class="activity-status"
         :aria-live="item.status === 'running' ? 'polite' : undefined"
         >{{ status }}</span

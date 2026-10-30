@@ -15,6 +15,7 @@ from tests.backend.test_full_agent import (
     ScriptHost,
     current_text,
     handoff,
+    native_reply,
     runtime,
     story_reply,
 )
@@ -30,15 +31,45 @@ def terminal(reason="stop"):
 
 
 def body_start(text):
-    return delta(text)
+    return {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "story-1",
+                            "function": {
+                                "name": "submit_story",
+                                "arguments": '{"content":"' + json.dumps(text, ensure_ascii=False)[1:-1],
+                            },
+                        }
+                    ]
+                }
+            }
+        ]
+    }
 
 
 def body_delta(text):
-    return delta(text)
+    return {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": json.dumps(text, ensure_ascii=False)[1:-1]}}
+                    ]
+                }
+            }
+        ]
+    }
 
 
 def body_end():
-    return [terminal()]
+    return [
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '"}'}}]}}]},
+        terminal(),
+    ]
 
 
 def story_events(text):
@@ -55,13 +86,13 @@ def tool_events(name="write_handoff", arguments=None):
                 {
                     "delta": {
                         "tool_calls": [
-                            {"index": 0, "id": "call-1", "function": {"name": name, "arguments": args[:5]}}
+                            {"index": 1, "id": "call-1", "function": {"name": name, "arguments": args[:5]}}
                         ]
                     }
                 }
             ]
         },
-        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": args[5:]}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 1, "function": {"arguments": args[5:]}}]}}]},
         terminal("tool_calls"),
     ]
 
@@ -256,7 +287,9 @@ async def test_preview_is_visible_before_completion_and_commit_is_atomic(tmp_pat
     store, service, session = game(tmp_path, "chat_completions")
     gate = Gate()
     usage = {"usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}}
-    stream = WireStream(body_start("尚未完成的"), terminal(), gate, body_delta("正文。"), usage)
+    stream = WireStream(
+        body_start("尚未完成的"), terminal(), gate, body_delta("正文。"), *body_end()[:-1], usage
+    )
     provider, bodies = connect(store, service, stream)
     try:
         tid = submit(service, session)
@@ -348,7 +381,7 @@ async def test_cancelled_preview_and_resume_after_restart_do_not_replay_partial_
 async def test_story_and_tools_keep_running_until_native_end(tmp_path):
     store, service, session = game(tmp_path, "chat_completions")
     tool_gate, next_gate = Gate(), Gate()
-    first = WireStream(delta("唯一正文"), *tool_events()[:1], tool_gate, *tool_events()[1:])
+    first = WireStream(*story_events("唯一正文")[:-1], *tool_events()[:1], tool_gate, *tool_events()[1:])
     second = WireStream(next_gate, *tool_events("read_history", {"ref": "H3"}))
     _, sent = connect(store, service, first, second, WireStream(terminal()))
     try:
@@ -360,7 +393,8 @@ async def test_story_and_tools_keep_running_until_native_end(tmp_path):
         await asyncio.wait_for(next_gate.reached.wait(), 5)
         assert store.turn(tid)["draft"] == replay(store, tid) == "唯一正文"
         assert any(
-            e["kind"] == "full_agent_assistant" and e["payload"].get("is_story") for e in store.events(tid)
+            e["kind"] == "full_agent_tool" and e["payload"].get("name") == "submit_story"
+            for e in store.events(tid)
         )
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
         assert current_text(store.full_agent_progress(tid)["snapshot"]["full_agent"]) == "已确认的工具进度"
@@ -372,6 +406,7 @@ async def test_story_and_tools_keep_running_until_native_end(tmp_path):
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
         assert len(sent) == 3
         assert [e["payload"]["name"] for e in store.events(tid) if e["kind"] == "full_agent_tool"] == [
+            "submit_story",
             "write_handoff",
             "read_history",
         ]
@@ -407,27 +442,34 @@ async def test_missing_work_stops_and_explicit_resume_keeps_story(tmp_path):
         await service.close()
 
 
-async def test_responses_terminal_text_replaces_delta_preview_without_duplication(tmp_path):
+async def test_responses_terminal_story_arguments_replace_preview_without_duplication(tmp_path):
     store, service, session = game(tmp_path, "responses")
     stream = WireStream(
         {
             "type": "response.output_item.added",
             "output_index": 0,
             "item": {
-                "type": "message",
-                "id": "msg_fixture",
-                "role": "assistant",
-                "content": [],
+                "type": "function_call",
+                "id": "fc_story",
+                "call_id": "story",
+                "name": "submit_story",
+                "arguments": "",
             },
         },
         {
-            "type": "response.output_text.delta",
-            "item_id": "msg_fixture",
-            "delta": "临时显示",
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_story",
+            "delta": '{"content":"临时显示',
         },
         {"type": "response.completed", "response": story_reply("responses", "完整权威正文")},
     )
-    connect(store, service, stream, api="responses")
+    connect(
+        store,
+        service,
+        stream,
+        WireStream({"type": "response.completed", "response": native_reply("responses", text="收尾完成。")}),
+        api="responses",
+    )
     try:
         tid = submit(service, session)
         await service.tasks[tid]
@@ -521,7 +563,7 @@ async def test_script_failure_after_complete_stream_does_not_save_story(tmp_path
         store,
         service,
         WireStream(*tool_events("read_history", {"ref": "H999"})),
-        WireStream(delta("模型完整正文"), *tool_events("write_note", note)[:-1], terminal()),
+        WireStream(*story_events("模型完整正文")[:-1], *tool_events("write_note", note)[:-1], terminal()),
     )
     try:
         tid = submit(service, session)
@@ -568,7 +610,7 @@ async def test_terminal_tool_call_with_incomplete_arguments_is_never_executed(tm
         await service.tasks[tid]
         result = store.turn(tid)
         assert result["status"] == "error" and "JSON" in result["error"]
-        assert result["draft"] == replay(store, tid) == "工具前的临时文字"
+        assert result["draft"] == replay(store, tid) == ""
         assert store.full_agent_progress(tid)["story"] is None
         assert not any(e["kind"] == "full_agent_tool_started" for e in store.events(tid))
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
@@ -586,7 +628,7 @@ async def test_empty_successful_stream_is_not_a_story_reply(tmp_path):
         tid = submit(service, session)
         await service.tasks[tid]
         result = store.turn(tid)
-        assert result["status"] == "error" and "尚未输出" in result["error"]
+        assert result["status"] == "error" and "尚未提交" in result["error"]
         assert len(requests) == 1
         assert result["draft"] == ""
         assert store.session(session["id"])["head"] == session["head"]

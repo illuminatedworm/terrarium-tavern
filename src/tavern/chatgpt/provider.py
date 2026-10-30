@@ -259,8 +259,7 @@ class ChatGPTProvider(ModelTransport):
                     raise ChatGPTError(
                         str(error), code="invalid_stream", request_id=self._request_id()
                     ) from None
-                if self._kemini:
-                    delta = self._kemini.feed(event, delta, "responses")
+                delta = self._preview_delta(event, delta, "responses")
                 if delta:
                     yield delta
             if not state.completion_seen:

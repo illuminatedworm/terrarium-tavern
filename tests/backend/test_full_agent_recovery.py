@@ -55,8 +55,10 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
             )
         elif len(requests) == 2:
             payload = native_reply(api, [("read", "read_state", {})], marker="DEPENDENT_NATIVE")
-        else:
+        elif len(requests) in (4, 6 if api in ("responses", "gemini") else 5):
             payload = story_reply(api, "完成正文")
+        else:
+            payload = native_reply(api, text="收尾完成。")
         return httpx.Response(200, json=payload, headers={"x-codex-turn-state": "source-route"})
 
     async def factory(settings, capture=None, *, request_context=None):
@@ -111,7 +113,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         await service.tasks[resumed["id"]]
         result = store.turn(resumed["id"])
         assert result["status"] == "committed", result["error"]
-        assert len(requests) == 4
+        assert len(requests) == (5 if api in ("responses", "gemini") else 4)
         body = requests[3].content.decode()
         assert "BAD_ARGUMENT" not in body and '"bad"' not in body
         assert "MIXED_NATIVE" not in body and "DEPENDENT_NATIVE" not in body
@@ -124,6 +126,7 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         assert [(i["name"], i["status"]) for i in items] == [
             ("write_handoff", "returned"),
             ("read_state", "returned"),
+            ("submit_story", "returned"),
         ]
         current = store.session(session["id"])
         memory = current["snapshot"]["full_agent"]
@@ -137,12 +140,12 @@ async def test_retry_filters_mixed_failures_from_native_wire_activity_and_commit
         )
         await service.tasks[following["id"]]
         assert store.turn(following["id"])["status"] == "committed"
-        assert "BAD_ARGUMENT" not in requests[4].content.decode()
+        assert "BAD_ARGUMENT" not in requests[5 if api in ("responses", "gemini") else 4].content.decode()
     finally:
         await service.close()
 
 
-async def test_retry_of_only_failures_starts_without_tools_and_survives_another_failure(tmp_path):
+async def test_retry_drops_failed_maintenance_and_survives_another_failure(tmp_path):
     store, service, session = game(tmp_path)
     try:
         failed, _ = await turn(
@@ -172,11 +175,20 @@ async def test_retry_of_only_failures_starts_without_tools_and_survives_another_
         await service.tasks[retry["id"]]
         assert store.turn(retry["id"])["status"] == "error"
         assert not tool_exchanges(store.full_agent_progress(retry["id"])["new_trace"])
-        assert not any(
-            m.get("tool_calls") or m["role"] == "tool" for m in retry_model.requests[0]["messages"]
-        )
+        retained_calls = [
+            c["function"]["name"]
+            for m in retry_model.requests[0]["messages"]
+            for c in m.get("tool_calls", [])
+        ]
+        assert retained_calls == ["submit_story"]
         assert "FAILED_PROPOSAL" not in json.dumps(retry_model.requests)
-        assert json.dumps(retry_model.requests, ensure_ascii=False).count("应保留的唯一正文") == 1
+        stories = [
+            json.loads(c["function"]["arguments"])["content"]
+            for m in retry_model.requests[0]["messages"]
+            for c in m.get("tool_calls", [])
+            if c["function"]["name"] == "submit_story"
+        ]
+        assert stories == ["应保留的唯一正文"]
         assert store.full_agent_progress(failed["id"]) == saved
         final_model = Model("")
         service.full.provider_factory = lambda: final_model
@@ -192,9 +204,11 @@ async def test_retry_of_only_failures_starts_without_tools_and_survives_another_
         await service.tasks[final["id"]]
         assert store.turn(final["id"])["status"] == "committed"
         assert store.session(session["id"])["messages"][-1]["raw"] == "应保留的唯一正文"
-        assert not any(
-            m.get("tool_calls") or m["role"] == "tool" for m in final_model.requests[0]["messages"]
-        )
+        assert [
+            c["function"]["name"]
+            for m in final_model.requests[0]["messages"]
+            for c in m.get("tool_calls", [])
+        ] == ["submit_story"]
     finally:
         await service.close()
 
@@ -208,7 +222,10 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
 
             self.requests.append(copy.deepcopy(messages))
             calls = (
-                [("reused", "read_history", {"ref": "H2"})]
+                [
+                    ("story", "submit_story", {"content": "续接正文"}),
+                    ("reused", "read_history", {"ref": "H2"}),
+                ]
                 if len(self.requests) == 1
                 else [
                     ("bad", "read_history", {"reason": "missing ref"}),
@@ -224,9 +241,7 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
             self.last_completion = ResponseCompletion(
                 "tools" if len(self.requests) == 1 else "end", "fixture"
             )
-            return SimpleNamespace(
-                content="续接正文" if len(self.requests) == 1 else "", usage={}, finish_reason="stop"
-            )
+            return SimpleNamespace(content="", usage={}, finish_reason="stop")
 
     original = AgentTools.execute
     interrupted, executed = False, []
@@ -264,11 +279,13 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         assert len(model.requests) == 1
         sent = model.requests[0]["messages"]
         assert [(c["id"], c["function"]["name"]) for m in sent for c in m.get("tool_calls", [])] == [
+            ("story", "submit_story"),
             ("reused", "read_history"),
             ("accepted", "write_handoff"),
             ("reused", "write_handoff"),
         ]
         assert [m["tool_call_id"] for m in sent if m["role"] == "tool"] == [
+            "story",
             "reused",
             "accepted",
             "reused",

@@ -92,6 +92,15 @@ class Model:
             raise response
         self.last_tool_calls = []
         if isinstance(response, dict):
+            response = copy.deepcopy(response)
+            if (
+                kwargs.get("_submit_story")
+                and response.get("content")
+                and not response.pop("commentary", False)
+            ):
+                response.setdefault("calls", []).insert(
+                    0, ("submit_story", {"content": response.pop("content")})
+                )
             self.last_tool_calls = [
                 SimpleNamespace(id=f"call{len(self.requests)}-{i}", name=name, arguments=json.dumps(args))
                 for i, (name, args) in enumerate(response.get("calls", []))
@@ -108,7 +117,17 @@ class Model:
             self.last_completion = ResponseCompletion("tools", "tool_calls")
             return SimpleNamespace(content="", usage={}, finish_reason="tool_calls")
         self.last_completion = ResponseCompletion("end", "stop")
-        return SimpleNamespace(content=response, usage={}, finish_reason="stop")
+        if response and kwargs.get("_submit_story"):
+            self.last_tool_calls = [
+                SimpleNamespace(
+                    id=f"story{len(self.requests)}",
+                    name="submit_story",
+                    arguments=json.dumps({"content": response}),
+                )
+            ]
+        return SimpleNamespace(
+            content="" if self.last_tool_calls else response, usage={}, finish_reason="stop"
+        )
 
     async def close(self):
         self.closed = True
@@ -182,7 +201,12 @@ def native_reply(api, calls=(), text="", marker=""):
 
 
 def story_reply(api, text="正文", *, calls=()):
-    return native_reply(api, calls, text=text)
+    reply = native_reply(api, [("story", "submit_story", {"content": text}), *calls])
+    if api == "chat_completions":
+        reply["choices"][0]["finish_reason"] = "stop"
+    elif api == "anthropic":
+        reply["stop_reason"] = "end_turn"
+    return reply
 
 
 def tool_exchanges(trace):
@@ -191,7 +215,7 @@ def tool_exchanges(trace):
         call["id"]
         for item in trace
         for call in item["message"].get("tool_calls", [])
-        if call["function"]["name"] == "kemini_emit_story"
+        if call["function"]["name"] in ("kemini_emit_story", "submit_story")
     }
     return [
         item
@@ -284,7 +308,7 @@ async def turn(service, session, model, **kwargs):
     service.full.provider_factory = (lambda: model) if model is not None else None
     request = TurnRequest(
         text="我答应明天在钟楼见面。",
-        operation_id=f"test-{session['revision']}",
+        operation_id=kwargs.pop("operation_id", f"test-{session['revision']}"),
         expected_revision=session["revision"],
         **kwargs,
     )
@@ -333,7 +357,7 @@ async def test_tools_handoff_rollover_recovery_and_no_tracker(story):
                 db.execute(
                     "SELECT count(*) FROM full_agent_trace WHERE json_extract(payload,'$.role')='tool'"
                 ).fetchone()[0]
-                == 4  # Four maintenance results; ordinary prose is not a tool.
+                == 5  # Four maintenance results and one accepted story delivery.
             )
         follow = Model("第二天如约而至。")
         result2, _ = await turn(service, current, follow)
@@ -496,7 +520,7 @@ async def test_failed_model_request_resumes_complete_tool_exchanges_after_reopen
             item["name"]
             for item in turn_items(reopened, session["id"], resumed["id"])
             if item["kind"] == "tool"
-        ] == ["read_history", "write_note"]
+        ] == ["read_history", "write_note", "submit_story"]
     finally:
         await service.close()
 
@@ -733,8 +757,10 @@ async def test_native_wire_and_atomic_handoff_on_invalid_arguments(story, monkey
                         "status": "completed",
                     }
                 ]
-            else:
+            elif len(calls) == 2:
                 output = story_reply("responses")["output"]
+            else:
+                output = native_reply("responses")["output"]
             return sdk_httpx.Response(
                 200,
                 json={
@@ -1377,6 +1403,74 @@ async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(stor
         assert owner.state["notes"]["事实"] == note
 
 
+async def test_submit_story_keeps_commentary_out_of_prose_and_resumes_without_overwrite(story):
+    from tavern.full_agent.activity import message_items
+
+    store, session = story
+    service = runtime(store)
+
+    class ReusedIds(Model):
+        async def chat_complete(self, messages, **kwargs):
+            response = await super().chat_complete(messages, **kwargs)
+            for call in self.last_tool_calls:
+                call.id = "reused"
+            return response
+
+    first = ReusedIds(
+        ("read_state", {}),
+        {
+            "content": "先核对资料。",
+            "commentary": True,
+            "calls": [("submit_story", {"content": "唯一正文。"})],
+        },
+        ("read_history", {"ref": "H3"}),
+        RuntimeError("connection lost after story receipt"),
+    )
+    try:
+        failed, unchanged = await turn(service, session, first)
+        assert failed["status"] == "error" and unchanged["head"] == session["head"]
+        assert failed["draft"] == "唯一正文。"
+        receipt = next(
+            json.loads(m["content"])
+            for m in first.requests[2]["messages"]
+            if m["role"] == "tool" and json.loads(m["content"]).get("data", {}).get("saved_to_draft")
+        )
+        assert receipt == {
+            "ok": True,
+            "data": {"saved_to_draft": True, "message": "本轮正文已接收并保存到草稿，请勿再次提交正文。"},
+        }
+        assert any('"text":"唯一正文。"' in m.get("content", "") for m in first.requests[3]["messages"])
+        resumed_model = Model(
+            ("submit_story", {"content": "不可覆盖的第二份正文。"}),
+            {"content": "本轮正文已输出完毕，我现在直接结束回复。", "commentary": True},
+        )
+        resumed, current = await turn(
+            service, session, resumed_model, operation_id="submit-resume", resume_turn_id=failed["id"]
+        )
+        assert resumed["status"] == "committed", resumed["error"]
+        assert current["messages"][-1]["raw"] == "唯一正文。"
+        assert current["messages"][-1]["id"] == store.full_agent_progress(failed["id"])["output_id"]
+        errors = [
+            json.loads(m["content"]) for m in resumed_model.requests[1]["messages"] if m["role"] == "tool"
+        ]
+        assert errors[-1]["error"]["code"] == "STORY_ALREADY_RECEIVED"
+        items = message_items(store, current, [current["head"]])[current["head"]]
+        notes = [i for i in items if i["kind"] == "assistant"]
+        assert [i["details"]["content"] for i in notes] == [
+            "先核对资料。",
+            "本轮正文已输出完毕，我现在直接结束回复。",
+        ]
+        assert all(not i["is_story"] for i in notes)
+        # A normal textual ending cannot silently become the next story.
+        missing, after_missing = await turn(
+            service, current, Model({"content": "只有备注。", "commentary": True})
+        )
+        assert missing["status"] == "error" and "submit_story" in missing["error"]
+        assert after_missing["head"] == current["head"] and missing["draft"] == ""
+    finally:
+        await service.close()
+
+
 async def test_empty_story_can_continue_without_half_agent_state(story):
     store, session = story
     session = store.update_session(session["id"], 0, head=None)
@@ -1607,7 +1701,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         )
         assert any("当前用户输入引用 H2" in m.get("content", "") for m in wire["messages"])
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
-        assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"}
+        from tavern.novel.tools import MAIN_SPECS
+
+        assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"} - set(MAIN_SPECS)
         assert (
             "When variable updates are authorized, submit at least one successful patch this turn"
             in definitions["patch_state"]["description"]
