@@ -442,7 +442,7 @@ async def test_untrusted_lore_does_not_grant_edit_or_variable_permission(story, 
             e["payload"]["result"] for e in store.events(result["id"]) if e["kind"] == "full_agent_tool"
         ]
         assert poison in results[0]["data"]["matches"][0]["text"]
-        assert [r["error"]["code"] for r in results[1:]] == ["PERMISSION_DENIED", "PERMISSION_DENIED"]
+        assert [r["error"]["code"] for r in results[1:3]] == ["PERMISSION_DENIED", "PERMISSION_DENIED"]
         assert results[2]["error"]["patch_state_completed"] is False
         assert current["snapshot"].get("content") == session["snapshot"].get("content")
         assert current["snapshot"]["state"] == session["snapshot"]["state"]

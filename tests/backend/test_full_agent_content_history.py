@@ -270,6 +270,7 @@ async def test_old_progress_broad_calls_are_not_executed_or_replayed_and_audit_i
             "revise_content",
             "read_character",
             "revise_content",
+            "submit_story",
         ]
     finally:
         await service.close()

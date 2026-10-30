@@ -11,7 +11,7 @@ from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store
 from tests.backend import test_full_agent
-from tests.backend.test_full_agent import current_text, handoff, native_reply, runtime, turn
+from tests.backend.test_full_agent import current_text, handoff, native_reply, runtime, story_reply, turn
 
 story = test_full_agent.story
 
@@ -85,15 +85,14 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
         payload = json.loads(request.content)
         requests.append(payload)
         first = len(requests) == 1
-        batch = actions if first else []
-        result = native_reply(
-            api_mode,
-            [
-                (f"call_{i}" if first else f"turn_{len(requests)}_{i}", name, args)
-                for i, (name, args) in enumerate(batch)
-            ],
-            text="" if first else "Narrative",
-        )
+        if first:
+            result = native_reply(
+                api_mode, [(f"call_{i}", name, args) for i, (name, args) in enumerate(actions)]
+            )
+        elif len(requests) == 2:
+            result = story_reply(api_mode, "Narrative")
+        else:
+            result = native_reply(api_mode, [])
         if api_mode == "gemini" and first:
             result["candidates"][0]["content"]["parts"][0]["thoughtSignature"] = "Zml4dHVyZS1zaWduYXR1cmU="
         return httpx.Response(200, json=result)
@@ -106,7 +105,7 @@ async def test_batch_policy_over_real_wire_and_complete_result_roundtrip(story, 
     try:
         result, current = await turn(service, session, provider)
         assert result["status"] == "committed", result["error"]
-        assert len(requests) == 2
+        assert len(requests) == (3 if api_mode in ("responses", "gemini") else 2)
         if api_mode in ("chat_completions", "responses"):
             assert requests[0]["parallel_tool_calls"] is enabled
             if api_mode == "chat_completions":

@@ -293,14 +293,14 @@ async def main():
                 # chronological message order when checking native tool pairs.
                 entries = history.locator(".context-entry")
                 await expect(entries.locator(".badge")).to_have_text(
-                    ["user", "assistant", "user", "assistant", "tool", "assistant"]
+                    ["user", "assistant", "user", "assistant", "tool", "assistant", "tool"]
                 )
                 await entries.nth(3).locator("summary").click()
                 await expect(entries.nth(3).locator("pre")).to_contain_text("read_note")
                 await expect(entries.nth(3).locator("pre")).to_contain_text("约定/钟楼")
                 await entries.nth(4).locator("summary").click()
                 await expect(entries.nth(4).locator("pre")).to_contain_text("玩家答应明天见面")
-                assert await entries.locator(".context-entry-position").all_text_contents() != ["位置 "] * 6
+                assert await entries.locator(".context-entry-position").all_text_contents() != ["位置 "] * 7
                 await page.screenshot(path=str(output / "context-preview.png"))
                 await page.get_by_role("dialog").get_by_role("button", name="关闭", exact=True).click()
                 await page.get_by_role("button", name="Agent 工作记录", exact=True).click()

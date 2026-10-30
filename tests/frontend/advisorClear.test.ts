@@ -10,7 +10,13 @@ vi.mock('vue', async (importOriginal) => ({
 }));
 
 const snapshot = (revision: number, text: string) =>
-  ({ revision, run: null, exchanges: text ? [{ user_text: text }] : [], context: {} }) as AdvisorState;
+  ({
+    revision,
+    run: null,
+    exchanges: text ? [{ user_text: text }] : [],
+    context: {},
+    effective: { model_selection: null },
+  }) as AdvisorState;
 
 beforeEach(() => vi.mocked(rawApi).mockReset());
 

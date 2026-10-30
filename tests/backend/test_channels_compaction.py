@@ -199,8 +199,10 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
         before_notes = copy.deepcopy(session["snapshot"]["full_agent"]["notes"])
         before_history = copy.deepcopy(session["messages"])
         wire = []
+        story_requests = 0
 
         def route(request):
+            nonlocal story_requests
             body = json.loads(request.content)
             wire.append(body)
             if any(
@@ -223,8 +225,13 @@ async def test_compact_round_trip_preserves_notes_replays_old_tools_and_never_ex
             if body.get("instructions"):
                 assert body["tool_choice"] == "none"
                 return sse(compact_response(number=len(wire)))
+            story_requests += 1
+            if story_requests > 1:
+                return sse(completed(""))
             response = compact_response("", len(wire))
-            response["output"].extend(completed("The next scene.")["output"])
+            response["output"].extend(
+                completed("", [("submit_story", {"content": "The next scene."})])["output"]
+            )
             return sse(response)
 
         store.chatgpt.http_transport = httpx.MockTransport(route)
@@ -778,7 +785,13 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         assert text in json.dumps(body["input"], ensure_ascii=False)
         if stages.count("story") == 1:
             return sse(completed("", [("read_history", {"ref": "H2"})]))
-        return sse(completed("The final reply follows the complete current input."))
+        if stages.count("story") == 3:
+            return sse(completed(""))
+        return sse(
+            completed(
+                "", [("submit_story", {"content": "The final reply follows the complete current input."})]
+            )
+        )
 
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
@@ -793,7 +806,7 @@ async def test_user_turn_compacts_before_story_only_when_enabled_and_never_durin
         await service.tasks[started["id"]]
         saved = store.turn(started["id"])
         assert saved["status"] == "committed", saved.get("error")
-        assert stages == (["maintenance"] if automatic else []) + ["story", "story"]
+        assert stages == (["maintenance"] if automatic else []) + ["story", "story", "story"]
         assert store.session(session["id"])["messages"][-2]["raw"] == text
     finally:
         await service.close()
@@ -880,10 +893,12 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
                     ],
                 )
             )
+        if stages.count("story") == 3:
+            return sse(completed(""))
         assert stages == ["maintenance", "story", "maintenance", "story"]
         assert "新的固定设定" in json.dumps(body["input"], ensure_ascii=False)
         assert sum(item.get("type") == "function_call" for item in body["input"]) == 1
-        return sse(completed("修改设定后的完整正文。"))
+        return sse(completed("", [("submit_story", {"content": "修改设定后的完整正文。"})]))
 
     store.chatgpt.http_transport = httpx.MockTransport(route)
     try:
@@ -901,7 +916,7 @@ async def test_fixed_source_edit_rebuilds_before_tool_continuation_without_repla
         await service.tasks[started["id"]]
         saved = store.turn(started["id"])
         assert saved["status"] == "committed", saved.get("error")
-        assert stages == ["maintenance", "story", "maintenance", "story"]
+        assert stages == ["maintenance", "story", "maintenance", "story", "story"]
         current = store.session(session["id"])
         assert current["messages"][-1]["raw"] == "修改设定后的完整正文。"
         assert normalize(current["snapshot"]["content"]["document"])["description"] == "新的固定设定"

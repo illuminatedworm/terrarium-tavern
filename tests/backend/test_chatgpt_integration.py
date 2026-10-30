@@ -95,7 +95,9 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
         if mode == "full_agent":
             if len(calls) == 1:
                 return sse(completed("", [("read_history", {"ref": "H1"})]))
-            return sse(completed("她推开门，完整的故事继续。"))
+            if len(calls) == 2:
+                return sse(completed("", [("submit_story", {"content": "她推开门，完整的故事继续。"})]))
+            return sse(completed(""))
         return sse(completed("她推开门，完整的故事继续。"))
 
     store.chatgpt.http_transport = httpx.MockTransport(model)
@@ -117,7 +119,7 @@ async def test_real_story_engines_use_subscription_and_commit_only_completed_rou
                 store.root / "runs" / f"{turn['id']}.kohakutr"
             ).exists()  # Real Terrarium, not ScriptedLLM.
         else:
-            assert len(calls) == 2
+            assert len(calls) == 3
             for body in calls:
                 assert [item["role"] for item in body["input"][:3]] == ["developer"] * 3
                 assert body["input"][0]["content"] == store.settings().full_agent_system_prompt

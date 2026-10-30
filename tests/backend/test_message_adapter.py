@@ -234,7 +234,9 @@ def test_full_agent_existing_owner_and_new_owner_inherit_protocol_defaults(tmp_p
         for item in catalog("full_agent"):
             if item["configurable"]:
                 assert rule_for(item["id"], adapter, api, "full_agent")["role"] == (
-                    "user" if api == "gemini" else "system"
+                    "user"
+                    if api == "gemini" and item["id"] not in ("novel_status", "novel_research")
+                    else "system"
                 )
 
 

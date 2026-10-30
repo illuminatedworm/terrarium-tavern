@@ -357,7 +357,7 @@ def test_injection_title_is_opt_in_and_prefers_comment_over_name():
         )
 
 
-def test_constant_over_model_budget_remains_complete_with_warning():
+def test_constant_over_reference_budget_remains_complete():
     content = "常驻规则" * 3000
     out = compile_context(
         document(constant=True, content=content),
@@ -369,7 +369,6 @@ def test_constant_over_model_budget_remains_complete_with_warning():
         "budget",
     )
     assert any(content in m["content"] for m in out["messages"])
-    assert any("仍完整发送" in d["reason"] for d in out["diagnostics"])
 
 
 def test_st_top_replaces_entries_and_starts_cooldown_at_absence():
