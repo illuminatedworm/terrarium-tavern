@@ -100,6 +100,14 @@ async def test_reopen_cleans_persisted_call_notification_mappings(tmp_path, kind
 @pytest.mark.parametrize("api", APIS)
 def test_configurable_message_defaults_follow_protocol_across_lanes(api):
     expected = "user" if api == "gemini" else "system"
+
+    def expected_role(name):
+        if name == "tracker_input":
+            return "user"
+        if name in ("novel_status", "novel_research"):
+            return "system"
+        return expected
+
     for lane in ("foreground", "full_agent", "background", "card_author", "advisor"):
         settings = Settings(runtime_mode="full_agent" if lane == "full_agent" else "half_agent", api_mode=api)
         settings._adapter_lane = lane
@@ -123,7 +131,7 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
         )
         projected, _, _ = adapt_messages(rows, settings)
         assert all(
-            row["role"] == ("user" if row["message_type"] == "tracker_input" else expected)
+            row["role"] == expected_role(row["message_type"])
             for row in projected
             if row["message_type"] in configurable
         )
@@ -134,10 +142,27 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
             "tool",
         ]
         assert all(
-            item["defaults"][api]["role"] == ("user" if item["id"] == "tracker_input" else expected)
+            item["defaults"][api]["role"] == expected_role(item["id"])
             for item in directory
             if item["configurable"]
         )
+        if lane == "full_agent":
+            legacy = runtime_messages(
+                [
+                    {"role": "user", "content": "Status", "_novel_status": True},
+                    {"role": "user", "content": "Report", "_novel_mail": 1},
+                ],
+                lane,
+            )
+            assert [row["message_type"] for row in legacy] == ["novel_status", "novel_research"]
+            settings.message_adapter = MessageAdapterConfig.model_validate(
+                {"mappings": {api: {"novel_research": {"role": "user", "wrap": False}}}}
+            )
+            custom, _, _ = adapt_messages(legacy, settings)
+            assert [(row["role"], row["content"]) for row in custom] == [
+                ("system", "Status"),
+                ("user", "Report"),
+            ]
         if lane == "background":
             task_input = next(row for row in projected if row["message_type"] == "tracker_input")
             assert task_input["runtime_content"] == "tracker_input"
@@ -149,8 +174,14 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
             custom, _, _ = adapt_messages([task_input], settings)
             assert custom[0]["role"] == "system" and custom[0]["content"] == "tracker_input"
         if api == "gemini":
-            _, contents, _ = native_messages(projected, api)
-            assert all(row["role"] in ("user", "model") for row in contents)
+            if lane == "full_agent":
+                # The explicit system default is preserved even where GenAI
+                # requires the user to choose a supported body role instead.
+                with pytest.raises(ValueError, match="原著参考运行状态.*role=system"):
+                    native_messages(projected, api)
+            else:
+                _, contents, _ = native_messages(projected, api)
+                assert all(row["role"] in ("user", "model") for row in contents)
 
 
 @pytest.mark.parametrize("api", APIS)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { notification, notify } from './lib/notifications';
+import { observeNovels, novelActivity } from './lib/novel';
 import { useTimedError } from './composables/useTimedError';
 import {
   computed,
@@ -107,6 +108,8 @@ const SettingsPanel = defineAsyncComponent({
   errorComponent: { render: () => h('p', { role: 'alert' }, '设置页面加载失败，请刷新页面后重试。') },
 });
 const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
+const NovelPanel = defineAsyncComponent(() => import('./components/story/NovelPanel.vue'));
+let stopNovelObservation: (() => void) | undefined;
 // Session-level editors and the share dialog open from the inspector on demand.
 const RecipeEditor = defineAsyncComponent({
   loader: () => import('./components/settings/RecipeEditor.vue'),
@@ -592,6 +595,7 @@ const inspectorPages = computed(() =>
     { id: 'advisor', label: '参谋', icon: 'compass' },
     { id: 'cache', label: '缓存', icon: 'bolt' },
     isFullAgent.value ? { id: 'tools', label: '工具', icon: 'wrench' } : null,
+    isFullAgent.value ? { id: 'novel', label: '原著', icon: 'book' } : null,
     { id: 'mvu', label: 'MVU 变量', icon: 'braces' },
     { id: 'scene', label: '场景', icon: 'map' },
     { id: 'options', label: '会话设置', icon: 'sliders' },
@@ -626,6 +630,12 @@ const deletingCard = ref<CardRecord | null>(null),
   deletingCardBusy = ref(false);
 const forkMessage = ref<BranchMessage | null>(null),
   creatingFork = ref(false);
+const activeNovelCount = computed(() =>
+  Math.max(
+    session.value?.novel_active || 0,
+    novelActivity.value.filter((job) => job.session === session.value?.id).length,
+  ),
+);
 const forkPoints = ref<BranchMessage[]>([]),
   forkFromPicker = ref(false);
 const regeneratingId = computed(() =>
@@ -2121,6 +2131,7 @@ async function createFork() {
       const created = await api(`/sessions/${originalId}/fork`, {
         message_id: fork.id,
         expected_revision: openStory().revision,
+        confirm_novel: activeNovelCount.value > 0,
       });
       localStorage.setItem(`tavern-effort-${created.id}`, effort);
       panel.value = '';
@@ -2334,6 +2345,7 @@ async function frameAction(
   }
 }
 onMounted(() => {
+  stopNovelObservation = observeNovels();
   mobileSidebarQuery.addEventListener('change', syncMobileSidebar);
   rightOverlayQuery.addEventListener('change', syncRightOverlay);
   document.addEventListener('pointerdown', closeDeleteOnOutside);
@@ -2363,6 +2375,7 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
+  stopNovelObservation?.();
   mobileSidebarQuery.removeEventListener('change', syncMobileSidebar);
   rightOverlayQuery.removeEventListener('change', syncRightOverlay);
   clearOptionsNotice();
@@ -3127,8 +3140,13 @@ useTimedError(error);
                       />
                       允许改设定</label
                     ></span
-                  ><button v-if="busy" class="send stop" @click="stop">
-                    <Icon name="stop" :size="15" />停止</button
+                  ><button
+                    v-if="busy"
+                    class="send stop"
+                    @click="stop"
+                    :title="session.novel_enabled ? '仅停止主生成；原著调查在原著面板单独停止' : '停止生成'"
+                  >
+                    <Icon name="stop" :size="15" />{{ session.novel_enabled ? '停止主生成' : '停止' }}</button
                   ><button
                     v-else
                     class="send conversation-compose-send"
@@ -3288,6 +3306,23 @@ useTimedError(error);
             @save="saveCacheBreakpoint"
             @save-retention="saveCacheRetention"
             @locate="locateCacheBreakpoint"
+          />
+          <NovelPanel
+            v-if="isFullAgent && inspectorTab === 'novel'"
+            :key="session.id"
+            :session-id="session.id"
+            :providers="loadedSettings().shared.providers"
+            :locked="storyLocked"
+            @changed="
+              session.novel_enabled = $event.enabled;
+              session.novel_active = $event.active;
+            "
+            @settings="
+              settingsInitialPage = 'full_agent.novel';
+              settingsChannel = session.channel_origin ?? undefined;
+              panel = 'settings';
+            "
+            @stopped="guarded(async () => applyFullSession(await viewApi('/sessions/' + openStory().id)))"
           />
           <FullAgentTools
             v-if="isFullAgent && inspectorTab === 'tools'"
@@ -3504,6 +3539,7 @@ useTimedError(error);
             :message="forkMessage"
             :from-picker="forkFromPicker"
             :creating="creatingFork"
+            :active-investigators="activeNovelCount"
             @back="panel = 'fork-select'"
             @cancel="panel = ''"
             @confirm="createFork"

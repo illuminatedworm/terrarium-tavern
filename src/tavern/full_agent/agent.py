@@ -56,8 +56,10 @@ class FullAgent:
         *,
         output_id: str,
         script_mirror=None,
+        novel=None,
     ):
         self.store, self.tid, self.document = store, tid, document
+        self.novel, self.novel_operation = novel, ""
         self.session = {**session, "messages": history}
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.regenerate_reply = reply_for_regeneration(request, session)
@@ -142,8 +144,9 @@ class FullAgent:
             self.tools.reads.restore(progress.get("tool_reads", {}))
             self.patch_state_done = progress["patch_state_done"]
 
-    async def save_progress(self):
-        script_mirror = await self.script.call("snapshot")
+    async def save_progress(self, *, script_mirror=None):
+        if script_mirror is None:
+            script_mirror = await self.script.call("snapshot")
         self.store.save_full_agent_progress(
             self.tid,
             {
@@ -458,6 +461,8 @@ class FullAgent:
             if hasattr(provider, "echo_reasoning"):
                 provider.echo_reasoning = True
             for step in range(self.settings.full_agent_config.max_steps):
+                if self.novel and self.session.get("novel_enabled"):
+                    await self.novel.deliver(self)
                 compiled = self.compile()
                 if (
                     self.settings.context_strategy == "openai_compact"
@@ -732,6 +737,7 @@ class FullAgent:
                 elif name == "kemini_emit_story" and self.settings.kemini.enabled:
                     result = success({"story_received": True, "ref": message_ref(len(self.source_history))})
                 else:
+                    self.novel_operation = self.request_context.turn_id + ":" + call["id"]
                     result = await self.tools.execute(name, arguments)
             except TurnError:
                 raise

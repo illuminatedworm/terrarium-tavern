@@ -1,3 +1,5 @@
+import asyncio
+import io
 import json
 import re
 
@@ -19,11 +21,220 @@ from tavern.full_agent.handoff import (
     require_coverage,
 )
 from tavern.full_agent.tools import SPECS
+from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.store import Store
 from tests.backend import test_full_agent
 from tests.backend.test_full_agent import Model, current_text, handoff, runtime, turn
 
 story = test_full_agent.story
+
+
+async def test_novel_research_isolates_reads_and_delivers_cross_turn_once(story):
+    """A late read-only report must not leak its reading context or rewrite a committed turn."""
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    service = runtime(store)
+    research = service.full.novel
+    source_id = uid()
+    source_marker = "3d83956c0ac84bc4976828fbfe6e8362"
+    original = "原著独有证据尾 " + source_marker + " " + "无关原文" * 20000
+    metadata = import_file(store.root, source_id, io.BytesIO(original.encode()), "原著.txt")
+    research.data.bind(session["id"], 0, source_id, metadata)
+    research.data.configure(session["id"], 1, enabled=True)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class Investigator(Model):
+        async def chat_complete(self, messages, **kwargs):
+            if not self.requests:
+                entered.set()
+                await release.wait()
+            return await super().chat_complete(messages, **kwargs)
+
+    investigator = Investigator(
+        ("read_novel", {"start": 0, "length": 50}),
+        ("search_novel", {"query": "@D1", "limit": 1}),
+        ("read_novel", {"start": 0, "length": 7}),
+        ValueError("maximum context length exceeded"),
+        "已核实 N1 的 0–7 字符；后续正文尚未通读。",
+        "调查报告：证据位于 N1 的 0–7 字符，不能推断全书。",
+    )
+    research.provider_factory = lambda cfg: investigator
+    first = Model(
+        ("start_novel_research", {"question": "查明该处证据", "background": "本局尚未决定去向"}),
+        "先独立完成本轮正文。",
+    )
+    try:
+        result, current = await turn(service, store.session(session["id"]), first)
+        assert result["status"] == "committed", result["error"]
+        await asyncio.wait_for(entered.wait(), 1)
+        job = research.data.resolve(session["id"], "R1")
+        assert job["status"] == "running"
+        assert "原著独有证据尾" not in json.dumps(first.requests, ensure_ascii=False)
+        status = next(
+            message
+            for message in first.requests[0]["messages"]
+            if message.get("content", "").startswith("原著参考运行状态：")
+        )
+        assert status["role"] == "system"
+        assert current["messages"][-1]["raw"] == "先独立完成本轮正文。"
+        release.set()
+        await asyncio.gather(*list(research.tasks.values()))
+        job = research.data.job(job["id"])
+        assert job["status"] == "completed", job["error"]
+        assert job["requests"] == 6  # A rejected request and the explicit compaction both consume quota.
+        assert investigator.closed
+        assert len(research.data.inbox(session["id"])) == 1
+        assert job["progress"]["context"]["summary"].startswith("已核实")
+        trace = research.data.trace(job["id"])
+        assert any("原著独有证据尾" in row["message"]["content"] for row in trace)
+        assert source_marker not in json.dumps(investigator.requests, ensure_ascii=False)
+        matches = [json.loads(row["message"]["content"]) for row in trace if row["message"]["role"] == "tool"]
+        assert matches[1]["matches"][0]["start"] == 8
+        assert job["progress"]["model_references"]["@D1"] == source_marker
+        assert session["messages"][0]["raw"] not in json.dumps(investigator.requests, ensure_ascii=False)
+
+        investigator.responses.append("追问报告：同一出处仍不足以推断全书。")
+        adapter = store.message_adapter_settings("story", session["id"])
+        adapter["config"]["full_agent"]["mappings"] = {
+            "chat_completions": {"novel_research": {"role": "user", "wrap": False}}
+        }
+        store.save_message_adapter("story", session["id"], adapter["revision"], adapter["config"])
+        second = Model(
+            ("list_novel_research", {}),
+            ("message_novel_research", {"ref": "R1", "message": "复核是否能据此推断全书"}),
+            ("wait_novel_research", {"ref": "R1", "timeout_seconds": 1}),
+            ("destroy_novel_research", {"ref": "R1"}),
+            "根据摘要继续正文。",
+        )
+        result, latest = await turn(service, current, second)
+        assert result["status"] == "committed", result["error"]
+        sent = json.dumps(second.requests, ensure_ascii=False)
+        assert "调查报告：证据位于" in sent
+        assert "追问报告：同一出处" in sent
+        reports = [
+            message
+            for request in second.requests
+            for message in request["messages"]
+            if message.get("content", "").startswith("原著调查消息：")
+        ]
+        assert reports and all(message["role"] == "user" for message in reports)
+        assert "原著独有证据尾" not in sent and original not in sent
+        assert source_id not in sent and job["id"] not in sent
+        assert research.data.inbox(session["id"]) == []
+        assert research.data.job(job["id"])["status"] == "destroyed"
+        assert research.data.job(job["id"])["requests"] == 7
+        assert latest["messages"][2]["raw"] == "先独立完成本轮正文。"
+        stored = store.full_agent_progress(result["id"])
+        with store.connection() as db:
+            deliveries = db.execute(
+                "SELECT count(*) FROM full_agent_trace WHERE session=? AND json_extract(payload,'$._novel_mail') IS NOT NULL",
+                (session["id"],),
+            ).fetchone()[0]
+        assert stored is None and deliveries == 2  # Each distinct report is delivered exactly once.
+    finally:
+        release.set()
+        await service.close()
+
+
+async def test_novel_limits_fork_authorization_and_portable_paused_progress(story):
+    """Slots, retry-start counts and consumed quota are durable; a fork never shares a worker."""
+    from fastapi import FastAPI
+
+    from tavern.novel.api import register_routes
+    from tavern.novel.service import NovelService
+    from tavern.novel.source import NovelText
+    from tavern.storage.store import Conflict
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+
+    store, session = story
+    research = NovelService(store)
+    app = FastAPI()
+    register_routes(app, research, None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            f"/api/sessions/{session['id']}/novel/source",
+            params={"filename": "原著.md", "expected_revision": 0},
+            headers={"Content-Type": "application/octet-stream"},
+            content="第一章\n证据完整。".encode(),
+        )
+    assert response.status_code == 200, response.text
+    source_id = response.json()["source"]["id"]
+    assert not response.json()["enabled"]  # Uploading is not permission to send text to a model.
+    config = research.snapshot_config(session["id"])
+    with pytest.raises(ValueError, match="尚未授权"):
+        research.data.create(session["id"], "off", 2, "", "问题", "", config)
+    research.data.configure(session["id"], 1, enabled=True)
+    jobs = [
+        research.data.create(session["id"], f"call-{i}", 2, "", "问题", "背景", config)[0] for i in range(3)
+    ]
+    with pytest.raises(ValueError, match="同时最多三个"):
+        research.data.create(session["id"], "fourth", 2, "", "问题", "", config)
+    with pytest.raises(Conflict, match="尚未销毁"):
+        research.data.configure(session["id"], 2, enabled=False)
+    with pytest.raises(Conflict, match="确认后"):
+        store.fork_session(session["id"], session["head"], session["revision"])
+    fork = store.fork_session(session["id"], session["head"], session["revision"], confirm_novel=True)
+    assert fork["novel_enabled"] and not fork["novel_active"]
+    assert research.data.binding(fork["id"])["source"] == source_id
+    assert research.data.job(jobs[0])["status"] == "running"
+    for i in range(2):
+        research.data.destroy(jobs[i])
+        jobs.append(research.data.create(session["id"], f"replacement-{i}", 2, "", "问题", "", config)[0])
+    research.data.destroy(jobs[2])
+    with pytest.raises(ValueError, match="本轮已启动五次"):
+        research.data.create(session["id"], "sixth", 2, "", "问题", "", config)
+    saved = research.data.job(jobs[3])
+    saved["requests"], saved["elapsed"] = 7, 13.5
+    research.data.save(saved)
+    store.recover()
+    restored = research.data.job(saved["id"])
+    assert (restored["status"], restored["requests"], restored["elapsed"]) == ("paused", 7, 13.5)
+    archive = export_package(store, ExportSelection(settings=False, sessions=[session["id"]]))
+    package, blobs = read_package(archive, store)
+    imported = import_package(store, package, blobs)["sessions"][0]
+    imported_job = research.data.resolve(imported, "R4")
+    assert (imported_job["status"], imported_job["requests"], imported_job["elapsed"]) == ("paused", 7, 13.5)
+    imported_source = research.data.source(research.data.binding(imported)["source"])
+    assert imported_source["id"] != source_id
+    assert NovelText(store.root, imported_source).read(0, 30)["text"] == "第一章\n证据完整。"
+    assert research.data.create(fork["id"], "own", 2, "", "独立问题", "", config)[1]
+    changed = store.update_session(session["id"], session["revision"], head=session["head"])
+    assert not changed["novel_active"]
+    assert research.data.resolve(fork["id"], "R4")["status"] == "running"
+    # A stale background response cannot resurrect a revoked investigator or send mail.
+    saved["status"] = "completed"
+    assert not research.data.save(saved, mail={"kind": "report", "content": "迟到", "operation": "late"})
+
+
+def test_novel_character_ranges_preserve_long_lines_and_unicode(tmp_path):
+    """Sparse offsets must survive long single lines, multibyte characters and block-spanning hits."""
+    from tavern.novel.source import NovelText, import_file
+    from tavern.storage.store import uid
+
+    source_id = uid()
+    text = "序章\r\n" + "甲" * 65527 + "跨界证据🦉" + "乙" * 9000 + "\n# 第二章\n尾部"
+    source = {
+        "id": source_id,
+        **import_file(tmp_path, source_id, io.BytesIO(text.encode("utf-8-sig")), "小说.txt"),
+    }
+    book = NovelText(tmp_path, source)
+    offset = text.index("跨界证据")
+    assert book.read(offset - 3, 12)["text"] == text[offset - 3 : offset + 9]
+    search = book.search("跨界证据🦉", 0, 1)
+    assert search["matches"][0]["start"] == offset
+    assert search["matches"][0]["end"] == offset + len("跨界证据🦉")
+    assert search["has_more"] is False
+    # Bounded counting must stop at end and still report every hit inside the range.
+    bounded = book.search("乙", offset, 1, offset + 20)
+    assert (bounded["total_matches"], bounded["has_more"], bounded["next_start"]) == (15, True, offset + 6)
+    assert [h["title"] for h in book.outline(0, 50)["headings"]] == ["序章", "# 第二章"]
+    assert book.read(len(text), 20)["text"] == ""
+    with pytest.raises(ValueError, match="超出原著范围"):
+        book.read(len(text) + 1, 20)
+    with pytest.raises(ValueError, match="解码失败"):
+        import_file(tmp_path, uid(), io.BytesIO(b"\xffinvalid"), "wrong.txt")
 
 
 @pytest.mark.parametrize("name", ["patch_state", "revise_content"])
@@ -333,7 +544,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert {t["name"] for t in catalog} == set(SPECS)
             assert "read_lore" not in {t["name"] for t in catalog}
             for tool in catalog:
-                assert tool["enabled"] == (tool["name"] != "write_plot")
+                assert tool["enabled"] == (tool["name"] not in {"write_plot", *MAIN_SPECS})
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
             lore = next(t for t in catalog if t["name"] == "recall_lore")
@@ -381,7 +592,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 url,
                 json={
                     "expected_revision": session["revision"],
-                    "disabled_tools": [name for name in SPECS if name != "write_plot"],
+                    "disabled_tools": [name for name in SPECS if name not in {"write_plot", *MAIN_SPECS}],
                 },
             )
             assert response.status_code == 200, response.text

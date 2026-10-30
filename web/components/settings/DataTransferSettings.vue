@@ -32,6 +32,7 @@ const enabled = ref<Record<Group, boolean>>({
 });
 const settings = ref(true),
   includeKeys = ref(false),
+  includeNovelFiles = ref(true),
   restoreSettings = ref(false);
 const loading = ref(true),
   loaded = ref(false),
@@ -105,6 +106,7 @@ async function download() {
     const saved = await downloadData({
       settings: settings.value,
       include_api_keys: settings.value && includeKeys.value,
+      include_novel_files: includeNovelFiles.value,
       browser_preferences: settings.value ? readBrowserPreferences() : {},
       ...Object.fromEntries(groups.map(({ key }) => [key, enabled.value[key] ? selected.value[key] : []])),
     });
@@ -243,6 +245,13 @@ onMounted(refresh);
           partialDefaults.join('、')
         }}的新建对话默认项引用了未选中的用户角色或世界书，导出时省略这部分默认项。
       </p>
+      <label class="transfer-choice transfer-secrets"
+        ><input
+          v-model="includeNovelFiles"
+          type="checkbox"
+          :disabled="!!busy"
+        />包含所选对话的原著参考文件及历史版本（关闭后，导入时会显示文件缺失）</label
+      >
       <label class="transfer-choice transfer-secrets"
         ><input v-model="includeKeys" type="checkbox" :disabled="!!busy || !settings" />包含 API
         Key（文件中将以明文保存）</label

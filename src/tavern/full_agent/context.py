@@ -110,11 +110,16 @@ def compile_window(
             items.append({"role": role, "content": content, "source": source, **metadata})
 
     add("system", settings.full_agent_system_prompt, "rules")
+    protocol = tool_protocol(
+        settings.full_agent_config, compact=compact, plot_enabled=session.get("plot_enabled", False)
+    )
+    if session.get("novel_enabled"):
+        from tavern.novel.config import MAIN_PROTOCOL
+
+        protocol += "\n\n" + MAIN_PROTOCOL
     add(
         "system",
-        tool_protocol(
-            settings.full_agent_config, compact=compact, plot_enabled=session.get("plot_enabled", False)
-        ),
+        protocol,
         "tool_protocol",
     )
     # Keep the window policy in the fixed prefix, once per compiled window;

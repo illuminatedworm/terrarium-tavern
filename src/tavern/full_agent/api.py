@@ -12,6 +12,7 @@ from tavern.full_agent.activity import compact, message_items, part_page, turn_i
 from tavern.full_agent.handoff import render_text, require_coverage
 from tavern.full_agent.state import full_state, note_view, rollover, rollover_start
 from tavern.full_agent.tools import RESULT_FIELDS, SPECS, result_field, tool_definitions
+from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.store import Conflict, dump
 
 
@@ -114,9 +115,12 @@ def register_full_agent_routes(app, store, context_operations=None):
                     "enabled": (
                         session["plot_enabled"]
                         if t["function"]["name"] == "write_plot"
+                        else session["novel_enabled"]
+                        if t["function"]["name"] in MAIN_SPECS
                         else t["function"]["name"] not in session["disabled_tools"]
                     ),
                     **({"controlled_by": "plot_enabled"} if t["function"]["name"] == "write_plot" else {}),
+                    **({"controlled_by": "novel_enabled"} if t["function"]["name"] in MAIN_SPECS else {}),
                     "available": t["function"]["name"] in available,
                     **(
                         {"edit_capabilities": edit_capabilities}
@@ -139,6 +143,8 @@ def register_full_agent_routes(app, store, context_operations=None):
             raise ValueError("未知的 Full Agent 工具")
         if "write_plot" in edit.disabled_tools:
             raise ValueError("write_plot 由剧情规划开关统一控制，请在记忆面板调整")
+        if set(edit.disabled_tools) & MAIN_SPECS.keys():
+            raise ValueError("原著调查工具由原著面板的授权开关统一控制")
         session = require_full(store, sid)
         options = (
             session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options

@@ -124,6 +124,7 @@ class Settings(BaseModel):
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=8192))
     card_author: ModelProfile | None = None
     advisor: ModelProfile | None = None
+    novel_research: ModelProfile | None = None
     card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     full_agent: ModelProfile | None = None
@@ -373,6 +374,7 @@ class RevisionRequest(BaseModel):
 
 
 class SessionFork(BaseModel):
+    confirm_novel: bool = False
     expected_revision: int
     message_id: str
 

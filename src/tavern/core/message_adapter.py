@@ -53,6 +53,8 @@ TYPES = {
         MessageType("editor_environment", "对话时间与系统环境", scopes=("card_author",)),
         MessageType("tool_protocol", "Full Agent 工具协议", scopes=("full_agent",)),
         MessageType("context_policy", "上下文窗口机制", scopes=("full_agent",)),
+        MessageType("novel_status", "原著参考运行状态", configurable=True, scopes=("full_agent",)),
+        MessageType("novel_research", "原著调查消息", configurable=True, scopes=("full_agent",)),
         MessageType("user", "用户输入", role="user"),
         MessageType("assistant", "模型回复", role="assistant"),
         MessageType("tool", "工具结果", role="tool"),
@@ -263,7 +265,9 @@ def default_rule(name, api, lane="foreground"):
     # Otherwise Tracker's sole user input becomes system-only, leaving relays
     # with no Responses input / Gemini contents after extracting instructions.
     task_role = definition.role in ("user", "assistant") and not name.startswith("compat:")
-    if definition.configurable and not task_role:
+    # Research delivery defaults to system on every API; the visible adapter
+    # mapping remains authoritative when a provider needs a different body role.
+    if definition.configurable and not task_role and name not in ("novel_status", "novel_research"):
         role = "user" if api == "gemini" else "system"
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"
@@ -328,6 +332,12 @@ def infer_type(message, lane="foreground"):
     if message.get("message_type"):
         type_definition(message["message_type"])
         return message["message_type"]
+    # Existing delivery traces predate explicit message types. Their durable
+    # markers identify reference material independently of the old SDK role.
+    if message.get("_novel_status"):
+        return "novel_status"
+    if "_novel_mail" in message:
+        return "novel_research"
     source = message.get("context_source", message.get("source"))
     if not source and message.get("role") in ("user", "assistant", "tool"):
         return message["role"]

@@ -40,6 +40,7 @@ import Icon from '../common/Icon.vue';
 import RecipeSettings from './RecipeSettings.vue';
 import PreferencePresetSettings from './PreferencePresetSettings.vue';
 import AdvisorSettings from './AdvisorSettings.vue';
+import NovelSettings from './NovelSettings.vue';
 import CardAuthorSettings from './CardAuthorSettings.vue';
 import WebSettings from './WebSettings.vue';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
@@ -377,7 +378,13 @@ onMounted(async () => {
           </button>
         </div>
         <p class="settings-scope-note">
-          {{ scope === 'shared' ? '这些资源由两种模式共用。' : '参数独立保存，成功保存后用于下一轮。' }}
+          {{
+            page?.key === 'novel'
+              ? '保存后用于新建调查者；已有调查者保留创建时的配置。'
+              : scope === 'shared'
+                ? '这些资源由两种模式共用。'
+                : '参数独立保存，成功保存后用于下一轮。'
+          }}
         </p>
         <section
           v-if="page"
@@ -582,6 +589,17 @@ onMounted(async () => {
             :initial-channel="channel"
             @channel="channel = $event"
             :flush="editor.flush"
+          />
+          <NovelSettings
+            v-else-if="page.key === 'novel'"
+            :value="draft.full_agent.novel_research"
+            :main="draft.full_agent.model"
+            :official-main="draft.full_agent.official_model"
+            :providers="draft.shared.providers"
+            :initial-channel="channel"
+            :effort-options="effortOptions"
+            :flush="editor.flush"
+            @checked="refreshAfterProbe"
           />
           <AdvisorSettings
             v-else-if="page.key === 'advisor'"

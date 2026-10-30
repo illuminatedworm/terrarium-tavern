@@ -6,6 +6,7 @@ defineProps<{
   message: Pick<BranchMessage, 'raw'> | null;
   fromPicker: boolean;
   creating: boolean;
+  activeInvestigators?: number;
 }>();
 const emit = defineEmits<{ back: []; cancel: []; confirm: [] }>();
 </script>
@@ -19,6 +20,11 @@ const emit = defineEmits<{ back: []; cancel: []; confirm: [] }>();
     <strong>{{ name }}</strong>
     <p>{{ message?.raw }}</p>
   </div>
+  <p v-if="activeInvestigators" role="alert" class="muted">
+    当前有
+    {{ activeInvestigators }}
+    个尚未销毁的原著调查者。继续分支后，它们仍属于原分支，结果不会送到新分支；新分支只继承所选进度中已收到的报告及原著文件绑定。是否继续由你决定。
+  </p>
   <div class="modal-footer">
     <button v-if="fromPicker" :disabled="creating" @click="emit('back')">返回选择</button
     ><button :disabled="creating" @click="emit('cancel')">取消</button

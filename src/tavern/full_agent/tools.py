@@ -25,6 +25,7 @@ from tavern.full_agent.handoff import (
 from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads, state_scope
 from tavern.full_agent.state import note_view, rollover, rollover_start
+from tavern.novel.tools import MAIN_SPECS
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
 
@@ -327,9 +328,14 @@ SPECS = {
 }
 
 
+SPECS.update(MAIN_SPECS)
+
+
 def tool_definitions(request, session, config=None, *, settings=None, catalog=False, document=None):
     config = config or FullAgentConfig()
     names = set(SPECS)
+    if not catalog and not session.get("novel_enabled"):
+        names.difference_update(MAIN_SPECS)
     if session.get("context_strategy") == "openai_compact":
         names.difference_update({"new_context", "write_handoff"})
     if not catalog:
@@ -437,6 +443,10 @@ class AgentTools:
         except ValidationError as error:
             raise ToolArgumentError(name, model, error) from None
         state = owner.state
+        if name in MAIN_SPECS:
+            if owner.novel is None:
+                raise ToolError("PERMISSION_DENIED", "原著调查服务不可用")
+            return await owner.novel.execute(owner, name, args)
         if name == "find_lore_for_edit":
             rows = [
                 {

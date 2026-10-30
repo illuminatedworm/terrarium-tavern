@@ -12,6 +12,7 @@ from tavern.core.models import Settings, TurnRequest
 from tavern.full_agent.protocol import success
 from tavern.full_agent.state import new_state
 from tavern.full_agent.tools import SPECS, AgentTools, tool_definitions
+from tavern.novel.tools import MAIN_SPECS
 from tests.backend.test_full_agent import Script
 from tools.export_full_agent_tools import ENTRY, EXAMPLES, NOTE_KEY, generated_documents
 
@@ -24,7 +25,7 @@ def test_generated_documents_and_catalog_match_source():
     assert set(re.findall(r"^\| `([a-z_]+)` \|", table, re.M)) == set(SPECS)
 
 
-@pytest.mark.parametrize("name", list(SPECS))
+@pytest.mark.parametrize("name", [name for name in SPECS if name not in MAIN_SPECS])
 async def test_documented_minimal_results_match_execution(name):
     settings = Settings()
     state = new_state()

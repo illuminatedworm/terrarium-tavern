@@ -26,6 +26,7 @@ def _files(root: Path):
 def _debug_protected(db, turns):
     protected = {turn["id"] for turn in turns if turn["protected"]}
     protected.update(r[0] for r in db.execute("SELECT run FROM card_author_progress"))
+    protected.update(r[0] for r in db.execute("SELECT id FROM novel_jobs WHERE status!='destroyed'"))
     protected.update(
         r[0]
         for r in db.execute(
@@ -154,6 +155,9 @@ def storage_report(store):
         from tavern.advisor.storage import cleanup_plan
 
         report.update(cleanup_plan(db, store.settings(), time.time())[1])
+        from tavern.novel.storage import cleanup_plan as novel_cleanup_plan
+
+        report.update(novel_cleanup_plan(db, store.settings(), time.time())[1])
     report["directories"] = {
         name: sum(p.stat().st_size for p in _files(store.root / name))
         for name in ("blobs", "runs", "dependencies", "models")
@@ -197,6 +201,20 @@ def cleanup(store, *, vacuum=False):
         advisor_remove, advisor_report = cleanup_plan(db, store.settings(), time.time())
         report.update(advisor_report)
         db.executemany("DELETE FROM advisor_runs WHERE id=?", [(rid,) for rid in advisor_remove])
+        from tavern.novel.storage import cleanup_plan as novel_cleanup_plan
+
+        novel_remove, novel_report = novel_cleanup_plan(db, store.settings(), time.time())
+        report.update(novel_report)
+        db.executemany("DELETE FROM novel_trace WHERE job=?", [(rid,) for rid in novel_remove])
+        db.executemany(
+            "UPDATE novel_jobs SET progress=? WHERE id=?",
+            [(dump({"detail_expired": True}), rid) for rid in novel_remove],
+        )
+        db.execute(
+            "DELETE FROM novel_events WHERE created<? AND (job IS NULL OR job IN "
+            "(SELECT id FROM novel_jobs WHERE status='destroyed'))",
+            (time.time() - store.settings().log_retention_days * 86400,),
+        )
         for turn in selected:
             for event in turn["events"]:
                 payload = json.loads(

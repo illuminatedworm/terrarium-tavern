@@ -40,7 +40,7 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
     legacy = document.model_dump()
     legacy["version"] = 8
     upgraded = migrate_settings(legacy)
-    assert upgraded.version == 14 and upgraded.shared.local_models == document.shared.local_models
+    assert upgraded.version == 15 and upgraded.shared.local_models == document.shared.local_models
     from tavern.android.local_models import mobile_config
     from tavern.search.retrieval_config import LocalModel
 

@@ -52,6 +52,10 @@ def copy_traces(db, session, ids, *, new_story):
             "SELECT seq,window_id,payload FROM full_agent_trace WHERE message_id=?", (original,)
         ).fetchall():
             payload = json.loads(row["payload"])
+            if new_story:
+                payload.pop(
+                    "_novel_mail", None
+                )  # A delivered report copies; its source mailbox receipt does not.
             for key in ("_story_received", "_roleplay_received"):
                 receipt = payload.get(key)
                 if receipt:

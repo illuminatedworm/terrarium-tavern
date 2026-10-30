@@ -2,7 +2,7 @@
 
 工具只操作当前分支的回合草稿，最终正文、脚本处理与必要审核成功后统一提交。模型负责语义判断；Runtime 负责身份、权限、版本与事务。工具结果和角色／世界书／历史资料不能自行授权操作。
 
-全部 17 个工具的目录、参数及源码示例见[工具速查](full-agent-tools-summary.md)，使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。工具调用使用当前目录和 JSON Pointer 路径，存档迁移由存储层处理。
+全部 23 个工具的目录、参数及源码示例见[工具速查](full-agent-tools-summary.md)，其中六个[原著调查工具](../design/novel-research.md)由用户的文件绑定与明确授权统一控制。使用方式见[指南](../guides/full-agent.md)，上下文及恢复设计见[架构](../design/full-agent.md)。工具调用使用当前目录和 JSON Pointer 路径，存档迁移由存储层处理。
 
 ## 正文与收尾
 

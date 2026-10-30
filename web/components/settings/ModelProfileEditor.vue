@@ -98,11 +98,13 @@ watch(
 const errorPrefix = computed(() =>
   props.role === 'full_agent'
     ? `full_agent.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
-    : props.role === 'advisor'
-      ? `shared.advisor.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
-      : props.role === 'card_author'
-        ? 'shared.card_author.'
-        : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
+    : props.role === 'novel_research'
+      ? `full_agent.novel_research.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
+      : props.role === 'advisor'
+        ? `shared.advisor.${props.channel === 'chatgpt' ? 'official_model' : 'model'}.`
+        : props.role === 'card_author'
+          ? 'shared.card_author.'
+          : 'half_agent.' + (props.channel === 'chatgpt' ? 'official_' : '') + props.role + '.',
 );
 const common = computed<SettingField[]>(() => [
   { path: 'context_tokens', label: '上下文窗口（tokens）', min: 2048, max: 2000000 },
@@ -293,7 +295,7 @@ async function action(check: boolean) {
         可用的采样参数留空即不发送。独立文本限额使用所选分词器，未知模型采用参考分词器；上下文只显示接口实测。显式缓存断点需要模型支持。
       </p>
     </details>
-    <details class="settings-advanced">
+    <details v-if="role !== 'novel_research'" class="settings-advanced">
       <summary>消息适配：发送角色与标签包裹</summary>
       <p class="muted">这里只影响新建的游玩或制卡对话。已有对话在自己的消息适配设置中修改。</p>
       <MessageAdapterEditor

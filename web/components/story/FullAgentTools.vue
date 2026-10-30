@@ -30,7 +30,13 @@ function resultLabel(name: string, key: string) {
 }
 let requestId = 0;
 watch(
-  () => [props.session.id, props.session.revision, props.updateVariables, props.allowContentEdit],
+  () => [
+    props.session.id,
+    props.session.revision,
+    props.session.novel_enabled,
+    props.updateVariables,
+    props.allowContentEdit,
+  ],
   async () => {
     const current = ++requestId;
     loading.value = true;
@@ -136,6 +142,9 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
       </p>
       <p v-if="tool.controlled_by === 'plot_enabled'" class="inspector-note">
         由记忆面板中的“剧情规划”开关统一控制。
+      </p>
+      <p v-if="tool.controlled_by === 'novel_enabled'" class="inspector-note">
+        由原著面板的文件绑定及明确授权统一控制；主 agent 不能直接读取原文。
       </p>
       <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available" class="inspector-note">
         工具定义保持稳定；勾选本轮“更新变量”后才允许执行，收尾前须至少成功调用一次。

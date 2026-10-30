@@ -133,6 +133,8 @@ export interface TurnRecord {
 
 /** `Store.session()`: one opened story with its current branch. */
 export interface Session {
+  novel_enabled?: boolean;
+  novel_active?: number;
   id: string;
   card: string;
   head: string;

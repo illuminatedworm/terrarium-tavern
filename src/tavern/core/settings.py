@@ -36,6 +36,7 @@ from tavern.core.prompts import (
 )
 from tavern.core.update_policy import Policy
 from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig
+from tavern.novel.config import NovelConfig
 from tavern.search.retrieval_config import LocalModel, ModelProfile, Network, Provider, RetrievalSettings
 from tavern.web.config import WebConfig, migrate_web_settings
 
@@ -90,6 +91,7 @@ class FullSettings(AgentSettings):
     official_model: ModelProfile | None = None
     tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
     system_prompt: str = FULL_AGENT_PROMPT
+    novel_research: NovelConfig = Field(default_factory=NovelConfig)
 
     @model_validator(mode="before")
     @classmethod
@@ -191,7 +193,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[14] = 14
+    version: Literal[15] = 15
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -234,6 +236,15 @@ class SettingsDocument(StrictSettings):
                 raise ValueError("提供商仍被参谋 agent 模型引用，请先切换参谋 agent 的提供商")
             if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
                 raise ValueError("参谋 agent 模型配置与渠道不一致")
+        for key in ("model", "official_model"):
+            profile = getattr(self.full_agent.novel_research, key)
+            if profile is None:
+                continue
+            provider = next((p for p in self.shared.providers if p.id == profile.provider_id), None)
+            if provider is None:
+                raise ValueError("提供商仍被原著调查模型引用，请先切换调查模型的提供商")
+            if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
+                raise ValueError("原著调查模型与渠道不一致")
         return self
 
     def runtime(self, mode="half_agent", channel=None) -> Settings:
@@ -271,6 +282,7 @@ class SettingsDocument(StrictSettings):
                 "official_foreground",
                 "official_background",
                 "default_channel",
+                "novel_research",
             }
         )
         data["runtime_mode"] = mode
@@ -561,6 +573,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 }
             for field in ("prompt_cache_key", "prompt_cache_mode", "prompt_cache_retention"):
                 profile.pop(field, None)
+        if raw["version"] == 14:
+            raw["version"] = 15
+            raw.setdefault("full_agent", {}).setdefault("novel_research", NovelConfig().model_dump())
+            changed_scopes.add("full_agent")
         for scope in changed_scopes:
             revisions = raw.setdefault(
                 "revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")}
@@ -627,7 +643,7 @@ def from_runtime(value: Settings) -> SettingsDocument:
     mode = value._settings_mode
     agent = getattr(doc, mode).model_dump()
     for key in agent:
-        if key in data and key not in {"model", "tools", "local_runtime"}:
+        if key in data and key not in {"model", "tools", "local_runtime", "novel_research"}:
             agent[key] = deepcopy(data[key])
     agent["local_runtime"] = {
         key: deepcopy(data["local_models"][key]) for key in RetrievalRuntime.model_fields

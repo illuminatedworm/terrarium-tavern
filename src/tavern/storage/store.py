@@ -96,8 +96,8 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 16
-SETTINGS_VERSIONS = range(2, 15)
+SCHEMA_VERSION = 17
+SETTINGS_VERSIONS = range(2, 16)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -275,6 +275,9 @@ class Store(MessageAdapters):
         from tavern.advisor.storage import initialize as initialize_advisor
 
         initialize_advisor(self)
+        from tavern.novel.storage import initialize as initialize_novel
+
+        initialize_novel(self)
         from tavern.storage.worldbooks import initialize as initialize_worldbooks
 
         initialize_worldbooks(self)
@@ -339,6 +342,10 @@ class Store(MessageAdapters):
 
         with self.connection() as db:
             recover_samples(db)
+            db.execute(
+                "UPDATE novel_jobs SET status='paused',error='应用已重启，调查暂停；已用额度保留' "
+                "WHERE status='running'"
+            )
             db.execute(
                 "UPDATE advisor_runs SET status='error',error='应用已重启，可继续或丢弃咨询' WHERE status IN ('queued','running')"
             )
@@ -785,7 +792,7 @@ class Store(MessageAdapters):
             self.create_message_adapter(db, "story", sid, options.agent_mode)
         return self.session(sid)
 
-    def fork_session(self, sid, head, expected_revision):
+    def fork_session(self, sid, head, expected_revision, *, confirm_novel=False):
         """Copy a committed assistant prefix into a session with independent message IDs."""
         from tavern.advisor.storage import fork as fork_advisor
         from tavern.conversation.cache_breakpoint import reset_follow
@@ -803,6 +810,13 @@ class Store(MessageAdapters):
                 raise NotFound("会话不存在")
             if source["revision"] != expected_revision:
                 raise Conflict("会话已改变，请刷新后重试")
+            if (
+                not confirm_novel
+                and db.execute(
+                    "SELECT 1 FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
+                ).fetchone()
+            ):
+                raise Conflict("存在活跃原著调查者；确认后才能分支。调查仍留在原分支，不会复制到新分支")
             if db.execute(
                 "SELECT 1 FROM turns WHERE session=? AND status IN ('queued','running','awaiting_review')",
                 (sid,),
@@ -870,6 +884,9 @@ class Store(MessageAdapters):
                 )
             self.copy_message_adapter(db, "story", sid, new_sid)
             fork_advisor(db, sid, new_sid, ids)
+            from tavern.novel.storage import fork as fork_novel
+
+            fork_novel(db, sid, new_sid)
             # Prefix hashes need no message-ID remapping. Only matching content
             # boundaries will be replayed in the fork's actual request.
             db.execute(
@@ -900,6 +917,11 @@ class Store(MessageAdapters):
             result["tool_result_options"] = json.loads(result["tool_result_options"])
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
+            novel = db.execute("SELECT enabled FROM novel_bindings WHERE session=?", (sid,)).fetchone()
+            result["novel_enabled"] = bool(novel and novel[0])
+            result["novel_active"] = db.execute(
+                "SELECT count(*) FROM novel_jobs WHERE session=? AND status!='destroyed'", (sid,)
+            ).fetchone()[0]
         result["messages"] = self.history(sid, result["head"])
         result["snapshot"] = (
             copy.deepcopy(result["messages"][-1]["snapshot"])
@@ -979,6 +1001,11 @@ class Store(MessageAdapters):
             db.execute("DELETE FROM full_agent_trace WHERE session=?", (sid,))
             db.execute("DELETE FROM context_operations WHERE session=?", (sid,))
             db.execute("DELETE FROM messages WHERE session=?", (sid,))
+            db.execute(
+                "DELETE FROM context_token_samples WHERE owner IN "
+                "(SELECT 'novel:' || id FROM novel_jobs WHERE session=?)",
+                (sid,),
+            )
             db.execute("DELETE FROM sessions WHERE id=?", (sid,))
             db.execute("DELETE FROM sent_cache_breakpoints WHERE owner=?", (sid,))
             db.execute(
@@ -1179,6 +1206,9 @@ class Store(MessageAdapters):
             if r.rowcount != 1:
                 raise Conflict("会话已改变，请刷新后重试")
             if fields.get("head"):
+                from tavern.novel.storage import invalidate as invalidate_novel
+
+                invalidate_novel(db, sid, "剧情进度已切换，旧调查及未送达报告已撤销")
                 self._update_cache_follow(db, sid, fields["head"])
                 db.execute(
                     "DELETE FROM context_token_samples WHERE owner IN (?,?)",
@@ -1398,6 +1428,21 @@ class Store(MessageAdapters):
                 if any(getattr(previous, field) != getattr(request, field) for field in matching):
                     raise Conflict("续接请求的输入或授权已改变，请重新开始本轮")
             tid = uid()
+            prior_attempt = db.execute(
+                "SELECT request,status FROM turns WHERE session=? ORDER BY created DESC,rowid DESC LIMIT 1",
+                (sid,),
+            ).fetchone()
+            restarts_attempt = bool(
+                prior_attempt and prior_attempt["status"] in {"error", "cancelled", "interrupted"}
+            )
+            if (
+                session["agent_mode"] == "full_agent"
+                and not request.resume_turn_id
+                and (request.mode == "regenerate" or request.replacement_text is not None or restarts_attempt)
+            ):
+                from tavern.novel.storage import invalidate as invalidate_novel
+
+                invalidate_novel(db, sid, "本轮剧情重新生成，旧调查及未送达报告已撤销")
             db.execute(
                 "INSERT INTO turns(id,session,operation,request,status,created) VALUES (?,?,?,?,?,?)",
                 (tid, sid, request.operation_id, request.model_dump_json(), "queued", time.time()),
@@ -1507,9 +1552,25 @@ class Store(MessageAdapters):
 
     def save_full_agent_progress(self, tid, progress):
         with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT OR REPLACE INTO full_agent_progress(turn,payload) VALUES (?,?)", (tid, dump(progress))
             )
+            deliveries = [
+                item["message"]["_novel_mail"]
+                for item in progress["new_trace"]
+                if "_novel_mail" in item["message"]
+            ]
+            claimed = db.executemany(
+                "UPDATE novel_mail SET delivered=? WHERE seq=? AND delivered IS NULL AND revoked=0 "
+                "AND job IN (SELECT id FROM novel_jobs WHERE session=(SELECT session FROM turns WHERE id=?))",
+                [(tid, seq, tid) for seq in deliveries],
+            )
+            if claimed.rowcount > 0:
+                from tavern.novel.storage import event as novel_event
+
+                sid = db.execute("SELECT session FROM turns WHERE id=?", (tid,)).fetchone()[0]
+                novel_event(db, sid, "delivered")
 
     def turn(self, tid):
         with self.connection() as db:

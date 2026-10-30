@@ -6,6 +6,8 @@ from pathlib import Path
 
 from tavern.full_agent.protocol import RECOVERY, success
 from tavern.full_agent.tools import SPECS
+from tavern.novel.service import DELIVERY_NOTICE, START_NOTICE
+from tavern.novel.storage import MAX_LIVING, MAX_STARTS
 
 ROOT = Path(__file__).resolve().parents[1]
 SUMMARY = ROOT / "docs/reference/full-agent-tools-summary.md"
@@ -95,7 +97,34 @@ EXAMPLES = {
     ),
     "read_character": ({"ref": "description"}, {"ref": "description", "exists": True, "text": "角色描述。"}),
     "set_retrieval_query": ({"query": ""}, {"saved_to_draft": True}),
+    "start_novel_research": (
+        {"question": "查证人物早年经历", "background": "本局尚未遇见此人"},
+        {
+            "ref": "R1",
+            "status": "running",
+            "created": True,
+            "notice": START_NOTICE,
+        },
+    ),
+    "list_novel_research": (
+        {},
+        {"investigators": [], "slots_remaining": MAX_LIVING, "starts_remaining_this_turn": MAX_STARTS},
+    ),
+    "message_novel_research": (
+        {"ref": "R1", "message": "请注明原著时期"},
+        {"ref": "R1", "status": "running"},
+    ),
+    "wait_novel_research": ({"ref": "R1", "timeout_seconds": 30}, {"ref": "R1", "status": "completed"}),
+    "resume_novel_research": ({"ref": "R1"}, {"ref": "R1", "status": "running"}),
+    "destroy_novel_research": ({"ref": "R1"}, {"ref": "R1", "status": "destroyed"}),
 }
+
+for _name in (
+    "message_novel_research",
+    "wait_novel_research",
+    "resume_novel_research",
+):
+    EXAMPLES[_name][1]["notice"] = DELIVERY_NOTICE
 
 
 def encoded(value):
@@ -109,7 +138,7 @@ def descriptions():
         "<details>",
         "<summary>查看工具描述原文与 JSON 示例</summary>",
         "",
-        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。参数与错误恢复见[完整协议](full-agent-tools.md)。",
+        "工具描述与源码同步。各示例独立使用同一虚构场景和默认返回选项：剧情规划已开启，变量更新已授权，设定和笔记修改所需的当前全文已在上下文中。原著调查示例还要求用户已绑定文件并开启参考；异步状态以实际任务为准。参数与错误恢复见[完整协议](full-agent-tools.md)。",
         "",
     ]
     assert set(EXAMPLES) == set(SPECS)

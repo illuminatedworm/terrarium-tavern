@@ -439,7 +439,7 @@ async def test_context_sample_survives_restart_and_cleanup_without_stale_respons
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     migrated = Store(store.root)
     settings = migrated.settings_document()
-    assert settings.version == 14 and settings.half_agent.chunk_mode == "messages"
+    assert settings.version == 15 and settings.half_agent.chunk_mode == "messages"
     assert (settings.half_agent.history_message_cap, settings.half_agent.chunk_size) == (24, 4)
     assert len(list(store.root.glob("before-upgrade-schema15-settings13-*.sqlite3"))) == 1
     with migrated.connection() as db:

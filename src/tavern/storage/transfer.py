@@ -52,6 +52,7 @@ class ExportSelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     settings: bool = True
     include_api_keys: bool = False
+    include_novel_files: bool = True
     personas: list[str] = Field(default_factory=list)
     worldbooks: list[str] = Field(default_factory=list)
     cards: list[str] = Field(default_factory=list)
@@ -136,7 +137,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 6,
+        "version": 7,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -146,6 +147,7 @@ def export_package(store, selection):
         "sessions": [],
     }
     blobs = set()
+    novel_files = {}
 
     def pin(card):
         card = copy.deepcopy(card)
@@ -209,6 +211,11 @@ def export_package(store, selection):
                     from tavern.advisor.transfer import export_bundle as export_advisor
 
                     bundle["advisor"] = export_advisor(db, identity)
+                    from tavern.novel.transfer import export_bundle as export_novel
+
+                    bundle["novel"] = export_novel(
+                        store, db, identity, selection.include_novel_files, novel_files
+                    )
                     for related in ("messages", "full_agent_trace", "half_agent_trace"):
                         bundle[related] = [
                             decoded(related, item)
@@ -225,10 +232,10 @@ def export_package(store, selection):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("dataset.json", dump(package))
-        for digest in sorted(blobs):
+        for digest in sorted(blobs | novel_files.keys()):
             if not re.fullmatch(r"[a-f0-9]{64}", digest):
                 raise ValueError("角色资源标识无效")
-            path = store.root / "blobs" / digest
+            path = novel_files.get(digest, store.root / "blobs" / digest)
             if not path.is_file():
                 raise ValueError("角色资源缺失，无法创建完整数据包")
             archive.write(path, "blobs/" + digest)
@@ -307,7 +314,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -321,6 +328,7 @@ def validate_package(store, package, blobs):
     if package["sessions"] and package["version"] < 3:
         raise ValueError("旧对话不支持整轮重试格式；请只导入角色卡、设置等非对话资料")
     identities = set()
+    novel_sources = {}
     with store.connection() as db:
         schema = {
             table: {column["name"]: dict(column) for column in db.execute(f"PRAGMA table_info({table})")}
@@ -406,6 +414,13 @@ def validate_package(store, package, blobs):
             from tavern.advisor.transfer import validate_bundle as validate_advisor
 
             validate_advisor(bundle.get("advisor"), session.get("channel_origin"))
+            from tavern.novel.transfer import validate_bundle as validate_novel
+
+            if bundle.get("novel") is not None and session.get("agent_mode") != "full_agent":
+                raise ValueError("原著调查只能属于 Full Agent 对话")
+            if bundle.get("novel") is not None and package["version"] < 7:
+                raise ValueError("原著调查需要个人数据包格式 7")
+            validate_novel(bundle.get("novel"), blobs, session.get("channel_origin"), novel_sources)
             validate_row(
                 schema,
                 "sessions",
@@ -674,6 +689,16 @@ def import_transaction(store):
 def import_package(store, package, blobs, restore_settings=False, expected_revisions=None):
     validate_package(store, package, blobs)
     ids = {row["id"]: uid() for key in ("personas", "worldbooks", "cards") for row in package[key]}
+    novel_source_ids = {}
+    novel_only_blobs = {
+        s["blob"] for b in package["sessions"] for s in (b.get("novel") or {}).get("sources", []) if s["blob"]
+    }
+    card_blobs = set().union(
+        *(
+            hashes(card)
+            for card in [*package["cards"], *[b["session"]["card_data"] for b in package["sessions"]]]
+        )
+    )
     for bundle in package["sessions"]:
         ids[bundle["session"]["id"]] = uid()
         ids.update({row["id"]: uid() for row in bundle["messages"]})
@@ -732,6 +757,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                     browser_preferences=browser_preferences(package["settings"].get("browser", {})),
                 )
             for digest, data in blobs.items():
+                if digest in novel_only_blobs and digest not in card_blobs:
+                    continue  # Novel originals live only in their dedicated file directory.
                 path = store.root / "blobs" / digest
                 if path.exists():
                     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
@@ -818,6 +845,8 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 for table in ("full_agent_trace", "half_agent_trace"):
                     for trace in bundle.get(table, []):
                         cloned = remap(trace, ids)
+                        if table == "full_agent_trace":
+                            cloned["payload"].pop("_novel_mail", None)
                         if table == "half_agent_trace":
                             from tavern.conversation.half_context import remap_record
 
@@ -828,6 +857,9 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 from tavern.advisor.transfer import import_bundle as import_advisor
 
                 import_advisor(db, row["id"], bundle.get("advisor"), ids)
+                from tavern.novel.transfer import import_bundle as import_novel
+
+                import_novel(store, db, row["id"], bundle.get("novel"), blobs, written, novel_source_ids)
                 if adapter:
                     insert(db, "message_adapter_configs", {**remap(adapter, ids), "revision": 0})
                 else:

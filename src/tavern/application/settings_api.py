@@ -141,6 +141,8 @@ def page_catalog():
         ]
         if scope == "half_agent":
             pages.append(("recipe", "上下文编排", ["context_recipe"]))
+        else:
+            pages.append(("novel", "原著调查", ["novel_research"]))
         for key, label, paths in pages:
             result.append(
                 {"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths}
@@ -153,7 +155,17 @@ def page_catalog():
         ("web", "联网与代理", ["web", "network", "model_request_mode"]),
         ("local", "本地资源", ["local_models"]),
         ("storage", "数据与存储", ["log_retention_days", "log_max_mib", "retrieval_cache_max_mib"]),
-        ("misc", "杂项", ["send_shortcut", "reply_locate_start", "debug_failed_requests", "debug_full_agent_prefix", "kemini"]),
+        (
+            "misc",
+            "杂项",
+            [
+                "send_shortcut",
+                "reply_locate_start",
+                "debug_failed_requests",
+                "debug_full_agent_prefix",
+                "kemini",
+            ],
+        ),
     ]:
         result.append({"id": f"shared.{key}", "scope": "shared", "key": key, "label": label, "paths": paths})
     return result
@@ -194,6 +206,18 @@ def validate_document(raw):
 
 
 def invalidate_capabilities(old, new):
+    for key in ("model", "official_model"):
+        before, after = (
+            getattr(old.full_agent.novel_research, key),
+            getattr(new.full_agent.novel_research, key),
+        )
+        if after is not None and (
+            before is None
+            or before.model_dump(exclude={"capability", "capability_key"})
+            != after.model_dump(exclude={"capability", "capability_key"})
+            or old.shared.providers != new.shared.providers
+        ):
+            after.capability, after.capability_key = "unknown", ""
     for key in ("model", "official_model"):
         before, after = getattr(old.shared.advisor, key), getattr(new.shared.advisor, key)
         if after is not None and (
@@ -402,6 +426,33 @@ def register_settings_routes(app, store):
 
 
 def save_probe(store, role, result, captured):
+    if role == "novel_research":
+        with store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            doc = SettingsDocument.model_validate_json(
+                db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0]
+            )
+            key = "official_model" if captured._settings_channel == "chatgpt" else "model"
+            profile = getattr(doc.full_agent.novel_research, key)
+            before = captured.novel_research
+            provider = next(
+                (p for p in doc.shared.providers if profile and p.id == profile.provider_id), None
+            )
+            old_provider = next(
+                (p for p in captured.providers if before and p.id == before.provider_id), None
+            )
+            if (
+                profile is None
+                or before is None
+                or provider != old_provider
+                or profile.model_dump(exclude={"capability", "capability_key"})
+                != before.model_dump(exclude={"capability", "capability_key"})
+            ):
+                raise Conflict("检查期间原著调查模型连接已改变，请重新检查")
+            profile.capability, profile.capability_key = result.capability, result.capability_key
+            doc.revisions["full_agent"] += 1
+            db.execute("UPDATE meta SET value=? WHERE key='settings'", (doc.model_dump_json(),))
+        return
     if role == "advisor":
         with store.connection() as db:
             db.execute("BEGIN IMMEDIATE")

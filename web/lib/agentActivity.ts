@@ -117,4 +117,10 @@ export const toolLabels: Record<string, string> = {
   read_character: '读取角色资料',
   revise_content: '修改设定',
   set_retrieval_query: '设置检索线索',
+  start_novel_research: '委派原著调查',
+  list_novel_research: '查看调查者',
+  message_novel_research: '联系原著调查者',
+  wait_novel_research: '等待原著调查',
+  resume_novel_research: '恢复原著调查',
+  destroy_novel_research: '销毁原著调查者',
 };

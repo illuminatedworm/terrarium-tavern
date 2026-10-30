@@ -138,7 +138,7 @@ def test_defaults_and_custom_prompts():
     old["full_agent"]["tools"].pop("chapter_tokens")
     old["full_agent"]["tools"].pop("chapters_total_tokens")
     migrated = migrate_settings(old)
-    assert migrated.version == 14
+    assert migrated.version == 15
     assert migrated.shared.kemini.identity_prompt == "已保存的身份"
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
     assert (migrated.half_agent.memory_recall_count, migrated.half_agent.memory_recall_filter) == (3, True)
@@ -184,7 +184,7 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     upgraded = Store(tmp_path).settings_document()
-    assert upgraded.version == 14 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    assert upgraded.version == 15 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
     for key, value in upgraded.shared.kemini.model_dump().items():
         assert value == expected.get(key, fields[key])
     assert migrate_settings(upgraded.model_dump()) == upgraded

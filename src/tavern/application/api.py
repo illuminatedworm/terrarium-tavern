@@ -77,10 +77,13 @@ def cancel_producers(app):
     """
     service = app.state.service
     service.japanese_dictionary.stop()
+    service.full.novel.closed = True
+    service.full.novel.notify()
     for owner in (
         service,
         app.state.editor,
         app.state.advisor,
+        service.full.novel,
         service.local_models,
         service.context_operations,
     ):
@@ -142,6 +145,9 @@ def create_app(data_dir=None):
     from tavern.advisor.api import register_routes as register_advisor_routes
 
     register_advisor_routes(app, advisor)
+    from tavern.novel.api import register_routes as register_novel_routes
+
+    register_novel_routes(app, service.full.novel, service.full)
     from tavern.chatgpt.api import register_chatgpt_routes
     from tavern.chatgpt.errors import ChatGPTError
 
@@ -391,12 +397,25 @@ def create_app(data_dir=None):
 
     @app.post("/api/settings/probe")
     async def probe(
-        role: Literal["foreground", "background", "card_author", "full_agent", "advisor"] = "foreground",
+        role: Literal[
+            "foreground", "background", "card_author", "full_agent", "advisor", "novel_research"
+        ] = "foreground",
         channel: Literal["standard", "chatgpt"] | None = None,
     ):
         from tavern.scripting.agent import make_provider
 
-        saved_config = store.settings("full_agent" if role == "full_agent" else "half_agent", channel)
+        saved_config = store.settings(
+            "full_agent" if role in {"full_agent", "novel_research"} else "half_agent", channel
+        )
+        if role == "novel_research":
+            novel_config = store.settings_document().full_agent.novel_research
+            saved_config.novel_research = (
+                novel_config.official_model
+                if saved_config._settings_channel == "chatgpt"
+                else novel_config.model
+            )
+            if saved_config.novel_research is None:
+                raise ValueError("此渠道正在跟随 Full Agent，请检查 Full Agent 模型连接")
         if role == "advisor":
             advisor_config = store.settings_document().shared.advisor
             saved_config.advisor = (
@@ -627,6 +646,9 @@ def create_app(data_dir=None):
     @app.delete("/api/sessions/{sid}")
     async def delete_session(sid: str):
         await advisor.cancel_session(sid)
+        for job in service.full.novel.data.jobs(sid):
+            if job["status"] != "destroyed":
+                await service.full.novel.destroy(job["id"])
         await service.delete_session(sid)
         return {"deleted": sid}
 
@@ -644,11 +666,15 @@ def create_app(data_dir=None):
 
     @app.post("/api/sessions/{sid}/fork", status_code=201)
     async def fork_session(sid: str, payload: SessionFork):
-        return store.fork_session(sid, payload.message_id, payload.expected_revision)
+        return store.fork_session(
+            sid, payload.message_id, payload.expected_revision, confirm_novel=payload.confirm_novel
+        )
 
     @app.put("/api/sessions/{sid}/messages/{mid}/version")
     async def switch_message_version(sid: str, mid: str, change: RevisionRequest):
-        return store.switch_message_version(sid, mid, change.head, change.expected_revision)
+        result = store.switch_message_version(sid, mid, change.head, change.expected_revision)
+        await service.full.novel.cancel_invalidated(sid)
+        return result
 
     @app.delete("/api/sessions/{sid}/lore-injections/{anchor_id}/{entry_id}")
     async def remove_lore_injection(sid: str, anchor_id: str, entry_id: str, change: LoreInjectionRemoval):
@@ -812,7 +838,9 @@ def create_app(data_dir=None):
 
     @app.put("/api/sessions/{sid}/head")
     async def switch_branch(sid: str, change: RevisionRequest):
-        return store.update_session(sid, change.expected_revision, head=change.head)
+        result = store.update_session(sid, change.expected_revision, head=change.head)
+        await service.full.novel.cancel_invalidated(sid)
+        return result
 
     @app.put("/api/sessions/{sid}/options")
     async def session_options(sid: str, options: SessionOptions):

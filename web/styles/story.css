@@ -1425,3 +1425,58 @@
   overflow-wrap: anywhere;
   font: inherit;
 }
+
+/* Original-novel controls stay inside the existing scrollable inspector. */
+.novel-panel {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  font-size: var(--fs-md);
+}
+.novel-panel p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.novel-panel strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.novel-panel label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.novel-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.novel-source,
+.novel-job {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.novel-path,
+.novel-trace {
+  font-size: var(--fs-sm);
+}
+.novel-trace,
+.novel-excerpt pre {
+  max-height: 28rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.novel-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.novel-panel .error {
+  color: var(--danger);
+}

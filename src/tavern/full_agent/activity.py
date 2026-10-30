@@ -26,7 +26,18 @@ def tool_item(key, order, name, arguments):
     summary = next(
         (
             str(args[k])
-            for k in ("query", "key", "ref", "path", "comment", "reason", "handoff", "content")
+            for k in (
+                "question",
+                "message",
+                "query",
+                "key",
+                "ref",
+                "path",
+                "comment",
+                "reason",
+                "handoff",
+                "content",
+            )
             if isinstance(args, dict) and args.get(k)
         ),
         "",

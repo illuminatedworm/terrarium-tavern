@@ -1,6 +1,6 @@
 # Full Agent 架构与一致性
 
-Full Agent 使用一个模型完成叙事、检索、笔记维护和授权变量更新。运行入口位于 `full_agent/`，由 [application/modes.py](../../src/tavern/application/modes.py) 路由。它共享存储、角色资料、检索、模型传输与脚本执行器，不使用 Half Agent 的 Writer／Tracker 编排、分类记忆引擎或窗口规划器。
+Full Agent 使用一个主模型完成叙事、检索、笔记维护和授权变量更新。用户明确开启[原著参考](novel-research.md)后，可委派独立、只读、可跨轮运行的轻量调查者，主模型只接收报告。运行入口位于 `full_agent/`，由 [application/modes.py](../../src/tavern/application/modes.py) 路由。它共享存储、角色资料、检索、模型传输与脚本执行器，不使用 Half Agent 的 Writer／Tracker 编排、分类记忆引擎或窗口规划器。
 
 运行时设计涵盖工具循环、上下文和事务。操作步骤见[使用指南](../guides/full-agent.md)，参数及示例见[工具协议](../reference/full-agent-tools.md)。
 

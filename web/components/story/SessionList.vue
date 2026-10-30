@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
+import { novelActivity } from '../../lib/novel';
 import Icon from '../common/Icon.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
@@ -23,6 +24,11 @@ const emit = defineEmits<{
 }>();
 
 const editingId = ref('');
+const investigators = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const job of novelActivity.value) counts[job.session] = (counts[job.session] || 0) + 1;
+  return counts;
+});
 const draft = ref('');
 const input = ref<HTMLInputElement | null>(null);
 
@@ -92,7 +98,8 @@ function open(event: MouseEvent, item: SessionSummary) {
             >{{ s.title || s.name
             }}<small
               >{{ new Date(s.created * 1000).toLocaleDateString('zh-CN') }} · {{ s.persona }} ·
-              {{ channelLabels[s.channel_origin as Channel] || '渠道待确认' }}</small
+              {{ channelLabels[s.channel_origin as Channel] || '渠道待确认'
+              }}{{ investigators[s.id] ? ` · 原著调查者 ${investigators[s.id]}` : '' }}</small
             ></span
           ></button
         ><span class="row-actions"

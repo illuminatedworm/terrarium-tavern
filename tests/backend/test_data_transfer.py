@@ -115,7 +115,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 6
+        assert payload["version"] == 7
         assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":

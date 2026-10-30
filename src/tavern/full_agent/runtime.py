@@ -25,6 +25,9 @@ class FullAgentRuntime:
         self.tasks, self.agents = {}, {}
         self.provider_factory = None
         self.prefix_debug = PrefixDebug()
+        from tavern.novel.service import NovelService
+
+        self.novel = NovelService(store)
 
     def submit(self, sid, request):
         session = self.store.session(sid)
@@ -56,6 +59,7 @@ class FullAgentRuntime:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*self.tasks.values(), return_exceptions=True)
+        await self.novel.close()
         await self.runtime.close()
         self.prefix_debug.clear()
 
@@ -88,6 +92,7 @@ class FullAgentRuntime:
 
     async def _run(self, tid):
         script = None
+        await self.novel.cancel_invalidated(self.store.turn(tid)["session"])
         deadline = asyncio.timeout(None)
         try:
             async with deadline:
@@ -198,6 +203,7 @@ class FullAgentRuntime:
                     self.retrieval,
                     progress,
                     script_mirror=mirror,
+                    novel=self.novel,
                     output_id=output_id,
                 )
                 self.agents[tid] = agent
