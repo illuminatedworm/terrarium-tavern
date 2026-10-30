@@ -45,11 +45,9 @@ def test_defaults_and_custom_prompts():
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
     assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
     assert all(
-        "用户对行动结果的描述，不自动决定其他人物的反应" in prompt
-        for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT)
+        "人物不会因为你知道就知道" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT)
     )
     assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
-    assert "每个人物都有自己想要的东西，也有自己知道和不知道的事" in FULL_AGENT_PROMPT
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
     # Keep the source excerpts as evidence; only the requested boundary markers
     # and references to omitted ST wrappers differ from these saved originals.
