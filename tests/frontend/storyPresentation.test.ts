@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { responseData, storyPresentation } from '../../web/lib/storyPresentation';
+import { shareDocument, shareEntries, shareRangeLabel, shareRounds } from '../../web/lib/conversationShare';
 
 // Like imported ST status interfaces: <head>/<body>, blank lines, indented CSS
 // and script containing markup. Markdown's indented-code heuristic cuts this up.
@@ -107,5 +108,50 @@ describe('normalized story presentation data', () => {
         .map((part) => part.text)
         .join(''),
     ).toMatch(/开头。[\s\S]*中间。[\s\S]*结尾。/);
+  });
+
+  it('shares only the reading text of the chosen rounds under the chosen form of address', () => {
+    const message = (id: string, role: string, parent: string | null, display: string, extra = {}) => ({
+      id,
+      role,
+      parent,
+      raw: display,
+      display,
+      snapshot: {},
+      ...extra,
+    });
+    const { messages } = responseData({
+      messages: [
+        message('g', 'assistant', null, '欢迎，{{user}}。'),
+        message('u1', 'user', 'g', '我是阿明。'),
+        message('r1', 'assistant', 'u1', `阿明推门。\n\n\`\`\`html\n${document}\n\`\`\``, {
+          retrieval_query: '检索线索原文',
+          auxiliary: [{ text: '生成附属记录' }],
+        }),
+        message('u2', 'user', 'r1', '第二轮'),
+        message('r2', 'assistant', 'u2', '第二轮回复'),
+      ],
+    });
+    const session = { persona: '阿明', card_data: { document: { name: '星' } }, messages };
+    const rounds = shareRounds(messages);
+    expect(rounds.map((round) => round.label)).toEqual(['第 1 轮', '第 2 轮', '第 3 轮']);
+    expect(shareRangeLabel(rounds, 1, 3)).toBe('共 3 轮');
+    expect(shareRangeLabel(rounds, 1, 1)).toBe('第 1 轮');
+    const entries = shareEntries(rounds, session, { from: 1, to: 2, alias: '旅人', character: '星' });
+    expect(entries.map((entry) => entry.speaker)).toEqual(['星', '旅人', '星']);
+    const html = shareDocument({
+      title: '星',
+      portrait: '',
+      range: shareRangeLabel(rounds, 1, 2),
+      css: '',
+      messages: entries.map((entry) => ({ ...entry, html: entry.parts.map((part) => part.text).join('') })),
+    });
+    expect(html).toContain("default-src 'none'");
+    expect(html).toContain('第 1–2 轮');
+    expect(html).toMatch(/欢迎，旅人。[\s\S]*我是旅人。[\s\S]*旅人推门。/);
+    // The MVU status panel, internal records and the real persona name stay out.
+    for (const hidden of ['stat_data', '检索线索原文', '生成附属记录', '阿明', '第二轮']) {
+      expect(html).not.toContain(hidden);
+    }
   });
 });

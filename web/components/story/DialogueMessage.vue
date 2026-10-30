@@ -3,7 +3,9 @@ import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import InlineMessageEditor from './InlineMessageEditor.vue';
 import Icon from '../common/Icon.vue';
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
+import { copyableText } from '../../lib/storyPresentation';
+import { notify } from '../../lib/notifications';
 const props = defineProps<{
   message: any;
   interval?: string;
@@ -42,6 +44,21 @@ const sentAt = computed(() => {
   const date = new Date(value * 1000);
   return Number.isNaN(date.getTime()) ? null : date;
 });
+const copyText = computed(() => copyableText(props.message, props.session));
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+async function copyMessage() {
+  try {
+    await navigator.clipboard.writeText(copyText.value);
+  } catch (error) {
+    notify('复制失败：' + (error instanceof Error ? error.message : String(error)));
+    return;
+  }
+  copied.value = true;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copied.value = false), 1500);
+}
+onBeforeUnmount(() => clearTimeout(copiedTimer));
 const editingMessageText = defineModel<string>('editingMessageText', { required: true });
 const emit = defineEmits<{
   cancelEdit: [];
@@ -168,6 +185,15 @@ function forwardAction(
             </button>
             <span class="action-divider" aria-hidden="true"></span>
           </template>
+          <button
+            class="icon-action"
+            :disabled="!copyText"
+            :aria-label="copied ? '已复制' : '复制正文'"
+            :title="copyText ? '复制正文原文（含 Markdown 标记）' : '此消息全部为卡片界面，无可复制的正文'"
+            @click="copyMessage"
+          >
+            <Icon :name="copied ? 'check' : 'copy'" :size="16" />
+          </button>
           <button
             v-if="editable"
             class="icon-action"

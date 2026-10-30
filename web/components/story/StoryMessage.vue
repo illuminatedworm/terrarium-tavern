@@ -3,7 +3,7 @@ import { computed } from 'vue';
 import StoryProse from './StoryProse.vue';
 import StoryFrame from './StoryFrame.vue';
 import ExperimentalRecords from './ExperimentalRecords.vue';
-import { snapshotMacros } from '../../../compat/variable-macros';
+import { messageCharacter, messageContents } from '../../lib/storyPresentation';
 import type { StoryContent } from '../../lib/storyPresentation';
 
 const props = defineProps<{
@@ -23,26 +23,10 @@ const emit = defineEmits<{
     stream: (chunk: string) => void,
   ];
 }>();
-const character = computed(() => {
-  const card =
-    typeof props.session.card_data === 'string'
-      ? JSON.parse(props.session.card_data)
-      : props.session.card_data;
-  const document = props.message.snapshot?.content?.document || card?.document || {};
-  const data = document.data || document;
-  return data.nickname || data.name || '';
-});
-const contents = computed<StoryContent[]>(() => {
-  const parts = (props.panelOnly ? props.message.presentation?.panel : props.message.presentation?.body) || [
-    { format: 'markdown', text: props.message.raw || '' },
-  ];
-  return parts.map((part: StoryContent) => ({
-    ...part,
-    text: snapshotMacros(part.text, props.message.snapshot?.state, props.message.snapshot?.scopes)
-      .replace(/\{\{user\}\}/gi, () => props.session.persona || '用户')
-      .replace(/\{\{char\}\}/gi, () => character.value),
-  }));
-});
+const character = computed(() => messageCharacter(props.message, props.session));
+const contents = computed<StoryContent[]>(() =>
+  messageContents(props.message, props.session, { panel: props.panelOnly }),
+);
 function forwardAction(
   method: string,
   args: any,

@@ -53,7 +53,6 @@ import { clampRightWidth, defaultReadingLayout, type ReadingLayout } from './lib
 import ReadingLayoutPanel from './components/settings/ReadingLayoutPanel.vue';
 import ConversationModelControls from './components/settings/ConversationModelControls.vue';
 import TurnReview from './components/story/TurnReview.vue';
-import RecipeEditor from './components/settings/RecipeEditor.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
 import Icon from './components/common/Icon.vue';
@@ -108,6 +107,19 @@ const SettingsPanel = defineAsyncComponent({
   errorComponent: { render: () => h('p', { role: 'alert' }, '设置页面加载失败，请刷新页面后重试。') },
 });
 const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
+// Session-level editors and the share dialog open from the inspector on demand.
+const RecipeEditor = defineAsyncComponent({
+  loader: () => import('./components/settings/RecipeEditor.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载上下文配方…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '上下文配方加载失败，请刷新页面后重试。') },
+});
+const ShareDialog = defineAsyncComponent({
+  loader: () => import('./components/story/ShareDialog.vue'),
+  delay: 0,
+  loadingComponent: { render: () => h('p', { role: 'status' }, '正在加载分享对话…') },
+  errorComponent: { render: () => h('p', { role: 'alert' }, '分享对话加载失败，请刷新页面后重试。') },
+});
 // Editing surfaces are independent of the story reader; load their code only
 // when opened, just as we do for settings.
 const CharacterEditor = defineAsyncComponent({
@@ -2712,14 +2724,11 @@ useTimedError(error);
               >
                 <Icon name="branch" /><span class="tool-label">剧情分支</span></button
               ><button
-                :aria-label="previewMessagesBusy ? '正在预览…' : '预览下次请求'"
-                :disabled="storyLocked || previewMessagesBusy"
-                title="导出按当前分支和输入编译的下次请求 messages；只读预览不运行神经召回"
-                @click="exportNextMessages"
+                aria-label="分享对话"
+                title="分享对话：生成给他人阅读的正文副本（HTML 或长图）"
+                @click="panel = 'share'"
               >
-                <Icon name="eye" /><span class="tool-label">{{
-                  previewMessagesBusy ? '正在预览…' : '预览下次请求'
-                }}</span>
+                <Icon name="eye" /><span class="tool-label">分享对话</span>
               </button>
             </div>
           </div>
@@ -3329,6 +3338,9 @@ useTimedError(error);
             :inherited-policy="activeSettings.policy"
             :presets="settings?.shared.preference_presets || []"
             @message-adapter="panel = 'message-adapter'"
+            :export-disabled="storyLocked || previewMessagesBusy"
+            :exporting="previewMessagesBusy"
+            @export-request="exportNextMessages"
             @save="saveOptions"
             @script-permission="setSessionScriptPermission"
             @presets-saved="settings = $event"
@@ -3389,12 +3401,13 @@ useTimedError(error);
           :class="{
             'context-management-modal': panel === 'context-management',
             'state-modal': panel === 'state',
+            'share-modal': panel === 'share',
             // Sized by panel, not by loaded content, so the frame keeps its height
             // while the settings chunk is still loading.
             'settings-modal': panel === 'settings',
           }"
           :size="
-            ['settings', 'context', 'state', 'recipe', 'message-adapter'].includes(panel)
+            ['settings', 'context', 'state', 'recipe', 'message-adapter', 'share'].includes(panel)
               ? 'large'
               : ['delete-card', 'fork', 'warmup'].includes(panel)
                 ? 'small'
@@ -3504,6 +3517,13 @@ useTimedError(error);
             :cache-rate="cacheRateLabel"
             :item-title="contextItemTitle"
             :rounds="messageRounds"
+          />
+          <ShareDialog
+            v-else-if="panel === 'share' && session"
+            :session="session"
+            :name="name"
+            :portrait-src="storyPortrait"
+            :reading="readingStyle"
           />
           <AboutPanel v-else-if="panel === 'about'" />
         </AppModal>

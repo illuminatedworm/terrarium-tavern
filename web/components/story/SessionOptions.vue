@@ -20,9 +20,12 @@ const props = defineProps<{
   preferencePrompt: string;
   inheritedPolicy?: string;
   presets: PreferencePreset[];
+  exportDisabled: boolean;
+  exporting: boolean;
 }>();
 const emit = defineEmits<{
   'message-adapter': [];
+  'export-request': [];
   save: [draft: SessionOptionsDraft];
   'script-permission': [enabled: boolean];
   'presets-saved': [settings: SettingsDocument];
@@ -48,7 +51,14 @@ watch(
 
 <template>
   <section class="inspector-options" aria-label="会话设置">
-    <button @click="emit('message-adapter')">消息适配</button>
+    <button @click="emit('message-adapter')">消息适配</button
+    ><button
+      :disabled="exportDisabled"
+      title="调试用：导出按当前分支和输入编译的下次请求 messages（JSON）；只读预览不运行神经召回。给他人阅读请用顶栏的“分享对话”"
+      @click="emit('export-request')"
+    >
+      {{ exporting ? '正在导出…' : '导出请求（调试）' }}
+    </button>
     <div class="inspector-options-heading">
       <h2>会话设置</h2>
       <div class="inspector-save">

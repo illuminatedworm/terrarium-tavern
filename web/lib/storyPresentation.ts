@@ -1,7 +1,44 @@
 import { visibleLoreData } from './loreRecords';
 import { parseStoryDisplay } from '../../compat/presentation';
-import type { StoryPresentation } from '../../compat/presentation';
+import { snapshotMacros } from '../../compat/variable-macros';
+import type { StoryContent, StoryPresentation } from '../../compat/presentation';
 export type { StoryContent, StoryPresentation } from '../../compat/presentation';
+
+/** The card name shown for a message: its snapshot's card, else the session card. */
+export function messageCharacter(message: any, session: any): string {
+  const card = typeof session.card_data === 'string' ? JSON.parse(session.card_data) : session.card_data;
+  const document = message.snapshot?.content?.document || card?.document || {};
+  const data = document.data || document;
+  return data.nickname || data.name || '';
+}
+
+/** Display parts with the same macro expansion the reader shows. `persona`
+ * overrides {{user}}, so a shared copy can use another form of address. */
+export function messageContents(
+  message: any,
+  session: any,
+  { panel = false, persona = session.persona || '用户' } = {},
+): StoryContent[] {
+  const parts = (panel ? message.presentation?.panel : message.presentation?.body) || [
+    { format: 'markdown', text: message.raw || '' },
+  ];
+  const character = messageCharacter(message, session);
+  return parts.map((part: StoryContent) => ({
+    ...part,
+    text: snapshotMacros(part.text, message.snapshot?.state, message.snapshot?.scopes)
+      .replace(/\{\{user\}\}/gi, () => persona)
+      .replace(/\{\{char\}\}/gi, () => character),
+  }));
+}
+
+/** Copy keeps the literal Markdown prose and leaves card interfaces behind. */
+export function copyableText(message: any, session: any): string {
+  return messageContents(message, session)
+    .filter((part) => part.format === 'markdown')
+    .map((part) => part.text)
+    .join('')
+    .trim();
+}
 
 /** Normalize imported display formats once, at the response-data boundary.
  * An extracted HTML document must never go through Markdown a second time.

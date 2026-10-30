@@ -73,7 +73,7 @@ const rows = computed<ContextRowGroup[]>(() =>
       :scale="budget"
       :tokens="currentContextTokens(preview)"
       :scale-label="`日常输入预算 ${budget.toLocaleString()} tokens`"
-      aside="只读预览"
+      aside="调试 · 模型实际输入"
       :caption="`${contextUsageLabel(preview)}${currentContextTokens(preview) == null ? '' : ` ${currentContextTokens(preview)!.toLocaleString()} tokens`}`"
       :sources="budgetSources"
       :sources-label="localEstimateLabel(preview?.local_estimate)"
