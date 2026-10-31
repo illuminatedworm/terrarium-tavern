@@ -304,6 +304,9 @@ onBeforeUnmount(() => {
           ><span>{{ novelStatus[job.status] }}</span>
         </div>
         <p>{{ job.task }}</p>
+        <p class="muted">
+          {{ job.config.auto_destroy ? '最终报告送达后自动销毁' : '保留调查者，可追问或手动销毁' }}
+        </p>
         <p v-if="job.pending_messages" class="muted">
           {{ job.pending_messages }} 条调查消息待主 agent 下一次请求接收；空闲时不会自动唤醒。
         </p>

@@ -21,6 +21,13 @@ class Start(Arguments):
         "the novel and how it differs. Do not paste the whole context or cite H/L/R references and notes; the "
         "investigator cannot see them.",
     )
+    auto_destroy: bool = Field(
+        default=False,
+        description="Automatically destroy this investigator and free its slot after its first final report is "
+        "durably delivered to you. Reports and history are kept. Questions, failures and pauses do not trigger "
+        "destruction. Default false; use true for a one-off investigation, false if you need follow-ups after "
+        "the report.",
+    )
 
 
 class Reference(Arguments):

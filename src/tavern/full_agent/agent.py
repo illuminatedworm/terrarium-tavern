@@ -147,7 +147,7 @@ class FullAgent:
     async def save_progress(self, *, script_mirror=None):
         if script_mirror is None:
             script_mirror = await self.script.call("snapshot")
-        self.store.save_full_agent_progress(
+        return self.store.save_full_agent_progress(
             self.tid,
             {
                 "version": 4,

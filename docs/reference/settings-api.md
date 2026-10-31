@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 15、数据库 schema 为 17、个人数据包格式为 7。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 15、数据库 schema 为 18、个人数据包格式为 8。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -134,7 +134,7 @@ Content-Type: application/json
 
 角色卡记录附带 `defaults`（`persona_id`、`worldbook_ids`），导出时只保留同一包中的用户角色和世界书；导入时随新身份重映射。对话快照中的挂载记录同样重映射到包内世界书，未随包的世界书保留原名称，按“书库中已删除”显示。
 
-ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 6，仍可读取版本 1–5（版本 1–3 视为没有世界书库）；版本 5 包含普通正文响应及原生结束轨迹，版本 6 还保留开场白的永久锁定状态，旧版程序拒绝读取新版包。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 8，仍可读取版本 1–7（版本 1–3 视为没有世界书库）；版本 5 包含普通正文响应及原生结束轨迹，版本 6 还保留开场白的永久锁定状态，版本 7 包含原著资料，版本 8 保存调查者自动销毁选项，旧版程序拒绝读取新版包。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
 导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及制卡 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 
@@ -184,11 +184,11 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker；Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不做迁移，数据库打开会在数据库写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料后在新目录导入；个人数据包 1、2 中的对话同样拒绝。以下旧格式升级仅适用于没有剧情对话的数据库及独立设置资料。
 
-当前数据库为 **schema 17**，设置文档为 **version 15**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
+当前数据库为 **schema 18**，设置文档为 **version 15**，剧情快照中的 `memory_document.version` 为 **3**。三者分别标识数据库结构、设置文档和记忆格式；Full Agent 快照中的 `full_agent.version` 为 **4**（handoff 由模型维护，不含章节手工标记）。版本 1 的自由文本 handoff 和未发行的版本 2 开发数据均不迁移，读取时明确报错并提示新建对话，不改写旧快照。
 
 记忆格式 version 2 除活跃记录外，在消息快照的 `memory_retired` 中保存该消息新增或修改的归档条目（见[归档与召回](../design/memory-consistency.md#归档与召回)）。新增字段同样属于持久格式变化，因此递增版本；version 1 的记忆不迁移，读取时报错并提示新建对话，不改写旧快照。
 
-存储层接受 schema 1–17，先只读核对版本与设置。数据库版本低于 17、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 17；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
+存储层接受 schema 1–18，先只读核对版本与设置。数据库版本低于 18、设置文档需要迁移或会话表缺少新增列时，在任何写入前生成一份 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 备份；已是当前格式则不备份。随后的步骤均可重复执行：初始化参谋数据表（schema 4），添加 `sessions.update_variables` 等新增列（schema 5），原地把 `card_editor_conversations/progress/messages/traces` 改名为 `card_author_*`，并把消息适配设置与已发送缓存断点中的 `card_editor` 通道改为 `card_author`，对话身份与内容不变（schema 6）。设置文档 version 2 的 `shared.card_editor`、`shared.card_editor_config` 原样移到 `shared.card_author`、`shared.card_author_config` 并升为 version 3；设置导入同样接受旧键名。旧编辑对话保留原身份。随后创建世界书库与角色卡默认项表（schema 10）。全部步骤完成后写入 schema 18；中途中断时下次启动从头重跑。其他数据库版本在写入前报错。
 
 schema 10 新增 `worldbooks`、`card_defaults`、`card_default_worldbooks` 三张表和剧情快照的可选字段 `worldbooks`（见[世界书库与挂载](#世界书库与挂载)）。schema 9 的剧情对话照常升级，升级前同样先备份；已有快照缺少该字段即没有挂载，无需改写。
 
@@ -244,3 +244,5 @@ schema 15 引入的 `context_token_samples` 在 schema 16 改存最新请求观�
 
 
 schema 17 新增原著文件绑定、调查者、独立进度、消息队列和详细记录表。设置 version 14 → 15 增加 `full_agent.novel_research`，普通 API/GPT 两个模型字段默认 `null`，明确跟随主模型；默认每个调查者 24 次请求、300 秒。个人数据包 version 7 支持可选携带原著文件和暂停调查进度。具体授权、分支、恢复与接口见[原著参考](../design/novel-research.md)。已有对话默认未开启，升级前备份，不修改应用版本。
+
+数据库 schema 18 为每个原著调查者保存 `auto_destroy`，旧记录迁移为 `false`，保持手动生命周期；个人数据包 version 8 携带该配置，旧包缺少时按 `false` 导入。仅最终报告可靠送达后按选项自动销毁，不改变全局设置格式、工具总说明或主 agent 提示词。

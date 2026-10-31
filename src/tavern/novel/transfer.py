@@ -34,6 +34,7 @@ class Configuration(Model):
     channel: Literal["standard", "chatgpt"]
     max_requests: int = Field(ge=2, le=100)
     timeout_seconds: int = Field(ge=30, le=3600)
+    auto_destroy: bool = False
 
 
 class Job(Model):

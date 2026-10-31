@@ -37,6 +37,7 @@ export interface NovelJob {
     channel: 'standard' | 'chatgpt';
     max_requests: number;
     timeout_seconds: number;
+    auto_destroy?: boolean;
   };
   requests: number;
   elapsed: number;

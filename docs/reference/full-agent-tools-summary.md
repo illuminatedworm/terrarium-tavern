@@ -13,7 +13,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
 | `submit_story` | 接收本轮完整故事正文到草稿 | `content: string` | 必须非空白；始终启用，每轮只成功一次，不覆盖正文；普通文本仅作备注。 |
-| `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。 |
+| `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
 | `message_novel_research` | 发送追问或回答 | `ref: string`；`message: string` | 在调查者下一请求前送达，复用原上下文与剩余额度，已暂停或失败的会重新运行；额度耗尽时拒绝。 |
 | `wait_novel_research` | 可选等待调查 | `ref: string`；`timeout_seconds: integer=30` | 允许 1–60 秒，只返回状态，超时不取消；报告和提问在本次工具结果之后单独送达。 |
@@ -408,6 +408,8 @@ Delegate a question about the user's novel to a new read-only investigator. Retu
 ```json
 {"question":"查证人物早年经历","background":"本局尚未遇见此人"}
 ```
+
+可选参数 `auto_destroy` 为布尔值，默认 `false`。一次性调查可传 `true`，在第一份最终报告可靠送达后自动销毁并释放名额，保留报告和历史；需要在报告后复用上下文追问时保持 `false`。提问、失败或暂停不触发自动销毁。
 
 成功返回：
 

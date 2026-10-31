@@ -96,7 +96,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 SETTINGS_VERSIONS = range(2, 16)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -288,6 +288,13 @@ class Store(MessageAdapters):
                 from tavern.core.context_usage import retire_estimated_pressure
 
                 retire_estimated_pressure(db)
+            if previous_schema is not None and int(previous_schema[0]) < 18:
+                # Old investigations retain their explicit manual lifetime. The
+                # format bump keeps older runtimes from ignoring the new policy.
+                db.execute(
+                    "UPDATE novel_jobs SET config=json_set(config,'$.auto_destroy',json('false')) "
+                    "WHERE json_type(config,'$.auto_destroy') IS NULL"
+                )
             db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version',?)", (str(SCHEMA_VERSION),))
 
     @contextmanager
@@ -1551,6 +1558,7 @@ class Store(MessageAdapters):
         return self.turn(tid)
 
     def save_full_agent_progress(self, tid, progress):
+        destroyed = set()
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
@@ -1561,16 +1569,37 @@ class Store(MessageAdapters):
                 for item in progress["new_trace"]
                 if "_novel_mail" in item["message"]
             ]
-            claimed = db.executemany(
-                "UPDATE novel_mail SET delivered=? WHERE seq=? AND delivered IS NULL AND revoked=0 "
-                "AND job IN (SELECT id FROM novel_jobs WHERE session=(SELECT session FROM turns WHERE id=?))",
-                [(tid, seq, tid) for seq in deliveries],
-            )
-            if claimed.rowcount > 0:
+            claimed = False
+            for seq in deliveries:
+                packet = db.execute(
+                    "UPDATE novel_mail SET delivered=? WHERE seq=? AND delivered IS NULL AND revoked=0 "
+                    "AND job IN (SELECT id FROM novel_jobs WHERE session=(SELECT session FROM turns WHERE id=?)) "
+                    "RETURNING job,kind",
+                    (tid, seq, tid),
+                ).fetchone()
+                if packet is None:
+                    continue
+                claimed = True
+                if (
+                    packet["kind"] == "report"
+                    and db.execute(
+                        "SELECT json_extract(config,'$.auto_destroy') FROM novel_jobs WHERE id=?",
+                        (packet["job"],),
+                    ).fetchone()[0]
+                ):
+                    destroyed.add(packet["job"])
+            if claimed:
                 from tavern.novel.storage import event as novel_event
 
                 sid = db.execute("SELECT session FROM turns WHERE id=?", (tid,)).fetchone()[0]
                 novel_event(db, sid, "delivered")
+                # Only newly claimed reports may trigger destruction. Older
+                # receipts remain in new_trace and must not retrigger on saves.
+                for job_id in destroyed:
+                    db.execute("UPDATE novel_jobs SET status='destroyed' WHERE id=?", (job_id,))
+                    db.execute("UPDATE novel_mail SET revoked=1 WHERE job=? AND delivered IS NULL", (job_id,))
+                    novel_event(db, sid, "destroyed", job_id)
+        return destroyed
 
     def turn(self, tid):
         with self.connection() as db:

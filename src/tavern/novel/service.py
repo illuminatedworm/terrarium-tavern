@@ -164,6 +164,7 @@ class NovelService:
                 "notice": "此委派已启动，不重复创建或刷新额度；已暂停或失败时用 resume_novel_research 恢复。",
             }
         config = self.snapshot_config(sid, main_settings=owner.settings)
+        config["auto_destroy"] = args.auto_destroy
         cfg = self.settings({"id": owner.tid, "config": config})
         if self.provider_factory is None:
             require_model_connection(cfg)
@@ -461,6 +462,8 @@ class NovelService:
                 "content": packet["content"],
                 "notice": "原著参考，不是本局已发生的事实；请结合当前进度判断是否仍适用。",
             }
+            if packet["auto_destroy"] and packet["kind"] == "report":
+                body["notice"] += "本报告送达后调查者自动销毁，报告和历史保留；如需继续调查请新建。"
             owner.append(
                 {
                     "role": "system",
@@ -472,5 +475,13 @@ class NovelService:
             )
         if packets or needs_status:
             # Saving the appended messages and claiming mail share a SQLite transaction.
-            await owner.save_progress(script_mirror=mirror)
+            destroyed = await owner.save_progress(script_mirror=mirror)
+            # The receipt transaction revokes first. Stop any follow-up already in
+            # flight too, so it cannot keep spending quota after automatic destruction.
+            for job_id in destroyed:
+                self.restart_requested.discard(job_id)
+                task = self.tasks.get(job_id)
+                if task and not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
             self.notify()

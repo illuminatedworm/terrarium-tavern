@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import re
+import sqlite3
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -188,14 +189,28 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
     saved = research.data.job(jobs[3])
     saved["requests"], saved["elapsed"] = 7, 13.5
     research.data.save(saved)
+    # An older database has no per-investigator destruction policy. Opening it
+    # must back up first and preserve the existing manual lifetime.
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='17' WHERE key='schema_version'")
+    store = Store(store.root)
+    research.store = research.data.store = store
+    assert research.data.job(jobs[3])["config"]["auto_destroy"] is False
+    assert list(store.root.glob("before-upgrade-schema17-*.sqlite3"))
     store.recover()
     restored = research.data.job(saved["id"])
     assert (restored["status"], restored["requests"], restored["elapsed"]) == ("paused", 7, 13.5)
+    with store.connection() as db:
+        db.execute(
+            "UPDATE novel_jobs SET config=json_set(config,'$.auto_destroy',json('true')) WHERE id=?",
+            (saved["id"],),
+        )
     archive = export_package(store, ExportSelection(settings=False, sessions=[session["id"]]))
     package, blobs = read_package(archive, store)
     imported = import_package(store, package, blobs)["sessions"][0]
     imported_job = research.data.resolve(imported, "R4")
     assert (imported_job["status"], imported_job["requests"], imported_job["elapsed"]) == ("paused", 7, 13.5)
+    assert imported_job["config"]["auto_destroy"] is True
     imported_source = research.data.source(research.data.binding(imported)["source"])
     assert imported_source["id"] != source_id
     assert NovelText(store.root, imported_source).read(0, 30)["text"] == "第一章\n证据完整。"
@@ -206,6 +221,116 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
     # A stale background response cannot resurrect a revoked investigator or send mail.
     saved["status"] = "completed"
     assert not research.data.save(saved, mail={"kind": "report", "content": "迟到", "operation": "late"})
+
+
+async def test_novel_auto_destroy_delivers_report_and_allows_clarification(story):
+    """One-shot research releases its slot only after its answer reaches the main context."""
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    service = runtime(store)
+    research = service.full.novel
+    source = uid()
+    metadata = import_file(store.root, source, io.BytesIO("原著证据".encode()), "原著.txt")
+    research.data.bind(session["id"], 0, source, metadata)
+    research.data.configure(session["id"], 1, enabled=True)
+    investigator = Model(("ask_delegator", {"question": "需要查哪个阶段？"}), "最终报告：早年阶段的证据。")
+    research.provider_factory = lambda cfg: investigator
+    main = Model(
+        ("start_novel_research", {"question": "查人物经历", "auto_destroy": True}),
+        ("wait_novel_research", {"ref": "R1", "timeout_seconds": 1}),
+        ("message_novel_research", {"ref": "R1", "message": "只查早年阶段"}),
+        ("wait_novel_research", {"ref": "R1", "timeout_seconds": 1}),
+        ("list_novel_research", {}),
+        "据调查结论继续正文。",
+    )
+    try:
+        result, _ = await turn(service, store.session(session["id"]), main)
+        assert result["status"] == "committed", result["error"]
+        job = research.data.resolve(session["id"], "R1")
+        assert job["config"]["auto_destroy"] is True
+        assert job["status"] == "destroyed" and investigator.closed
+        assert research.data.inbox(session["id"]) == []
+        report_request = next(
+            request for request in main.requests if "最终报告：早年阶段的证据。" in str(request["messages"])
+        )
+        assert "本报告送达后调查者自动销毁" in str(report_request["messages"])
+        results = [
+            json.loads(message["content"])
+            for message in main.requests[-1]["messages"]
+            if message["role"] == "tool"
+        ]
+        listing = next(item["data"] for item in results if "slots_remaining" in item.get("data", {}))
+        assert listing["investigators"] == [] and listing["slots_remaining"] == 3
+        assert research.data.starts(session["id"], job["round_position"]) == 1
+        with store.connection() as db:
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM novel_mail WHERE job=? AND delivered IS NOT NULL AND revoked=0",
+                    (job["id"],),
+                ).fetchone()[0]
+                == 3
+            )  # Clarification, answer and final report all survive.
+    finally:
+        await service.close()
+
+
+def test_novel_auto_destroy_receipt_is_atomic_and_not_replayed(story):
+    """A failed destruction must not consume the report; saving old receipts must not trigger it again."""
+    from tavern.novel.service import NovelService
+    from tavern.novel.source import import_file
+    from tavern.storage.store import uid
+
+    store, session = story
+    research = NovelService(store)
+    source = uid()
+    metadata = import_file(store.root, source, io.BytesIO("证据".encode()), "原著.txt")
+    research.data.bind(session["id"], 0, source, metadata)
+    research.data.configure(session["id"], 1, enabled=True)
+    config = {**research.snapshot_config(session["id"]), "auto_destroy": True}
+    job_id, _ = research.data.create(session["id"], "auto", 2, "", "问题", "", config)
+    tid, _ = store.create_turn(
+        session["id"], TurnRequest(text="继续", operation_id="receipt", expected_revision=0)
+    )
+    job = research.data.job(job_id)
+    progress = {"new_trace": []}
+    for kind, status in (("question", "waiting"), ("error", "failed"), ("report", "completed")):
+        job["status"] = status
+        research.data.save(job, mail={"kind": kind, "content": kind, "operation": kind})
+        packet = research.data.inbox(session["id"])[0]
+        progress["new_trace"].append({"message": {"_novel_mail": packet["seq"], "content": kind}})
+        if kind != "report":
+            assert store.save_full_agent_progress(tid, progress) == set()
+            assert research.data.job(job_id)["status"] == status
+            continue
+        with store.connection() as db:
+            before = db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()[0]
+            db.execute(
+                "CREATE TRIGGER reject_auto_destroy BEFORE UPDATE OF status ON novel_jobs "
+                "WHEN NEW.status='destroyed' BEGIN SELECT RAISE(ABORT,'injected failure'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="injected failure"):
+            store.save_full_agent_progress(tid, progress)
+        assert research.data.job(job_id)["status"] == "completed"
+        assert research.data.inbox(session["id"])[0]["kind"] == "report"
+        with store.connection() as db:
+            assert (
+                db.execute("SELECT payload FROM full_agent_progress WHERE turn=?", (tid,)).fetchone()[0]
+                == before
+            )
+            db.execute("DROP TRIGGER reject_auto_destroy")
+    assert store.save_full_agent_progress(tid, progress) == {job_id}
+    assert research.data.job(job_id)["status"] == "destroyed"
+    assert research.data.inbox(session["id"]) == []
+    assert store.save_full_agent_progress(tid, progress) == set()
+    with store.connection() as db:
+        assert (
+            db.execute(
+                "SELECT count(*) FROM novel_events WHERE job=? AND kind='destroyed'", (job_id,)
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_novel_character_ranges_preserve_long_lines_and_unicode(tmp_path):

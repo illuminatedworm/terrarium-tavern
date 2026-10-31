@@ -414,7 +414,9 @@ class NovelStore:
     def inbox(self, sid):
         with self.store.connection() as db:
             rows = db.execute(
-                "SELECT m.*,j.ref,j.task,j.background,j.round_position,s.name AS source_name,s.created AS source_created FROM novel_mail m "
+                "SELECT m.*,j.ref,j.task,j.background,j.round_position,"
+                "json_extract(j.config,'$.auto_destroy') AS auto_destroy,"
+                "s.name AS source_name,s.created AS source_created FROM novel_mail m "
                 "JOIN novel_jobs j ON j.id=m.job JOIN novel_sources s ON s.id=j.source WHERE j.session=? AND m.sender='worker' "
                 "AND m.delivered IS NULL AND m.revoked=0 ORDER BY m.seq",
                 (sid,),
