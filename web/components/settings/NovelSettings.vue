@@ -5,6 +5,8 @@ import type { NovelConfig } from '../../lib/novel';
 import { channelProviders, type Channel } from '../../lib/channels';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import ModelProfileEditor from './ModelProfileEditor.vue';
+import GlobalMessageAdapter from './GlobalMessageAdapter.vue';
+import { adapterApis } from '../../lib/messageAdapter';
 const props = defineProps<{
   value: NovelConfig;
   main: ModelProfile;
@@ -18,6 +20,8 @@ defineEmits<{ checked: [] }>();
 const channel = ref<Channel>(props.initialChannel || 'standard');
 const key = computed(() => (channel.value === 'chatgpt' ? 'official_model' : 'model'));
 const base = computed(() => (channel.value === 'chatgpt' ? props.officialMain : props.main));
+const deliveryApi = computed(() => (channel.value === 'chatgpt' ? 'responses' : props.main.api_mode));
+const deliveryApiLabel = computed(() => adapterApis.find((item) => item.value === deliveryApi.value)?.label);
 const profile = computed(() => props.value[key.value]);
 function follow(value: boolean) {
   props.value[key.value] = value ? null : base.value ? JSON.parse(JSON.stringify(base.value)) : null;
@@ -39,18 +43,32 @@ function follow(value: boolean) {
         base?.model || '尚未配置此渠道'
       }}。
     </p>
-    <ModelProfileEditor
-      v-if="profile"
-      :key="channel"
-      :profile="profile"
-      :providers="channelProviders(providers, channel)"
-      role="novel_research"
-      :channel="channel"
-      label="用户指定的原著调查模型"
-      :effort-options="effortOptions"
-      :flush="flush"
-      @checked="$emit('checked')"
-    />
+    <div class="profile-editor">
+      <ModelProfileEditor
+        v-if="profile"
+        :key="channel"
+        :profile="profile"
+        :providers="channelProviders(providers, channel)"
+        role="novel_research"
+        :channel="channel"
+        label="用户指定的原著调查模型"
+        :effort-options="effortOptions"
+        :flush="flush"
+        @checked="$emit('checked')"
+      />
+      <GlobalMessageAdapter
+        :model-value="main.message_adapter"
+        :api-mode="deliveryApi"
+        lane="full_agent"
+        :type-ids="['novel_research', 'novel_status']"
+        @update:model-value="main.message_adapter = $event"
+      />
+    </div>
+    <p class="muted">
+      汇报消息适配用于主 agent 接收报告、提问、失败通知和运行状态，当前接口：{{ deliveryApiLabel }}。 与 Full
+      Agent → 模型与生成 → 普通 API →
+      消息适配共用新建对话默认值，与调查模型选择无关；撤回本页也会撤回这份共享设置。
+    </p>
     <p class="muted">
       调查者不能选择或更换模型。配置在创建时固定，修改只影响新建调查者；旧调查的实际模型在原著面板显示。
     </p>

@@ -265,9 +265,7 @@ def default_rule(name, api, lane="foreground"):
     # Otherwise Tracker's sole user input becomes system-only, leaving relays
     # with no Responses input / Gemini contents after extracting instructions.
     task_role = definition.role in ("user", "assistant") and not name.startswith("compat:")
-    # Research delivery defaults to system on every API; the visible adapter
-    # mapping remains authoritative when a provider needs a different body role.
-    if definition.configurable and not task_role and name not in ("novel_status", "novel_research"):
+    if definition.configurable and not task_role:
         role = "user" if api == "gemini" else "system"
     elif role == "developer" and api in ("anthropic", "gemini"):
         role = "system"

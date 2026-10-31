@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 import SettingsFields, { type SettingField } from './SettingsFields.vue';
 import CacheSettingsEditor from './CacheSettingsEditor.vue';
-import MessageAdapterEditor from './MessageAdapterEditor.vue';
+import GlobalMessageAdapter from './GlobalMessageAdapter.vue';
 import { modelEndpoint } from '../../lib/cachePolicy';
 import { geminiControls } from '../../lib/geminiCapabilities';
 import { useModelCatalog } from '../../lib/modelCatalog';
@@ -31,7 +31,7 @@ const busy = ref(false);
 const fetching = ref(false);
 const feedback = ref('');
 const cacheValid = ref(true);
-const adapterEditor = ref<InstanceType<typeof MessageAdapterEditor>>();
+const adapterEditor = ref<InstanceType<typeof GlobalMessageAdapter>>();
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
 const gemini = computed(() => geminiControls(props.profile.api_mode, props.profile.model));
@@ -295,16 +295,13 @@ async function action(check: boolean) {
         可用的采样参数留空即不发送。独立文本限额使用所选分词器，未知模型采用参考分词器；上下文只显示接口实测。显式缓存断点需要模型支持。
       </p>
     </details>
-    <details v-if="role !== 'novel_research'" class="settings-advanced">
-      <summary>消息适配：发送角色与标签包裹</summary>
-      <p class="muted">这里只影响新建的游玩或制卡对话。已有对话在自己的消息适配设置中修改。</p>
-      <MessageAdapterEditor
-        ref="adapterEditor"
-        :model-value="profile.message_adapter"
-        :api-mode="subscription ? 'responses' : profile.api_mode"
-        :lane="role"
-        @update:model-value="profile.message_adapter = $event"
-      />
-    </details>
+    <GlobalMessageAdapter
+      v-if="role !== 'novel_research'"
+      ref="adapterEditor"
+      :model-value="profile.message_adapter"
+      :api-mode="subscription ? 'responses' : profile.api_mode"
+      :lane="role"
+      @update:model-value="profile.message_adapter = $event"
+    />
   </section>
 </template>

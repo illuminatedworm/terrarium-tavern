@@ -142,7 +142,7 @@ def page_catalog():
         if scope == "half_agent":
             pages.append(("recipe", "上下文编排", ["context_recipe"]))
         else:
-            pages.append(("novel", "原著调查", ["novel_research"]))
+            pages.append(("novel", "原著调查", ["novel_research", "model.message_adapter"]))
         for key, label, paths in pages:
             result.append(
                 {"id": f"{scope}.{key}", "scope": scope, "key": key, "label": label, "paths": paths}

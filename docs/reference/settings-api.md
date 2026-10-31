@@ -144,7 +144,9 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 
 `GET /api/message-adapter/types?lane=foreground` 返回该调用链的类型目录、标签和四种协议的默认规则；`lane` 也可为 `background`、`full_agent`、`card_author`、`advisor`。
 
-`full_agent` 的 `novel_research`（原著调查消息）和 `novel_status`（原著参考运行状态）允许配置发送角色，四种协议均默认 `system`。
+`full_agent` 的 `novel_research`（原著调查消息）和 `novel_status`（原著参考运行状态）允许配置发送角色，Google GenAI（`gemini`）默认 `user`，其他协议默认 `system`；显式设置的消息适配映射优先。
+
+全局“原著调查”页的“消息适配”只展示这两个类型，直接编辑 `full_agent.model.message_adapter`，与“模型与生成 → 普通 API”共用配置。该页的撤回范围同时包含 `novel_research` 和 `model.message_adapter`；撤回共享映射时，两处入口同步更新。
 
 对话配置使用 `GET/PUT /api/sessions/{sid}/message-adapter`；制卡使用 `GET/PUT /api/card-author/conversations/{wid}/message-adapter`。GET 返回 `revision`、按调用链组织的 `config` 和 `lanes` 类型目录。PUT 提交 `{"expected_adapter_revision":0,"config":{...}}`，成功返回完整的新值。这个修订号独立于剧情／草稿修订号，运行中也可保存。下一次模型调用读取新值，同次调用的重试保持原快照。
 

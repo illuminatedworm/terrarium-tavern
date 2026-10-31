@@ -14,6 +14,7 @@ const props = defineProps<{
   apiMode: string;
   lane: string;
   types?: MessageTypeDefinition[];
+  typeIds?: string[];
   keminiEnabled?: boolean;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: MessageAdapterConfig] }>();
@@ -44,6 +45,7 @@ watch(
 );
 const types = computed(() =>
   (props.types || loaded.value)
+    .filter((type) => !props.typeIds || props.typeIds.includes(type.id))
     .filter(
       (type) =>
         (showFixed.value || type.configurable) &&
@@ -74,7 +76,14 @@ async function resetRoles(apiMode: string) {
   try {
     const definitions = await (props.types || typesRequest);
     if (token !== generation || props.apiMode !== apiMode) return;
-    emit('update:modelValue', resetAdapterRoles(props.modelValue, apiMode, definitions));
+    emit(
+      'update:modelValue',
+      resetAdapterRoles(
+        props.modelValue,
+        apiMode,
+        definitions.filter((type) => !props.typeIds || props.typeIds.includes(type.id)),
+      ),
+    );
     error.value = '';
   } catch (e) {
     if (token === generation) error.value = String(e);

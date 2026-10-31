@@ -489,6 +489,11 @@
 .settings-advanced > :last-child {
   margin-bottom: 16px;
 }
+.settings-detail .global-message-adapter > .muted {
+  /* Keep the model-page typography when embedded in an agent settings grid. */
+  margin: 10px 0 16px;
+  line-height: 1.65;
+}
 .settings-channel-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

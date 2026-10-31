@@ -104,8 +104,6 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
     def expected_role(name):
         if name == "tracker_input":
             return "user"
-        if name in ("novel_status", "novel_research"):
-            return "system"
         return expected
 
     for lane in ("foreground", "full_agent", "background", "card_author", "advisor"):
@@ -156,12 +154,12 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
             )
             assert [row["message_type"] for row in legacy] == ["novel_status", "novel_research"]
             settings.message_adapter = MessageAdapterConfig.model_validate(
-                {"mappings": {api: {"novel_research": {"role": "user", "wrap": False}}}}
+                {"mappings": {api: {"novel_research": {"role": "assistant", "wrap": False}}}}
             )
             custom, _, _ = adapt_messages(legacy, settings)
             assert [(row["role"], row["content"]) for row in custom] == [
-                ("system", "Status"),
-                ("user", "Report"),
+                (expected, "Status"),
+                ("assistant", "Report"),
             ]
         if lane == "background":
             task_input = next(row for row in projected if row["message_type"] == "tracker_input")
@@ -174,14 +172,8 @@ def test_configurable_message_defaults_follow_protocol_across_lanes(api):
             custom, _, _ = adapt_messages([task_input], settings)
             assert custom[0]["role"] == "system" and custom[0]["content"] == "tracker_input"
         if api == "gemini":
-            if lane == "full_agent":
-                # The explicit system default is preserved even where GenAI
-                # requires the user to choose a supported body role instead.
-                with pytest.raises(ValueError, match="原著参考运行状态.*role=system"):
-                    native_messages(projected, api)
-            else:
-                _, contents, _ = native_messages(projected, api)
-                assert all(row["role"] in ("user", "model") for row in contents)
+            _, contents, _ = native_messages(projected, api)
+            assert all(row["role"] in ("user", "model") for row in contents)
 
 
 @pytest.mark.parametrize("api", APIS)

@@ -58,6 +58,44 @@ async def test_composer_shortcut_persistence_validation_and_page_undo(tmp_path):
         assert undo.json()["full_agent"] == original["full_agent"]
 
 
+async def test_novel_delivery_defaults_share_main_mapping_and_page_undo(tmp_path):
+    """Both global entry points must save and undo one mapping without changing existing stories."""
+    app = create_app(tmp_path)
+    store = app.state.store
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}', "fixture.json")
+    existing = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+    before = store.message_adapter("story", existing["id"], "full_agent")["config"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        opened = (await client.post("/api/settings/edit-sessions", json={})).json()
+        original = opened["settings"]
+        page = next(page for page in original["pages"] if page["id"] == "full_agent.novel")
+        assert page["paths"] == ["novel_research", "model.message_adapter"]
+        mapping = {
+            "version": 1,
+            "mappings": {"gemini": {"novel_research": {"role": "assistant", "wrap": False}}},
+        }
+        changed = await client.patch(
+            "/api/settings/full_agent",
+            json={
+                "expected_revision": original["revisions"]["full_agent"],
+                "edit_session": opened["id"],
+                "changes": {"model.message_adapter": mapping},
+            },
+        )
+        assert changed.status_code == 200, changed.text
+        assert store.settings_document().full_agent.model.message_adapter.model_dump() == mapping
+        created = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+        assert store.message_adapter("story", created["id"], "full_agent")["config"] == mapping
+        undo = await client.post(
+            f"/api/settings/edit-sessions/{opened['id']}/undo",
+            json={"page": page["id"], "expected_revision": changed.json()["revisions"]["full_agent"]},
+        )
+        assert undo.status_code == 200, undo.text
+        assert undo.json()["full_agent"] == original["full_agent"]
+        assert store.message_adapter("story", created["id"], "full_agent")["config"] == mapping
+        assert store.message_adapter("story", existing["id"], "full_agent")["config"] == before
+
+
 @pytest.mark.parametrize("scope,path", [("full_agent", "model"), ("half_agent", "foreground")])
 async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_path, scope, path):
     app = create_app(tmp_path)
