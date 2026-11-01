@@ -46,6 +46,29 @@ it('pairs streamed calls/results in order and ignores replay and foreign turns',
   expect(mergeActivity(items, items)).toHaveLength(2);
   const snapshot = { ...items[0], event_seq: 20, status: 'returned' as const };
   expect(mergeActivity([snapshot], liveActivity([first], 'current', 'running'))[0].status).toBe('returned');
+  const received = {
+    seq: 6,
+    turn: 'current',
+    kind: 'full_agent_runtime',
+    payload: {
+      id: 'runtime-3',
+      order: 30,
+      name: 'novel_report_delivery',
+      summary: 'R1 · 原著调查报告已送达',
+      status: 'running',
+      reasoning_content: 'PRIVATE_REASONING',
+    },
+  };
+  const dispatched = {
+    ...received,
+    seq: 7,
+    payload: { ...received.payload, status: 'returned' },
+  };
+  const runtime = liveActivity([received, dispatched, received], 'current', 'running');
+  expect(runtime).toMatchObject([{ id: 'runtime-3', kind: 'runtime', status: 'returned' }]);
+  expect(JSON.stringify(runtime)).not.toContain('PRIVATE_REASONING');
+  expect(liveActivity([received], 'current', 'cancelled')[0].status).toBe('interrupted');
+  expect(mergeActivity(runtime, liveActivity([received], 'current', 'running'))[0].status).toBe('returned');
 });
 
 it('keeps errors visible and hides transport metadata from dialogue activity', () => {

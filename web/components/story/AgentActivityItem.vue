@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { api } from '../../lib/api';
 import { toolLabels, type AgentActivity } from '../../lib/agentActivity';
+import Icon from '../common/Icon.vue';
 
 const props = defineProps<{
   item: AgentActivity;
@@ -33,6 +34,15 @@ const status = computed(
   () =>
     props.statusLabel ||
     { running: '执行中', returned: '已返回', error: '返回错误', interrupted: '已中断' }[props.item.status],
+);
+const runtimeStatus = computed(
+  () =>
+    ({
+      running: '准备发送主模型请求',
+      returned: '主模型请求已发出',
+      error: '请求发送失败',
+      interrupted: '请求未确认发出',
+    })[props.item.status],
 );
 
 async function load(part: Part, more = false) {
@@ -87,7 +97,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <div
+    v-if="item.kind === 'runtime'"
+    class="agent-runtime-activity"
+    :class="`activity-${item.status}`"
+    :data-activity-id="item.id"
+    role="status"
+  >
+    <Icon name="arrow-right" />
+    <span class="runtime-label">Runtime</span>
+    <span class="runtime-summary">{{ item.summary }}</span>
+    <span class="activity-status">{{ runtimeStatus }}</span>
+  </div>
   <details
+    v-else
     class="agent-activity"
     :class="`activity-${item.status}`"
     :data-activity-id="item.id"
@@ -126,6 +149,26 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.agent-runtime-activity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 9px;
+  margin: 8px 0 12px 52px;
+  padding: 9px 12px;
+  border-left: 2px solid rgb(var(--accent-rgb) / 0.5);
+  background: rgb(var(--accent-rgb) / 0.04);
+  border-radius: var(--radius-sm);
+  font: var(--fs-sm) / 1.6 var(--font-ui);
+  color: var(--text-secondary);
+}
+.runtime-label {
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+.runtime-summary {
+  overflow-wrap: anywhere;
+}
 .agent-activity {
   container-type: inline-size;
   padding: 0;
@@ -229,7 +272,8 @@ onBeforeUnmount(() => {
   }
 }
 @media (max-width: 620px) {
-  .agent-activity {
+  .agent-activity,
+  .agent-runtime-activity {
     margin-left: 0;
   }
   .activity-name {

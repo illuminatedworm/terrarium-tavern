@@ -92,13 +92,50 @@ def text_item(key, order, content, *, is_story=False):
     }
 
 
+def novel_report_item(seq, message):
+    if "_novel_mail" not in message:
+        return None
+    body = json.loads(message["content"].partition("\n")[2])
+    if body["kind"] != "report":
+        return None
+    return {
+        "id": f"runtime-{seq}",
+        "order": seq * 10,
+        "kind": "runtime",
+        "name": "novel_report_delivery",
+        "summary": f"{body['investigator']} · 原著调查报告已送达",
+        "status": "running",
+        "details": {},
+    }
+
+
+def observe_report_dispatch(request, reports, emit):
+    """Preparing/capturing a request does not prove its body left the client."""
+    previous = request.extensions.get("trace")
+
+    async def trace(name, info):
+        if previous:
+            await previous(name, info)
+        if name in ("http11.send_request_body.complete", "http2.send_request_body.complete"):
+            for item in reports:
+                emit("full_agent_runtime", {**item, "status": "returned"})
+            reports.clear()  # A retry or duplicate transport notification is not a new delivery.
+
+    request.extensions["trace"] = trace
+
+
 def from_trace(rows):
-    items, pending = [], {}
+    items, pending, reports = [], {}, []
     for row in rows:
         seq, message = row["seq"], json.loads(row["payload"])
         if message.get("_full_agent_final") or message.get("_full_agent_rejected"):
             continue
         if message.get("role") == "assistant":
+            # A durable model response also proves dispatch, including old traces
+            # and forks whose transient transport events have been cleaned up.
+            for item in reports:
+                item["status"] = "returned"
+            reports.clear()
             if message.get("content") and (
                 not message.get("_story_call_id")
                 or any(
@@ -127,7 +164,10 @@ def from_trace(rows):
         elif message.get("role") == "tool" and message.get("tool_call_id") in pending:
             item = pending.pop(message["tool_call_id"])
             finish_tool(item, message.get("_archive_content", message.get("content", "")))
-    for item in pending.values():
+        elif item := novel_report_item(seq, message):
+            items.append(item)
+            reports.append(item)
+    for item in [*pending.values(), *reports]:
         item["status"] = "interrupted"
     return items
 
@@ -158,6 +198,14 @@ def turn_items(store, sid, tid):
     items = {}
     for event in store.events(tid):
         payload, kind = event["payload"], event["kind"]
+        if kind == "full_agent_runtime":
+            key = payload["id"]
+            items[key] = {
+                **{k: payload[k] for k in ("id", "order", "kind", "name", "summary", "status")},
+                "details": {},
+                "event_seq": event["seq"],
+            }
+            continue
         if kind not in ("full_agent_assistant", "full_agent_tool_started", "full_agent_tool"):
             continue
         key = payload.get("activity_id", f"event-{event['seq']}")

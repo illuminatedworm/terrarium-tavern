@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
 
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Request
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, TurnRequest
-from tavern.full_agent.activity import from_trace
+from tavern.full_agent.activity import from_trace, novel_report_item, observe_report_dispatch
 from tavern.full_agent.context import load_trace
 from tests.backend.test_full_agent import Model, handoff, runtime, turn
 
@@ -188,3 +188,35 @@ def test_batch_calls_pair_results_by_id_and_preserve_request_order():
     assert json.loads(items[0]["details"]["result"]) == {"ok": True, "data": {"energy": 4}}
     assert json.loads(items[2]["details"]["arguments"]) == {"chapters": None}
     assert json.loads(items[3]["details"]["arguments"])["handoff"]["chapters"][0]["title"] == 123
+
+
+async def test_report_activity_confirms_body_dispatch_and_survives_trace_replay():
+    """A captured/failed-before-send request must never be advertised as sent."""
+    message = {
+        "role": "system",
+        "_novel_mail": 7,
+        "content": '原著调查消息：\n{"investigator":"R1","kind":"report","content":"证据尾"}',
+    }
+    item = novel_report_item(3, message)
+    reports, emitted, transport_events = [item], [], []
+    request = Request("POST", "https://fixture.invalid/v1/chat/completions", json={"messages": [message]})
+    original_body = request.content
+
+    async def previous(name, info):
+        transport_events.append(name)
+
+    request.extensions["trace"] = previous
+    observe_report_dispatch(request, reports, lambda kind, payload: emitted.append((kind, payload)))
+    trace = request.extensions["trace"]
+    await trace("http11.send_request_headers.complete", {})
+    assert emitted == [] and item["status"] == "running"
+    await trace("http11.send_request_body.complete", {})
+    await trace("http11.send_request_body.complete", {})
+    assert len(emitted) == 1 and emitted[0][0] == "full_agent_runtime"
+    sent = emitted[0][1]
+    assert sent["status"] == "returned" and sent["id"] == item["id"]
+    assert len(transport_events) == 3 and request.content == original_body
+    rows = [{"seq": 3, "payload": json.dumps(message)}]
+    assert from_trace(rows)[0]["status"] == "interrupted"
+    rows.append({"seq": 4, "payload": json.dumps({"role": "assistant", "content": "继续本轮"})})
+    assert from_trace(rows)[0] == sent

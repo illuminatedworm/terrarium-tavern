@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import io
 import json
 import socket
 import tempfile
@@ -15,7 +16,9 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
 from tavern.desktop_browser import system_browser
+from tavern.novel.source import import_file
 from tavern.scripting.model_transport import ModelTransport
+from tavern.storage.store import uid
 from tests.backend.test_full_agent_streaming import (
     body_delta,
     body_end,
@@ -44,7 +47,7 @@ class BrowserStream(httpx.AsyncByteStream):
         self.closed = True
 
 
-async def main(single_viewport=False):
+async def main(single_viewport=False, report_activity_only=False):
     output = Path(".cache/full-agent-streaming")
     output.mkdir(parents=True, exist_ok=True)
     gates = [Event() for _ in range(5)]
@@ -62,6 +65,23 @@ async def main(single_viewport=False):
         store.save_settings(cfg)
         session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
         other = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+        research = app.state.service.full.novel
+        source = uid()
+        metadata = import_file(store.root, source, io.BytesIO("钟声来自旧港。".encode()), "原著.txt")
+        research.data.bind(session["id"], 0, source, metadata)
+        research.data.configure(session["id"], 1, enabled=True)
+        job_id, _ = research.data.create(
+            session["id"],
+            "fixture-report",
+            1,
+            "",
+            "钟声来自哪里？",
+            "",
+            research.snapshot_config(session["id"]),
+        )
+        job = research.data.job(job_id)
+        job["status"] = "completed"
+        research.data.save(job, mail={"kind": "report", "content": "钟声来自旧港。", "operation": "report"})
         store.update_session(session["id"], 0, title="流式正文测试")
         store.update_session(other["id"], 0, title="另一个故事")
         streams = [
@@ -76,9 +96,12 @@ async def main(single_viewport=False):
         ]
         bodies = []
 
-        def route(request):
+        async def route(request):
             bodies.append(json.loads(request.content))
             assert bodies[-1]["stream"] is True
+            # MockTransport bypasses HTTPcore's real body-sent notification.
+            if trace := request.extensions.get("trace"):
+                await trace("http11.send_request_body.complete", {})
             return httpx.Response(
                 200, headers={"content-type": "text/event-stream"}, stream=streams[len(bodies) - 1]
             )
@@ -118,7 +141,12 @@ async def main(single_viewport=False):
                     await expect(send).to_be_visible()
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("继续故事")
                     await send.click()
+                    runtime = page.locator(".agent-runtime-activity")
+                    await expect(runtime).to_contain_text("R1 · 原著调查报告已送达")
+                    await expect(runtime).to_contain_text("主模型请求已发出")
+                    assert await runtime.locator("summary, code").count() == 0
                     await expect(page.locator(".draft")).to_have_count(0)
+                    await page.screenshot(path=str(output / "report-dispatched.png"))
                     assert store.session(session["id"])["head"] == session["head"]
                     gates[0].set()
                     await expect(page.locator(".activity-name")).to_contain_text(["write_handoff"])
@@ -127,6 +155,7 @@ async def main(single_viewport=False):
                     await expect(page.locator(".draft")).to_contain_text("第一段正在生成。")
                     await expect(page.locator(".message .badge").last).to_have_text("正文预览 · 未保存")
                     await page.reload()
+                    await expect(runtime).to_contain_text("主模型请求已发出")
                     await expect(page.locator(".draft .prose")).to_have_text("第一段正在生成。")
                     assert store.session(session["id"])["head"] == session["head"]
                     await page.get_by_role("button", name="折叠左侧栏", exact=True).click()
@@ -144,6 +173,7 @@ async def main(single_viewport=False):
                     for width, height, name in viewports:
                         await page.set_viewport_size({"width": width, "height": height})
                         await expect(page.locator(".draft")).to_be_visible()
+                        await expect(runtime).to_contain_text("主模型请求已发出")
                         assert await page.evaluate(
                             "document.documentElement.scrollWidth <= innerWidth && "
                             "document.documentElement.scrollHeight <= innerHeight"
@@ -154,6 +184,7 @@ async def main(single_viewport=False):
                     await page.locator(".session-open").filter(has_text="另一个故事").click()
                     await expect(page.locator(".session-row.active")).to_contain_text("另一个故事")
                     await expect(page.locator(".draft")).to_have_count(0)
+                    await expect(runtime).to_have_count(0)
                     completed = Event()
                     pending = next(task for task in app.state.service.full.tasks.values() if not task.done())
                     pending.get_loop().call_soon_threadsafe(
@@ -168,6 +199,16 @@ async def main(single_viewport=False):
                         "第一段正在生成。这是第二段。"
                     )
                     await expect(page.locator(".draft")).to_have_count(0)
+                    await expect(
+                        page.locator(".agent-message-activity .agent-runtime-activity")
+                    ).to_contain_text("主模型请求已发出")
+                    if report_activity_only:
+                        assert all(stream.closed for stream in streams[:2])
+                        assert not errors, errors
+                        print(
+                            "Novel report dispatch, pending reload, selected-session isolation and durable activity passed."
+                        )
+                        return
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("第二轮")
                     await send.click()
                     await expect(page.locator(".draft")).to_contain_text("第二轮已接收的完整正文")
@@ -233,4 +274,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--single-viewport", action="store_true", help="Check only desktop when no layout changed."
     )
-    asyncio.run(main(parser.parse_args().single_viewport))
+    parser.add_argument(
+        "--report-activity-only", action="store_true", help="Stop after report dispatch and history checks."
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.single_viewport, args.report_activity_only))

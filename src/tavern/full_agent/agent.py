@@ -19,6 +19,7 @@ from tavern.core.history_refs import message_ref
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
+from tavern.full_agent.activity import novel_report_item, observe_report_dispatch
 from tavern.full_agent.content import lore_references
 from tavern.full_agent.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
 from tavern.full_agent.context import compile_window, load_trace
@@ -458,7 +459,17 @@ class FullAgent:
                     request_context=self.request_context,
                 )
             )
-            provider.request_observer = request_observer
+            dispatching_reports = []
+
+            def observe_request(request):
+                if request_observer:
+                    request_observer(request)
+                if dispatching_reports:
+                    observe_report_dispatch(request, dispatching_reports, self.event)
+
+            provider.request_observer = (
+                observe_request if self.session.get("novel_enabled") else request_observer
+            )
             provider.operation_purpose = "narrative"
             provider.auxiliary_capture = lambda items: self.event("kemini_auxiliary", {"items": items})
             if hasattr(provider, "request_context"):
@@ -469,6 +480,16 @@ class FullAgent:
             for step in range(self.settings.full_agent_config.max_steps):
                 if self.novel and self.session.get("novel_enabled"):
                     await self.novel.deliver(self)
+                reports = []
+                for seq in range(len(self.new_trace), 0, -1):
+                    message = self.new_trace[seq - 1]["message"]
+                    if message["role"] == "assistant":
+                        break
+                    if item := novel_report_item(seq, message):
+                        reports.append(item)
+                reports.reverse()
+                for item in reports:
+                    self.event("full_agent_runtime", item)
                 compiled = self.compile()
                 if (
                     self.settings.context_strategy == "openai_compact"
@@ -531,6 +552,9 @@ class FullAgent:
                     self.preview.replace("")
                 try:
                     messages = provider_messages(provider, model_messages(compiled), self.settings)
+                    # Compaction can send requests too; only this narrative/tool
+                    # continuation acknowledges forwarding the newly received reports.
+                    dispatching_reports = reports.copy()
                     complete = getattr(provider, "chat_complete_with_preview", None)
                     if complete:
                         response = await complete(
@@ -552,6 +576,8 @@ class FullAgent:
                     if record.get("error"):
                         self.event("provider_response", record)
                     raise TurnError("PROVIDER_ERROR", str(error) or type(error).__name__) from error
+                finally:
+                    dispatching_reports.clear()
                 self.event(
                     "usage",
                     {"usage": response.usage or {}, "calls": 1, "duration_s": time.perf_counter() - started},

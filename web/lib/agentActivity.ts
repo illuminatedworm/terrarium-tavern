@@ -2,7 +2,7 @@ export interface AgentActivity {
   id: string;
   order: number;
   event_seq?: number;
-  kind: 'tool' | 'assistant';
+  kind: 'tool' | 'assistant' | 'runtime';
   is_story?: boolean;
   name?: string;
   summary: string;
@@ -41,7 +41,17 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
     const p = event.payload || {};
     const id = p.activity_id || `event-${event.seq}`;
     const order = p.order ?? event.seq * 10;
-    if (event.kind === 'full_agent_assistant') {
+    if (event.kind === 'full_agent_runtime') {
+      items.set(p.id, {
+        id: p.id,
+        event_seq: event.seq,
+        order,
+        kind: 'runtime',
+        name: p.name,
+        summary: p.summary,
+        status: p.status,
+      });
+    } else if (event.kind === 'full_agent_assistant') {
       items.set(id, {
         id,
         event_seq: event.seq,
