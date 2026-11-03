@@ -5,15 +5,18 @@
 
 ## 正式角色命名
 
-- 前台 Writer：零工具正文生成，输出约定的检索线索；MVU 变量由后台 Tracker 工具提出补丁，再由 Runtime 校验应用。
-- 后台 Tracker：使用独立上下文和统一工具流程维护分支文本记忆、对话级角色卡与 MVU 变量；由 Runtime 按周期、开关和权限调度前后置任务。
+游玩分为 Full Agent 与 Half Agent 两种并列模式，创建故事时选定，各自独立配置与编排。
+
+- Full Agent：单一主模型通过工具完成检索、笔记、授权变量与设定修改，并交付完整正文；主动换窗并写交接笔记，由 Full Agent Runtime 计数、提醒、校验和事务提交。
+- 前台 Writer（Half Agent）：零工具正文生成，输出约定的检索线索；MVU 变量由后台 Tracker 工具提出补丁，再由 Runtime 校验应用。
+- 后台 Tracker（Half Agent）：使用独立上下文和统一工具流程维护分支文本记忆、对话级角色卡与 MVU 变量；由 Runtime 按周期、开关和权限调度前后置任务。
 - Card Author（制卡 agent）：与剧情无关的角色卡创作助手，可从零新建或修改已引用的卡片；仅通过受限工具操作独立草稿，创作与适配 skill 随项目打包，保存需由用户审阅操作。
 - Advisor（参谋 agent）：依附当前故事的独立聊天助手，同渠道独立模型；只读查阅与联网咨询，仅在用户明令时暂存并提交本轮偏好，不写故事记忆、规划或变量。
 - 原著调查者：Full Agent 在用户绑定并开启原著参考后委派的只读调查 agent；独立上下文与额度，只读授权的小说文件，只向主 agent 交付报告或提问，不写故事、记忆或变量。
-- Roleplay Runtime：确定性程序编排，负责对话、提示词组装、世界书检索与注入、窗口、权限、脚本和事务提交。
+- Roleplay Runtime：Half Agent 的确定性程序编排，负责对话、提示词组装、世界书检索与注入、窗口、权限、脚本和事务提交。
 - 例外：Kemini 式实验功能是仅作用于 Kemini 实验对话的覆写层，不得改变普通对话及其他功能的请求、指纹、缓存或数据；行为见[设置指南](docs/guides/settings.md#kemini-式实验功能)与[上下文生命周期](docs/design/context-lifecycle.md)。
 - 参谋 agent 和制卡 agent 在界面与文档中使用完整名称；仅侧栏标签和栏内标题可使用短名称。
-- 代码、注释与当前文档统一使用上述名称；foreground/background 分别是 Writer/Tracker 的配置键，不另设角色。普通后台任务或工作记录不等同于 Tracker。
+- 代码、注释与当前文档统一使用上述名称；`half_agent.foreground/background` 分别是 Writer/Tracker 的配置键，Full Agent 使用 `full_agent.model`，不另设角色。普通后台任务或工作记录不等同于 Tracker。
 
 ## 结构与工作方式
 
@@ -33,7 +36,7 @@
 
 - [文本完整性](.agents/TEXT_INTEGRITY.md)——触发：组装或修改模型输入、工具结果、内部或外部读取工具。红线：已选内部原文块完整送出，超长只提示，不截断、拆页回读或按预算省略；外部资料按有界协议读取并标明片段与限制。
 - [模型数据边界](.agents/MODEL_DATA_BOUNDARY.md)——触发：新增或修改任何模型请求路线、提示词、工具 schema、工具结果或错误消息。红线：主键、UUID、长随机ID、哈希、指纹、版本摘要、缓存键不得进入模型业务输入或要求模型回写；用请求内短编号，由 Runtime 映射回填。
-- [上下文与检索](.agents/CONTEXT_RETRIEVAL.md)——触发：世界书检索与召回、上下文编译、窗口或 compact、记忆覆盖、token 计数、请求编排。红线：宁缺毋滥，选中条目完整注入；记忆覆盖不足时不得裁剪；不以字节或字符冒充 tokens；保持请求前缀稳定。
+- [上下文与检索](.agents/CONTEXT_RETRIEVAL.md)——触发：世界书检索与召回、上下文编译、窗口或 compact、记忆覆盖、token 计数、请求编排。红线：宁缺毋滥，选中条目完整注入；Half Agent 记忆覆盖不足时不得裁剪，Full Agent 换窗须经 Runtime 校验；不以字节或字符冒充 tokens；保持请求前缀稳定。
 - [长期使用与发行](.agents/RELEASE.md)——触发：日志与缓存生命周期、清理、升级、打包发行、发行前或布局验收。红线：清理不删剧情、分支、恢复快照及活跃、待审核回合；数据库任何写入前检查格式，持久格式变化必须递增对应格式版本。
 - [版本号基准](.agents/VERSIONING.md)——仅在用户明确提及版本号、发版或打标签时查看；平时不自行提升版本号。
 - [Android 打包与版本](docs/development/android.md#版本号与内部序号)——Android 打包前先读。用户每次明确要求打包 APK 时，将 `packaging/android/app/build.gradle` 的 `versionCode` 加一；同一次要求内重试不重复增加，三位 `versionName` 保持不变，除非用户另行要求升级应用版本。
@@ -135,5 +138,5 @@
 
 常用命令：`npm.cmd test -- <文件>`、`.venv/Scripts/python.exe -m pytest -q <文件或用例>`、`npm.cmd run format:check`、
 `.venv/Scripts/python.exe -m ruff check src tests tools`；用户要求时的全量：`npm.cmd test`、`.venv/Scripts/python.exe -m pytest -q tests/backend`。
-详细职责见 [工作流](docs/design/agent-workflow.md)、[上下文](docs/design/context-lifecycle.md)、
+详细职责见 [Full Agent 架构](docs/design/full-agent.md)、[Half Agent 工作流](docs/design/agent-workflow.md)、[Half Agent 上下文](docs/design/context-lifecycle.md)、
 [计数口径](docs/guides/token-counting.md)、[维护](docs/guides/maintenance.md)和[验证说明](docs/development/validation.md)。

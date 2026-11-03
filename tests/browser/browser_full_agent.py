@@ -57,7 +57,7 @@ async def main():
                 # The session list is the default panel; clicking its active tab would collapse it.
                 await page.get_by_role("button", name="开始新故事", exact=True).click()
                 await page.get_by_role("button", name=f"选择角色卡 {card['name']}").click()
-                await page.get_by_label("运行模式", exact=True).select_option("full_agent")
+                await page.get_by_role("radio", name="Full Agent", exact=True).click()
                 await page.get_by_role("button", name="下一步：挂载世界书", exact=True).click()
                 await page.get_by_role("button", name="进入故事", exact=True).click()
                 await page.locator(".story").wait_for()

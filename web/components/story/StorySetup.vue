@@ -10,7 +10,7 @@ import CharacterPortrait from '../character/CharacterPortrait.vue';
 import { cardPortraitUrl } from '../../lib/portraits';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { channelLabels, type Channel } from '../../lib/channels';
-import type { CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
+import type { AgentMode, CardDefaults, CardRecord, WorldbookSummary } from '../../lib/types';
 
 const props = defineProps<{ card: CardRecord; settings?: any }>();
 const emit = defineEmits<{
@@ -27,7 +27,18 @@ const personas = ref<any[]>([]),
 const greeting = ref(0),
   busy = ref(false),
   error = ref('');
-const agentMode = ref('half_agent');
+const agentMode = ref<AgentMode>('full_agent');
+const agentModes: { value: AgentMode; label: string }[] = [
+  { value: 'full_agent', label: 'Full Agent' },
+  { value: 'half_agent', label: 'Half Agent' },
+];
+function moveMode(event: KeyboardEvent, index: number) {
+  const next = agentModes[(index + agentModes.length) % agentModes.length].value;
+  agentMode.value = next;
+  (event.currentTarget as HTMLElement).parentElement
+    ?.querySelector<HTMLButtonElement>(`[data-mode="${next}"]`)
+    ?.focus();
+}
 // Step 2 sets the user and opening; step 3 picks library worldbooks to mount.
 const step = ref<2 | 3>(2);
 const worldbooks = ref<WorldbookSummary[]>([]),
@@ -205,16 +216,28 @@ useTimedError(error);
             </div>
           </section>
           <section class="story-setup-section">
-            <label
-              >运行模式<select v-model="agentMode" aria-label="运行模式">
-                <option value="half_agent">Half Agent · Writer 与 Tracker</option>
-                <option value="full_agent">Full Agent · 单 Agent 与工具</option>
-              </select></label
-            >
+            <h3 id="story-mode-title">运行模式</h3>
+            <div class="panel-tabs story-mode-switch" role="radiogroup" aria-labelledby="story-mode-title">
+              <button
+                v-for="(mode, i) in agentModes"
+                :key="mode.value"
+                type="button"
+                role="radio"
+                :data-mode="mode.value"
+                :aria-checked="agentMode === mode.value"
+                :tabindex="agentMode === mode.value ? 0 : -1"
+                :class="{ active: agentMode === mode.value }"
+                @click="agentMode = mode.value"
+                @keydown.right.prevent="moveMode($event, i + 1)"
+                @keydown.left.prevent="moveMode($event, i - 1)"
+              >
+                {{ mode.label }}
+              </button>
+            </div>
             <p class="muted">
               {{
                 agentMode === 'full_agent'
-                  ? '由 Agent 自行检索、维护笔记和切换工作窗口。需要支持原生工具调用的模型。'
+                  ? '单一 Agent 通过工具自行检索、维护笔记和切换工作窗口。需要支持原生工具调用的模型。'
                   : 'Writer 负责正文，Tracker 负责后台整理，运行时管理上下文。'
               }}上下文方式：{{ agentMode === 'full_agent' ? '本地换窗' : '本地滚动窗口'
               }}{{ channel === 'chatgpt' ? '（创建后可切换云端 compact）' : '' }}

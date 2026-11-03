@@ -5,8 +5,8 @@
 ```mermaid
 flowchart TD
     UI[Vue 界面] --> API[FastAPI 与模式路由]
-    API --> HALF[Roleplay Runtime · Half Agent]
     API --> FULL[Full Agent Runtime]
+    API --> HALF[Roleplay Runtime · Half Agent]
     API --> EDIT[制卡 agent]
     API --> ADVISOR[参谋 agent]
     HALF --> WRITER[Writer 正文]
@@ -21,11 +21,11 @@ flowchart TD
 
 | 角色 | 职责 | 代码入口与边界 |
 |---|---|---|
-| Writer | 演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；正文一次生成，无业务工具；可选实验层声明仅传输正文的函数，不调度 Tracker 或提交状态 |
-| Tracker | 分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
+| Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
+| Writer | Half Agent 中演绎角色、生成正文及检索线索 | [scripting/agent.py](../../src/tavern/scripting/agent.py) 的 `Writer`；正文一次生成，无业务工具；可选实验层声明仅传输正文的函数，不调度 Tracker 或提交状态 |
+| Tracker | Half Agent 中的分类记忆、授权对话设定和 MVU 变量维护 | [tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度，[tracker/task.py](../../src/tavern/tracker/task.py) 执行原生工具循环；工具按本轮任务授权 |
 | 制卡 agent | 独立编辑和适配已引用卡片的草稿 | [character/card_author.py](../../src/tavern/character/card_author.py)；用户审阅后保存书架卡片 |
 | 参谋 agent | 查阅故事、咨询与联网；按明确要求更新本轮偏好 | [advisor/runtime.py](../../src/tavern/advisor/runtime.py)；使用独立咨询记录和偏好草稿 |
-| Full Agent | 通过工具检索、维护笔记并生成正文 | [full_agent/agent.py](../../src/tavern/full_agent/agent.py)；独立模型循环 |
 | Roleplay Runtime | Half Agent 的回合、检索、上下文、窗口、脚本、审核和提交 | [application/service.py](../../src/tavern/application/service.py) 的 `RoleplayRuntime`；程序编排者 |
 | 模式路由 | 将故事操作交给对应引擎 | [application/modes.py](../../src/tavern/application/modes.py)；Full Agent 不调用 Writer／Tracker 编排 |
 

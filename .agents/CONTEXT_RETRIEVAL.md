@@ -1,6 +1,6 @@
 # 召回、上下文窗口与请求缓存
 
-本文件约束世界书检索、上下文编译、窗口与 compact、记忆覆盖、token 计数和模型请求编排。当前实现见 [上下文生命周期](../docs/design/context-lifecycle.md)、[记忆一致性](../docs/design/memory-consistency.md)、[计数口径](../docs/guides/token-counting.md) 和 [缓存控制](../docs/design/cache-control.md)。
+本文件约束世界书检索、上下文编译、窗口与 compact、记忆覆盖、token 计数和模型请求编排。当前实现见 [Full Agent 架构](../docs/design/full-agent.md)、Half Agent 的[上下文生命周期](../docs/design/context-lifecycle.md)与[记忆一致性](../docs/design/memory-consistency.md)、[计数口径](../docs/guides/token-counting.md) 和 [缓存控制](../docs/design/cache-control.md)。
 
 ## 召回与准入
 
@@ -12,9 +12,10 @@
 
 ## 窗口与记忆覆盖
 
+- Full Agent 由模型主动换窗并写交接笔记，Runtime 负责计数、提醒与强制校验，规则见 [Full Agent 架构](../docs/design/full-agent.md)。
 - Half Agent 本地滚动窗口中，中途世界书与剧情共同计入窗口，按完整交流边界退出；保留最近两次交流与当前输入。用户选择云端 compact 时改用完整交流压缩，当前输入及当轮锚定资料保持原文。
 - Half Agent 本地退出剧情前必须验证记忆覆盖，云端 compact 只代替 Writer 窗口裁剪、不代替 Tracker 记忆，切回本地也须补齐必要覆盖。云端压缩、已整理范围与本地已退出范围独立，世界书设定不能被归档为已发生事实。
-- 周期记忆失败且无需裁剪时可继续正文，但须显著提示；必须裁剪而覆盖不足时阻止正文请求。
+- Half Agent 周期记忆失败且无需裁剪时可继续正文，但须显著提示；必须裁剪而覆盖不足时阻止正文请求。
 
 ## Token 计数与单位
 

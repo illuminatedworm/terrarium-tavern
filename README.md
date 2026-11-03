@@ -87,12 +87,12 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 创建故事时可选择运行模式，两者各自独立配置模型与参数。
 
-| | **Half Agent** | **Full Agent** |
+| | **Full Agent** | **Half Agent** |
 |:--|:--|:--|
-| **分工** | Writer 专注正文，后台 Tracker 维护记忆与变量 | 单一 Agent 通过工具完成检索、笔记、变量与正文 |
-| **记忆** | 按周期积累分类记忆，可查看来源并手工修订 | 自行维护笔记，跨上下文窗口时通过交接笔记续接 |
-| **特点** | 写作与工具操作分离，Writer 不调用工具 | 独立实验路线，叙事质量仍待验证 |
-| **说明** | [窗口与记忆](docs/guides/history-maintenance-settings.md) | [使用指南](docs/guides/full-agent.md) |
+| **分工** | 单一 Agent 通过工具完成检索、笔记、变量与正文 | Writer 专注正文，后台 Tracker 维护记忆与变量 |
+| **记忆** | 自行维护笔记，跨上下文窗口时通过交接笔记续接 | 按周期积累分类记忆，可查看来源并手工修订 |
+| **特点** | 由模型按剧情需要主动查阅、记录和换窗 | 写作与工具操作分离，Writer 不调用工具 |
+| **说明** | [使用指南](docs/guides/full-agent.md) | [窗口与记忆](docs/guides/history-maintenance-settings.md) |
 
 ## 快速开始
 
@@ -169,11 +169,11 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 上手指南
 
-1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或连接 ChatGPT 账号；再到对应运行模式的「模型与生成」选择提供商和模型。Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker；Full Agent 和 Tracker 需要模型支持工具调用。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
+1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或连接 ChatGPT 账号；再到对应运行模式的「模型与生成」选择提供商和模型。Full Agent 与 Half Agent 的 Tracker 需要模型支持工具调用；Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
 2. **导入角色卡** — 从侧栏「角色卡」导入文件，或从空白卡开始编辑。仓库附带两张示例卡：
    - [雾港来信](samples/雾港来信.json)：体验文本故事
    - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，进入故事前需启用该卡的脚本权限
-3. **开始故事** — 点击「开始新故事」，按三步完成：选择角色卡 → 在「用户与开场」中设定对话渠道、运行模式、用户身份并选择开场 → 按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。角色卡可预设新建对话默认使用的用户角色与世界书。
+3. **开始故事** — 点击「开始新故事」，按三步完成：选择角色卡 → 在「用户与开场」中设定对话渠道、运行模式（默认 Full Agent）、用户身份并选择开场 → 按需挂载[世界书库](docs/guides/worldbooks.md)中的世界书。角色卡可预设新建对话默认使用的用户角色与世界书。
 4. **调整开场** — 在首次模型任务（生成、参谋 agent 咨询或上下文整理）开始前，可点击开场白旁的「编辑」修改开场原文；保存只影响当前对话，并重新初始化开场变量和脚本状态。任务开始后开场白永久锁定。
 5. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。变量更新与设定修改按界面提示授权。
 
@@ -191,8 +191,8 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | **制卡 agent** | 已提供草稿编辑、工作流适配、校验和保存流程，但交互打磨、复杂卡片理解及修改质量仍需完善。修改结果需人工审阅，尤其是初始化、脚本与世界书用途的调整。 |
 | **角色卡兼容范围** | 当前适配了 SillyTavern 的部分格式与接口。扩展、远程脚本和复杂 MVU 卡片需逐卡确认，详见[兼容范围](docs/guides/compatibility.md)。 |
 | **长篇叙事质量** | 开发者个人游玩初步确认中篇体验较好。模型选择、系统提示词和各项机制参数都会显著影响体验。 |
-| **记忆系统对模型的要求** | 记忆整理涉及复杂判断和格式化输出。测试中 GPT-5.6-Luna 故障与错误率较高，正常运行至少需要 GPT-5.6-Terra 或相近能力的模型。 |
-| **Half Agent 的 Agent 化程度** | 该模式有意将正文生成与工具操作分开。开发者观察认为，当前模型的 agent 与编程训练倾向可能让写作变得机械，因此保留这一分工。Full Agent 作为独立实验路线，实际叙事质量仍需验证。 |
+| **记忆系统对模型的要求** | 两种模式的记忆维护都依赖工具调用，涉及复杂判断和格式化输出。Half Agent 的 Tracker 整理测试中，GPT-5.6-Luna 故障与错误率较高，正常运行至少需要 GPT-5.6-Terra 或相近能力的模型。 |
+| **两种模式的取舍** | Full Agent 让同一模型统筹检索、记忆与正文；Half Agent 将正文生成与工具操作分开，以避免当前模型的 agent 与编程训练倾向让写作变得机械。两条路线的长篇叙事质量都仍在验证。 |
 
 ## 文档与开发
 
@@ -201,10 +201,12 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | 使用指南 | 设计与开发 |
 |:--|:--|
 | [设置指南](docs/guides/settings.md) | [应用架构](docs/design/architecture.md) |
-| [制卡与角色卡编辑](docs/guides/card-author.md) | [项目目录](docs/development/structure.md) |
-| [阅读、编辑与分支](docs/guides/story-history.md) | [开发、测试与发行](docs/development/validation.md) |
-| [参谋 agent](docs/guides/advisor.md) | [回合工作流](docs/design/agent-workflow.md) |
-| [世界书检索](docs/guides/retrieval.md) | [上下文生命周期](docs/design/context-lifecycle.md) |
+| [Full Agent 使用指南](docs/guides/full-agent.md) | [Full Agent 架构](docs/design/full-agent.md) |
+| [Half Agent 窗口与记忆](docs/guides/history-maintenance-settings.md) | [Half Agent 回合工作流](docs/design/agent-workflow.md) |
+| [制卡与角色卡编辑](docs/guides/card-author.md) | [Half Agent 上下文生命周期](docs/design/context-lifecycle.md) |
+| [阅读、编辑与分支](docs/guides/story-history.md) | [项目目录](docs/development/structure.md) |
+| [参谋 agent](docs/guides/advisor.md) | [开发、测试与发行](docs/development/validation.md) |
+| [世界书检索](docs/guides/retrieval.md) | |
 
 ### 技术栈
 

@@ -1220,6 +1220,15 @@
   padding: 4px 10px;
   font-size: var(--fs-sm);
 }
+/* Two fixed modes: a full-width segmented switch instead of a dropdown. */
+.story-mode-switch {
+  display: flex;
+}
+.story-mode-switch button {
+  flex: 1;
+  min-height: 34px;
+  font-size: var(--fs-base);
+}
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1200px) {
