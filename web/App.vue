@@ -36,12 +36,10 @@ import { historyMessageIntervals } from './lib/storyHistory';
 import LoreInjectionRecords from './components/records/LoreInjectionRecords.vue';
 import { dialogueLoreRecords, type LoreRecord } from './lib/loreRecords';
 import ContextPreview from './components/story/ContextPreview.vue';
-import FullAgentTools from './components/story/FullAgentTools.vue';
 import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
 import InlineMessageEditor from './components/story/InlineMessageEditor.vue';
-import CacheBreakpointPanel from './components/story/CacheBreakpointPanel.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
 import DialogueTools from './components/story/DialogueTools.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
@@ -109,6 +107,10 @@ const SettingsPanel = defineAsyncComponent({
 });
 const AdvisorPanel = defineAsyncComponent(() => import('./components/story/AdvisorPanel.vue'));
 const NovelPanel = defineAsyncComponent(() => import('./components/story/NovelPanel.vue'));
+const FullAgentTools = defineAsyncComponent(() => import('./components/story/FullAgentTools.vue'));
+const CacheBreakpointPanel = defineAsyncComponent(
+  () => import('./components/story/CacheBreakpointPanel.vue'),
+);
 let stopNovelObservation: (() => void) | undefined;
 // Session-level editors and the share dialog open from the inspector on demand.
 const RecipeEditor = defineAsyncComponent({
@@ -520,22 +522,40 @@ const writerResponseCache = computed(() => {
 });
 const writerCacheRetention = computed(() => {
   const profile = activeModel.value;
-  const retention = cacheRetention(
-    profile?.model || '',
-    profile?.api_mode || 'chat_completions',
-    profile?.cache || { mode: 'cloud', preset: 'auto', field: 'cache_control', value: {}, request: {} },
-  );
+  const cache = profile?.cache || {
+    mode: 'cloud',
+    preset: 'auto',
+    field: 'cache_control',
+    value: {},
+    request: {},
+  };
+  const retention = cacheRetention(profile?.model || '', profile?.api_mode || 'chat_completions', cache);
+  // Who controls the cache, as the 缓存 page shows it: the subscription and
+  // implicit-only Gemini leave it to the server; otherwise the saved cache mode.
+  const page = {
+    channel:
+      (session.value?.channel_origin && channelLabels[session.value.channel_origin as Channel]) ||
+      '渠道待确认',
+    role: isFullAgent.value ? 'Full Agent 正文模型' : 'Half Agent Writer',
+    preset: cache.preset,
+    control: activeSubscription.value
+      ? ('subscription' as const)
+      : retention.implicit
+        ? ('implicit' as const)
+        : cache.mode,
+  };
   return activeSubscription.value
     ? {
         ...retention,
-        apiLabel: 'ChatGPT 订阅 · Responses',
+        ...page,
+        apiLabel: 'Responses',
         explicit: false,
         enabled: false,
         options: [],
         protocolNote: '',
         note: '缓存由服务端管理，此通道不支持显式缓存控制。',
       }
-    : retention;
+    : { ...retention, ...page };
 });
 const cacheRequestState = computed(
   () =>
@@ -557,7 +577,7 @@ const cacheBreakpointId = computed(() => {
 const sentCacheLabel = computed(() => {
   const cache = cacheRequestState.value;
   const at = session.value?.messages.findIndex((m) => m.id === cache?.message_id) ?? -1;
-  return at >= 0 ? `历史 H${at + 1}` : contextLabel(cache?.source || '固定前缀');
+  return at >= 0 ? `H${at + 1}` : contextLabel(cache?.source || '固定前缀');
 });
 const sceneSubmitting = ref<'memory' | null>(null);
 const storyView = ref<'dialogue' | 'work'>('dialogue');
@@ -3306,6 +3326,11 @@ useTimedError(error);
             @save="saveCacheBreakpoint"
             @save-retention="saveCacheRetention"
             @locate="locateCacheBreakpoint"
+            @settings="
+              settingsChannel = session.channel_origin ?? undefined;
+              settingsInitialPage = session.agent_mode + '.model';
+              panel = 'settings';
+            "
           />
           <NovelPanel
             v-if="isFullAgent && inspectorTab === 'novel'"
@@ -3332,6 +3357,7 @@ useTimedError(error);
             :update-variables="updateVariables"
             :allow-content-edit="allowEdit"
             @saved="applyFullSession"
+            @navigate="showInspector"
           />
           <MvuInspector
             v-show="inspectorTab === 'mvu'"

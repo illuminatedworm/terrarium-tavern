@@ -41,6 +41,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
       value: '',
       enabled: false,
       explicit: false,
+      implicit: true,
       note: '当前 Gemini 模型仅支持隐式缓存，缓存前缀和时效由服务端管理；已保存的本地缓存参数不发送。',
       options: [] as Array<{ value: string; label: string }>,
     };
@@ -87,7 +88,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     '1h': '1 小时',
     '24h': '24 小时',
     '30m': '30 分钟',
-    in_memory: '内存缓存（通常 5–10 分钟）',
+    in_memory: '内存缓存',
   };
   const value = values.includes(cache.retention || '') ? cache.retention! : values[0] || '';
   const enabled =
@@ -105,7 +106,9 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
           ? '控制显式缓存对象的保存时长；保存越久，存储费用越高。'
           : kind === 'openai_ttl'
             ? '当前模型支持的最低缓存时效为 30 分钟，仅有这一档。'
-            : '实际保留时间由服务端决定，24 小时是最长保留上限。';
+            : '实际保留时间由服务端决定' +
+              (values.includes('in_memory') ? '；内存缓存通常 5–10 分钟' : '') +
+              (values.includes('24h') ? '，24 小时是最长保留上限。' : '。');
   const explicit = !(
     cache.preset === 'auto' &&
     kind === 'openai_retention' &&
@@ -120,6 +123,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     enabled,
     note,
     explicit,
+    implicit: false,
     options: values.map((value) => ({ value, label: labels[value] })),
   };
 }

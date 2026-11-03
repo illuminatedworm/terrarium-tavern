@@ -555,7 +555,8 @@ main {
 }
 .inspector-content > section > h2,
 .scene-heading h2,
-.inspector-options-heading h2 {
+.inspector-options-head h2,
+.mvu-head h2 {
   margin: 0;
   font-size: var(--fs-xl);
 }
@@ -566,21 +567,122 @@ main {
 .inspector-content .card-frame {
   min-height: 150px;
 }
-.right-sidebar section[aria-label='MVU 变量'] > h2 {
-  margin: 0 0 14px;
+/* MVU 变量 page: the card's own panel first, then the raw tree in an inset well. */
+.mvu-head {
+  margin-bottom: 14px;
 }
-.right-sidebar section[aria-label='MVU 变量'] > details {
+.mvu-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.mvu-head h2 .icon {
+  color: var(--accent);
+}
+.mvu-head p {
+  margin: 6px 0 0 29px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.mvu-raw {
   margin-top: 16px;
-  border-top: 1px solid var(--border-subtle);
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(var(--well-rgb) / 0.35);
 }
-.right-sidebar section[aria-label='MVU 变量'] > details > summary {
-  min-height: 40px;
-  padding: 11px 0;
+.mvu-raw > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 14px;
+  background: rgb(255 255 255 / 0.02);
   color: var(--text-secondary);
   font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  list-style: none;
+}
+.mvu-raw > summary::-webkit-details-marker {
+  display: none;
+}
+.mvu-raw[open] > summary {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.mvu-raw > summary > span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.mvu-raw-chevron {
+  color: var(--text-faint);
+  transition: transform var(--dur) var(--ease-out);
+}
+.mvu-raw[open] .mvu-raw-chevron {
+  transform: rotate(90deg);
+  color: var(--accent);
+}
+.mvu-raw-body {
+  padding: 4px 14px 10px;
+}
+/* Inside the well the tree reads as key/value rows; multi-line text stays stacked. */
+.mvu-raw .state-tree summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  list-style: none;
+}
+.mvu-raw .state-tree summary::-webkit-details-marker {
+  display: none;
+}
+.mvu-raw .state-tree summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin: 0 3px 0 1px;
+  border-right: 1.5px solid var(--text-faint);
+  border-bottom: 1.5px solid var(--text-faint);
+  transform: rotate(-45deg);
+  transition: transform var(--dur) var(--ease-out);
+}
+.mvu-raw .state-tree details[open] > summary::before {
+  transform: rotate(45deg);
+}
+.mvu-raw .state-leaf {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+.mvu-raw .state-leaf:has(.prose) {
+  flex-direction: column;
+  gap: 4px;
+}
+.mvu-raw .state-leaf > span {
+  flex: none;
+  max-width: 45%;
+  font-size: var(--fs-xs);
+}
+.mvu-raw .state-leaf > strong {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  text-align: right;
+}
+.mvu-raw .state-leaf .numeric {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
 }
 .right-sidebar.scene-active .inspector-content,
 .right-sidebar.scene-active .scene-memory,
+.right-sidebar.scene-active .scene-memory-block,
+.right-sidebar.scene-active .scene-memory-block > .scene-block-body,
 .right-sidebar.scene-active .scene-notes,
 .right-sidebar.scene-active .classified-memory {
   display: flex;
@@ -600,38 +702,112 @@ main {
   font-size: var(--fs-sm);
   line-height: 1.7;
 }
-.scene-heading,
-.scene-section-heading,
-.inspector-options-heading {
+/* 场景 page: a notebook of separate blocks. Each block owns a title bar with its
+   own actions; the Full Agent notes keep the same blocks inside dialogs. */
+.scene-memory {
+  gap: 12px;
+}
+.scene-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px 10px;
 }
-.scene-heading button,
-.scene-section-heading button {
-  display: inline-flex;
+.scene-heading h2 {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
+}
+.scene-heading h2 .icon {
+  color: var(--accent);
+}
+.scene-heading button {
   flex-shrink: 0;
   padding: 5px 10px;
   font-size: var(--fs-xs);
   white-space: nowrap;
 }
-.scene-section-heading {
-  margin: 18px 0 10px;
+.scene-summary {
+  flex-basis: 100%;
+  margin: 0 0 0 29px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
 }
-.scene-memory h3 {
+.scene-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: rgb(255 255 255 / 0.03);
+}
+.scene-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 10px 6px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgb(255 255 255 / 0.02);
+}
+.scene-block-head h3 {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   margin: 0;
   color: var(--text-secondary);
-  font-size: var(--fs-md);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
-.scene-section-heading button[aria-busy='true'] {
+.scene-block-head > button:not(.icon-button) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.scene-block-head > .icon-button {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+}
+.scene-block-head button[aria-busy='true'] {
   opacity: 1;
   color: var(--accent);
   border-color: rgb(var(--accent-rgb) / 0.5);
   background: var(--accent-soft);
+}
+.scene-block-tag,
+.scene-block-count {
+  color: var(--text-muted);
+  font-size: var(--fs-2xs);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.scene-block-tag {
+  padding: 1px 7px;
+  border-radius: var(--radius-2xs);
+  background: rgb(255 255 255 / 0.06);
+}
+.scene-block-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.scene-block-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+.scene-block-body > .state-empty {
+  margin: 0;
+  font-size: var(--fs-sm);
 }
 .scene-update-spinner {
   width: 11px;
@@ -642,6 +818,7 @@ main {
   animation: spin 0.8s linear infinite;
 }
 .scene-update-status {
+  margin: 0;
   font-size: var(--fs-sm);
   color: var(--text-muted);
   line-height: 1.7;
@@ -654,34 +831,70 @@ main {
     transform: rotate(360deg);
   }
 }
-.inspector-options input,
-.inspector-options textarea,
-.inspector-options select {
-  font-size: var(--fs-base);
+/* 会话设置 page: a numbered form. Labels sit above their fields, read-only values
+   are key/value rows, and the save bar appears only while the draft is dirty. */
+.inspector-options {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
-.inspector-options > button {
-  width: 100%;
-  min-height: 36px;
-  margin-top: 8px;
+.inspector-options-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.inspector-options-head h2 .icon {
+  color: var(--accent);
+}
+.options-summary {
+  margin: 6px 0 4px 29px;
+  color: var(--text-muted);
   font-size: var(--fs-sm);
 }
-/* Negative top cancels the scroller's padding so the frosted row sits flush. */
-.inspector-options-heading {
-  position: sticky;
-  top: -18px;
-  z-index: 2;
-  margin: 4px 0 14px;
-  padding: 8px 0 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: rgb(var(--glass-rgb) / 0.9);
+.options-dirty {
+  color: var(--warning);
 }
-:root.no-glass .inspector-options-heading {
-  background: var(--surface-sidebar);
+.options-saved {
+  color: var(--success);
 }
-.inspector-options > label,
-.inspector-options .policy-control > label {
-  margin: 13px 0;
+.options-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px 0;
+}
+.options-section + .options-section {
+  border-top: 1px solid var(--border-subtle);
+}
+.options-section h3 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
   font-size: var(--fs-md);
+}
+.options-section h3 > span {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+.options-field,
+.inspector-options .policy-control > label {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.options-field > span {
+  display: inline-flex;
+  align-items: center;
+}
+.options-field input,
+.options-field textarea,
+.inspector-options select {
+  margin: 0;
+  font-size: var(--fs-base);
 }
 .inspector-options .expandable-textarea > .prompt-field:not(.has-prefix) > textarea {
   height: 112px;
@@ -689,27 +902,102 @@ main {
   max-height: 112px;
   line-height: 1.5;
 }
-.inspector-options .inspector-note,
 .inspector-options .policy-help {
-  margin: 8px 0 12px;
-  font-size: var(--fs-sm);
+  margin: 8px 0 0;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
-.inspector-options h3 {
-  margin: 20px 0 8px;
+.options-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
 }
-.inspector-save {
+.options-values {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.options-values dt,
+.options-values dd {
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border-subtle);
+}
+.options-values dt {
+  color: var(--text-muted);
+}
+.options-values dd {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
-  flex-shrink: 0;
+  margin: 0;
+  color: var(--text-primary);
 }
-.inspector-save span {
-  color: var(--success);
+.options-label {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.options-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.options-actions button {
   font-size: var(--fs-sm);
 }
-.inspector-save button {
+.options-advanced {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  text-align: left;
+}
+.options-advanced:hover:not(:disabled) {
+  background: none;
+}
+.options-advanced h3 {
+  flex: 1;
+}
+.options-advanced small {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+.options-advanced .icon {
+  color: var(--text-faint);
+}
+/* Negative bottom cancels the scroller's padding so the frosted bar sits flush. */
+.options-savebar {
+  position: sticky;
+  bottom: -18px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: auto -18px -18px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--glass-edge-strong);
+  background: rgb(var(--glass-hi-rgb) / 0.92);
+}
+:root.no-glass .options-savebar {
+  background: var(--surface-panel);
+}
+.options-savebar span {
+  flex: 1;
+  color: var(--warning);
+  font-size: var(--fs-sm);
+}
+.options-savebar button {
   min-height: 32px;
   padding: 5px 14px;
   font-size: var(--fs-sm);
@@ -880,8 +1168,10 @@ main {
   .inspector-content::-webkit-scrollbar {
     display: none;
   }
-  .inspector-options-heading {
-    top: -12px;
+  .options-savebar {
+    bottom: -12px;
+    margin: auto -12px -12px;
+    padding-inline: 12px;
   }
   /* An open inspector takes the whole phone width, closed from its rail, and the
      card status panel runs edge to edge: card layouts crowd below ~300px. */

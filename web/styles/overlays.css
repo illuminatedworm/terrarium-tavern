@@ -130,8 +130,8 @@
   font-size: var(--fs-ui);
   line-height: 1.6;
 }
-.context-management-modal .full-agent-notes h3 {
-  font-size: var(--fs-xl);
+.context-management-modal .full-agent-notes .scene-block-head h3 {
+  font-size: var(--fs-base);
 }
 .context-management-modal .full-agent-notes .inspector-note {
   font-size: var(--fs-base);

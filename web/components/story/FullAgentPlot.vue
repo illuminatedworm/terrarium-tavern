@@ -2,6 +2,7 @@
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import type { ContextOperations } from '../../composables/useContextOperations';
 import { api } from '../../lib/api';
+import FieldHelp from '../common/FieldHelp.vue';
 
 interface PlotSession {
   id: string;
@@ -115,72 +116,112 @@ async function refresh() {
 </script>
 
 <template>
-  <section class="full-agent-plot" aria-label="剧情规划">
-    <h3>剧情规划</h3>
-    <label class="plot-toggle">
+  <section class="scene-block full-agent-plot" aria-label="剧情规划">
+    <div class="scene-block-head">
+      <h3>
+        剧情规划<FieldHelp
+          tooltip="按当前对话保存可调整的阶段大纲，帮助铺设伏笔与后续转折。关闭后保留大纲并暂停使用。"
+        />
+      </h3>
       <input
         type="checkbox"
+        class="switch"
+        role="switch"
+        aria-label="开启剧情规划"
         :checked="!!session.plot_enabled"
         :disabled="working"
         @change="save({ enabled: !session.plot_enabled })"
       />
-      开启剧情规划
-    </label>
-    <p class="inspector-note">
-      按当前对话保存可调整的阶段大纲，帮助铺设伏笔与后续转折。关闭后保留大纲并暂停使用。
-    </p>
-    <details :open="expanded" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
-      <summary>查看和编辑大纲（含未来剧情）</summary>
-      <p class="inspector-note">编辑后模型仍可随剧情调整。明确的创作要求请通过对话或创作偏好传达。</p>
-      <label>
-        阶段大纲
-        <textarea
-          v-model="text"
-          rows="10"
-          :disabled="working || !session.head"
-          placeholder="当前阶段、可能事件与转折、伏笔及推进条件…"
-        />
-      </label>
-      <p v-if="!session.head" class="inspector-note">可以先开启功能；发送第一条消息后即可保存和编辑大纲。</p>
-      <p v-else-if="!savedText" class="inspector-note">尚无大纲；开启后，模型会在下一次剧情回复前建立。</p>
-      <p v-if="limit" class="inspector-note">大纲上限 {{ limit }} tokens。</p>
-      <div class="plot-actions">
-        <button :disabled="working || !session.head || !dirty" @click="save({ content: text })">
-          {{ saving ? '正在保存…' : '保存大纲' }}
+    </div>
+    <div class="scene-block-body">
+      <div class="plot-summary">
+        <span>{{ session.plot_enabled ? '已开启，模型按大纲推进' : '已暂停，大纲保留' }}</span>
+        <button :aria-expanded="expanded" @click="expanded = !expanded">
+          {{ expanded ? '收起大纲' : '查看和编辑大纲' }}
         </button>
-        <button class="quiet" :disabled="working || !session.head || !text" @click="text = ''">
-          清空编辑内容
-        </button>
-        <span v-if="dirty" role="status">有未保存修改</span>
       </div>
-      <p class="inspector-note">保存空白大纲后，开启状态下的下一回合会重新建纲。</p>
-      <details v-if="conflict">
-        <summary>核对当前已保存版本</summary>
-        <p class="plot-saved-text">{{ currentText(session) || '当前已保存大纲为空。' }}</p>
-      </details>
-    </details>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <button v-if="conflict" class="quiet" :disabled="working" @click="refresh">
-      刷新会话（保留编辑内容）
-    </button>
+      <template v-if="expanded">
+        <label>
+          <span
+            >阶段大纲（含未来剧情）<FieldHelp
+              tooltip="编辑后模型仍可随剧情调整。明确的创作要求请通过对话或创作偏好传达。保存空白大纲后，开启状态下的下一回合会重新建纲。"
+          /></span>
+          <textarea
+            v-model="text"
+            rows="10"
+            :disabled="working || !session.head"
+            placeholder="当前阶段、可能事件与转折、伏笔及推进条件…"
+          />
+        </label>
+        <p v-if="!session.head" class="plot-note">可以先开启功能；发送第一条消息后即可保存和编辑大纲。</p>
+        <p v-else-if="!savedText" class="plot-note">尚无大纲；开启后，模型会在下一次剧情回复前建立。</p>
+        <p v-if="limit" class="plot-note">大纲上限 {{ limit }} tokens。</p>
+        <div class="plot-actions">
+          <button :disabled="working || !session.head || !dirty" @click="save({ content: text })">
+            {{ saving ? '正在保存…' : '保存大纲' }}
+          </button>
+          <button class="quiet" :disabled="working || !session.head || !text" @click="text = ''">
+            清空编辑内容
+          </button>
+          <span v-if="dirty" role="status">有未保存修改</span>
+        </div>
+        <details v-if="conflict">
+          <summary>核对当前已保存版本</summary>
+          <p class="plot-saved-text">{{ currentText(session) || '当前已保存大纲为空。' }}</p>
+        </details>
+      </template>
+      <p v-if="error" role="alert" class="plot-error">{{ error }}</p>
+      <button v-if="conflict" class="quiet" :disabled="working" @click="refresh">
+        刷新会话（保留编辑内容）
+      </button>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.full-agent-plot {
-  min-width: 0;
-  display: grid;
-  gap: 0.65rem;
-}
 .full-agent-plot h3 {
   margin: 0;
 }
-.plot-toggle,
+.plot-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.plot-summary button {
+  flex: none;
+  padding: 5px 10px;
+  font-size: var(--fs-xs);
+}
+.full-agent-plot label {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.full-agent-plot label > span {
+  display: inline-flex;
+  align-items: center;
+}
+.plot-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+.plot-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
 .plot-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+.plot-actions span {
+  color: var(--warning);
+  font-size: var(--fs-xs);
 }
 .full-agent-plot textarea {
   display: block;

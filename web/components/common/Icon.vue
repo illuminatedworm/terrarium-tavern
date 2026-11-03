@@ -69,6 +69,16 @@ const icons: Record<string, string> = {
   clock: '<circle cx="12" cy="12" r="8.8"/><path d="M12 7.5V12l3 2"/>',
   memory:
     '<path d="M9 4.5a3 3 0 0 0-3 3 3 3 0 0 0-2 5.3A3 3 0 0 0 7 17.5a2.5 2.5 0 0 0 5 .5V6.5a2 2 0 0 0-3-2Z"/><path d="M15 4.5a3 3 0 0 1 3 3 3 3 0 0 1 2 5.3 3 3 0 0 1-3 4.7 2.5 2.5 0 0 1-5 .5"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.2 10.5V8a3.8 3.8 0 0 1 7.6 0v2.5"/>',
+  pause: '<path d="M9 5.5v13M15 5.5v13"/>',
+  play: '<path d="M7.5 5v14l11.5-7Z"/>',
+  minus: '<path d="M5 12h14"/>',
+  ban: '<circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/>',
+  target:
+    '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5"/>',
+  download: '<path d="M12 4v11m-4.6-4.6L12 15l4.6-4.6"/><path d="M5 19.5h14"/>',
+  unlink:
+    '<path d="M9.5 6.8 8 5.3a3.6 3.6 0 0 0-5.1 5.1L4.4 12M14.5 17.2l1.5 1.5a3.6 3.6 0 0 0 5.1-5.1L19.6 12M8.5 15.5l7-7M3.5 3.5l17 17"/>',
 };
 withDefaults(defineProps<{ name: string; size?: number; stroke?: number }>(), { size: 18, stroke: 1.6 });
 </script>
