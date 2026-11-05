@@ -69,7 +69,7 @@ const groups: Array<{ label: string; tools: Record<string, string> }> = [
       destroy_novel_research: '销毁调查者',
     },
   },
-  { label: '正文', tools: { submit_story: '提交正文' } },
+  { label: '正文与图形', tools: { submit_story: '提交正文', present_ui: '交互图形' } },
 ];
 const grouped = computed(() => {
   const byName = new Map(tools.value.map((tool) => [tool.name, tool]));
@@ -253,6 +253,9 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
           </p>
         </div>
         <div v-if="open.has(tool.name)" class="tool-detail">
+          <p v-if="tool.name === 'present_ui'" class="hint">
+            开启后允许模型按需生成地图、结构图和关系图。图形随本轮正文保存，旧图保留当时内容；交互仅改变显示或填写输入框，由你发送。
+          </p>
           <div v-if="Object.keys(tool.result_options || {}).length" class="tool-options">
             <span>附带返回</span>
             <button

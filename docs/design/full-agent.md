@@ -268,3 +268,9 @@ JSON 损坏的工具参数会终止回合并记录响应与用量；合法 JSON 
 | [activity.py](../../src/tavern/full_agent/activity.py)、[api.py](../../src/tavern/full_agent/api.py) | 用户可见过程与会话 API |
 
 协议、分支、恢复和审核由 [test_full_agent.py](../../tests/backend/test_full_agent.py)、[test_full_agent_alignment.py](../../tests/backend/test_full_agent_alignment.py)、[变量规则回归](../../tests/backend/test_full_agent_variables.py) 及工具专项保护。真实叙事质量、记忆充分性和检索取舍需用实际模型评估，方法见[验证说明](../development/validation.md)。
+
+## 交互图形的数据归属
+
+`present_ui` 为显式启用的普通 Full Agent 工具，完整 json-render Spec 仅保存在成功调用参数中，不增加消息正文副本、MVU 字段或可变 artifact 表。前端复用已有工具记录中的成功标记，仅为确有图形的回复挂载组件；共享可见性观察器，并在下一动画帧按会话合并读取。后端用分支身份链校验版本，不加载完整会话；SQL 仅返回成功 present_ui 的参数，其他工具只投影配对所需的调用身份，结果全文不进入 Python。失败续接、审核、回复版本、分支和个人数据包沿用完整工具轨迹的事务与生命周期。
+
+`Scene` 是项目注册的矢量画布组件；只接收有界几何图元和预设显隐状态。Python 在模型输出与导入边界校验组件、动作、状态路径与单根树；Vue 使用官方 json-render 渲染器，业务控件由应用注册，不执行模型代码。`composeDraft` 使用主输入框追加路径，保留原有草稿，不使用角色 HTML 的 `/interaction`，不扩大 Full Agent 脚本能力。图形跟随回复冻结，刷新只重置本地 UI 状态，修改需生成后续回复。

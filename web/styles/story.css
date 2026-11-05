@@ -1819,3 +1819,103 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* Full Agent frozen graphics: only the drawing scrolls horizontally. */
+.story-visuals,
+.story-visual,
+.visual-interface {
+  min-width: 0;
+  max-width: 100%;
+}
+.story-visual {
+  margin-top: 20px;
+  border-top: 1px solid var(--border-control);
+  padding-top: 12px;
+}
+.visual-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.visual-header small {
+  margin-left: 8px;
+  color: var(--text-muted);
+}
+.visual-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.visual-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.visual-interface button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-sm);
+}
+.visual-interface button[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-strong);
+  border-color: var(--accent);
+}
+.visual-interface .visual-text {
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.visual-scene {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+}
+.visual-scene svg {
+  display: block;
+  max-width: none;
+  margin-inline: auto;
+}
+.visual-scene text {
+  fill: var(--text-primary);
+  font-size: var(--fs-base);
+  font-family: var(--font-ui);
+  paint-order: stroke;
+  stroke: var(--surface-base);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.visual-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(820px, calc(100dvh - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+.visual-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.visual-dialog::backdrop {
+  background: rgb(var(--canvas-rgb) / 0.65);
+}
+.visual-dialog-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}

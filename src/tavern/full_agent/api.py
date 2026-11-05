@@ -12,6 +12,7 @@ from tavern.full_agent.activity import compact, message_items, part_page, turn_i
 from tavern.full_agent.handoff import render_text, require_coverage
 from tavern.full_agent.state import full_state, note_view, rollover, rollover_start
 from tavern.full_agent.tools import RESULT_FIELDS, SPECS, result_field, tool_definitions
+from tavern.full_agent.visuals import message_visuals
 from tavern.novel.tools import MAIN_SPECS
 from tavern.storage.store import Conflict, dump
 
@@ -186,6 +187,10 @@ def register_full_agent_routes(app, store, context_operations=None):
     def dialogue_activity(sid: str, query: ActivityQuery):
         groups = message_items(store, require_full(store, sid), query.message_ids)
         return {"messages": {mid: compact(items) for mid, items in groups.items()}}
+
+    @app.post("/api/sessions/{sid}/full-agent/visuals")
+    def dialogue_visuals(sid: str, query: ActivityQuery):
+        return {"messages": message_visuals(store, sid, query.message_ids)}
 
     @app.get("/api/sessions/{sid}/full-agent/messages/{mid}/activity/{activity_id}")
     def dialogue_activity_part(

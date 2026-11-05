@@ -21,6 +21,7 @@ const props = defineProps<{
   savingEdit: boolean;
   reviewing: boolean;
   enabled: boolean;
+  hasVisuals?: boolean;
   writerResponseCache: boolean;
   cacheEligible: boolean;
   cacheBreakpointId: string | null;
@@ -135,6 +136,7 @@ function forwardAction(
         :message="message"
         :session="session"
         :enabled="enabled"
+        :has-visuals="hasVisuals"
         @action="forwardAction"
       />
       <button

@@ -4,6 +4,7 @@ import StoryProse from './StoryProse.vue';
 import StoryFrame from './StoryFrame.vue';
 import ExperimentalRecords from './ExperimentalRecords.vue';
 import StorySegmentDivider from './StorySegmentDivider.vue';
+import StoryVisuals from './StoryVisuals.vue';
 import { messageCharacter, messageContents } from '../../lib/storyPresentation';
 import type { StoryContent } from '../../lib/storyPresentation';
 
@@ -11,6 +12,7 @@ const props = defineProps<{
   message: any;
   session: any;
   enabled: boolean;
+  hasVisuals?: boolean;
   panelOnly?: boolean;
   expandFirstLevel?: boolean;
   findInDialogue?: boolean;
@@ -37,6 +39,16 @@ function forwardAction(
 ) {
   emit('action', method, args, resolve, reject, stream);
 }
+function composeVisual(text: string) {
+  emit(
+    'action',
+    'visual-input',
+    { text },
+    () => {},
+    () => {},
+    () => {},
+  );
+}
 </script>
 <template>
   <template v-for="(content, index) in contents" :key="index">
@@ -61,4 +73,11 @@ function forwardAction(
     />
   </template>
   <ExperimentalRecords v-if="!panelOnly" :parts="message.auxiliary || []" />
+  <StoryVisuals
+    v-if="!panelOnly && hasVisuals && !session.kemini && session.agent_mode === 'full_agent'"
+    :key="`${session.id}:${message.id}`"
+    :session-id="session.id"
+    :message-id="message.id"
+    @compose="composeVisual"
+  />
 </template>

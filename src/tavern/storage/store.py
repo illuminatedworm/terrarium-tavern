@@ -96,7 +96,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 SETTINGS_VERSIONS = range(2, 16)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -299,6 +299,19 @@ class Store(MessageAdapters):
                     "UPDATE novel_jobs SET config=json_set(config,'$.auto_destroy',json('false')) "
                     "WHERE json_type(config,'$.auto_destroy') IS NULL"
                 )
+            if previous_schema is not None and int(previous_schema[0]) < 20:
+                # Opt-in capability: preserve every existing tool choice and add
+                # an explicit disabled entry, rather than hiding a default override.
+                rows = db.execute(
+                    "SELECT id,disabled_tools FROM sessions WHERE agent_mode='full_agent'"
+                ).fetchall()
+                for row in rows:
+                    disabled = json.loads(row["disabled_tools"])
+                    if "present_ui" not in disabled:
+                        db.execute(
+                            "UPDATE sessions SET disabled_tools=? WHERE id=?",
+                            (dump([*disabled, "present_ui"]), row["id"]),
+                        )
             db.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version',?)", (str(SCHEMA_VERSION),))
 
     @contextmanager
@@ -775,6 +788,7 @@ class Store(MessageAdapters):
                     "created": now,
                     "title": card["name"],
                     "agent_mode": options.agent_mode,
+                    "disabled_tools": dump(["present_ui"] if options.agent_mode == "full_agent" else []),
                     # Full Agent keeps worldbook entries inside the conversation it manages.
                     "lore_injection_mode": (
                         "conversation" if options.agent_mode == "full_agent" else settings.lore_injection_mode

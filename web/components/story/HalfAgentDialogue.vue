@@ -30,7 +30,7 @@ defineExpose({
     >
       <template #default="{ message }">
         <slot name="before-message" :message="message" />
-        <slot name="message" :message="message" />
+        <slot name="message" :message="message" :has-visuals="false" />
       </template>
     </StoryHistory>
     <slot name="pending" />

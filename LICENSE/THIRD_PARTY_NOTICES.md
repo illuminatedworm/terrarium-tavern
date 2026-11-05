@@ -55,6 +55,8 @@ Gemini 原生接入使用 Google 官方 [python-genai](https://github.com/google
 
 ## 前端依赖
 
+交互图形使用 [json-render](https://github.com/vercel-labs/json-render) 的 `@json-render/core` 和 `@json-render/vue`，版本 0.22.0，采用 **Apache-2.0**。本项目注册自己的矢量画布与控件，不修改上游源码；许可原文见 [json-render-Apache-2.0.txt](json-render-Apache-2.0.txt)，依赖版本由 npm 锁文件固定。
+
 Vue、lodash、jQuery、Zod、YAML、JSON5、fast-json-patch、Acorn、DOMPurify、marked、mathjs 和 klona 通过 npm 安装。各依赖附带的许可文件以及构建产物中保留的声明继续适用；准确版本见 [package-lock.json](../package-lock.json)。
 
 卡片离线模块打包使用 [esbuild](https://github.com/evanw/esbuild) 的 **MIT** 许可浏览器版本 `esbuild-wasm 0.25.10`。构建会将浏览器脚本、WebAssembly 二进制及其 `LICENSE.md` 原文复制至 `src/tavern/static/esbuild/`，随桌面和 Android 应用一同分发。

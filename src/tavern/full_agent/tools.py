@@ -26,6 +26,8 @@ from tavern.full_agent.handoff import (
 from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads, state_scope
 from tavern.full_agent.state import note_view, rollover, rollover_start
+from tavern.full_agent.visuals import DESCRIPTION as VISUAL_DESCRIPTION
+from tavern.full_agent.visuals import PresentUI, successful_specs, validate_spec
 from tavern.novel.tools import MAIN_SPECS
 from tavern.scripting.runtime import RuntimeRollbackError
 from tavern.tracker.state import InvalidStatePatch, InvalidStatePath, ProtectedStateField, stage
@@ -345,6 +347,7 @@ SPECS = {
 
 
 SPECS.update(MAIN_SPECS)
+SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 SPECS["submit_story"] = (
     Story,
     "Append a new story segment to this turn's draft. At most 3 successful submissions per turn; "
@@ -372,6 +375,7 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
     # Story delivery is required by the ordinary protocol, not an optional capability.
     if settings is not None and settings.kemini.enabled:
         names.discard("submit_story")
+        names.discard("present_ui")
     else:
         names.add("submit_story")
     if not catalog and not request.allow_content_edit:
@@ -472,6 +476,17 @@ class AgentTools:
         except ValidationError as error:
             raise ToolArgumentError(name, model, error) from None
         state = owner.state
+        if name == "present_ui":
+            if len(successful_specs(item["message"] for item in owner.new_trace)) >= 3:
+                raise ToolError("CONTENT_LIMIT", "本轮已接收三份图形；保留已有产物，完成正文后结束。")
+            try:
+                validate_spec(args.spec)
+            except ValueError as error:
+                raise ToolError("INVALID_ARGUMENTS", str(error)) from None
+            return {
+                "saved_to_draft": True,
+                "message": "图形已接收，随本轮正文统一提交；界面操作仅改变本地显示或填写输入框。",
+            }
         if name == "submit_story":
             await owner.receive_story(args.content, [])
             count = len(owner.story["breaks"]) + 1

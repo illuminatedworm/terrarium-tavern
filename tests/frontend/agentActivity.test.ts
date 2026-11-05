@@ -1,6 +1,70 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { liveActivity, mergeActivity } from '../../web/lib/agentActivity';
 import { mergeWorkTurns } from '../../web/lib/workRecords';
+import { appendVisualInput, hasVisuals, loadVisuals, observeVisuals } from '../../web/lib/visuals';
+import { rawApi } from '../../web/lib/api';
+
+vi.mock('../../web/lib/api', () => ({ rawApi: vi.fn() }));
+
+it('batches visible graphics across callback microtasks and preserves unsent drafts', async () => {
+  const frames: FrameRequestCallback[] = [];
+  const callbacks: Array<(entries: Array<{ target: Element; isIntersecting: boolean }>) => void> = [];
+  class Observer {
+    constructor(callback: (entries: Array<{ target: Element; isIntersecting: boolean }>) => void) {
+      callbacks.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  vi.stubGlobal('IntersectionObserver', Observer);
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
+  vi.mocked(rawApi).mockResolvedValue({ messages: { a: [], b: [] } });
+  const first = {} as Element,
+    second = {} as Element;
+  const requests: ReturnType<typeof loadVisuals>[] = [];
+  const stopFirst = observeVisuals(first, () => {
+    requests.push(loadVisuals('story', 'a'));
+  });
+  const stopSecond = observeVisuals(second, () => {
+    requests.push(loadVisuals('story', 'b'));
+  });
+  try {
+    expect(callbacks).toHaveLength(1);
+    callbacks[0]([{ target: first, isIntersecting: true }]);
+    await Promise.resolve(); // A browser can run microtasks before notifying the next element.
+    callbacks[0]([{ target: second, isIntersecting: true }]);
+    await Promise.resolve();
+    expect(rawApi).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(1);
+    frames[0](0);
+    await Promise.all(requests);
+    expect(rawApi).toHaveBeenCalledExactlyOnceWith('/sessions/story/full-agent/visuals', {
+      message_ids: ['a', 'b'],
+    });
+    const returned = {
+      id: 'v',
+      order: 1,
+      kind: 'tool' as const,
+      name: 'present_ui',
+      status: 'returned' as const,
+      summary: '',
+    };
+    expect(hasVisuals([returned])).toBe(true);
+    expect(hasVisuals([returned], true)).toBe(false);
+    expect(hasVisuals([{ ...returned, status: 'error' }])).toBe(false);
+    expect(hasVisuals()).toBe(false);
+    const draft = '我还没写完的内容  \n\n';
+    expect(appendVisualInput(draft, '查看庭院')).toBe(draft + '查看庭院');
+    expect(appendVisualInput('已有草稿', '查看庭院')).toBe('已有草稿\n查看庭院');
+    expect(appendVisualInput('', '查看庭院')).toBe('查看庭院');
+  } finally {
+    stopFirst();
+    stopSecond();
+    vi.unstubAllGlobals();
+    vi.mocked(rawApi).mockReset();
+  }
+});
 
 it('hides future outline spoilers from collapsed live activity summaries', () => {
   const [item] = liveActivity(

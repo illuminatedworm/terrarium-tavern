@@ -304,6 +304,193 @@ def runtime(store):
     return service
 
 
+def visual_spec():
+    return {
+        "root": "scene",
+        "state": {"selection": "overview", "detail": "本地显示"},
+        "elements": {
+            "scene": {
+                "type": "Scene",
+                "props": {
+                    "title": "冻结图形",
+                    "height": 280,
+                    "selection": {"$state": "/selection"},
+                    "items": [
+                        {"kind": "label", "x": 50, "y": 50, "text": "完整图形尾标", "anchor": "middle"}
+                    ],
+                },
+                "children": [],
+            }
+        },
+    }
+
+
+def test_visual_lookup_projects_only_graphs_without_loading_session(story, monkeypatch):
+    import sqlite3
+    from contextlib import contextmanager
+
+    from tavern.full_agent.visuals import message_visuals
+
+    store, session = story
+    spec = visual_spec()
+    unrelated = "UNRELATED_TOOL_FULL_TEXT" * 4096
+
+    def call(name, identity, arguments):
+        return {"id": identity, "function": {"name": name, "arguments": arguments}}
+
+    records = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                call("read_lore_entry", "lore", unrelated),
+                call("present_ui", "reused", json.dumps({"spec": spec})),
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "lore",
+            "content": json.dumps({"ok": True, "data": {"text": unrelated}}),
+        },
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
+        {"role": "assistant", "tool_calls": [call("read_history", "reused", unrelated)]},
+        {"role": "tool", "tool_call_id": "reused", "content": json.dumps({"ok": True, "data": unrelated})},
+        {"role": "assistant", "tool_calls": [call("present_ui", "reused", "invalid")]},
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":false}'},
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
+    ]
+    with store.connection() as db:
+        db.executemany(
+            "INSERT INTO full_agent_trace VALUES (?,?,?,?,?)",
+            [
+                (session["id"], session["head"], seq, "window", json.dumps(record))
+                for seq, record in enumerate(records, 1)
+            ],
+        )
+    connect = store.connection
+
+    @contextmanager
+    def projected_connection():
+        with connect() as db:
+
+            def row_factory(cursor, row):
+                assert not any(
+                    isinstance(value, str) and "UNRELATED_TOOL_FULL_TEXT" in value for value in row
+                )
+                return sqlite3.Row(cursor, row)
+
+            db.row_factory = row_factory
+            yield db
+
+    def forbidden_session(*args, **kwargs):
+        pytest.fail("visual lookup must not load a full session")
+
+    monkeypatch.setattr(store, "connection", projected_connection)
+    monkeypatch.setattr(store, "session", forbidden_session)
+    assert message_visuals(store, session["id"], [session["head"]]) == {session["head"]: [spec]}
+
+
+async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
+    """A graph must never escape a failed turn or attach to another reply/version."""
+    from tavern.full_agent.tools import tool_definitions
+    from tavern.full_agent.visuals import message_visuals, successful_specs, validate_spec
+    from tavern.storage.store import NotFound
+    from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
+
+    store, session = story
+    spec = visual_spec()
+    validate_spec(spec)
+    paired = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "reused", "function": {"name": "present_ui", "arguments": json.dumps({"spec": spec})}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "reused", "function": {"name": "present_ui", "arguments": "invalid"}}],
+        },
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":false}'},
+    ]
+    assert successful_specs(paired) == [spec]
+    bad = copy.deepcopy(spec)
+    bad["elements"]["scene"]["props"]["selection"] = {"$state": "/stat_data/hp"}
+    with pytest.raises(ValueError, match="Invalid visual spec"):
+        validate_spec(bad)
+    bad = copy.deepcopy(spec)
+    bad["elements"]["scene"]["props"]["items"][0]["onclick"] = "fetch('/api/settings')"
+    with pytest.raises(ValueError, match="Invalid visual spec"):
+        validate_spec(bad)
+    with store.connection() as db:
+        db.execute("UPDATE meta SET value='19' WHERE key='schema_version'")
+        db.execute("UPDATE sessions SET disabled_tools='[\"read_note\"]' WHERE id=?", (session["id"],))
+    store = Store(store.root)
+    session = store.session(session["id"])
+    assert set(session["disabled_tools"]) == {"read_note", "present_ui"}
+    assert list(store.root.glob("before-upgrade-schema19-*.sqlite3"))
+    request = TurnRequest(operation_id="catalog", expected_revision=session["revision"])
+    settings = store.session_settings(session).for_role("full_agent")
+    assert "present_ui" not in {
+        d["function"]["name"] for d in tool_definitions(request, session, settings=settings)
+    }
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET disabled_tools='[\"read_note\"]' WHERE id=?", (session["id"],))
+    store = Store(store.root)
+    session = store.session(session["id"])
+    assert session["disabled_tools"] == ["read_note"]  # Reopening never resets the user's opt-in.
+    settings.kemini.enabled = True
+    assert "present_ui" not in {
+        d["function"]["name"] for d in tool_definitions(request, session, settings=settings)
+    }
+    service = runtime(store)
+    try:
+        model = Model(("present_ui", {"spec": spec}), RuntimeError("fixture interruption"))
+        failed, unchanged = await turn(service, session, model, operation_id="visual-failed")
+        assert failed["status"] == "error" and unchanged["head"] == session["head"]
+        assert message_visuals(store, unchanged["id"], [unchanged["head"]])[unchanged["head"]] == []
+        assert "完整图形尾标" in json.dumps(model.requests[-1]["messages"], ensure_ascii=False)
+        result, current = await turn(
+            service,
+            unchanged,
+            Model("图形随正文保存。"),
+            resume_turn_id=failed["id"],
+            operation_id="visual-resume",
+        )
+        assert result["status"] == "committed", result["error"]
+        original = current["head"]
+        assert message_visuals(store, current["id"], [original])[original] == [spec]
+        fork = store.fork_session(current["id"], original, current["revision"])
+        assert message_visuals(store, fork["id"], [fork["head"]])[fork["head"]] == [spec]
+        with pytest.raises(NotFound):
+            message_visuals(store, fork["id"], [original])
+        result, replacement = await turn(
+            service, current, Model("这版没有图形。"), mode="regenerate", operation_id="visual-replace"
+        )
+        assert result["status"] == "committed", result["error"]
+        assert message_visuals(store, replacement["id"], [replacement["head"]])[replacement["head"]] == []
+        restored = store.switch_message_version(
+            current["id"], replacement["head"], original, replacement["revision"]
+        )
+        assert message_visuals(store, restored["id"], [original])[original] == [spec]
+        package, blobs = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[restored["id"]])), store
+        )
+        imported = import_package(store, package, blobs)
+        cloned = store.session(imported["sessions"][0])
+        assert "present_ui" not in cloned["disabled_tools"]
+        assert message_visuals(store, cloned["id"], [cloned["head"]])[cloned["head"]] == [spec]
+        broken = copy.deepcopy(package)
+        for trace in broken["sessions"][0]["full_agent_trace"]:
+            for call in trace["payload"].get("tool_calls", []):
+                if call["function"]["name"] == "present_ui":
+                    call["function"]["arguments"] = json.dumps({"spec": bad})
+        with pytest.raises(ValueError, match="Invalid visual spec"):
+            import_package(store, broken, blobs)
+    finally:
+        await service.close()
+
+
 async def turn(service, session, model, **kwargs):
     service.full.provider_factory = (lambda: model) if model is not None else None
     request = TurnRequest(

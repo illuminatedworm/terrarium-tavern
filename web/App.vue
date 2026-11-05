@@ -19,6 +19,7 @@ import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJ
 import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
+import { appendVisualInput } from './lib/visuals';
 import { saveDownload } from './lib/download';
 import { androidHost } from './lib/hostCapabilities';
 import { loreTitle } from './lib/loreBook';
@@ -2301,6 +2302,11 @@ async function frameAction(
 ) {
   const token = viewScope.current();
   try {
+    if (method === 'visual-input') {
+      input.value = appendVisualInput(input.value, args.text);
+      resolve(null);
+      return;
+    }
     if (method === 'input') {
       input.value = String(args.text || '');
       resolve(null);
@@ -2857,7 +2863,13 @@ useTimedError(error);
               @reading="readingMessageId = $event"
               v-bind="
                 isFullAgent
-                  ? { sessionId: session.id, turn: activeTurn, events: trace, pending: !!pendingVisible }
+                  ? {
+                      sessionId: session.id,
+                      turn: activeTurn,
+                      events: trace,
+                      pending: !!pendingVisible,
+                      kemini: !!session.kemini,
+                    }
                   : {}
               "
               @content-change="scroll()"
@@ -2871,9 +2883,10 @@ useTimedError(error);
                   @remove="removeLore"
                 />
               </template>
-              <template #message="{ message }">
+              <template #message="{ message, hasVisuals }">
                 <DialogueMessage
                   :message="message"
+                  :has-visuals="hasVisuals"
                   :interval="messageIntervals.get(message.id)"
                   :session="session"
                   :name="name"

@@ -138,7 +138,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 9,
+        "version": 10,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -315,7 +315,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -582,6 +582,21 @@ def validate_package(store, package, blobs):
                     ):
                         raise ValueError("对话上下文轨迹无效")
                     trace_keys.add(key)
+            from tavern.full_agent.visuals import successful_specs, validate_spec
+
+            visual_records = {}
+            for trace in bundle.get("full_agent_trace", []):
+                visual_records.setdefault(trace["message_id"], []).append(trace)
+            for records in visual_records.values():
+                specs = successful_specs(
+                    row["payload"] for row in sorted(records, key=lambda row: row["seq"])
+                )
+                if len(specs) > 3:
+                    raise ValueError("一条回复最多保存三份交互图形")
+                for spec in specs:
+                    if package["version"] < 10:
+                        raise ValueError("交互图形需要个人数据包格式 10")
+                    validate_spec(spec)
             for key, expected_type in (
                 ("disabled_tools", list),
                 ("tool_result_options", dict),
@@ -589,6 +604,10 @@ def validate_package(store, package, blobs):
             ):
                 if key in session and not isinstance(session[key], expected_type):
                     raise ValueError("对话选项格式无效")
+            if package["version"] < 10 and session["agent_mode"] == "full_agent":
+                disabled = session.setdefault("disabled_tools", [])
+                if "present_ui" not in disabled:
+                    disabled.append("present_ui")
             adapter = bundle.get("adapter")
             if adapter:
                 validate_row(

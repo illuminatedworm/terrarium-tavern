@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { liveActivity, mergeActivity, type AgentActivity } from '../../lib/agentActivity';
 import AgentActivityItem from './AgentActivityItem.vue';
 import StoryHistory from './StoryHistory.vue';
+import { hasVisuals } from '../../lib/visuals';
 
 const props = defineProps<{
   sessionId: string;
@@ -15,6 +16,7 @@ const props = defineProps<{
   editingId?: string;
   following?: boolean;
   retainInteractive?: boolean;
+  kemini?: boolean;
 }>();
 const emit = defineEmits<{ contentChange: []; reading: [id: string] }>();
 const history = ref<InstanceType<typeof StoryHistory>>();
@@ -138,7 +140,7 @@ onBeforeUnmount(() => {
             :endpoint="`${prefix}/messages/${message.id}/activity`"
           />
         </div>
-        <slot name="message" :message="message" />
+        <slot name="message" :message="message" :has-visuals="hasVisuals(records[message.id], kemini)" />
       </template>
     </StoryHistory>
     <slot name="pending" />
