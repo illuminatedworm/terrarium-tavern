@@ -121,7 +121,7 @@ class ContentRevision(ContentArguments):
         description="Atomic setting actions: set_character, add_lore, update_lore, remove_lore. No JSON Patch paths, IDs, card roots or extensions.",
     )
     comment: str = Field(
-        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+        min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
     )
 
 

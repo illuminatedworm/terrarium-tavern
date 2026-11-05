@@ -136,7 +136,7 @@ class Patch(Card):
         description="1–100 JSON Patch operations applied atomically. Read current affected fields first; preserve unrelated fields and extensions.",
     )
     comment: str = Field(
-        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+        min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
     )
 
 
@@ -149,7 +149,7 @@ class TextField(Card):
         description="Complete replacement text, including literal macros, quotes and newlines. Empty string clears the field. Do not encode it as JSON text."
     )
     comment: str = Field(
-        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+        min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
     )
 
 
@@ -215,7 +215,7 @@ class Portrait(Card):
 
 class Revert(Card):
     comment: str = Field(
-        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+        min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
     )
 
 

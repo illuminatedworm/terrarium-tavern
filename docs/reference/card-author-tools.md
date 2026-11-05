@@ -64,7 +64,7 @@ Agent 优先使用专门工具：
 - **撤销本轮卡片修改**用 `revert_draft`。
 - **结构修改**或确需跨字段原子修改时用 `patch_draft`。
 
-`set_text_field`、`set_opening`、`patch_draft` 三个编辑工具的读取要求、权限、可逆编号与文档校验一致。`patch_draft`、`revert_draft` 和 `set_text_field` 都要求必填的简短操作备注 `comment`（1–1000 字符）。`comment` 取代了旧参数 `reason`：新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
+`set_text_field`、`set_opening`、`patch_draft` 三个编辑工具的读取要求、权限、可逆编号与文档校验一致。`patch_draft`、`revert_draft` 和 `set_text_field` 都要求必填的简短操作备注 `comment`（1–2000 字符）。`comment` 取代了旧参数 `reason`：新调用传 `reason` 会被严格参数校验拒绝；旧调用记录保留原样，活动摘要仍可显示其备注。
 
 `operations` 必须是数组，不能是序列化后的数组字符串。参数校验失败会指出字段与修复方法，数组类型错误附结构示例及开场、文本字段专用工具指引；不自动解析或修补错误参数。失败标记随工具结果持久化，Anthropic 续答携带 `tool_result.is_error=true`，其他接口保留错误正文，不发送不支持的状态字段。
 

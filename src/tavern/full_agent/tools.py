@@ -173,7 +173,7 @@ class StatePatch(Arguments):
         max_length=100, description=PATCH_GUIDANCE + " Empty array means no changes."
     )
     comment: str = Field(
-        min_length=1, max_length=1000, description="Brief user-facing comment about this operation."
+        min_length=1, max_length=2000, description="Brief user-facing comment about this operation."
     )
 
 

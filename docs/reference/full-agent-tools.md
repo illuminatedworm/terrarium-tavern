@@ -29,7 +29,7 @@
 - query 为 1–1000 字符，只有 set_retrieval_query 允许空串；limit 为 1–10，默认 5。
 - 历史 ref 与笔记 key 为 1–80 字符。read_history 的 ref 可为单条 H 或闭区间 `H52-H58`，区间最多 8 条，两端都须在当前分支。read_state.path 最长 200 字符。
 - 笔记正文为 1–64000 字符，不能为空白，另受 note_tokens 约束；handoff 的限额见下文。
-- comment 为必填的简短操作备注，1–1000 字符。patch_state 和 revise_content 的旧参数 reason 已改为 comment：新调用传 reason 会报错，提示补 comment 并删除 reason；旧调用记录保留原样。
+- comment 为必填的简短操作备注，1–2000 字符。patch_state 和 revise_content 的旧参数 reason 已改为 comment：新调用传 reason 会报错，提示补 comment 并删除 reason；旧调用记录保留原样。
 - 新笔记键允许字母、数字、下划线、中文、斜线、连字符、空格和点。
 
 ## 叙事检索与编辑定位
