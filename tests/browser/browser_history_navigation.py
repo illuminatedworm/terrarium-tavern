@@ -62,7 +62,7 @@ async def main():
     with tempfile.TemporaryDirectory() as data:
         app = create_app(data)
         store = app.state.store
-        card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+        card = store.import_card(Path("samples/雾港来信.json").read_bytes())
         with store.connection() as database:
             database.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
         cases = [

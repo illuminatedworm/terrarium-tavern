@@ -27,12 +27,12 @@ def read_manifest(path):
     return manifest
 
 
-def mobile_config(purpose, device="cpu"):
+def mobile_config(purpose):
     source = SOURCES[purpose]
     return {
         "model": source["repository"],
         "revision": source["revision"],
-        "device": device,
+        "device": "cpu",
         "quantization": "q8_0",
         "batch_size": 1,
         "dimensions": 1024,

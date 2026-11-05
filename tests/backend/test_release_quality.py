@@ -105,7 +105,7 @@ def test_storage_cleanup_preserves_story_branches_and_recoverable_failure(tmp_pa
     from tavern.storage.maintenance import cleanup, storage_report
 
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode(), "card.json")
+    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     old, _ = store.create_turn(
         session["id"], TurnRequest(text="过去", operation_id="old", expected_revision=0)
@@ -145,7 +145,7 @@ def test_storage_quota_evicts_details_and_obsolete_indexes_but_not_models(tmp_pa
     cfg = store.settings()
     cfg.log_max_mib = cfg.retrieval_cache_max_mib = 1
     store.save_settings(cfg)
-    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode(), "card.json")
+    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     turn, _ = store.create_turn(session["id"], TurnRequest(operation_id="large", expected_revision=0))
     store.set_turn(turn, status="committed")

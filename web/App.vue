@@ -58,7 +58,7 @@ import TurnReview from './components/story/TurnReview.vue';
 import ConversationMessageAdapter from './components/settings/ConversationMessageAdapter.vue';
 import CharacterPortrait from './components/character/CharacterPortrait.vue';
 import Icon from './components/common/Icon.vue';
-import { cardPortraitUrl, sessionPortraitUrl } from './lib/portraits';
+import { sessionPortraitUrl } from './lib/portraits';
 import StoryWizard from './components/story/StoryWizard.vue';
 import MvuInspector from './components/story/MvuInspector.vue';
 import SceneInspector from './components/story/SceneInspector.vue';
@@ -911,9 +911,6 @@ const currentCard = computed(
     (sessionCard.value?.id === session.value?.card ? sessionCard.value : null),
 );
 const name = computed(() => currentCard.value?.name || '新的故事，正等着你');
-const archiveCharacter = computed(
-  () => sessionCard.value?.document?.data?.nickname || sessionCard.value?.document?.nickname || name.value,
-);
 const contextLabels: Record<string, string> = {
   rules: '规则',
   lore: '世界书（按设定位置）',
@@ -3415,7 +3412,6 @@ useTimedError(error);
             :submitting="!!sceneSubmitting"
             :updating="sceneUpdating"
             :progress="memoryProgress"
-            :character="archiveCharacter"
             :saving="sceneSaving === 'memory'"
             @edit-lore="editSessionLore"
             @saved="applyFullSession"
@@ -3580,7 +3576,6 @@ useTimedError(error);
             :session="session"
             :full-agent="isFullAgent"
             :progress="memoryProgress"
-            :character="archiveCharacter"
             :disabled="busy || activeTurn?.status === 'awaiting_review'"
             :saving="sceneSaving === 'memory'"
             @saved="applyFullSession"

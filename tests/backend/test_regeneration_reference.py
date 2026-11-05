@@ -16,7 +16,7 @@ from tests.backend.test_message_versions import generate
 @pytest.fixture(params=["half_agent", "full_agent"])
 def story(tmp_path, request):
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     settings = store.settings()
     settings.full_agent_config.auto_retrieval = False
     settings.retrieval.channels = ["keyword"]

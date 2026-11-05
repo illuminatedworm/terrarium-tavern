@@ -17,6 +17,7 @@ from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.request_context import ProviderRequestContext
 from tavern.storage.store import Store
 from tests.backend.test_full_agent import Model, current_text, handoff, runtime, story_reply, turn, written
+from tests.support.model_transport import request_payload
 
 
 def config(api="anthropic", mode="runtime", **kwargs):
@@ -214,12 +215,12 @@ async def test_native_items_round_trip_in_original_order_and_invalidate_on_edit(
     try:
         result = await p.chat_complete([{"role": "user", "content": "fixture"}])
         message = assistant(p, result)
-        body = p._request([message])
+        body = await request_payload(p, [message])
         items = body["messages"][0]["content"] if api == "anthropic" else body["input"]
         assert items == original
         assert p.last_response_record["native"]["items"] == original
         message["content"] = "edited text"
-        body = p._request([message])
+        body = await request_payload(p, [message])
         assert "edited text" in json.dumps(body)
         assert "between calls" not in json.dumps(body)
         assert "signed-original" not in json.dumps(body)
@@ -238,8 +239,8 @@ async def test_explicit_cache_key_wins_and_half_agent_gets_no_identity():
     )
     plain = transport(cfg, lambda _: httpx.Response(200, json=reply("responses")))
     try:
-        assert p._request([])["prompt_cache_key"] == "custom-key"
-        assert "prompt_cache_key" not in plain._request([])
+        assert (await request_payload(p, []))["prompt_cache_key"] == "custom-key"
+        assert "prompt_cache_key" not in (await request_payload(plain, []))
     finally:
         await p.close()
         await plain.close()
@@ -247,7 +248,7 @@ async def test_explicit_cache_key_wins_and_half_agent_gets_no_identity():
 
 def game(tmp_path, api="anthropic", *, kemini=False):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     document = store.settings_document()
     document.full_agent.tools.auto_retrieval = False
     document.full_agent.model.model = "claude-opus-5-5" if api == "anthropic" else "gpt-6-sol"
@@ -429,7 +430,10 @@ async def test_turn_requirements_replay_in_place_and_append_revocations():
     assert again["context_additions"] == []
     provider = transport(settings, lambda _: pytest.fail("Context compilation must not call the model"))
     try:
-        before, after = provider._request(sent["messages"]), provider._request(second["messages"])
+        before, after = (
+            (await request_payload(provider, sent["messages"])),
+            (await request_payload(provider, second["messages"])),
+        )
         assert after["systemInstruction"] == before["systemInstruction"]
         assert after["contents"][: len(before["contents"])] == before["contents"]
         assert "完整待重写参考。" in json.dumps(after, ensure_ascii=False)
@@ -1398,7 +1402,7 @@ async def test_explicit_identity_overrides_survive_cloud_mode(api):
     context = ProviderRequestContext(uuid4().hex, "turn", "window", "device")
     p = transport(cfg, lambda _: httpx.Response(200, json=reply(api)), context)
     try:
-        body = p._request([{"role": "user", "content": "hello"}])
+        body = await request_payload(p, [{"role": "user", "content": "hello"}])
         if api == "anthropic":
             assert body["metadata"]["user_id"] == "custom-user"
         else:
@@ -1433,14 +1437,18 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
 
     monkeypatch.setattr(agent_module, "make_provider", factory)
     try:
-        for allow in (False, True):
+        for index in range(2):
+            if index:
+                # Tool limits change the fixed source; per-turn authorization does not.
+                settings = store.settings()
+                settings.full_agent_config.note_tokens += 1
+                store.save_settings(settings)
             pending = service.submit(
                 session["id"],
                 TurnRequest(
                     text="next",
                     operation_id=uuid4().hex,
                     expected_revision=session["revision"],
-                    allow_content_edit=allow,
                 ),
             )
             await service.tasks[pending["id"]]

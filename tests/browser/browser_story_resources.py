@@ -97,7 +97,7 @@ window.TavernPanel={save:()=>({draft:document.querySelector('#local-draft').valu
             )
             validation = patch("tavern.scripting.dependencies.validate_remote", validate)
             validation.start()
-        card = store.import_card(dump({"name": "资源夹具", "first_mes": panel}).encode(), "card.json")
+        card = store.import_card(dump({"name": "资源夹具", "first_mes": panel}).encode())
         with store.connection() as db:
             db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
         session = store.new_session(SessionCreate(card_id=card["id"]))

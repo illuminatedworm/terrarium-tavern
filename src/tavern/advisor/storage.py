@@ -33,7 +33,7 @@ def initialize(store):
         """)
 
 
-def fork(db, source, target, message_ids):
+def fork(db, source, target):
     row = db.execute("SELECT options FROM advisor_conversations WHERE session=?", (source,)).fetchone()
     if not row:
         return

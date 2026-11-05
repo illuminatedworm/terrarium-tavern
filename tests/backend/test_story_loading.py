@@ -10,7 +10,7 @@ from tavern.core.models import SessionCreate
 async def test_slow_preview_does_not_block_other_requests(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(b'{"name":"Test","first_mes":"Hello"}', "test.json")
+    card = store.import_card(b'{"name":"Test","first_mes":"Hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     started, release = threading.Event(), threading.Event()
 

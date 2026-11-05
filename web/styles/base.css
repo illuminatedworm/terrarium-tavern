@@ -487,13 +487,6 @@ summary:hover {
 }
 
 /* ---------- Layout helpers ---------- */
-.form-row {
-  display: flex;
-  gap: 16px;
-}
-.form-row > * {
-  flex: 1;
-}
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -546,11 +539,6 @@ summary:hover {
 .field-help[data-tooltip]:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-}
-@media (max-width: 620px) {
-  .form-row {
-    display: block;
-  }
 }
 
 /* ---------- Inline status ---------- */

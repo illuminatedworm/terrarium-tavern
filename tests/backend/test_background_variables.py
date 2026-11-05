@@ -1,14 +1,12 @@
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.service import RoleplayRuntime
 from tavern.core.models import SessionCreate, TurnRequest
-from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store
 from tests.support.tracker_model import PatchModel
 
@@ -26,12 +24,10 @@ class VariableProvider:
 
     async def chat_complete(self, messages, **kwargs):
         self.messages = messages
-        if "extra_body" in kwargs:
-            if self.closed:
-                self.native = PatchModel(self.content)
-                self.closed = False
-            return await self.native.chat_complete(messages, **kwargs)
-        return SimpleNamespace(content=self.content, usage={})
+        if self.closed:
+            self.native = PatchModel(self.content)
+            self.closed = False
+        return await self.native.chat_complete(messages, **kwargs)
 
     async def close(self):
         self.closed = True
@@ -48,7 +44,7 @@ class VariableProvider:
 )
 async def test_variable_turn_is_separate_and_atomic(tmp_path, enabled, result, status):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/星航状态卡.json").read_bytes())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -100,53 +96,9 @@ async def test_variable_turn_is_separate_and_atomic(tmp_path, enabled, result, s
         await service.close()
 
 
-@pytest.mark.parametrize("with_rules", [False, True])
-async def test_recent_context_and_provider_cleanup(with_rules):
-    events = []
-    store = SimpleNamespace(event=lambda *args: events.append(args))
-    settings = SimpleNamespace(memory_timeout=10)
-    provider = VariableProvider("[]")
-    document = (
-        {
-            "name": "测试",
-            "character_book": {
-                "entries": [
-                    {
-                        "id": "rule",
-                        "content": "变量规则 {{user}}",
-                        "extensions": {"terrarium": {"audience": "tracker_mvu"}},
-                    }
-                ]
-            },
-        }
-        if with_rules
-        else None
-    )
-    operations = await analyze_variables(
-        store,
-        "turn",
-        settings,
-        [{"role": "assistant", "raw": str(i)} for i in range(12)],
-        {"stat_data": {"hp": 2}},
-        "input",
-        "new prose",
-        lambda: provider,
-        document=document,
-    )
-    assert operations == []
-    payload = json.loads(next(m["content"] for m in provider.messages if m["role"] == "user"))
-    rules = [m["content"] for m in provider.messages if m["content"].startswith("<mvu_rules>\n")]
-    assert len(rules) == int(with_rules)
-    if with_rules:
-        assert "变量规则 用户" in rules[0] and rules[0].endswith("\n</mvu_rules>")
-    assert [m["content"] for m in payload["recent_history"]] == [str(i) for i in range(6, 12)]
-    assert payload["current_turn"] == {"user": "input", "assistant": "new prose"}
-    assert provider.closed
-
-
 async def test_cancel_during_analysis_rolls_back(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/星航状态卡.json").read_bytes())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     session = store.new_session(SessionCreate(card_id=card["id"]))

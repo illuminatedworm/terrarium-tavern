@@ -14,7 +14,6 @@ from tavern.storage.store import Conflict, Store, dump
 def create_story(store):
     card = store.import_card(
         dump({"name": "面板权限", "first_mes": "开场", "extensions": {"unknown": {"keep": True}}}).encode(),
-        "card.json",
     )
     return card, store.new_session(SessionCreate(card_id=card["id"]))
 

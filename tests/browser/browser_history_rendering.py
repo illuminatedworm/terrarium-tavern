@@ -30,9 +30,7 @@ async def main(all_viewports=False):
         cfg.foreground.model = cfg.background.model = "fixture"
         cfg.local_models.reranker_enabled = False
         store.save_settings(cfg)
-        card = store.import_card(
-            b'{"name":"History fixture","first_mes":"Old source sentence."}', "card.json"
-        )
+        card = store.import_card(b'{"name":"History fixture","first_mes":"Old source sentence."}')
         with store.connection() as db:
             db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
         session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -80,7 +78,7 @@ async def main(all_viewports=False):
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         address = f"http://127.0.0.1:{sock.getsockname()[1]}"
-        short_card = store.import_card(b'{"name":"Retry fixture","first_mes":"Opening"}', "retry.json")
+        short_card = store.import_card(b'{"name":"Retry fixture","first_mes":"Opening"}')
         short = generate(
             store, store.new_session(SessionCreate(card_id=short_card["id"])), text="Original reply"
         )

@@ -58,7 +58,7 @@ def long_story(store):
     config.full_agent.official_model.reply_tokens = 1024
     store.save_settings(config)
     card = store.import_card(
-        json.dumps({"name": "Long fixture", "first_mes": "完整开场原文。" * 6000}).encode(), "long.json"
+        json.dumps({"name": "Long fixture", "first_mes": "完整开场原文。" * 6000}).encode()
     )
     return store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
 
@@ -136,7 +136,7 @@ async def test_ordinary_custom_cache_parameters_cannot_enable_cloud_compaction()
 async def test_channel_boundary_is_enforced_in_settings_creation_and_origin_assignment(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(json.dumps({"name": "Fixture", "first_mes": "Opening"}).encode(), "fixture.json")
+    card = store.import_card(json.dumps({"name": "Fixture", "first_mes": "Opening"}).encode())
     try:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://testserver"

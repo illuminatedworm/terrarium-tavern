@@ -97,10 +97,8 @@ SPECS.update(
 )
 
 
-def definitions(mode, web=True):
+def definitions(mode):
     excluded = {"search_memory"} if mode == "full_agent" else {"search_notes", "read_note"}
-    if not web:
-        excluded |= {"web_search", "read_webpage"}
     result = []
     for name, (model, description) in SPECS.items():
         if name in excluded:

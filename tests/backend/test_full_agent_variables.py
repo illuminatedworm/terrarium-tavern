@@ -55,7 +55,7 @@ def document():
 
 def game(tmp_path, *, real=False):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps(document()).encode(), "fixture.json")
+    card = store.import_card(json.dumps(document()).encode())
     settings = store.settings()
     settings.full_agent_config.auto_retrieval = False
     settings.retrieval.channels = ["keyword"]

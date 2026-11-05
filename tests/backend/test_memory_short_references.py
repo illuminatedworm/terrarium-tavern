@@ -5,13 +5,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from kohakuterrarium.llm.base import NativeToolCall
 
 from tavern.core.models import Settings
-from tavern.memories.history_recall import HistoryBudget, HistoryRecall, complete_with_recall
+from tavern.memories.history_recall import HistoryBudget, HistoryRecall
 from tavern.memories.memory_engine import CallBudget, consolidate
 from tavern.memories.memory_protocol import References, split_passages
 from tavern.memories.memory_records import Record, source_hash, with_source_status
+from tavern.tracker.task import TrackerTask
+from tests.support.tracker_model import TrackerModel
 
 
 def history(texts):
@@ -308,41 +309,50 @@ async def test_native_tool_short_refs_use_batch_cutoff_and_resolve_history_evide
     messages = history(["艾琳借出银戒。"] + ["继续。"] * 5 + ["旅人归还银戒。", "未来剧情秘密。"])
     settings, budget = Settings(), CallBudget()
 
-    class Provider:
-        last_tool_calls = []
-        calls = 0
-
-        async def chat_complete(self, thread, **kwargs):
-            self.calls += 1
-            wire = json.dumps(thread, ensure_ascii=False)
-            assert all(m["id"] not in wire for m in messages)
-            assert "未来剧情秘密" not in wire
-            if self.calls == 1:
-                self.last_tool_calls = [NativeToolCall("call1", "tavern_recall_history", '{"query":"银戒"}')]
-                return SimpleNamespace(content="", usage={})
-            self.last_tool_calls = []
-            result = json.loads(thread[-1]["content"])
-            old_ref = next(
-                p["ref"] for item in result["matches"] for p in item["passages"] if "借出" in p["text"]
-            )
-            return SimpleNamespace(
-                content=answer(
-                    {"category": "episode", "content": "借出后已归还", "sources": ["H7#1", old_ref]}
-                ),
-                usage={},
-            )
-
-    provider = Provider()
-
-    async def generate(prompt, phase, **kwargs):
-        return await complete_with_recall(
-            provider, prompt, history=messages, settings=settings, budget=budget.history, phase=phase
+    def write_memory(thread):
+        result = json.loads(thread[-1]["content"])
+        old_ref = next(
+            p["ref"] for item in result["matches"] for p in item["passages"] if "借出" in p["text"]
+        )
+        return "write_memory", json.loads(
+            answer({"category": "episode", "content": "借出后已归还", "sources": ["H7#1", old_ref]})
         )
 
-    result = await consolidate(
-        messages[:-1], settings, generate, memory={"version": 3, "records": []}, start=6, budget=budget
+    provider = TrackerModel(("tavern_recall_history", {"query": "银戒"}), write_memory)
+    sid = "00000000-0000-0000-0000-000000000001"
+    store = SimpleNamespace(
+        event=lambda *args: None,
+        device_id=lambda: sid,
+        cache_breakpoint_history=lambda *args: None,
     )
-    assert provider.calls == 2 and budget.history.calls == 1
+    work = TrackerTask(
+        store,
+        "memory",
+        settings,
+        {"id": sid, "persona": "用户"},
+        {"name": "艾琳"},
+        messages,
+        {},
+        phase="pre",
+        memory=True,
+        provider=provider,
+        history_budget=budget.history,
+    )
+    await work.start()
+
+    result = await consolidate(
+        messages[:-1],
+        settings,
+        work.generate_memory,
+        memory={"version": 3, "records": []},
+        start=6,
+        budget=budget,
+    )
+    assert provider.call_count == 2 and budget.history.calls == 1
+    for request in provider.requests:
+        wire = json.dumps(request["messages"], ensure_ascii=False)
+        assert all(m["id"] not in wire for m in messages)
+        assert "未来剧情秘密" not in wire
     assert {s["message_id"] for s in result["records"][0]["sources"]} == {
         messages[0]["id"],
         messages[6]["id"],

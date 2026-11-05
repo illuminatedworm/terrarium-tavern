@@ -368,7 +368,7 @@ async def test_plot_api_edits_pause_clear_catalog_and_conflicts(story):
 
 async def test_empty_story_can_enable_plot_but_not_save_text_and_half_agent_is_rejected(story):
     store, session = story
-    card = store.import_card(json.dumps({"name": "Blank"}).encode(), "blank.json")
+    card = store.import_card(json.dumps({"name": "Blank"}).encode())
     empty = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     empty = store.update_session(empty["id"], empty["revision"], head=None)
     half = store.new_session(SessionCreate(card_id=card["id"], agent_mode="half_agent"))

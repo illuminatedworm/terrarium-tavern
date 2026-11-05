@@ -15,7 +15,7 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     store = Store(tmp_path)
     cfg = Settings(memory_timeout=60, tracker_system_prompt="自定义原则")
     store.save_settings(cfg)
-    card = store.import_card(b'{"name":"fixture","first_mes":"hello"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     assert session["persona"] == "用户"
     assert read_memory(session["snapshot"]) == {"version": 3, "records": []}
@@ -24,7 +24,9 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
     assert reopened.settings().tracker_system_prompt == cfg.tracker_system_prompt
     assert reopened.session(session["id"]) == store.session(session["id"])
     with reopened.connection() as db:
-        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(SCHEMA_VERSION)
+        assert db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(
+            SCHEMA_VERSION
+        )
         assert dict((r[1], r[3]) for r in db.execute("PRAGMA table_info(sessions)"))["card_data"] == 1
 
 
@@ -32,7 +34,7 @@ def test_fresh_store_reopens_without_rewriting_settings(tmp_path):
 def test_saved_persona_names_survive_reopen_and_fork(tmp_path, mode):
     name = "旅人"
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture","first_mes":"hello {{user}}"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"hello {{user}}"}')
     saved = store.save_persona(None, PersonaEdit(name=name, description="保留的用户介绍"))
     explicit = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, persona=name))
     selected = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, persona_id=saved["id"]))

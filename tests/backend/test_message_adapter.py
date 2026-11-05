@@ -25,6 +25,7 @@ from tavern.scripting.protocols import native_messages
 from tavern.storage.message_adapters import recipe_types
 from tavern.storage.store import Conflict, Store
 from tests.support.history_labels import strip_label
+from tests.support.model_transport import request_payload
 
 
 def config(**rules):
@@ -33,7 +34,7 @@ def config(**rules):
 
 def story(tmp_path, mode="half_agent"):
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
     return store, store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
 
 
@@ -226,9 +227,7 @@ def test_full_agent_existing_owner_and_new_owner_inherit_protocol_defaults(tmp_p
         for item in catalog("full_agent"):
             if item["configurable"]:
                 assert rule_for(item["id"], adapter, api, "full_agent")["role"] == (
-                    "user"
-                    if api == "gemini" and item["id"] not in ("novel_status", "novel_research")
-                    else "system"
+                    "user" if api == "gemini" else "system"
                 )
 
 
@@ -249,7 +248,7 @@ async def test_same_type_has_one_sdk_role_and_labels_are_reversible(api, mode):
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500))),
     )
     try:
-        body = provider._request(original)
+        body = await request_payload(provider, original)
         rows = body.get("messages", body.get("input", body.get("contents")))
         text = json.dumps(rows)
         assert "V1" in text and "V2" in text and "tavern_state" not in text
@@ -259,7 +258,7 @@ async def test_same_type_has_one_sdk_role_and_labels_are_reversible(api, mode):
         assert "message_type" not in json.dumps(body) and "runtime_content" not in json.dumps(body)
         assert original == before
         settings.message_adapter.mappings[api]["state"].wrap = True
-        assert "<tavern_state>" in json.dumps(provider._request(original))
+        assert "<tavern_state>" in json.dumps((await request_payload(provider, original)))
     finally:
         await provider.close()
 
@@ -643,13 +642,9 @@ async def test_next_sdk_call_uses_live_adapter_while_current_request_keeps_snaps
     try:
         owner = session["id"] if kind == "story" else editor.edits.create_conversation()["id"]
         lane = "foreground" if kind == "story" else "card_author"
-        cfg = bind_adapter(
-            Settings(model="fixture", base_url="https://fixture.test", use_proxy=False),
-            store,
-            kind,
-            owner,
-            lane,
-        )
+        cfg = Settings(model="fixture", base_url="https://fixture.test", use_proxy=False)
+        cfg._adapter_lane = lane
+        bind_adapter(cfg, store, kind, owner)
         received, release = asyncio.Event(), asyncio.Event()
         requests = []
 
@@ -694,7 +689,7 @@ async def test_next_sdk_call_uses_live_adapter_while_current_request_keeps_snaps
 async def test_owner_api_allows_running_turn_and_preserves_story_revision(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     with store.connection() as db:
         db.execute(

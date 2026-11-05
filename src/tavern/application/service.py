@@ -10,7 +10,7 @@ from tavern.character.cards import regex_scripts
 from tavern.conversation.regeneration import turn_start
 from tavern.conversation.update_review import finish_turn
 from tavern.core.models import TurnRequest, without_nulls
-from tavern.memories.memory import Tracker, completed_rounds
+from tavern.memories.memory import completed_rounds
 from tavern.memories.memory_records import new_memory
 from tavern.scripting.agent import Writer
 from tavern.scripting.dependencies import Dependencies
@@ -36,7 +36,6 @@ class RoleplayRuntime:
         self.memory_provider_factory = None
         self.variable_provider_factory = None
         self.tracker_provider_factory = None
-        self.tracker = Tracker(store)
         from tavern.search.local_models import create_local_model_manager
         from tavern.search.retrieval import RetrievalEngine
 
@@ -55,7 +54,7 @@ class RoleplayRuntime:
             from tavern.memories.memory import window_history
             from tavern.memories.memory_archive import read_archive
 
-            visible, _ = window_history(session["messages"], session["snapshot"])
+            visible = window_history(session["messages"], session["snapshot"])
             await self.retrieval.prepare(
                 document,
                 visible,
@@ -549,7 +548,7 @@ class RoleplayRuntime:
                         from tavern.memories.memory import window_history
 
                         nested_document = (snapshot.get("content") or {}).get("document", document)
-                        visible, _ = window_history(history, snapshot, enabled=local_window_enabled(settings))
+                        visible = window_history(history, snapshot, enabled=local_window_enabled(settings))
                         from tavern.memories.memory_archive import read_archive
 
                         prepared = await self.retrieval.prepare(
@@ -683,9 +682,8 @@ class RoleplayRuntime:
                 "snapshot": copy.deepcopy(before),
             }
             # The compiler owns input insertion; memory tools may cite the pending user input.
-            agent = Writer(self.store, tid, document, session, history, snapshot, req, runtime, settings)
+            agent = Writer(self.store, tid, document, session, history, snapshot, req, settings)
             agent.input_message_id = input_id
-            agent.retrieval_engine = self.retrieval
             self.agents[tid] = agent
             agent.retrieval = prepared
             provider = self.provider_factory() if self.provider_factory else None
@@ -763,7 +761,6 @@ class RoleplayRuntime:
                     self.store,
                     tid,
                     settings,
-                    session,
                     task_history,
                     snapshot,
                     req,

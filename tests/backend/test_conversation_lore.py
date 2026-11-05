@@ -387,7 +387,7 @@ def test_st_top_replaces_entries_and_starts_cooldown_at_absence():
 
 def test_global_mode_only_affects_new_sessions_and_fork_remaps_records(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode(), "card.json")
+    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode())
     original = store.new_session(SessionCreate(card_id=card["id"]))
     assert original["lore_injection_mode"] == "conversation"
     store.save_settings(Settings(lore_injection_mode="st_top"))
@@ -433,9 +433,7 @@ async def test_real_narrative_requests_keep_lore_then_exit_at_cap_and_regenerate
 
     store = Store(tmp_path)
     store.save_settings(Settings(history_message_cap=8, chunk_size=2, memory_interval_turns=1))
-    card = store.import_card(
-        json.dumps({"first_mes": "欢迎", **document(content="冻结灯塔设定")}).encode(), "card.json"
-    )
+    card = store.import_card(json.dumps({"first_mes": "欢迎", **document(content="冻结灯塔设定")}).encode())
     current = store.new_session(SessionCreate(card_id=card["id"]))
     narrative = ScriptedLLM(["正文"])
     service = RoleplayRuntime(store)
@@ -711,7 +709,7 @@ def test_exported_lore_flags_preserve_matching_recursion_and_source():
         },
     }
     raw = json.dumps(original).encode()
-    doc, kind, assets, _ = parse_card(raw, "card.json")
+    doc, kind, assets, _ = parse_card(raw)
     entries = lore_entries(doc)
     assert entries[0]["matchWholeWords"] is True
     assert matches("B", "B", {**entries[0], "use_regex": True})
@@ -721,7 +719,7 @@ def test_exported_lore_flags_preserve_matching_recursion_and_source():
     assert compile(doc, [], {"state": {}}, text="LIGHTING")["lore"] == []
     assert compile(doc, [], {"state": {}}, text="light")["lore"] == []
     assert recursive_candidates(entries, ["a"], {"a"}, 1) == {}
-    selected, _, _ = activate_lore(doc, [], "LIGHT", {}, "seed", recursion_depth=1)
+    selected, _, _ = activate_lore(doc, [], "LIGHT", {}, "seed")
     assert [e["id"] for e in selected] == ["a"]
     out = compile(doc, [], {"state": {}}, text="LIGHT")
     assert any(m["content"] == "<lorebook>\n海港：灯塔完整设定\n</lorebook>" for m in out["messages"])
@@ -736,8 +734,6 @@ def test_exported_lore_flags_preserve_matching_recursion_and_source():
     assert recursive_candidates(entries, ["a"], {"a"}, 1) == {
         "b": {"recursive_parents": ["a"], "recursion_depth": 1}
     }
-    selected, _, _ = activate_lore(doc, [], "LIGHT", {}, "seed", recursion_depth=1)
-    assert [e["id"] for e in selected] == ["a", "b"]
     out = compile(
         doc,
         [],
@@ -798,7 +794,7 @@ def test_body_only_short_keywords_do_not_activate_named_subjects():
 def test_explicit_timeline_tags_exclude_later_arc_entries():
     doc = document(keys=["灭却师"], content="后期设定", timelines=["千年血战篇"])
     state = {"世界": {"当前时间线": "死神代行篇"}}
-    out = compile(doc, [], {"state": state}, text="灭却师", requested=["e"])
+    out = compile(doc, [], {"state": state}, text="灭却师")
     assert out["lore"] == []
     assert any("时间线" in n["reason"] for n in out["diagnostics"])
     state["世界"]["当前时间线"] = "千年血战篇"

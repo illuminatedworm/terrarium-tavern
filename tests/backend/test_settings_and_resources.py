@@ -236,7 +236,7 @@ def test_personas_only_keep_latest_and_delete_physically(tmp_path):
     with pytest.raises(Conflict):
         store.save_persona(persona["id"], PersonaEdit(name="覆盖", description="", expected_version=1))
     assert store.personas() == [persona]
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"]))
     store.delete_persona(persona["id"])
     assert Store(tmp_path).personas() == []

@@ -27,10 +27,10 @@ async def main():
     with tempfile.TemporaryDirectory(prefix="card-authoring-ui-") as root:
         app = create_app(root)
         store, editor = app.state.store, app.state.editor
-        card = store.import_card(dump(fixture()).encode(), "fixture.json")
+        card = store.import_card(dump(fixture()).encode())
         second = fixture()
         second["name"] = "参考卡乙"
-        store.import_card(dump(second).encode(), "second.json")
+        store.import_card(dump(second).encode())
         editor.provider_factory = lambda: ToolLLM([])
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))

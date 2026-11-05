@@ -69,7 +69,6 @@ async def main(all_viewports=False, host_only=False):
                     },
                 }
             ).encode(),
-            "card.json",
         )
         with store.connection() as db:
             db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))

@@ -16,7 +16,7 @@ def recipe(text):
 
 
 def card(store):
-    return store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    return store.import_card(Path("samples/雾港来信.json").read_bytes())
 
 
 def test_new_sessions_copy_global_recipe_and_remain_independent(tmp_path):

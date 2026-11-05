@@ -9,19 +9,17 @@ import pytest
 
 from tavern.application.service import RoleplayRuntime
 from tavern.conversation.context import compile_context
-from tavern.conversation.half_context import apply_context, finalize_record, load_trace
+from tavern.conversation.half_context import finalize_record, load_trace
 from tavern.core.kemini import PREFIX_SOURCES, TURN_SOURCES, control_text, prefix_frames
 from tavern.core.message_adapter import MessageAdapterConfig, adapt_messages
 from tavern.core.models import ContextRecipe, SessionCreate, Settings, TurnRequest
-from tavern.memories.history_recall import HISTORY_TOOL, HistoryBudget, complete_with_recall
 from tavern.scripting.model_transport import ModelTransport
 from tavern.scripting.native_response import attachment
 from tavern.scripting.protocols import native_messages
-from tavern.scripting.request_context import OperationContexts, configure_operation, response_origin
+from tavern.scripting.request_context import OperationContexts, response_origin
 from tavern.storage.store import Store
 from tests.backend.test_full_agent_alignment import reply
-from tests.backend.test_history_recall import history as recall_history
-from tests.backend.test_history_recall import request as recall_request
+from tests.support.model_transport import request_payload
 
 
 class Story:
@@ -292,13 +290,13 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         block["condition"] = "stat_data.hp"
     provider = ModelTransport(story.cfg, "fixture-secret")
 
-    def request_rows(context):
-        body = provider._request(context["messages"])
+    async def request_rows(context):
+        body = await request_payload(provider, context["messages"])
         return body["messages" if api == "anthropic" else "input"]
 
     try:
         first = story.compile()
-        prefix = request_rows(first)
+        prefix = await request_rows(first)
         story.commit(first)
         # A hidden state change must not leave the previously sent value current.
         story.snapshot["state"]["stat_data"]["hp"] = 0
@@ -311,7 +309,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         assert len(frames) == 2
         assert frames[-1].startswith("<tavern_state>\n[此前剧情状态")
         assert frames[-1].endswith("已撤销；旧版本不再作为当前要求或状态。]\n</tavern_state>")
-        rows = request_rows(closed)
+        rows = await request_rows(closed)
         assert rows[: len(prefix)] == prefix
         assert "已撤销" in json.dumps(rows[-1], ensure_ascii=False)
         assert json.dumps(rows, ensure_ascii=False).count("已撤销") == 1
@@ -320,7 +318,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         for _ in range(2):
             still_closed = story.compile()
             assert still_closed["context_ledger"]["updates"] == []
-            later = request_rows(still_closed)
+            later = await request_rows(still_closed)
             assert later[: len(rows)] == rows
             assert json.dumps(later, ensure_ascii=False).count("已撤销") == 1
             rows = later
@@ -332,7 +330,7 @@ async def test_state_block_revokes_once_and_reopening_appends_even_the_same_valu
         reopened = story.compile()
         assert reopened["context_ledger"]["rebuild_reason"] is None
         assert reopened["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
-        later = request_rows(reopened)
+        later = await request_rows(reopened)
         assert later[: len(rows)] == rows
         assert json.dumps({"stat_data": {"hp": 3}}) in reopened["messages"][-1]["content"]
         assert "当前剧情状态" in json.dumps(later[-1], ensure_ascii=False)
@@ -350,13 +348,13 @@ async def test_empty_state_replaces_prior_values_and_restoring_appends_once(api,
     original = copy.deepcopy(story.snapshot["state"])
     provider = ModelTransport(story.cfg, "fixture-secret")
 
-    def request_rows(context):
-        body = provider._request(context["messages"])
+    async def request_rows(context):
+        body = await request_payload(provider, context["messages"])
         return body["messages" if api == "anthropic" else "input"]
 
     try:
         first = story.compile()
-        prefix = request_rows(first)
+        prefix = await request_rows(first)
         story.commit(first)
         story.snapshot["state"] = copy.deepcopy(empty_state)
         cleared = story.compile()
@@ -366,20 +364,20 @@ async def test_empty_state_replaces_prior_values_and_restoring_appends_once(api,
         assert "取代此前同来源版本" in content
         assert content.endswith(json.dumps(empty_state) + "\n</tavern_state>")
         assert "hp" not in content
-        rows = request_rows(cleared)
+        rows = await request_rows(cleared)
         assert rows[: len(prefix)] == prefix
         assert "hp" not in json.dumps(rows[-1], ensure_ascii=False)
         story.commit(cleared)
 
         unchanged = story.compile()
         assert unchanged["context_ledger"]["updates"] == []
-        assert request_rows(unchanged)[: len(rows)] == rows
+        assert (await request_rows(unchanged))[: len(rows)] == rows
         story.commit(unchanged)
         story.snapshot["state"] = original
         restored = story.compile()
         assert restored["context_ledger"]["updates"] == [{"source": "state", "cleared": False}]
         assert restored["messages"][-1]["content"].endswith(json.dumps(original) + "\n</tavern_state>")
-        assert "当前剧情状态" in json.dumps(request_rows(restored)[-1], ensure_ascii=False)
+        assert "当前剧情状态" in json.dumps((await request_rows(restored))[-1], ensure_ascii=False)
         story.commit(restored)
         assert story.compile()["context_ledger"]["updates"] == []
     finally:
@@ -446,45 +444,6 @@ def test_native_footer_projection_edits_and_model_switch_do_not_resurrect(api):
     assert any(m["content"] == "用户编辑正文" for m in edited["messages"])
 
 
-def test_inflight_tool_updates_append_after_results_without_rewriting_old_prefix():
-    story = Story()
-    context = compile_context(
-        story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one"
-    )
-    first = apply_context(
-        context, {}, story.session, story.history, story.snapshot, story.cfg, purpose="maintenance"
-    )
-    prefix = copy.deepcopy(first["messages"])
-    previous, sent = copy.deepcopy(first["half_agent_record"]), copy.deepcopy(first["trace"])
-    continuation = [
-        {
-            "role": "assistant",
-            "content": "调用",
-            "tool_calls": [{"id": "call1", "function": {"name": "write_memory", "arguments": "{}"}}],
-        },
-        {"role": "tool", "tool_call_id": "call1", "content": "成功"},
-    ]
-    story.snapshot["state"]["stat_data"]["hp"] = 8
-    fresh = compile_context(
-        story.document, story.session, story.history, story.snapshot, "继续", story.cfg, "one"
-    )
-    second = apply_context(
-        fresh,
-        {},
-        story.session,
-        story.history,
-        story.snapshot,
-        story.cfg,
-        purpose="maintenance",
-        previous_record=previous,
-        sent=sent,
-        continuation=continuation,
-    )
-    assert second["messages"][: len(prefix)] == prefix
-    assert second["messages"][len(prefix) : len(prefix) + 2] == continuation
-    assert second["messages"][-1]["content"].endswith('{"stat_data": {"hp": 8}}\n</tavern_state>')
-
-
 def test_memory_macro_conditions_and_turn_scoping_are_independent():
     story = Story()
     story.note = "给 {{user}} 的作者注"
@@ -527,7 +486,7 @@ async def test_durable_record_commits_only_with_story_and_survives_backup(tmp_pa
     from tavern.storage.backup import backup, restore
 
     store = Store(tmp_path / "game")
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"], policy="preview"))
     service = RoleplayRuntime(store)
 
@@ -620,7 +579,6 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
                 "post_history_instructions": "后置规则",
             }
         ).encode(),
-        "card.json",
     )
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
@@ -771,67 +729,8 @@ async def test_real_streaming_writer_persists_replays_and_forks(tmp_path, monkey
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])
-async def test_background_native_tool_loop_routes_only_within_operation(tmp_path, api):
-    story = Story(api)
-    store = Store(tmp_path)
-    contexts = OperationContexts(store, story.session["id"], "turn")
-    context = contexts.new("memory")
-    requests, events = [], []
-    name = HISTORY_TOOL["function"]["name"]
-    parts = blocks(api, "核对")
-    call = (
-        {"type": "tool_use", "id": "tool1", "name": name, "input": {"query": "银戒"}}
-        if api == "anthropic"
-        else {
-            "type": "function_call",
-            "id": "fc1",
-            "call_id": "tool1",
-            "name": name,
-            "arguments": '{"query":"银戒"}',
-        }
-    )
-    parts.insert(1, call)
-
-    def route(request):
-        requests.append(request)
-        return httpx.Response(
-            200,
-            json=reply(api, parts if len(requests) == 1 else blocks(api, "完成")),
-            headers={"x-codex-turn-state": "memory-route"},
-        )
-
-    provider = ModelTransport(
-        story.cfg, story.cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    configure_operation(provider, context, lambda k, p: events.append((k, p)), "memory")
-    try:
-        result = await complete_with_recall(
-            provider,
-            recall_request(),
-            history=recall_history(),
-            settings=story.cfg,
-            budget=HistoryBudget(),
-            phase="memory",
-        )
-        assert str(result) == "完成"
-        body = json.loads(requests[-1].content)
-        if api == "anthropic":
-            assert body["messages"][-2]["content"] == parts
-        else:
-            assert body["input"][-4:-1] == parts
-            assert requests[1].headers["x-codex-turn-state"] == "memory-route"
-        assert len(events) == 2
-        assert context.session_id != str(UUID(story.session["id"]))
-        assert contexts.new("memory").session_id == context.session_id
-        assert contexts.new("memory").routing == {}
-        assert contexts.new("variables").session_id != context.session_id
-    finally:
-        await provider.close()
-
-
-@pytest.mark.parametrize("api", ["anthropic", "responses"])
-async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_identity(tmp_path, api):
-    from tavern.scripting.agent import Writer
+async def test_tracker_preserves_native_blocks_and_uses_separate_identity(tmp_path, api):
+    from tavern.tracker.task import TrackerTask
 
     store = Store(tmp_path)
     cfg = Story(api).cfg
@@ -846,23 +745,13 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
     settings.half_agent.background.model = cfg.model
     settings.half_agent.background.reasoning_effort = "high"
     store.save_settings(settings)
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     req = TurnRequest(
         text="查看资料", operation_id="maintenance", expected_revision=0, allow_content_edit=True
     )
     tid, _ = store.create_turn(session["id"], req)
     store.set_turn(tid, status="running")
-    writer = Writer(
-        store,
-        tid,
-        card["document"],
-        session,
-        session["messages"],
-        copy.deepcopy(session["snapshot"]),
-        req,
-        None,
-    )
     requests = []
     parts = blocks(api, "先查资料")
     tool = (
@@ -891,7 +780,21 @@ async def test_maintenance_framework_preserves_native_blocks_and_uses_separate_i
         cfg, cfg.api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
     )
     try:
-        assert await writer._run(provider, maintenance=True) == "维护完成"
+        work = TrackerTask(
+            store,
+            tid,
+            store.settings(),
+            session,
+            card["document"],
+            session["messages"],
+            session["snapshot"],
+            phase="pre",
+            content=True,
+            user_input=req.text,
+            provider=provider,
+        )
+        await work.run()
+        assert work.summary == "维护完成"
         assert len(requests) == 2
         body = json.loads(requests[-1].content)
         if api == "anthropic":

@@ -25,7 +25,6 @@ CLEAR_TEXT = {
 class ContextLedger:
     def __init__(self, settings, fixed, tools, document, snapshot, records, input_id, history):
         self.origin = response_origin(settings)
-        self.input_id = input_id
         window = snapshot["full_agent"]["window"]
         sources = {
             "fixed": fixed,
@@ -85,7 +84,7 @@ class ContextLedger:
                 }
             )
 
-    def replay(self, message, source="agent_tools"):
+    def replay(self, message):
         if message.get("_context_baseline") or message.get("_full_agent_final"):
             return None
         if (
@@ -106,7 +105,7 @@ class ContextLedger:
             return copy.deepcopy(message)
         item = self.native_message(message)
         self.observe_tools(item)
-        return {**item, "source": source}
+        return {**item, "source": "agent_tools"}
 
     def native_message(self, message):
         has_native = any(k in message for k in (*REASONING_FIELDS, "_native_response"))

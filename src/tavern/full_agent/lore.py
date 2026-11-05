@@ -83,7 +83,6 @@ def inject_lore(
         session_id=session["id"],
         turn_number=sum(m["role"] == "user" for m in session["messages"]) + 1,
         retained=retained | exiting,
-        recursive=False,
         max_entries=settings.lore_max_entries,
         title_heading=settings.retrieval.title_in_retrieval,
         expand_content=lambda text: macros(

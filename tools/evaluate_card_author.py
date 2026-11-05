@@ -148,7 +148,7 @@ async def evaluate(args):
         },
     }
     try:
-        card = store.import_card(dump(document).encode(), "evaluation.json")
+        card = store.import_card(dump(document).encode())
         workspace = service.edits.create(card["id"])
         if args.baseline:
             workspace = await run(
@@ -163,7 +163,7 @@ async def evaluate(args):
             async def attached(count=1, doc=None):
                 value = service.edits.create_conversation()
                 for _ in range(count):
-                    added = store.import_card(dump(doc or document).encode(), "synthetic.json")
+                    added = store.import_card(dump(doc or document).encode())
                     value = service.edits.attach(value["id"], added["id"], value["revision"])
                 return value
 

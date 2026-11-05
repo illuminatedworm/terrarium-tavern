@@ -491,23 +491,6 @@
 .persona-preview {
   white-space: pre-wrap;
 }
-.full-json {
-  height: 65vh;
-}
-.code-editor {
-  font: var(--fs-sm) / 1.7 var(--font-mono);
-  min-height: 390px;
-  resize: vertical;
-}
-.card-dialog-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 30px;
-}
-.card-dialog-grid .code-editor {
-  height: 540px;
-  margin-bottom: 14px;
-}
 .greeting {
   max-height: 220px;
   overflow: auto;
@@ -1329,9 +1312,6 @@
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .card-dialog-grid {
-    grid-template-columns: 1fr;
   }
   .lore-entry-grid {
     grid-template-columns: 1fr;

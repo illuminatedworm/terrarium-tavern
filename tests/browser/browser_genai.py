@@ -30,7 +30,7 @@ async def main():
         profile.cache.request = {"legacy_option": "preserve"}
         store.save_settings(doc)
         original = profile.model_dump()
-        card = store.import_card('{"name":"GenAI 验证","first_mes":"开场。"}'.encode(), "card.json")
+        card = store.import_card('{"name":"GenAI 验证","first_mes":"开场。"}'.encode())
         session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

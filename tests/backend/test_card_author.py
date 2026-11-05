@@ -17,10 +17,11 @@ from tavern.character.card_author_store import EditorStore
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import export_card, parse_card
 from tavern.conversation.context import compile_context
-from tavern.core.models import CardAuthorRequest, SessionCreate, Settings
+from tavern.core.models import CardAuthorRequest, SessionCreate
 from tavern.scripting.native_response import ResponseCompletion
-from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Conflict, Store
+from tavern.tracker.task import TrackerTask
+from tests.support.tracker_model import PatchModel
 
 
 def fixture():
@@ -54,7 +55,7 @@ def fixture():
 
 
 def import_fixture(store):
-    return store.import_card(json.dumps(fixture()).encode(), "fixture.json")
+    return store.import_card(json.dumps(fixture()).encode())
 
 
 def test_adaptation_validation_leaves_opening_mvu_out_of_scope():
@@ -111,7 +112,7 @@ def test_copy_export_resources_and_session_isolation(tmp_path, container):
             archive.writestr("card.json", raw)
             archive.writestr("assets/a.txt", "preserved")
         raw = buf.getvalue()
-    card = store.import_card(raw, f"fixture.{container}")
+    card = store.import_card(raw)
     session = store.new_session(SessionCreate(card_id=card["id"]))
     copied = store.copy_card(card["id"])
     copied2 = store.copy_card(card["id"])
@@ -128,7 +129,7 @@ def test_copy_export_resources_and_session_isolation(tmp_path, container):
     original = (store.root / "blobs" / copied["original"]).read_bytes()
     resources = {k: (store.root / "blobs" / v).read_bytes() for k, v in copied["resources"].items()}
     exported, _, ext = export_card(copied["document"], container, original, resources)
-    parsed = parse_card(exported, f"copy.{ext}")
+    parsed = parse_card(exported)
     assert parsed[0] == copied["document"]
     assert parsed[0]["extensions"]["unknown"] == {"keep": True}
 
@@ -240,7 +241,7 @@ async def test_mvu_routing_and_opening_initialization(tmp_path):
     doc["first_mes"] += "\n<initvar>hp: 8</initvar>"
     doc["alternate_greetings"] = ["开场二\n<initvar>hp: 10</initvar>"]
     validate_document(doc)
-    card = store.import_card(json.dumps(doc).encode(), "fixture.json")
+    card = store.import_card(json.dumps(doc).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], greeting=1))
     service = RoleplayRuntime(store)
     try:
@@ -259,30 +260,25 @@ async def test_mvu_routing_and_opening_initialization(tmp_path):
         wire = json.dumps(compiled["messages"], ensure_ascii=False)
         assert "变量秘密规则" not in wire
         assert "普通世界设定" in wire
-        provider = ScriptedLLM(["[]"])
-        events = []
-
-        class Capture:
-            def event(self, *args):
-                events.append(args)
-
-        await analyze_variables(
-            Capture(),
+        provider = PatchModel([])
+        work = TrackerTask(
+            store,
             "test",
-            Settings(),
+            store.settings(),
+            {**session, "persona": "测试玩家"},
+            doc,
             [],
-            snapshot["state"],
-            "继续",
-            "剧情",
-            lambda: provider,
-            document=doc,
-            persona="测试玩家",
+            snapshot,
+            phase="post",
+            variables=True,
+            user_input="继续",
+            narrative="剧情",
+            provider=provider,
         )
+        await work.run()
         request = json.dumps(provider.last_messages, ensure_ascii=False)
         assert "变量秘密规则 测试玩家" in request
         assert "普通世界设定" not in request
-        assert "hp: 5" not in request
-        assert events[0][1] == "variable_rules"
     finally:
         await service.close()
 

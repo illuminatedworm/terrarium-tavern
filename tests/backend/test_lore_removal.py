@@ -10,7 +10,7 @@ from tests.backend.test_conversation_lore import compile, document, message
 
 
 def seed(store):
-    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode(), "card.json")
+    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     out = compile(document(), session["messages"], session["snapshot"])
     snapshot = session["snapshot"] | {
@@ -84,7 +84,7 @@ async def test_removal_api(tmp_path):
 @pytest.mark.parametrize("greeting_anchor", [True, False])
 def test_regeneration_from_pre_injection_user_snapshot_keeps_removal(tmp_path, greeting_anchor):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode(), "card.json")
+    card = store.import_card(json.dumps({"first_mes": "欢迎", **document()}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     user_id, reply_id = uid(), uid()
     anchor = session["head"] if greeting_anchor else user_id

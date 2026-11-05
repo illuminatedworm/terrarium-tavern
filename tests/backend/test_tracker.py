@@ -38,7 +38,7 @@ def story(tmp_path):
             "extensions": {"unrelated": {"keep": True}},
         },
     }
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     settings = store.settings()
     settings.system_prompt = "WRITER_ONLY"
@@ -801,7 +801,7 @@ async def test_mvu_callbacks_run_once_after_repaired_tool_and_on_regeneration(tm
             }
         },
     }
-    card = store.import_card(json.dumps(doc).encode(), "counter.json")
+    card = store.import_card(json.dumps(doc).encode())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     session = store.new_session(SessionCreate(card_id=card["id"]))

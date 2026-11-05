@@ -47,7 +47,7 @@ def fixture():
 async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_contexts(tmp_path):
     store = Store(tmp_path)
     original = fixture()
-    card = store.import_card(dump(original).encode(), "fixture.json")
+    card = store.import_card(dump(original).encode())
     editor = CardAuthorService(store)
     service = RoleplayRuntime(store)
     wid = editor.edits.create(card["id"])["id"]
@@ -75,7 +75,7 @@ async def test_inline_overrides_survive_editor_and_are_hidden_from_both_model_co
         assert doc["alternate_greetings"] == original["alternate_greetings"]
         assert doc["first_mes"].split("\n", 1)[1] == original["first_mes"].split("\n", 1)[1]
         assert validation_report(doc)["warnings"] == []
-        imported = store.import_card(dump(doc).encode(), "edited.json")
+        imported = store.import_card(dump(doc).encode())
         openings = [doc["first_mes"], *doc["alternate_greetings"]]
         expected = [
             {"hp": 8, "place": "morning"},
@@ -135,7 +135,7 @@ async def test_new_story_uses_saved_worldbook_money_without_resetting_existing_s
         "extensions": {},
         "character_book": {"entries": [{"comment": "[InitVar]", "enabled": False, "content": "Money: 0"}]},
     }
-    card = store.import_card(dump(doc).encode(), "card.json")
+    card = store.import_card(dump(doc).encode())
     service = RoleplayRuntime(store)
     try:
         previous = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
@@ -173,5 +173,5 @@ def test_removed_initialization_channel_is_rejected_in_tools_and_card_import(tmp
     assert not report["valid"] and "已移除" in report["errors"][0]
     store = Store(tmp_path)
     with pytest.raises(ValueError, match="已移除"):
-        store.import_card(dump(doc).encode(), "old.json")
+        store.import_card(dump(doc).encode())
     assert store.cards() == []

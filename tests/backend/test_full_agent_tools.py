@@ -632,7 +632,7 @@ async def test_retired_tool_names_are_not_accepted_in_settings(story, old_name):
                 json={"expected_revision": 0, "disabled_tools": [old_name]},
             )
             assert response.status_code == 400
-            assert store.session(session["id"])["disabled_tools"] == []
+            assert store.session(session["id"])["disabled_tools"] == session["disabled_tools"]
     finally:
         await app.state.service.close()
 
@@ -793,7 +793,6 @@ async def test_user_result_options_save_and_control_tool_output(tmp_path):
                 },
             }
         ).encode(),
-        "card.json",
     )
     settings = store.settings()
     settings.retrieval.channels = ["keyword"]

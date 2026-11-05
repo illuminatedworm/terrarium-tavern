@@ -13,7 +13,7 @@ from tests.backend.test_full_agent import Model, handoff, runtime, turn
 def setup(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     settings = store.settings()
     settings.full_agent_config.auto_retrieval = False
     store.save_settings(settings)

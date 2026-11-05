@@ -652,7 +652,6 @@ async def test_review_decides_story_variables_and_checkpoint_as_one_transaction(
                 },
             }
         ).encode(),
-        "card.json",
     )
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session = store.update_session(session["id"], session["revision"], policy="review")

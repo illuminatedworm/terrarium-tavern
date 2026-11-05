@@ -11,7 +11,7 @@ from tavern.storage.store import Conflict, Store, dump
 
 def test_deleted_card_disappears_from_shelf_but_existing_progress_survives(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     store.delete_card(card["id"])
     assert store.cards() == []
@@ -32,8 +32,8 @@ def test_deleted_card_disappears_from_shelf_but_existing_progress_survives(tmp_p
 def test_deletion_prunes_unique_blobs_but_keeps_shared_imports(tmp_path):
     store = Store(tmp_path)
     data = Path("samples/雾港来信.json").read_bytes()
-    first = store.import_card(data, "one.json")
-    second = store.import_card(data, "two.json")
+    first = store.import_card(data)
+    second = store.import_card(data)
     unique = store.blob(b"unique asset")
     with store.connection() as db:
         db.execute("UPDATE cards SET resources=? WHERE id=?", (dump({"unique.png": unique}), first["id"]))
@@ -46,7 +46,7 @@ def test_deletion_prunes_unique_blobs_but_keeps_shared_imports(tmp_path):
 
 def test_deleted_card_resources_survive_fork_and_are_removed_after_last_story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     asset = store.blob(b"cached dependency")
     bundle = store.blob(b"compiled script")
     source_hash = "a" * 64
@@ -82,7 +82,7 @@ def test_deleted_card_resources_survive_fork_and_are_removed_after_last_story(tm
 @pytest.mark.parametrize("status", ["queued", "running", "awaiting_review"])
 def test_delete_card_rejects_active_story_without_partial_changes(tmp_path, status):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     tid, _ = store.create_turn(session["id"], TurnRequest(operation_id="active", expected_revision=0))
     store.set_turn(tid, status=status)
@@ -95,7 +95,7 @@ def test_delete_card_rejects_active_story_without_partial_changes(tmp_path, stat
 async def test_card_delete_endpoint_and_reimport(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         deleted = await client.delete(f"/api/cards/{card['id']}")
         assert deleted.status_code == 200
@@ -104,14 +104,14 @@ async def test_card_delete_endpoint_and_reimport(tmp_path):
         # NotFound messages reach the UI verbatim, without KeyError's repr quotes.
         assert missing.status_code == 404 and missing.json() == {"detail": "角色不存在"}
         assert (await client.delete(f"/api/cards/{card['id']}")).status_code == 404
-    added = store.import_card(Path("samples/雾港来信.json").read_bytes(), "new.json")
+    added = store.import_card(Path("samples/雾港来信.json").read_bytes())
     assert [entry["id"] for entry in store.cards()] == [added["id"]]
 
 
 async def test_story_can_preview_and_continue_after_card_is_physically_deleted(tmp_path):
     app = create_app(tmp_path)
     store, service = app.state.store, app.state.service
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service.provider_factory = lambda: ScriptedLLM(["故事继续。"])
     try:

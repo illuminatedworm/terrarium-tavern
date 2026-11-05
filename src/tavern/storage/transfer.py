@@ -884,7 +884,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                 adapter = bundle.get("adapter")
                 from tavern.advisor.transfer import import_bundle as import_advisor
 
-                import_advisor(db, row["id"], bundle.get("advisor"), ids)
+                import_advisor(db, row["id"], bundle.get("advisor"))
                 from tavern.novel.transfer import import_bundle as import_novel
 
                 import_novel(store, db, row["id"], bundle.get("novel"), blobs, written, novel_source_ids)

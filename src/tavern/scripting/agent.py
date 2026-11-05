@@ -14,35 +14,31 @@ from tavern.scripting.request_context import OperationContexts, configure_operat
 from tavern.search.retrieval_text import RetrievalParser, split_retrieval
 
 
-class TurnAgent:
-    """Shared turn draft and Terrarium transport; Roleplay Runtime owns orchestration."""
+class Writer:
+    """前台 Writer: one narrative call without business tools.
 
-    def __init__(self, store, tid, document, session, history, snapshot, request, runtime, settings=None):
+    Consumes Runtime-compiled context; never schedules Tracker or commits state.
+    Tracker uses a separate compiler and native tool loop.
+    """
+
+    def __init__(self, store, tid, document, session, history, snapshot, request, settings=None):
         self.store, self.tid = store, tid
         self.document, self.session, self.history = document, session, history
-        self.snapshot, self.request, self.runtime = snapshot, request, runtime
+        self.snapshot, self.request = snapshot, request
         self.regenerate_reply = reply_for_regeneration(request, session)
-        self.requested = set()
-        self.state_patches = []
-        self.agent = None
         self.compiled = None
         self.calls = 0
-        from tavern.memories.history_recall import HistoryBudget
-
-        self.history_recall_budget = HistoryBudget()
         self.settings = (settings or store.settings()).for_role("foreground")
         self.settings.cache_scope = session["id"]
         self.retrieval = None
         self.retrieval_query = ""
         if request.reasoning_effort is not None:
             self.settings.reasoning_effort = request.reasoning_effort
-        self.maintenance = False
         self.input_message_id = ""
         self.operation_contexts = OperationContexts(store, session["id"], tid)
         self.native_response = None
         self.clean_response = ""
         self.auxiliary = []
-        self.native_responses = {}
         self.compact_checked = False
         self.compact_calls = 0
 
@@ -55,7 +51,6 @@ class TurnAgent:
             self.request.text,
             self.settings,
             self.tid,
-            self.requested,
             self.request.generate,
             turn_instruction=self.request.regenerate_note,
             regenerate_reply=self.regenerate_reply,
@@ -78,17 +73,11 @@ class TurnAgent:
         self.store.set_turn(self.tid, preview=json.dumps(self.compiled, ensure_ascii=False))
         return self.compiled
 
-    async def _run(self, provider=None, *, maintenance=False):
+    async def run(self, provider=None):
         from kohakuterrarium import Activity, Terrarium, TextChunk, TurnEnded
         from kohakuterrarium.core.config_types import AgentConfig
         from kohakuterrarium.modules.plugin import BasePlugin
 
-        if maintenance:
-            # Compatibility entry delegates to the dedicated compiler; never
-            # install maintenance instructions into Writer's context.
-            from tavern.memories.memory import Tracker
-
-            return await Tracker(self.store).maintain(self, provider)
         owner = self
         self.calls = 0
         allowed = set()
@@ -191,10 +180,7 @@ class TurnAgent:
 
             async def post_llm_call(self, messages, response, usage, **kwargs):
                 owner.auxiliary = copy.deepcopy(getattr(provider, "last_auxiliary", []))
-                native = getattr(provider, "last_native_response", None)
-                if native:
-                    owner.native_responses[native["message_sha256"]] = copy.deepcopy(native)
-                owner.native_response = copy.deepcopy(native)
+                owner.native_response = copy.deepcopy(getattr(provider, "last_native_response", None))
 
         owned_provider = provider is None
         if provider is None:
@@ -237,7 +223,6 @@ class TurnAgent:
                 io="headless",
                 session=self.store.root / "runs" / f"{self.tid}.kohakutr",
             )
-            self.agent = creature.agent
             async for event in creature.run_stream(self.request.text or "继续剧情"):
                 if isinstance(event, TextChunk):
                     visible = parser.feed(event.text)
@@ -292,18 +277,3 @@ class TurnAgent:
             await engine.shutdown()
             if owned_provider:
                 await provider.close()
-
-    async def cancel(self):
-        if self.agent:
-            self.agent.interrupt()
-
-
-class Writer(TurnAgent):
-    """前台 Writer: one narrative call without business tools, plus retrieval text protocol.
-
-    Consumes Runtime-compiled context; never schedules Tracker or commits state.
-    Tracker uses a separate compiler and native tool loop.
-    """
-
-    async def run(self, provider=None):
-        return await self._run(provider)

@@ -302,9 +302,7 @@ async def test_attached_image_becomes_png_portrait_of_saved_card(tmp_path):
             exported = await client.get(f"/api/cards/{saved['id']}/export")
         with Image.open(BytesIO(exported.content)) as image:
             assert image.format == "PNG"
-        assert (
-            store.import_card(exported.content, "雾港.png")["document"]["data"]["first_mes"] == "雾笛响起。"
-        )
+        assert store.import_card(exported.content)["document"]["data"]["first_mes"] == "雾笛响起。"
 
         # A portrait-only agent turn must add its own undo step instead of undoing
         # an earlier text edit. The library stays unchanged until explicit save.

@@ -4,11 +4,13 @@ import copy
 import json
 import sqlite3
 from contextlib import closing
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tavern.core.models import ContextRecipe, Settings, TurnRequest
-from tavern.memories.memory import Tracker, fingerprint
+from tavern.memories.memory import fingerprint
 from tavern.memories.memory_archive import (
     ARCHIVE,
     RETIRING,
@@ -22,6 +24,7 @@ from tavern.memories.memory_engine import consolidate
 from tavern.memories.memory_records import Record, RecordEdit, render_document, source_hash
 from tavern.memories.memory_retention import retain_memory
 from tavern.storage.store import Store, settle_message_archive
+from tavern.tracker.workflow import before_story
 
 
 def story(rounds):
@@ -145,7 +148,7 @@ async def test_question_target_is_marked_uncertain_before_current_cap_runs():
     assert result["records"][0]["category"] == "uncertain"
 
 
-async def test_retention_runs_on_send_even_when_no_tracker_batch_is_due(tmp_path):
+async def test_retention_runs_on_send_even_when_no_tracker_batch_is_due(tmp_path, monkeypatch):
     history = story(4)
     snap = {
         "state": {},
@@ -169,14 +172,18 @@ async def test_retention_runs_on_send_even_when_no_tracker_batch_is_due(tmp_path
         calls.append(1)
         raise AssertionError("retention needs no model call")
 
-    await Tracker(Store(tmp_path)).prepare(
+    # Isolate retention from retrieval and window planning; no batch is due.
+    monkeypatch.setattr("tavern.tracker.workflow.plan_window", lambda *args, **kwargs: (0, None))
+    await before_story(
+        Store(tmp_path),
         "t",
-        {},
+        Settings(memory_interval_turns=100, memory_episode_cooldown_rounds=3),
         session,
         history,
         snap,
         TurnRequest(text="继续", operation_id="test", expected_revision=0),
-        Settings(memory_interval_turns=100, memory_episode_cooldown_rounds=3),
+        {},
+        SimpleNamespace(prepare=AsyncMock(return_value=None)),
         generate,
     )
     assert not calls

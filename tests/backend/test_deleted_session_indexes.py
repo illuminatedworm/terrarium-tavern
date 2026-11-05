@@ -7,7 +7,7 @@ from tavern.storage.store import Store
 
 def test_delete_full_session_removes_owned_records_and_exclusive_indexes(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     live = store.new_session(SessionCreate(card_id=card["id"]))
     tid, _ = store.create_turn(full["id"], TurnRequest(operation_id="delete-test", expected_revision=0))
@@ -63,7 +63,7 @@ async def test_late_index_preparation_cannot_restore_a_deleted_session_reference
     from tavern.search.retrieval import RetrievalEngine
 
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     removed = store.new_session(SessionCreate(card_id=card["id"]))
     store.delete_session(removed["id"])
 

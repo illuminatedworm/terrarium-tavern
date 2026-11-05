@@ -430,13 +430,11 @@ def adapter_snapshot(settings):
     return {"config": config.model_dump() if hasattr(config, "model_dump") else config, "revision": 0}
 
 
-def bind_adapter(settings, store, owner_kind, owner_id, lane=None):
+def bind_adapter(settings, store, owner_kind, owner_id):
     from tavern.core.context_usage import bind_meter
 
     bind_meter(settings, store, owner_kind, owner_id)
     settings._adapter_loader = lambda current: store.message_adapter(owner_kind, owner_id, current)
-    if lane:
-        settings._adapter_lane = lane
     return settings
 
 

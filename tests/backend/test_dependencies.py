@@ -35,7 +35,7 @@ async def test_dynamic_image_templates_resolve_after_expansion_and_stay_image_on
             ]
         },
     }
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     card["permission"] = 1
     before = deepcopy(card)
     buffer = BytesIO()
@@ -195,7 +195,6 @@ async def test_offline_dependency_graph_is_pinned(tmp_path, monkeypatch):
                 "extensions": {"tavern_helper": {"scripts": [{"id": "module", "content": source}]}},
             }
         ).encode(),
-        "card.json",
     )
     card["permission"] = 1
     requested = []
@@ -263,7 +262,6 @@ async def test_new_conversation_reuses_existing_session_dependencies(tmp_path, m
                 "extensions": {"tavern_helper": {"scripts": [{"id": "module", "content": source}]}},
             }
         ).encode(),
-        "card.json",
     )
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
@@ -322,7 +320,6 @@ async def test_css_fonts_and_imports_are_cached_and_inlined(tmp_path, monkeypatc
     url = "https://cards.example/css/icons.css"
     card = store.import_card(
         json.dumps({"name": "icons", "first_mes": f'<link href="{url}" rel="stylesheet">'}).encode(),
-        "card.json",
     )
     card["permission"] = 1
     resolver = Dependencies(store)

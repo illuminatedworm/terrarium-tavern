@@ -45,7 +45,7 @@ async def main():
     with tempfile.TemporaryDirectory() as root:
         app = create_app(root)
         store = app.state.store
-        card = store.import_card(dump({"name": "非脚本状态显示", "first_mes": text}).encode(), "card.json")
+        card = store.import_card(dump({"name": "非脚本状态显示", "first_mes": text}).encode())
         session = store.new_session(SessionCreate(card_id=card["id"]))
         snapshot = session["snapshot"]
         snapshot["state"] = {

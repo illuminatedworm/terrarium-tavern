@@ -253,7 +253,6 @@ def lexical_recall(
             snapshot.get("lore", {}),
             seed,
             session_id=session.get("id", ""),
-            recursive=False,
             timeline=timeline,
             turn_number=turn_number,
             title_heading=config.title_in_retrieval,
@@ -314,7 +313,6 @@ def lexical_recall(
                 snapshot.get("lore", {}),
                 seed,
                 session_id=session.get("id", ""),
-                recursive=False,
                 timeline=timeline,
                 turn_number=turn_number,
                 retained=retained | exiting if session.get("lore_injection_mode") == "conversation" else (),
@@ -620,7 +618,6 @@ class RetrievalEngine:
             snapshot.get("lore", {}),
             seed,
             session_id=session.get("id", ""),
-            recursive=False,
             turn_number=turn_number,
             timeline=(snapshot.get("state", {}).get("世界", {}) or {}).get("当前时间线", ""),
             retained=(
@@ -712,7 +709,6 @@ class RetrievalEngine:
                 snapshot.get("lore", {}),
                 seed,
                 session_id=session.get("id", ""),
-                recursive=False,
                 turn_number=turn_number,
                 timeline=(snapshot.get("state", {}).get("世界", {}) or {}).get("当前时间线", ""),
                 retained={r["id"] for r in snapshot.get("lore_injections", [])}

@@ -10,14 +10,12 @@ a provider/client is recreated. No persistent index or cross-turn cooldown is us
 import copy
 import json
 import re
-import time
 import unicodedata
 from dataclasses import dataclass
 
 from tavern.core.history_refs import message_positions, message_ref, parse_message_ref, span_ref
-from tavern.core.tokens import count_text, request_tokens
 from tavern.memories.memory_protocol import References, split_passages
-from tavern.memories.memory_records import digest, usage_fields
+from tavern.memories.memory_records import digest
 
 HISTORY_CALL_LIMIT = 3
 HISTORY_TOOL = {
@@ -78,6 +76,7 @@ def _normalized(text):
 @dataclass
 class HistoryBudget:
     calls: int = 0
+    # Saved context operations restore this dataclass with their existing fields.
     continuations: int = 0
 
     @property
@@ -244,108 +243,3 @@ class HistoryRecall:
                 parts = range(1, len(list(split_passages(m.get("model", m["raw"])))) + 1)
                 self._admit(result, "rounds", m, parts)
                 self.reads.add(key)
-
-
-async def complete_with_recall(
-    provider, messages, *, history, settings, budget, phase, document=None, persona=None, event=None
-):
-    """Native function calling with one bounded continuation per tool-bearing reply.
-
-    The pinned provider's non-streaming method ignores a `tools=` kwarg. Sending
-    tools through its documented extra_body merge puts them on the actual HTTP
-    request; a transport test guards against a merely decorative tool definition.
-    """
-    # import asyncio  # 暂停启用记忆整理请求超时；恢复 wait_for 时一并恢复。
-
-    event = event or (lambda kind, payload: None)
-    # Infer the batch boundary from Runtime's payload, never from model arguments.
-    supplied = json.loads(messages[-1]["content"])["messages"]
-    references = getattr(messages, "references", None)
-    cutoff = max((parse_message_ref(m["ref"]) for m in supplied), default=0)
-    recall = None  # Do not expand or scan the archive when Tracker does not ask.
-    thread = copy.deepcopy(messages)
-    if hasattr(provider, "echo_reasoning"):
-        provider.echo_reasoning = True
-    continuation = False
-    while True:
-        limit = min(
-            settings.memory_input_tokens,
-            settings.context_tokens - settings.reply_tokens - 2048,
-            8192 if phase == "memory_review" else settings.memory_input_tokens,
-        )
-        reasoning_tokens = sum(
-            count_text(
-                _json({k: m[k] for k in ("reasoning_content", "reasoning_details", "reasoning") if k in m}),
-                settings,
-            )
-            for m in thread
-            if not m.get("_native_response")
-            and any(k in m for k in ("reasoning_content", "reasoning_details", "reasoning"))
-        )
-        used_tokens = request_tokens(thread, settings, [HISTORY_TOOL]) + reasoning_tokens
-        if used_tokens > limit:
-            event("context_warning", {"purpose": phase, "message": "记忆请求估算超出输入预算，仍完整发送"})
-        enabled = budget.remaining > 0
-        extra = {
-            "tools": [HISTORY_TOOL],
-            "tool_choice": "auto" if enabled else "none",
-            "parallel_tool_calls": False,
-        }
-        started = time.perf_counter()
-        # response = await asyncio.wait_for(
-        #     provider.chat_complete(thread, extra_body=extra), settings.memory_timeout
-        # )
-        response = await provider.chat_complete(thread, extra_body=extra)
-        event(
-            "usage",
-            {
-                "purpose": phase,
-                "usage": usage_fields(response.usage),
-                "calls": 1,
-                "history_continuation": continuation,
-                "duration_s": time.perf_counter() - started,
-            },
-        )
-        calls = getattr(provider, "last_tool_calls", []) or []
-        if not calls:
-            return MemoryText(response.content, recall.sources if recall else {})
-        if not enabled or budget.continuations >= HISTORY_CALL_LIMIT:
-            raise ValueError("历史工具已停用，模型仍请求调用；停止整理并保留旧记忆")
-        if len(calls) > 8 or len({c.id for c in calls}) != len(calls) or any(not c.id for c in calls):
-            raise ValueError("历史工具调用列表无效")
-        if any(c.name != HISTORY_TOOL["function"]["name"] for c in calls):
-            raise ValueError("记忆整理仅允许调用只读历史工具")
-        if recall is None:
-            recall = HistoryRecall(
-                history[:cutoff],
-                settings,
-                budget,
-                document=document,
-                persona=persona,
-                event=lambda kind, payload: event(kind, {**payload, "purpose": phase}),
-                references=references,
-            )
-        assistant = {
-            "role": "assistant",
-            "content": response.content or "",
-            "tool_calls": [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
-                for c in calls
-            ],
-        }
-        assistant.update(
-            {
-                k: v
-                for k, v in getattr(provider, "last_assistant_extra_fields", {}).items()
-                if k in ("reasoning_content", "reasoning_details", "reasoning", "_native_response")
-            }
-        )
-        thread.append(assistant)
-        for call in calls:
-            result = recall.execute(call.arguments)
-            message = {"role": "tool", "tool_call_id": call.id, "content": _json(result)}
-            if "error" in result:
-                message["_tool_error"] = True
-            thread.append(message)
-        budget.continuations += 1
-        continuation = True

@@ -329,7 +329,7 @@ class Conversations:
             (wid, dump(item["document"]), reason, item["ref"], dump(item)),
         )
 
-    def attach(self, wid, cid, revision, document=None, expected_card_revision=None, *, editable=False):
+    def attach(self, wid, cid, revision, document=None, expected_card_revision=None):
         source = self.store.card(cid)
         source["dependencies"] = self.store.card_manifest(source)
         if expected_card_revision is not None and expected_card_revision != source["revision"]:
@@ -348,7 +348,7 @@ class Conversations:
                         "ref": f"C{workspace['next_ref']}",
                         "card": cid,
                         "source": source,
-                        "kind": "draft" if editable or document != source["document"] else "reference",
+                        "kind": "draft" if document != source["document"] else "reference",
                         "target_mode": None,
                         "base_revision": source["revision"],
                         "base_document": source["document"],

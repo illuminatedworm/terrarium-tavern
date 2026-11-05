@@ -63,9 +63,7 @@ def openai_messages(messages, marker=None):
     return result
 
 
-def response_input(messages, marker=None, *, session_breakpoint=False):
-    if session_breakpoint and marker is None:
-        marker = {"field": "prompt_cache_breakpoint", "value": {"mode": "explicit"}}
+def response_input(messages, marker=None):
     result = []
     for message in messages:
         native = native_items(message, "responses")

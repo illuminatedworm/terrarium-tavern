@@ -20,7 +20,7 @@ async def main():
     with tempfile.TemporaryDirectory() as data:
         app = create_app(data)
         store = app.state.store
-        card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+        card = store.import_card(Path("samples/雾港来信.json").read_bytes())
         settings = store.settings_document()
         settings.full_agent.model.model = "fixture"
         settings.shared.providers[0].api_key = "fixture-local-only"

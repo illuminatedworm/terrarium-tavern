@@ -34,7 +34,7 @@ async def test_lorebook_upload_adds_entries_without_overwriting_existing_data(
     document = {"spec": "chara_card_v3", "data": data} if wrapped else data
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             for count in (3, 5):
@@ -109,7 +109,6 @@ async def test_invalid_lorebook_upload_preserves_saved_card(tmp_path, imported):
                 "character_book": {"entries": [{"id": "old", "content": "保留原文"}]},
             }
         ).encode(),
-        "card.json",
     )
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -211,7 +210,7 @@ async def test_session_card_sync_commits_selected_items_and_rejects_stale_shelf(
         "description": "旧描述",
         "character_book": {"entries": [{"id": "x", "content": "旧"}]},
     }
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     shelf = {
         **document,
@@ -262,7 +261,7 @@ def test_worldbook_library_validates_writes_and_card_defaults_follow_their_targe
     with pytest.raises(Conflict):
         worldbooks.save(store, saved["id"], WorldbookEdit(name="雾港", book=book))
 
-    card = store.import_card(json.dumps({"name": "旅人"}).encode(), "card.json")
+    card = store.import_card(json.dumps({"name": "旅人"}).encode())
     persona = store.save_persona(None, PersonaEdit(name="玩家"))
     other = worldbooks.save(store, None, WorldbookEdit(name="航线", book={"entries": []}))
     edit = CardDefaultsEdit(persona_id=persona["id"], worldbook_ids=[other["id"], saved["id"]])
@@ -301,7 +300,7 @@ async def test_new_story_mounts_worldbooks_as_fresh_entries_and_initializes_thei
         "first_mes": "开门。",
         "character_book": {"entries": [{"id": "0", "content": "卡片设定"}]},
     }
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     book = {
         "entries": {
             "0": {"id": "0", "content": "书库设定", "extensions": {"id": "0"}},
@@ -336,7 +335,7 @@ async def test_adjusting_mounts_touches_only_that_books_copies_and_versions_rest
     app = create_app(tmp_path)
     store = app.state.store
     document = {"name": "雾港", "character_book": {"entries": [{"id": "card", "content": "卡片设定"}]}}
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     first = worldbooks.save(store, None, WorldbookEdit(name="甲", book={"entries": [{"content": "甲一"}]}))
     second = worldbooks.save(store, None, WorldbookEdit(name="乙", book={"entries": [{"content": "乙一"}]}))
     session = store.new_session(SessionCreate(card_id=card["id"], worldbook_ids=[first["id"]]))

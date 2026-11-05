@@ -110,7 +110,7 @@ H 是分支位置，与 Full Agent、参谋 agent 和剧情界面显示的编号
 
 ## 整理入口
 
-[tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度前后置任务；[tracker/task.py](../../src/tavern/tracker/task.py) 的原生工具循环接入 `memory_engine.consolidate`，周期、裁剪前及手动重建共用来源、保护和增量校验。`memories/memory.py` 的 `Tracker.prepare` 是低层兼容入口，普通回合使用统一任务调度。
+[tracker/workflow.py](../../src/tavern/tracker/workflow.py) 调度前后置任务；[tracker/task.py](../../src/tavern/tracker/task.py) 的原生工具循环接入 `memory_engine.consolidate`，周期、裁剪前及手动重建共用来源、保护和增量校验。[memories/memory.py](../../src/tavern/memories/memory.py) 只提供历史窗口、轮数、指纹与记忆正文的共用函数，不另设维护入口。
 
 ## 排查
 

@@ -50,14 +50,10 @@ async def main(*, misc_only=False, connections_only=False, models_only=False):
                 profile.api_mode, profile.api_path, profile.model = "gemini", "a/v1beta", "original-model"
         app.state.store.save_settings(settings)
         if connections_only:
-            card = app.state.store.import_card(
-                b'{"name":"Connection fixture","first_mes":"Opening"}', "fixture.json"
-            )
+            card = app.state.store.import_card(b'{"name":"Connection fixture","first_mes":"Opening"}')
             session = app.state.store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
         if misc_only:
-            card = app.state.store.import_card(
-                b'{"name":"Experiment fixture","first_mes":"Story preview"}', "fixture.json"
-            )
+            card = app.state.store.import_card(b'{"name":"Experiment fixture","first_mes":"Story preview"}')
             session = app.state.store.new_session(SessionCreate(card_id=card["id"]))
             with app.state.store.connection() as db:
                 db.execute(

@@ -12,7 +12,7 @@ from tavern.storage.store import Conflict, Store, uid
 @pytest.fixture(params=["half_agent", "full_agent"])
 def story(tmp_path, request):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=request.param))
     return store, session
 

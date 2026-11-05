@@ -22,7 +22,7 @@ def audience(entry):
 
 
 def validate_document(document):
-    parse_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
+    parse_card(json.dumps(document, ensure_ascii=False).encode())
     for entry in lore_entries(document):
         if audience(entry) not in AUDIENCES:
             raise ValueError(f"条目 {entry['id']} 的用途无效")

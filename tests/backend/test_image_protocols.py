@@ -17,6 +17,7 @@ from tests.backend.chatgpt_fixtures import IdentityFixture, seed_account
 from tests.backend.test_chatgpt_provider import configuration
 from tests.backend.test_half_agent_alignment import sse
 from tests.backend.test_unified_cache import reply
+from tests.support.model_transport import request_payload
 
 IMAGES = [
     ("image/png", base64.b64encode(b"first-image-bytes").decode()),
@@ -200,8 +201,16 @@ async def test_unknown_nontext_blocks_are_rejected_instead_of_dropped(api):
     )
     try:
         with pytest.raises(ValueError, match="不能丢弃非文本"):
-            provider._request(
-                [{"role": "user", "content": [{"type": "unhandled_media", "data": "must-not-disappear"}]}]
+            (
+                await request_payload(
+                    provider,
+                    [
+                        {
+                            "role": "user",
+                            "content": [{"type": "unhandled_media", "data": "must-not-disappear"}],
+                        }
+                    ],
+                )
             )
     finally:
         await provider.close()

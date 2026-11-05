@@ -8,7 +8,7 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.kemini import TURN_SOURCES as KEMINI_TRANSIENT
 from tavern.core.kemini import control_text, prefix_frames
 from tavern.core.message_adapter import project_context, type_definition, unwrapped
-from tavern.scripting.native_response import message_digest, native_items
+from tavern.scripting.native_response import message_digest
 from tavern.scripting.request_context import response_origin
 from tavern.search.retrieval_text import split_retrieval
 
@@ -151,10 +151,6 @@ def apply_context(
     settings,
     *,
     input_id="",
-    purpose="narrative",
-    previous_record=None,
-    continuation=(),
-    sent=(),
 ):
     """Reconcile a fresh canonical compilation with the last committed request.
 
@@ -180,7 +176,7 @@ def apply_context(
     base, dynamic = rows[:boundary], rows[boundary:]
     visible_ids = {m.get("message_id") for m in base if m.get("source") == "history"}
     active = [(m["id"], records[m["id"]]) for m in history if m["id"] in records and m["id"] in visible_ids]
-    previous = previous_record or (active[-1][1] if active else None)
+    previous = active[-1][1] if active else None
     generation = (
         snapshot.get("half_context", {}).get("compaction", {}).get("generation", "")
         if enabled(settings)
@@ -190,7 +186,7 @@ def apply_context(
     origin = response_origin(settings)
     window = fingerprint(
         [
-            purpose,
+            "narrative",
             next((m["id"] for m in history if m["id"] in visible_ids), None),
             snapshot.get("context_window", {}) if local_window_enabled(settings) else {},
         ]
@@ -204,7 +200,7 @@ def apply_context(
     kemini = (
         [prefix_frames(settings.kemini), control_text(settings.kemini)] if settings.kemini.enabled else []
     )
-    policy = fingerprint([purpose, layout, *kemini])
+    policy = fingerprint(["narrative", layout, *kemini])
     current_base = [descriptor(m) for m in base]
     reason = None
     if previous is None:
@@ -230,10 +226,6 @@ def apply_context(
             if record["epoch"] == epoch:
                 replay[mid] = [copy.deepcopy(f) for f in record["frames"] if f["source"] not in TRANSIENT]
                 for frame in replay[mid]:
-                    seen[frame["_half_frame"]["key"]] = frame["_half_frame"]
-        if previous_record:
-            for frame in sent:
-                if "_half_frame" in frame:
                     seen[frame["_half_frame"]["key"]] = frame["_half_frame"]
 
     def restore_native(row):
@@ -267,12 +259,7 @@ def apply_context(
     items = []
     for row in base:
         items.extend(replay.pop(row.get("message_id"), []))
-        if (
-            purpose == "narrative"
-            and not enabled(settings)
-            and row.get("source") == "history"
-            and row["role"] == "assistant"
-        ):
+        if not enabled(settings) and row.get("source") == "history" and row["role"] == "assistant":
             restore_native(row)
         items.append(row)
     current = {}
@@ -337,10 +324,6 @@ def apply_context(
     # end, so ordinary conversations keep their exact request order.
     at = next((i for i, f in enumerate(updates) if f["source"] in KEMINI_TRANSIENT), len(updates))
     updates[at:at] = revoked
-    if previous_record and not reason:
-        items = copy.deepcopy(list(sent))
-    old_count = previous.get("continuation_count", 0) if previous_record and not reason else 0
-    items.extend({**copy.deepcopy(m), "source": "maintenance_tools"} for m in continuation[old_count:])
     items.extend(updates)
     messages = []
     for item in items:
@@ -384,7 +367,8 @@ def apply_context(
         "compaction_generation": generation,
         "frames": updates,
         "retired_native": sorted(retired & visible_ids),
-        "continuation_count": len(continuation),
+        # Preserve the durable v5 record shape; Writer never has tool continuations.
+        "continuation_count": 0,
     }
     # Save only newly introduced lore. Older frozen originals belong to their
     # own exchange and remain recoverable after active snapshots retire them.
@@ -397,15 +381,3 @@ def apply_context(
     context["_half_record_ids"] = list(records)
     context["runtime_trace"] = items
     return project_context(context, settings)
-
-
-def attach_continuation(messages, responses):
-    """Preserve native metadata even if a framework drops unknown extra fields."""
-    result = copy.deepcopy(messages)
-    for row in result:
-        if row.get("role") != "assistant":
-            continue
-        native = responses.get(message_digest(row))
-        if native and native_items({**row, "_native_response": native}, native["origin"]["api"]) is not None:
-            row["_native_response"] = copy.deepcopy(native)
-    return result

@@ -397,8 +397,8 @@ class Store(MessageAdapters):
             write_blob(path, data)
         return digest
 
-    def import_card(self, data, filename):
-        document, container, resources, report = parse_card(data, filename)
+    def import_card(self, data):
+        document, container, resources, report = parse_card(data)
         from tavern.character.card_workflow import validate_document
 
         validate_document(document)
@@ -430,7 +430,7 @@ class Store(MessageAdapters):
         name, index = "新角色", 2
         while name in names:
             name, index = f"新角色 {index}", index + 1
-        return self.import_card(dump(blank_card(name)).encode(), "card.json")
+        return self.import_card(dump(blank_card(name)).encode())
 
     @staticmethod
     def _card_row(row):
@@ -453,12 +453,12 @@ class Store(MessageAdapters):
             rows = db.execute("SELECT * FROM cards ORDER BY rowid DESC").fetchall()
         return [self._card_row(row) for row in rows]
 
-    def copy_card(self, cid, document=None, source=None):
+    def copy_card(self, cid):
         from tavern.character.card_workflow import validate_document
         from tavern.character.cards import diagnose
 
-        source = source or self.card(cid)
-        document = copy.deepcopy(document if document is not None else source["document"])
+        source = self.card(cid)
+        document = copy.deepcopy(source["document"])
         validate_document(document)
         data = document.get("data", document) if document.get("spec") else document
         base, new_id = data["name"] + "（副本）", uid()
@@ -910,7 +910,7 @@ class Store(MessageAdapters):
                     },
                 )
             self.copy_message_adapter(db, "story", sid, new_sid)
-            fork_advisor(db, sid, new_sid, ids)
+            fork_advisor(db, sid, new_sid)
             from tavern.novel.storage import fork as fork_novel
 
             fork_novel(db, sid, new_sid)

@@ -2,11 +2,7 @@
 import { computed } from 'vue';
 import MemoryRecords from '../records/MemoryRecords.vue';
 const props = defineProps<{
-  kind: 'memory';
-  snapshot: any;
   messages: any[];
-  persona?: string;
-  character?: string;
   disabled?: boolean;
   saving?: boolean;
   memoryView?: any;
@@ -19,7 +15,7 @@ const emit = defineEmits<{ change: [value: any]; cancel: []; locate: [source: st
 const refs = computed(() => new Map<string, string>(props.messages.map((m) => [m.id, m.ref])));
 </script>
 <template>
-  <div class="scene-notes" :data-kind="kind">
+  <div class="scene-notes" data-kind="memory">
     <p v-if="progress" role="status">{{ progress }} <button @click="emit('cancel')">取消重建</button></p>
     <MemoryRecords
       v-if="memoryView"

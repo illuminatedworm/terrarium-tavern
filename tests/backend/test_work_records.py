@@ -14,7 +14,7 @@ from tavern.storage.store import uid
 def story(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     return app, session
 

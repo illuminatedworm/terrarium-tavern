@@ -8,7 +8,7 @@
 |---|---|---|
 | 上下文记录 | 保持已发送动态消息与原生回复顺序，变化时追加或重建 | [half_context.py](../../src/tavern/conversation/half_context.py)、[context_ledger.py](../../src/tavern/full_agent/context_ledger.py) |
 | 断点计划 | 将会话策略解析为当前窗口中的剧情锚点 | [cache_breakpoint.py](../../src/tavern/conversation/cache_breakpoint.py) |
-| 协议编译 | 模型预设、时效和字段映射 | [cache_policy.py](../../src/tavern/core/cache_policy.py)、[prompt_cache.py](../../src/tavern/scripting/prompt_cache.py) |
+| 协议编译 | 模型预设、时效和字段映射 | [cache_policy.py](../../src/tavern/core/cache_policy.py)、[protocols.py](../../src/tavern/scripting/protocols.py) |
 | 传输与记录 | 最终请求、已发送端点、缓存对象和降级 | [model_transport.py](../../src/tavern/scripting/model_transport.py)、[sent_breakpoints.py](../../src/tavern/scripting/sent_breakpoints.py)、[cloud_cache.py](../../src/tavern/scripting/cloud_cache.py) |
 
 模型的 `cache.mode` 为 `cloud` 或 `runtime`。正文默认本地控制，后台与角色编辑默认云端。云端模式不注入本地断点、附加缓存 JSON 或 Gemini 对象引用；独立时效字段按[协议映射](../reference/model-api.md#缓存时效)处理。

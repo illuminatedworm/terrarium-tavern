@@ -31,7 +31,7 @@ story = test_full_agent.story
 def test_legacy_policy_migrates_without_losing_review(tmp_path, legacy, expected):
     assert Settings(policy=legacy).policy == FullSettings(policy=legacy).policy == expected
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"Guide","first_mes":"Hello"}', "card.json")
+    card = store.import_card(b'{"name":"Guide","first_mes":"Hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     with store.connection() as db:
         db.execute("UPDATE sessions SET policy=? WHERE id=?", (legacy, session["id"]))
@@ -93,7 +93,6 @@ async def test_policy_never_grants_full_or_half_content_permission(policy):
         None,
         "turn",
         Settings(),
-        session,
         [{"role": "assistant", "model": "Story"}],
         {},
         request,

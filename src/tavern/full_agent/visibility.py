@@ -11,6 +11,7 @@ import json
 import jsonpatch
 import jsonpointer
 
+from tavern.conversation.context import lore_text
 from tavern.core.cache_policy import fingerprint
 from tavern.core.message_adapter import unwrapped
 from tavern.core.model_view import state_for_model
@@ -120,7 +121,7 @@ def observe_context(reads, messages):
         if current is not None and text == expose(current["content"]):
             reads.read_note(key)
 
-    def entry(ref, text, *, expanded=False):
+    def entry(ref, text, *, expanded=False, injected=False):
         if not isinstance(ref, str):
             return
         row = entries.get(refs.get(ref))
@@ -130,6 +131,10 @@ def observe_context(reads, messages):
         expected = normalized.get("content", "")
         if expanded:
             expected = owner.expand(expected)
+        if injected:
+            # Compare the complete compiled block; stripping an arbitrary first
+            # line could accidentally authorize a different or incomplete body.
+            expected = lore_text(normalized, expected, owner.settings.lore_injection_title, owner.expand)
         if text == expose(expected):
             reads.read_entry(ref, raw)
 
@@ -146,7 +151,7 @@ def observe_context(reads, messages):
         if field in CHARACTER_FIELDS:
             character(field, text, expanded=True)
         elif source.startswith("lore:") and source[5:] in reverse:
-            entry(reverse[source[5:]], text, expanded=True)
+            entry(reverse[source[5:]], text, expanded=True, injected=True)
 
         for call in message.get("tool_calls", []):
             function = call.get("function", {})

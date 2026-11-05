@@ -24,8 +24,8 @@ from tavern.chatgpt.vault import CredentialVault
 from tavern.core.errors import NotFound
 
 
-def _tokens(payload, *, old=None, now=None):
-    now = time.time() if now is None else now
+def _tokens(payload, *, old=None):
+    now = time.time()
     if not isinstance(payload, dict):
         raise ChatGPTError("ChatGPT 凭据响应无效", code="invalid_token_response")
     scope = payload.get("scope")

@@ -13,7 +13,7 @@ from tavern.storage.store import SCHEMA_VERSION, Store
 @pytest.fixture
 def story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     return store, session
 

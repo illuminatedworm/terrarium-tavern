@@ -270,7 +270,7 @@ if __name__ == "__main__":
         cfg.foreground.model = cfg.background.model = "fixture"
         store.save_settings(cfg)
         for filename in Path("samples").glob("*.json"):
-            card = store.import_card(filename.read_bytes(), filename.name)
+            card = store.import_card(filename.read_bytes())
             store.new_session(SessionCreate(card_id=card["id"]))
         with (OUTPUT / "server.log").open("w", encoding="utf-8") as log:
             process = subprocess.Popen(

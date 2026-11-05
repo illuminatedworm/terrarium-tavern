@@ -20,9 +20,7 @@ from tests.backend.test_full_agent import Model
 
 
 def seed(store, mode="half_agent", **fields):
-    card = store.import_card(
-        json.dumps({"name": "旅人", "first_mes": "故事开始。", **fields}).encode(), "card.json"
-    )
+    card = store.import_card(json.dumps({"name": "旅人", "first_mes": "故事开始。", **fields}).encode())
     persona = store.save_persona(None, PersonaEdit(name="玩家", description="寻找钟楼"))
     session = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"], agent_mode=mode))
     return card, persona, session
@@ -268,7 +266,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     assert not imported["settings_restored"]
     assert target.settings_document().half_agent.system_prompt != "个人提示词"
     revisions = target.settings_document().revisions
-    card = target.import_card(b'{"name":"running consultation"}', "card.json")
+    card = target.import_card(b'{"name":"running consultation"}')
     session = target.new_session(SessionCreate(card_id=card["id"]))
     before = target.settings_document()
     with target.connection() as db:
@@ -326,7 +324,7 @@ def test_invalid_graph_and_failed_write_leave_no_partial_import(tmp_path, monkey
 
 def test_failed_file_write_cleans_up_before_another_import_can_reuse_blobs(tmp_path, monkeypatch):
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"fixture"}', "card.json")
+    card = store.import_card(b'{"name":"fixture"}')
     payload, blobs = package(store, settings=False, cards=[card["id"]])
     store.delete_card(card["id"])
     asset = b"new imported asset"

@@ -72,7 +72,7 @@ def effective_message_id(session, settings):
     else:
         from tavern.conversation.half_compaction import local_window_enabled
 
-        visible, _ = window_history(
+        visible = window_history(
             session["messages"], session["snapshot"], enabled=local_window_enabled(settings)
         )
     return candidate if any(message["id"] == candidate for message in visible) else None

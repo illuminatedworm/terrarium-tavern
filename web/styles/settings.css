@@ -521,35 +521,6 @@
   width: 68px;
   min-height: 32px;
 }
-.settings-detail .retrieval-channel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  margin: 9px 0;
-  padding: 9px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: rgb(var(--well-rgb) / 0.3);
-}
-.settings-detail .retrieval-channel-choice,
-.settings-detail .retrieval-channel-weight {
-  display: inline-flex;
-  align-items: center;
-  margin: 0;
-}
-.retrieval-channel-weight {
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-}
-.settings-detail .retrieval-channel-weight input {
-  width: 68px;
-  min-height: 34px;
-  padding: 5px 8px;
-}
 .settings-detail .policy-help {
   font-size: var(--fs-sm);
 }

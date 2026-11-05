@@ -39,7 +39,7 @@ def configured_app(path):
     doc.half_agent.chunk_mode = "off"
     doc.half_agent.retrieval.channels = doc.full_agent.retrieval.channels = ["keyword"]
     store.save_settings(doc)
-    card = store.import_card(b'{"name":"Fixture","first_mes":"Opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"Fixture","first_mes":"Opening"}')
     return app, card
 
 
@@ -321,7 +321,7 @@ async def test_full_agent_resume_uses_new_provider_without_replaying_accepted_wo
 
 def test_kemini_identity_is_fixed_at_creation_and_standard_only(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode(), "card.json")
+    card = store.import_card(json.dumps({"name": "测试", "first_mes": "开场"}).encode())
     with pytest.raises(ValueError, match="请先"):
         store.new_session(SessionCreate(card_id=card["id"], kemini=True))
     document = store.settings_document()

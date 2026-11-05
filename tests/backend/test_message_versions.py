@@ -15,7 +15,7 @@ from tavern.storage.store import Conflict, Store, dump, uid
 @pytest.fixture
 def story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     return store, store.new_session(SessionCreate(card_id=card["id"]))
 
 
@@ -117,7 +117,7 @@ async def test_opening_save_cannot_overwrite_failed_or_concurrent_work(tmp_path)
 
     app = create_app(tmp_path)
     store, service, advisor = app.state.store, app.state.service, app.state.advisor
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     started, release = asyncio.Event(), asyncio.Event()
 

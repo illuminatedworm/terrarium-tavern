@@ -17,6 +17,7 @@ from tavern.scripting.request_context import OperationContexts, response_origin
 from tavern.storage.backup import backup, restore
 from tavern.storage.store import Store
 from tests.backend.test_unified_cache import config, reply
+from tests.support.model_transport import request_payload
 
 
 def messages(at, count=6):
@@ -68,7 +69,7 @@ async def test_only_dispatched_boundaries_accumulate_and_manual_rewind_keeps_the
     seen, captured = [], []
     original = messages(0)
     async with transport(api, seen, capture=captured.append) as p:
-        p._request(messages(1))  # A preview must not create a sent fact.
+        (await request_payload(p, messages(1)))  # A preview must not create a sent fact.
         await p._prepare(messages(3), None, False, {})
         await p.chat_complete(original)
         await p.chat_complete(messages(2))
@@ -95,7 +96,7 @@ async def test_sent_markers_replay_even_without_a_new_planned_boundary(api):
         _, diagnostic, _ = await p._prepare(following, None, False, {})
         assert diagnostic["status"] == "fallback"
         await p.chat_complete(current)
-        assert marked(p._request(following), api) == ["block 2"]
+        assert marked((await request_payload(p, following)), api) == ["block 2"]
         await p.chat_complete(following)
         assert marked(seen[-1], api) == ["block 2"]
 
@@ -247,7 +248,7 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
         with pytest.raises(asyncio.CancelledError):
             await task
         provider.request_context = OperationContexts(Store(tmp_path), sid, "retry").new()
-        assert marked(provider._request(messages(2)), "responses") == ["block 0", "block 2"]
+        assert marked((await request_payload(provider, messages(2))), "responses") == ["block 0", "block 2"]
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -262,7 +263,7 @@ async def test_real_http_body_transmission_persists_before_any_response(tmp_path
 @pytest.mark.parametrize("api", ["responses", "chat_completions"])
 async def test_durable_history_survives_restart_backup_and_fork_without_cross_session_leaks(tmp_path, api):
     store = Store(tmp_path / "original")
-    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}', "card.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     sid, seen = session["id"], []
     context = OperationContexts(store, sid, "turn1").new()
@@ -318,9 +319,7 @@ async def test_story_requests_keep_old_breakpoints_across_committed_turns(tmp_pa
     for model in (document.full_agent.model, document.half_agent.foreground):
         model.api_mode, model.model = api, "gpt-6-sol"
     store.save_settings(document)
-    card = store.import_card(
-        b'{"name":"fixture","first_mes":"opening","description":"fixed rules"}', "card.json"
-    )
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening","description":"fixed rules"}')
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
     session = store.set_cache_breakpoint(session["id"], session["revision"], True, None, 1, 1)
     service = ModeRuntime(store)

@@ -134,7 +134,7 @@ class OperationContexts:
         self.store, self.session_id, self.turn_id = store, session_id, turn_id
         self.counts = {}
 
-    def new(self, purpose="narrative", window_id=""):
+    def new(self, purpose="narrative"):
         number = self.counts.get(purpose, 0)
         self.counts[purpose] = number + 1
         sid = UUID(self.session_id)
@@ -143,7 +143,7 @@ class OperationContexts:
         return ProviderRequestContext(
             str(sid),
             f"{self.turn_id}:{purpose}:{number}",
-            window_id,
+            "",
             self.store.device_id(),
             sent_breakpoints=self.store.cache_breakpoint_history(self.session_id, purpose),
         )

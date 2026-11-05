@@ -220,7 +220,7 @@ async def test_committed_clues_never_enter_model_history(tmp_path):
 
     app = create_app(tmp_path)
     store, service = app.state.store, app.state.service
-    card = store.import_card(json.dumps({"name": "角色", "first_mes": "你好"}).encode(), "c.json")
+    card = store.import_card(json.dumps({"name": "角色", "first_mes": "你好"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = ScriptedLLM(["正文<tavern_retrieval>唯一隐藏标记xyz</tavern_retrieval>"])
     service.provider_factory = lambda: provider
@@ -379,7 +379,7 @@ async def test_index_preparation_never_runs_query_or_reranker(tmp_path, monkeypa
         "character_book": {"entries": [{"id": "a", "keys": ["灯塔"], "content": "灯塔守卫"}]},
     }
     try:
-        card = store.import_card(json.dumps(doc, ensure_ascii=False).encode(), "fixture.json")
+        card = store.import_card(json.dumps(doc, ensure_ascii=False).encode())
         session = store.new_session(SessionCreate(card_id=card["id"]))
         snapshot = copy.deepcopy(session["snapshot"])
         snapshot[ARCHIVE] = [

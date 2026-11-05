@@ -9,7 +9,7 @@ from tavern.storage.store import Store
 
 def test_backup_restore_preserves_cards_and_rejects_overwrite(tmp_path):
     store = Store(tmp_path / "source")
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     archive = tmp_path / "backup.zip"
     backup(store, archive)
@@ -22,7 +22,7 @@ def test_backup_restore_preserves_cards_and_rejects_overwrite(tmp_path):
 
 def test_backup_restore_preserves_story_assets_after_card_deletion(tmp_path):
     store = Store(tmp_path / "source")
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     store.delete_card(card["id"])
     archive = tmp_path / "backup.zip"

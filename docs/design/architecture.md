@@ -31,7 +31,7 @@ flowchart TD
 
 Writer 和 Tracker 的调用及草稿交换由 Runtime 统一编排。前置任务处理必要的裁剪补整理及明确设定修改，后置任务合并到期记忆与授权变量维护。调用限额见[Half Agent 设置](../guides/history-maintenance-settings.md#记忆与任务限额)。
 
-`scripting/agent.py` 的 `TurnAgent` 适配 Writer 与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本；`RoleplayRuntime` 负责整个回合的调度和提交。
+`scripting/agent.py` 的 `Writer` 适配正文请求与 Terrarium；[scripting/runtime.py](../../src/tavern/scripting/runtime.py) 的 `ScriptRuntime` 执行隔离卡片脚本；`RoleplayRuntime` 负责整个回合的调度和提交。
 
 ## 数据所有权与事务
 

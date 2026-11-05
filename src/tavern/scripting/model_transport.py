@@ -252,23 +252,6 @@ class ModelTransport(BaseLLMProvider):
     def _retains_breakpoints(self, selected):
         return self.settings.api_mode in APIS and selected.get("field") == FIELD
 
-    def _request(self, messages, *, tools=None, **kwargs):
-        messages, _, _ = adapt_messages(messages, self.settings)
-        selected = preset(self.settings)
-        enabled = self.settings.cache.mode == "runtime" and (
-            any(m.get("_cache_breakpoint") for m in messages) or self._retains_breakpoints(selected)
-        )
-        marker = selected if enabled and selected["kind"] == "block" else None
-        tools = tools or (kwargs.get("extra_body") or {}).get("tools")
-        return self._body(
-            messages,
-            tools,
-            False,
-            marker,
-            selected["request"] if marker or selected["kind"] == "implicit" else {},
-            kwargs,
-        )
-
     def _body(self, messages, tools, stream, marker, params, kwargs):
         cfg, api = self.settings, self.settings.api_mode
         messages, _ = prepare_messages(messages, response_origin(cfg, self.key))

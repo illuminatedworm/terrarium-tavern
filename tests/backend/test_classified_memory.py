@@ -432,7 +432,7 @@ def test_manual_deletion_references_survive_a_fork(tmp_path):
     from tavern.storage.store import Store
 
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"a","first_mes":"hello"}', "c.json")
+    card = store.import_card(b'{"name":"a","first_mes":"hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     record = Record(
         id="x",
@@ -453,9 +453,7 @@ def test_manual_deletion_references_survive_a_fork(tmp_path):
 async def test_record_api_revision_and_fork(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(
-        json.dumps({"name": "她", "first_mes": "她把戒指借给了你。"}).encode(), "card.json"
-    )
+    card = store.import_card(json.dumps({"name": "她", "first_mes": "她把戒指借给了你。"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     mid = session["head"]
     record = Record(
@@ -494,7 +492,7 @@ async def test_rebuild_memory_saves_without_content_review(tmp_path):
 
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(b'{"name":"a","first_mes":"hello"}', "c.json")
+    card = store.import_card(b'{"name":"a","first_mes":"hello"}')
     s = store.new_session(SessionCreate(card_id=card["id"]))
     s = store.update_session(s["id"], 0, policy="preview")
     app.state.service.memory_provider_factory = lambda: MemoryModel(

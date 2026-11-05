@@ -19,7 +19,6 @@ const props = defineProps<{
   submitting: boolean;
   updating?: string | null;
   progress: string;
-  character: string;
   saving: boolean;
 }>();
 const emit = defineEmits<{
@@ -76,16 +75,12 @@ const summary = computed(() => {
         <div class="scene-block-body">
           <SceneNotes
             :key="`${session.id}:memory`"
-            kind="memory"
-            :snapshot="session.snapshot"
             :memory-view="session.memory_view"
             :archived="session.archived_memory"
             :progress="progress"
             @change="emit('change', $event)"
             @cancel="emit('cancel')"
             :messages="session.messages"
-            :persona="session.persona"
-            :character="character"
             :disabled="memoryDisabled"
             :saving="saving"
             @locate="(source, excerpt) => emit('locate', source, excerpt)"

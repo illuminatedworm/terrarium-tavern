@@ -50,7 +50,8 @@ def test_quantization_roundtrip_reuses_weights_but_requires_new_worker(tmp_path)
         == upgraded.shared.local_models.embedding
     )
     upgraded.shared.local_models.embedding.device = "opencl:0"
-    upgraded.shared.local_models.reranker = LocalModel(**mobile_config("reranker", "hexagon:0"))
+    upgraded.shared.local_models.reranker = LocalModel(**mobile_config("reranker"))
+    upgraded.shared.local_models.reranker.device = "hexagon:0"
     assert SettingsDocument.model_validate_json(upgraded.model_dump_json()) == upgraded
 
 

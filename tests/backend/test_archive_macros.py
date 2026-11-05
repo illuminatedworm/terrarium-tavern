@@ -26,9 +26,7 @@ async def test_manual_refresh_uses_session_identity(kind, tmp_path):
     settings.foreground.model = settings.background.model = "fixture"
     settings.providers[0].api_key = "local"
     store.save_settings(settings)
-    card = store.import_card(
-        json.dumps({"name": "洛伊", "first_mes": "{{user}}遇见{{char}}。"}).encode(), "card.json"
-    )
+    card = store.import_card(json.dumps({"name": "洛伊", "first_mes": "{{user}}遇见{{char}}。"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], persona="小舟"))
     response = {"operations": [], "questions": []}
     provider = MemoryModel([json.dumps(response)])

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { PreferencePreset } from '../../lib/settingsDocument';
 import ExpandableTextarea from '../common/ExpandableTextarea.vue';
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick } from 'vue';
 
 const props = defineProps<{
   presets: PreferencePreset[];

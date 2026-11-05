@@ -477,7 +477,7 @@ def create_app(data_dir=None):
 
     @app.post("/api/cards/import")
     async def import_card(file: UploadFile = File(...)):
-        return store.import_card(await file.read(32 * 1024 * 1024 + 1), file.filename or "card.json")
+        return store.import_card(await file.read(32 * 1024 * 1024 + 1))
 
     @app.get("/api/cards/{cid}")
     async def card(cid: str):

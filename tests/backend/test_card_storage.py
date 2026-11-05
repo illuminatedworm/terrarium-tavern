@@ -11,7 +11,7 @@ from tavern.core.models import SessionCreate
 async def test_card_api_revision_save_keeps_existing_story_settings(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     doc = copy.deepcopy(card["document"])
     doc["data"]["name"] = "新雾港 #1; 100%"

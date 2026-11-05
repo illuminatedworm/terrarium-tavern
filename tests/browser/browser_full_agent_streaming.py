@@ -57,7 +57,7 @@ async def main(single_viewport=False, report_activity_only=False):
         app = create_app(root)
         store = app.state.store
         card = store.import_card(
-            json.dumps({"name": "流式预览角色", "first_mes": "开场：旧港的钟声响了。"}).encode(), "card.json"
+            json.dumps({"name": "流式预览角色", "first_mes": "开场：旧港的钟声响了。"}).encode()
         )
         cfg = store.settings_document()
         cfg.full_agent.model.model = "fixture"

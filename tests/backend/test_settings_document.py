@@ -62,7 +62,7 @@ async def test_novel_delivery_defaults_share_main_mapping_and_page_undo(tmp_path
     """Both global entry points must save and undo one mapping without changing existing stories."""
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}', "fixture.json")
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
     existing = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     before = store.message_adapter("story", existing["id"], "full_agent")["config"]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -124,9 +124,7 @@ async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_p
 
 def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_data(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(
-        json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode(), "card.json"
-    )
+    card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], persona="玩家甲"))
     raw = store.settings_document().model_dump()
     raw["version"] = 9
@@ -318,7 +316,7 @@ async def test_other_window_changes_cannot_be_undone_and_capabilities_cannot_be_
 
 def test_modes_inherit_their_own_policy_and_card_author_stays_independent(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     full = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     half = store.new_session(SessionCreate(card_id=card["id"], agent_mode="half_agent"))
     doc = store.settings_document()

@@ -166,7 +166,7 @@ class WebTools:
                     )
         raise ValueError("网页重定向次数过多")
 
-    async def legacy_search(self, name, query, limit):
+    async def legacy_search(self, name, query):
         if name == "searxng":
             endpoint = self.config.searxng.endpoint
             response = await self.fetch(
@@ -330,7 +330,7 @@ class WebTools:
 
         async def call(name):
             if name not in {"exa", "tavily"}:
-                return await self.legacy_search(name, query, limit)
+                return await self.legacy_search(name, query)
             async with self.client() as client:
                 if name == "exa":
                     mcp = ExaMCP(client, self.request, self.auth(name))

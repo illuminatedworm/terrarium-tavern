@@ -21,7 +21,7 @@ def document(name="角色"):
 def test_json_unknown_roundtrip():
     d = document()
     raw = json.dumps(d).encode()
-    parsed, kind, assets, _ = parse_card(raw, "card.json")
+    parsed, kind, assets, _ = parse_card(raw)
     out, _, _ = export_card(parsed, kind, raw, assets)
     assert json.loads(out) == d
 
@@ -54,7 +54,7 @@ def test_export_canonicalizes_lore_flags_without_changing_saved_source():
         },
     }
     raw = json.dumps(original).encode()
-    parsed, kind, assets, _ = parse_card(raw, "card.json")
+    parsed, kind, assets, _ = parse_card(raw)
     out, _, _ = export_card(parsed, kind, raw, assets)
     exported = json.loads(out)
     expected = copy.deepcopy(original)
@@ -88,12 +88,12 @@ def test_png_prefers_v3_and_preserves_other_chunks():
     buf = io.BytesIO()
     Image.new("RGB", (2, 2)).save(buf, "PNG", pnginfo=info)
     raw = buf.getvalue()
-    parsed, kind, assets, _ = parse_card(raw, "card.png")
+    parsed, kind, assets, _ = parse_card(raw)
     assert parsed["data"]["name"] == "角色"
     parsed["data"]["name"] = "edited"
     out, _, _ = export_card(parsed, kind, raw, assets)
     assert Image.open(io.BytesIO(out)).text["unrelated"] == "preserved"
-    assert parse_card(out, "card.png")[0] == parsed
+    assert parse_card(out)[0] == parsed
 
 
 def test_charx_assets_and_path_escape():
@@ -102,11 +102,11 @@ def test_charx_assets_and_path_escape():
         z.writestr("card.json", json.dumps(document()))
         z.writestr("assets/a.txt", "hello")
     raw = buf.getvalue()
-    parsed, kind, assets, _ = parse_card(raw, "card.charx")
+    parsed, kind, assets, _ = parse_card(raw)
     assert assets["assets/a.txt"] == b"hello"
     out, _, _ = export_card(parsed, kind, raw, assets)
-    assert parse_card(out, "card.charx")[2] == assets
+    assert parse_card(out)[2] == assets
     with zipfile.ZipFile(buf, "a") as z:
         z.writestr("../evil", "bad")
     with pytest.raises(ValueError, match="非法"):
-        parse_card(buf.getvalue(), "evil.charx")
+        parse_card(buf.getvalue())

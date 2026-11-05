@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.character.card_author import CardAuthorService
 from tavern.conversation.context import compile_context, macros
@@ -17,9 +16,9 @@ from tavern.memories.memory_evidence import evidence_pool
 from tavern.memories.memory_protocol import References
 from tavern.memories.memory_records import Record
 from tavern.memories.recall_filter import filter_messages, filter_recall
-from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store
 from tavern.tracker.task import TrackerTask
+from tests.support.tracker_model import PatchModel
 
 ID = "12345678-90ab-cdef-1234-567890abcdef"
 KEY = "long-storage-key-with-opaque-identity-019876543210"
@@ -222,23 +221,28 @@ def test_writer_and_nested_context_exclude_ledgers_and_internal_state():
 async def test_mvu_final_request_and_memory_auxiliary_state_exclude_bookkeeping():
     captured = []
 
-    class Events:
-        def event(self, *args):
-            captured.append(args)
-
-    provider = ScriptedLLM(['[{"op":"replace","path":"/hp","value":9}]'])
-    result = await analyze_variables(
-        Events(),
+    store = SimpleNamespace(
+        event=lambda *args: captured.append(args),
+        device_id=lambda: ID,
+        cache_breakpoint_history=lambda *args: None,
+    )
+    provider = PatchModel([{"op": "replace", "path": "/hp", "value": 9}])
+    task = TrackerTask(
+        store,
         "turn",
         Settings(),
+        {"id": ID, "persona": "用户"},
+        {"name": "艾琳"},
         [],
-        runtime_state(),
-        "休息",
-        "恢复精神",
-        lambda: provider,
-        document={"name": "艾琳"},
+        {"state": runtime_state()},
+        phase="post",
+        variables=True,
+        user_input="休息",
+        narrative="恢复精神",
+        provider=provider,
     )
-    assert result == [{"op": "replace", "path": "/hp", "value": 9}]
+    await task.run()
+    assert task.patch == [{"op": "replace", "path": "/hp", "value": 9}]
     wire = json.dumps(provider.last_messages, ensure_ascii=False)
     assert ID not in wire and HASH not in wire and "$internal" not in wire and "$meta" not in wire
     pool = evidence_pool([{"id": ID, "snapshot": {"state": runtime_state()}}], {}, 0, 1)
@@ -257,7 +261,7 @@ async def test_authorized_tools_only_return_short_refs_and_program_fills_sources
         "content": "银戒的禁用条目",
         "enabled": False,
     }
-    card = store.import_card(json.dumps(doc).encode(), "card.json")
+    card = store.import_card(json.dumps(doc).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     session["snapshot"]["state"] = runtime_state()
     from tavern.conversation.scene import archive_history
@@ -321,7 +325,7 @@ async def test_editor_final_requests_hide_ids_hashes_and_support_reversible_pare
 
     doc = document()
     store = Store(tmp_path)
-    card = store.import_card(json.dumps(doc).encode(), "card.json")
+    card = store.import_card(json.dumps(doc).encode())
     service = CardAuthorService(store)
     workspace = service.edits.create(card["id"])
 
@@ -365,7 +369,7 @@ async def test_opening_tool_restores_handles_in_complete_inline_text(tmp_path):
 
     doc = {"name": "艾琳", "first_mes": "遗物编号：" + ID}
     store = Store(tmp_path)
-    card = store.import_card(json.dumps(doc).encode(), "card.json")
+    card = store.import_card(json.dumps(doc).encode())
     service = CardAuthorService(store)
     workspace = service.edits.create(card["id"])
 

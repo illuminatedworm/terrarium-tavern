@@ -62,7 +62,7 @@ def validate_bundle(value, channel):
             raise ValueError("参谋 agent 工具过程不完整") from None
 
 
-def import_bundle(db, sid, value, ids):
+def import_bundle(db, sid, value):
     if value is None:
         return
     db.execute(

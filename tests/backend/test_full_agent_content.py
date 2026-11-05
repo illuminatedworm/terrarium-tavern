@@ -371,7 +371,6 @@ async def test_script_lore_deltas_preserve_agent_edits_across_variable_patch_and
         json.dumps(
             {"name": "Guide", "first_mes": "Opening", "character_book": {"entries": original}}
         ).encode(),
-        "fixture.json",
     )
     settings = store.settings()
     settings.full_agent_config.auto_retrieval = False
@@ -498,7 +497,7 @@ async def test_five_hundred_entries_only_selected_source_reaches_model_and_other
             "character_book": {"name": "World", "entries": entries},
         },
     }
-    card = store.import_card(json.dumps(original).encode(), "large.json")
+    card = store.import_card(json.dumps(original).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
     settings = store.settings()
     settings.context_tokens = 128000

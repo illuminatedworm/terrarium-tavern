@@ -6,7 +6,6 @@ import re
 from pathlib import Path
 
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 from pydantic import ValidationError
 
 from tavern.application.service import RoleplayRuntime
@@ -19,10 +18,11 @@ from tavern.conversation.context import compile_context
 from tavern.core.model_view import ModelView
 from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
-from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store, dump
+from tavern.tracker.task import TrackerTask
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_authoring import run
+from tests.support.tracker_model import PatchModel
 
 TEMPLATE = (
     "<details><summary>状态栏</summary><div>TIME: {{getvar::Time}} MONEY: {{getvar::Money}}</div></details>"
@@ -205,7 +205,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
     opaque_id = "50b3f562-051d-47f9-bfcc-e4c3e7076573"
     original["character_book"]["entries"][0]["id"] = opaque_id
     original["alternate_greetings"] = [OPENING.replace("08:20", "19:40").replace("12", "35")]
-    source = store.import_card(dump(original).encode(), "fixture.json")
+    source = store.import_card(dump(original).encode())
     editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     wid = workspace["id"]
@@ -273,7 +273,7 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
         assert document["character_book"]["entries"][0]["id"] == opaque_id
         assert document["description"] == original["description"]
         assert document["character_book"]["entries"][1] == original["character_book"]["entries"][1]
-        migrated = store.import_card(dump(document).encode(), "migrated-fixture.json")
+        migrated = store.import_card(dump(document).encode())
         for index, time, money in [(0, "08:20", 12), (1, "19:40", 35)]:
             probe = await probe_card(store, item, index=index)
             assert probe["status"] == "passed", probe
@@ -309,24 +309,22 @@ async def test_editor_migration_preserves_source_and_initializes_each_opening_wi
             assert RULE not in dump(half["messages"])
             assert RULE in dump(full["messages"])
         # Half Agent sends the same semantic rule to the independent variable task.
-        provider = ScriptedLLM(["[]"])
-
-        class Capture:
-            def event(self, *args):
-                pass
-
-        await analyze_variables(
-            Capture(),
+        provider = PatchModel([])
+        work = TrackerTask(
+            store,
             "test",
             store.settings(),
+            {**session, "persona": "店主"},
+            document,
             [],
-            state,
-            "继续",
-            "旅客等待。",
-            lambda: provider,
-            document=document,
-            persona="店主",
+            snapshot,
+            phase="post",
+            variables=True,
+            user_input="继续",
+            narrative="旅客等待。",
+            provider=provider,
         )
+        await work.run()
         assert RULE in dump(provider.last_messages) and TEMPLATE not in dump(provider.last_messages)
         assert store.card(source["id"])["document"] == original
     finally:

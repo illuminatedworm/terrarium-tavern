@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { apply, commands, initialize } from '../../compat/mvu';
+import { apply, initialize } from '../../compat/mvu';
 import { previewLore } from '../../web/lib/cardPreview';
 describe('MVU transaction semantics', () => {
   const emit = async () => {};

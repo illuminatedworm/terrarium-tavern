@@ -61,7 +61,7 @@ def png_chunks(blob):
     raise ValueError("PNG 缺少结束标记")
 
 
-def parse_card(blob: bytes, filename: str):
+def parse_card(blob: bytes):
     if len(blob) > MAX_BYTES:
         raise ValueError("角色卡超过 32 MB")
     resources = {}

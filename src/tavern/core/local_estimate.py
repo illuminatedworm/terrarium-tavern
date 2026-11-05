@@ -66,10 +66,10 @@ def estimate(messages, rows, settings, tools=None):
     }
 
 
-def attach_local_estimate(preview, settings, tools=None):
+def attach_local_estimate(preview, settings):
     """Add the reference to a preview response; the request messages are untouched."""
     preview["trace"] = annotate_rows(preview["trace"], settings)
     preview["local_estimate"] = estimate(
-        preview["messages"], preview["trace"], settings, preview.get("tools") if tools is None else tools
+        preview["messages"], preview["trace"], settings, preview.get("tools")
     )
     return preview

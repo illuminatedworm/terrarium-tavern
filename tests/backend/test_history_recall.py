@@ -2,20 +2,13 @@ import copy
 import json
 from types import SimpleNamespace
 
-import httpx
-import pytest
 from kohakuterrarium.llm.base import NativeToolCall
-from openai import AsyncOpenAI
 
 from tavern.core.models import Settings
 from tavern.memories.history_recall import (
-    HISTORY_TOOL,
     HistoryBudget,
     HistoryRecall,
-    MemoryText,
-    complete_with_recall,
 )
-from tavern.memories.memory_engine import CallBudget, apply_operations, consolidate
 from tavern.memories.memory_protocol import exposed_excerpts, split_passages
 from tavern.scripting.agent import make_provider
 
@@ -39,25 +32,6 @@ def history():
                 "这是尚未提交回复的输入",
             ]
         )
-    ]
-
-
-def request(messages=None):
-    chosen = {m["id"] for m in (messages or history()[3:5])}
-    return [
-        {"role": "system", "content": "最终只返回operations/questions"},
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "messages": [
-                        {"ref": f"H{position}", "role": m["role"], "text": m["model"]}
-                        for position, m in enumerate(history(), 1)
-                        if m["id"] in chosen
-                    ]
-                }
-            ),
-        },
     ]
 
 
@@ -140,266 +114,6 @@ def test_search_limit_counts_history_segments_and_radius_zero_reads_only_center(
     assert [item["ref"] for item in result["matches"]] == ["H2"]
 
 
-async def test_three_tools_then_final_response_and_no_future_batch_visibility():
-    provider = Provider(
-        [
-            ("", [call(1, {"query": "银戒"})]),
-            ("", [call(2, {"ref": "H2", "radius": 0})]),
-            ("", [call(3, {"query": "不存在"})]),
-            ('{"operations":[],"questions":[]}', []),
-        ]
-    )
-    messages = history()[:3]
-    budget = HistoryBudget()
-    events = []
-    result = await complete_with_recall(
-        provider,
-        request(messages),
-        history=history(),
-        settings=Settings(),
-        budget=budget,
-        phase="memory",
-        event=lambda k, p: events.append((k, p)),
-    )
-    assert isinstance(result, MemoryText) and "m2" in result.history_sources
-    assert budget.calls == budget.continuations == 3
-    assert len(provider.calls) == 4
-    assert provider.calls[-1][1]["extra_body"]["tool_choice"] == "none"
-    assert "海岸" not in json.dumps(provider.calls[-1][0], ensure_ascii=False)
-    assert len([p for k, p in events if k == "usage"]) == 4
-
-
-async def test_parallel_attempts_cannot_execute_fourth_and_quota_spans_batches():
-    budget = HistoryBudget()
-    provider = Provider(
-        [("", [call(i, {"query": f"词{i}"}) for i in range(1, 5)]), ('{"operations":[],"questions":[]}', [])]
-    )
-    await complete_with_recall(
-        provider, request(), history=history(), settings=Settings(), budget=budget, phase="memory"
-    )
-    tool_results = [m for m in provider.calls[-1][0] if m["role"] == "tool"]
-    assert len(tool_results) == 4 and "3次上限" in tool_results[-1]["content"]
-    assert budget.calls == 3
-    later = Provider([("", [call(5, {"ref": "H1"})])])
-    with pytest.raises(ValueError, match="已停用"):
-        await complete_with_recall(
-            later, request(), history=history(), settings=Settings(), budget=budget, phase="memory_review"
-        )
-    assert budget.calls == 3
-
-
-async def test_loop_prohibits_unknown_tools():
-    provider = Provider([("", [NativeToolCall("1", "write_memory", "{}")])])
-    with pytest.raises(ValueError, match="仅允许"):
-        await complete_with_recall(
-            provider,
-            request(),
-            history=history(),
-            settings=Settings(),
-            budget=HistoryBudget(),
-            phase="memory",
-        )
-
-
-async def test_cancellation_during_followup_does_not_advance_memory():
-    import asyncio
-
-    provider = Provider([("", [call(1, {"query": "银戒"})])])
-    original = provider.chat_complete
-
-    async def cancel_after_tool(messages, **kwargs):
-        if any(m["role"] == "tool" for m in messages):
-            raise asyncio.CancelledError()
-        return await original(messages, **kwargs)
-
-    provider.chat_complete = cancel_after_tool
-    with pytest.raises(asyncio.CancelledError):
-        await complete_with_recall(
-            provider,
-            request(),
-            history=history(),
-            settings=Settings(),
-            budget=HistoryBudget(),
-            phase="memory",
-        )
-
-
-async def test_recalled_source_can_supplement_but_cannot_replace_fresh_source():
-    messages = history()[:3]
-    messages += [
-        {"id": f"m{i}", "role": "user" if i % 2 else "assistant", "raw": "继续前进", "model": "继续前进"}
-        for i in range(3, 10)
-    ]
-    messages.append({"id": "m10", "role": "assistant", "raw": "两人来到海岸。", "model": "两人来到海岸。"})
-    operation = {
-        "op": "add",
-        "id": "journey",
-        "record": {
-            "category": "episode",
-            "content": "带着借来的银戒到了海岸",
-            "sources": [
-                {"message_id": "m2", "excerpt": "艾琳借出银戒"},
-                {"message_id": "m10", "excerpt": "两人来到海岸。"},
-            ],
-        },
-    }
-    cfg, budget = Settings(), CallBudget()
-    wire = copy.deepcopy(operation)
-    wire["record"]["sources"] = ["H3#1", "H11#1"]
-    provider = Provider([("", [call(1, {"query": "银戒"})]), (json.dumps({"operations": [wire]}), [])])
-
-    async def generate(prompt, **kw):
-        payload = json.loads(prompt[-1]["content"])
-        assert "H3" not in {m["ref"] for m in payload["background_messages"] + payload["messages"]}
-        return await complete_with_recall(
-            provider, prompt, history=messages, settings=cfg, budget=budget.history, phase=kw["phase"]
-        )
-
-    result = await consolidate(
-        messages, cfg, generate, memory={"version": 3, "records": []}, start=9, budget=budget
-    )
-    assert len(result["records"][0]["sources"]) == 2
-    operation["record"]["sources"] = operation["record"]["sources"][:1]
-    by_id = {m["id"]: m for m in messages}
-    with pytest.raises(ValueError, match="batch_range"):
-        apply_operations(
-            {"version": 3, "records": []},
-            {"operations": [operation]},
-            by_id,
-            by_id,
-            [],
-            fresh_ids={"m10"},
-            settings=cfg,
-        )
-
-
-async def test_history_tool_remains_available_without_reserved_result_budget():
-    provider = Provider([('{"operations":[],"questions":[]}', [])])
-    cfg = Settings(memory_input_tokens=4096, memory_evidence_tokens=0)
-    budget = HistoryBudget()
-    result = await complete_with_recall(
-        provider, request(), history=history(), settings=cfg, budget=budget, phase="memory"
-    )
-    assert result and budget.calls == 0
-    assert provider.calls[0][1]["extra_body"]["tool_choice"] == "auto"
-
-
-async def test_long_history_tool_result_reaches_tracker_complete():
-    old = history()
-    old[2]["model"] = "旧事" * 5000 + "结尾证据"
-    provider = Provider(
-        [
-            ("", [call(1, {"ref": "H3", "radius": 0})]),
-            ('{"operations":[],"questions":[]}', []),
-        ]
-    )
-    result = await complete_with_recall(
-        provider, request(old[3:5]), history=old, settings=Settings(), budget=HistoryBudget(), phase="memory"
-    )
-    assert result
-    assert "结尾证据" in provider.calls[1][0][-1]["content"]
-
-
-async def test_anthropic_legacy_recall_distinguishes_errors_from_empty_results():
-    from tavern.scripting.model_transport import ModelTransport
-
-    cfg = Settings(api_mode="anthropic", model="fixture", api_key="fixture", use_proxy=False)
-    captured = []
-    actions = [{"query": "", "ref": "H1"}, {"query": "NO_MATCH_924"}]
-
-    def route(req):
-        captured.append(json.loads(req.content))
-        index = len(captured) - 1
-        content = (
-            [
-                {
-                    "type": "tool_use",
-                    "id": f"call{index}",
-                    "name": "tavern_recall_history",
-                    "input": actions[index],
-                }
-            ]
-            if index < len(actions)
-            else [{"type": "text", "text": '{"operations":[],"questions":[]}'}]
-        )
-        return httpx.Response(200, json={"content": content, "stop_reason": "end_turn"})
-
-    provider = ModelTransport(
-        cfg, "fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    try:
-        await complete_with_recall(
-            provider, request(), history=history(), settings=cfg, budget=HistoryBudget(), phase="memory"
-        )
-        results = [
-            b
-            for m in captured[-1]["messages"]
-            for b in m.get("content", [])
-            if isinstance(b, dict) and b.get("type") == "tool_result"
-        ]
-        assert [b.get("is_error", False) for b in results] == [True, False]
-        assert "error" in json.loads(results[0]["content"])
-        assert json.loads(results[1]["content"])["found"] is False
-        assert "_tool_error" not in json.dumps(captured)
-    finally:
-        await provider.close()
-
-
-async def test_native_tool_definition_reaches_http_and_reasoning_roundtrip():
-    provider = await make_provider(Settings(api_key="fixture", model="fixture", use_proxy=False))
-    await provider._client.close()
-    captured = []
-
-    def route(request):
-        payload = json.loads(request.content)
-        captured.append(payload)
-        if len(captured) == 1:
-            message = {
-                "role": "assistant",
-                "content": None,
-                "reasoning_content": "需要核对旧约定",
-                "tool_calls": [
-                    {
-                        "id": "lookup",
-                        "type": "function",
-                        "function": {"name": "tavern_recall_history", "arguments": '{"query":"银戒"}'},
-                    }
-                ],
-            }
-        else:
-            message = {"role": "assistant", "content": '{"operations":[],"questions":[]}'}
-        return httpx.Response(
-            200,
-            json={
-                "id": "test",
-                "object": "chat.completion",
-                "created": 0,
-                "model": "fixture",
-                "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            },
-        )
-
-    provider._client = AsyncOpenAI(
-        api_key="fixture", http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
-    )
-    try:
-        await complete_with_recall(
-            provider,
-            request(),
-            history=history(),
-            settings=Settings(),
-            budget=HistoryBudget(),
-            phase="memory",
-        )
-        assert captured[0]["tools"] == [HISTORY_TOOL]
-        assert captured[0]["tool_choice"] == "auto"
-        assert captured[1]["messages"][-2]["reasoning_content"] == "需要核对旧约定"
-        assert captured[1]["messages"][-1]["tool_call_id"] == "lookup"
-    finally:
-        await provider.close()
-
-
 async def test_provider_request_timeout_is_opt_out_per_call():
     settings = Settings(api_key="fixture", model="fixture", use_proxy=False)
     ordinary = await make_provider(settings)
@@ -417,7 +131,7 @@ async def test_maintenance_alias_shares_the_actual_recall_budget(tmp_path):
     from tavern.storage.store import Store
 
     store = Store(tmp_path)
-    card = store.import_card(b'{"name":"a","first_mes":"hello"}', "c.json")
+    card = store.import_card(b'{"name":"a","first_mes":"hello"}')
     session = store.new_session(SessionCreate(card_id=card["id"]))
     from tavern.tracker.task import TrackerTask
 
@@ -444,7 +158,7 @@ async def test_manual_runtime_logs_each_model_request_once_and_commits_only_fina
 
     app = create_app(tmp_path)
     store, service = app.state.store, app.state.service
-    card = store.import_card('{"name":"艾琳","first_mes":"艾琳借出银戒。"}'.encode(), "c.json")
+    card = store.import_card('{"name":"艾琳","first_mes":"艾琳借出银戒。"}'.encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = Provider(
         [

@@ -866,8 +866,7 @@
   backdrop-filter: var(--glass-blur-strong);
   box-shadow: var(--glass-highlight), var(--shadow-float);
 }
-.retry-toolbar,
-.retry-note {
+.retry-toolbar {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -886,8 +885,7 @@
   padding: 7px 10px;
   font-size: var(--fs-sm);
 }
-.regenerate-bar button,
-.retry-note button {
+.regenerate-bar button {
   white-space: nowrap;
   padding: 6px 11px;
   font-size: var(--fs-sm);
@@ -898,46 +896,6 @@
   gap: 8px;
   margin: 0;
   color: var(--text-muted);
-  font-size: var(--fs-xs);
-}
-.failed-turn-retry {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-}
-.failed-turn-retry button {
-  flex-shrink: 0;
-}
-.failed-turn-retry input {
-  flex: 1;
-  min-width: 0;
-  width: auto;
-  padding: 7px 10px;
-  font-size: var(--fs-sm);
-}
-.maintenance-warning {
-  flex: none;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 8px 18px;
-  background: var(--surface-panel);
-  color: var(--warning);
-  font-size: var(--fs-sm);
-  max-height: 100px;
-  overflow: auto;
-}
-.maintenance-warning span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.maintenance-warning button {
-  flex-shrink: 0;
-  padding: 5px 8px;
   font-size: var(--fs-xs);
 }
 
@@ -1405,12 +1363,6 @@
   }
   .composer-meta span {
     flex: none;
-  }
-  .failed-turn-retry {
-    flex-wrap: wrap;
-  }
-  .failed-turn-retry span {
-    flex-basis: 100%;
   }
   .inline-edit-actions {
     flex-wrap: wrap;

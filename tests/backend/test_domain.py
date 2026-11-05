@@ -17,7 +17,7 @@ def store(tmp_path):
 
 @pytest.fixture
 def session(store):
-    c = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    c = store.import_card(Path("samples/雾港来信.json").read_bytes())
     return store.new_session(SessionCreate(card_id=c["id"]))
 
 

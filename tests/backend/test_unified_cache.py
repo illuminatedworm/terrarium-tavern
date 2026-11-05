@@ -876,7 +876,7 @@ async def test_full_runtime_persists_native_signature_and_returns_tool_result(tm
     from tests.backend.test_full_agent import native_reply, runtime, story_reply, turn
 
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     settings = store.settings()
     settings.full_agent.api_mode = api
     settings.providers[0].api_key = "test-key"

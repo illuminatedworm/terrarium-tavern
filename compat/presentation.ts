@@ -106,19 +106,6 @@ export function htmlDocuments(text: string): string[] {
   return displayFragments(text).map((fragment) => fragment.html);
 }
 
-export function splitMvuPanel(text: string): { panel: string; narrative: string } {
-  if (!hasMvuScript(text)) return { panel: '', narrative: text };
-  const panels = displayFragments(text).filter((group) => hasMvuScript(group.html));
-  let narrative = '';
-  let cursor = 0;
-  for (const panel of panels) {
-    narrative += text.slice(cursor, panel.start);
-    cursor = panel.end;
-  }
-  narrative += text.slice(cursor);
-  return { panel: panels.map((part) => part.html).join('\n'), narrative };
-}
-
 /** One structural parser for the UI, message callbacks and Card Author probes.
  * CSS-only and ordinary HTML stay inline; recognized MVU scripts move to the
  * sidebar. Both paths preserve all surrounding prose and every HTML block.

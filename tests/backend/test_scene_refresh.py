@@ -19,7 +19,7 @@ def story(tmp_path):
     settings.foreground.model = settings.background.model = "fixture"
     settings.providers[0].api_key = "local"
     store.save_settings(settings)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     snapshot = session["snapshot"] | {
         "state": {"keys": 1},

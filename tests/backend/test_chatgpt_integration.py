@@ -64,7 +64,6 @@ def connected_store(root):
 def story(store, mode="half_agent"):
     card = store.import_card(
         json.dumps({"name": "旅人", "first_mes": "你站在门前。", "description": "完整的人物设定"}).encode(),
-        "card.json",
     )
     return card, store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode))
 

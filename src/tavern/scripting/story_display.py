@@ -3,8 +3,8 @@
 from tavern.core.story_segments import join_segments, split_segments
 
 
-async def transform_display(script, text, rules, *, breaks=(), placement=2, markup=None):
-    display = await script.call("transform", text, rules, placement, "display", 0)
+async def transform_display(script, text, rules, *, breaks=(), markup=None):
+    display = await script.call("transform", text, rules, 2, "display", 0)
     # Wrappers and cross-segment replacements own the whole reply. Splitting
     # their result at old offsets would break markup or repeat card interfaces.
     boundaries = breaks if display == text else ()

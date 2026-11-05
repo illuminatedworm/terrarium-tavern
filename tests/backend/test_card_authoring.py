@@ -385,7 +385,7 @@ async def test_long_source_reaches_followup_and_strict_patch_recovers(tmp_path):
     settings.shared.card_author.context_tokens = 550000
     store.save_settings(settings)
     document = {"name": "长卡", "description": "x" * 300000 + "TAIL_849301", "first_mes": "开场"}
-    card = store.import_card(dump(document).encode(), "card.json")
+    card = store.import_card(dump(document).encode())
     editor = CardAuthorService(store)
     workspace = editor.edits.create(card["id"])
     provider = ToolLLM(
@@ -731,7 +731,7 @@ async def test_nullable_worldbook_is_searchable_and_unrelated_edit_preserves_it(
     store = Store(tmp_path)
     editor = CardAuthorService(store)
     card = store.import_card(
-        dump({"name": "无世界书", "description": "原文", "character_book": None}).encode(), "card.json"
+        dump({"name": "无世界书", "description": "原文", "character_book": None}).encode()
     )
     workspace = editor.edits.create(card["id"])
     try:

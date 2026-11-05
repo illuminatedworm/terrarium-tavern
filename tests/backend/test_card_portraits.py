@@ -44,7 +44,7 @@ async def test_portrait_survives_card_edits_deletion_and_session_fork(tmp_path, 
             zipped.writestr("assets/portrait.png", expected)
             zipped.writestr("assets/replacement.png", replacement)
         original = archive.getvalue()
-    card = store.import_card(original, f"card.{container}")
+    card = store.import_card(original)
     session = store.new_session(SessionCreate(card_id=card["id"]))
     card_url = f"/api/cards/{card['id']}/portrait"
     session_url = f"/api/sessions/{session['id']}/portrait"
@@ -73,12 +73,12 @@ async def test_no_portrait_and_missing_image_return_not_found(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
     document = {"name": "纯文本角色", "first_mes": "你好。"}
-    card = store.import_card(json.dumps(document).encode(), "card.json")
+    card = store.import_card(json.dumps(document).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         assert (await client.get(f"/api/cards/{card['id']}/portrait")).status_code == 404
         assert (await client.get(f"/api/sessions/{session['id']}/portrait")).status_code == 404
-        card = store.import_card(png_image("teal", document), "card.png")
+        card = store.import_card(png_image("teal", document))
         session = store.new_session(SessionCreate(card_id=card["id"]))
         (tmp_path / "blobs" / card["original"]).unlink()
         assert (await client.get(f"/api/cards/{card['id']}/portrait")).status_code == 404

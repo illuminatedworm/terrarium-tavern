@@ -39,7 +39,7 @@ async def test_published_recipe_is_available_written_and_tested_through_editor_t
     store = Store(tmp_path)
     original = document()
     original["extensions"]["regex_scripts"] = []
-    source = store.import_card(dump(original).encode(), "fixture.json")
+    source = store.import_card(dump(original).encode())
     editor = CardAuthorService(store)
     workspace = editor.edits.create(source["id"])
     rule, probe = recipe()

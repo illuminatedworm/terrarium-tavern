@@ -9,18 +9,19 @@ from openai import AsyncOpenAI
 from tavern.application.api import create_app
 from tavern.application.service import RoleplayRuntime
 from tavern.conversation.cache_breakpoint import context_breakpoint_index
-from tavern.core.models import SessionCreate, TurnRequest
+from tavern.core.models import SessionCreate, Settings, TurnRequest
 from tavern.memories.memory import fingerprint
 from tavern.scripting.agent import make_provider
-from tavern.scripting.responses import ResponsesProvider
+from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Store, dump, uid
 from tests.support.history_labels import strip_label
+from tests.support.model_transport import request_payload
 
 
 @pytest.fixture
 def story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     parent = session["head"]
     replies = []
@@ -71,7 +72,7 @@ def test_clipped_target_falls_back_and_invalid_manual_target_is_rejected(story):
     assert manual["cache_breakpoint_effective_id"] is None
 
 
-def test_request_marks_reply_itself_before_later_memory_and_notes():
+async def test_request_marks_reply_itself_before_later_memory_and_notes():
     trace = [
         {"source": "lore:a", "lore_region": "constant", "role": "system"},
         {"source": "history", "role": "assistant", "message_id": "reply"},
@@ -80,8 +81,9 @@ def test_request_marks_reply_itself_before_later_memory_and_notes():
     ]
     assert context_breakpoint_index(trace, "reply") == 1
     assert context_breakpoint_index(trace, None) == 0
-    provider = ResponsesProvider(api_key="test", model="fixture")
-    provider.session_breakpoint = True
+    settings = Settings(api_key="test", model="gpt-fixture", api_mode="responses", use_proxy=False)
+    settings.cache.mode = "runtime"
+    provider = ModelTransport(settings, "test")
     try:
         messages = [
             {"role": "system", "content": "constant lore"},
@@ -89,7 +91,7 @@ def test_request_marks_reply_itself_before_later_memory_and_notes():
             {"role": "system", "content": "memory"},
             {"role": "system", "content": "author note"},
         ]
-        request = provider._request(messages)
+        request = await request_payload(provider, messages)
         assert request["prompt_cache_options"] == {"mode": "explicit"}
         assert request["input"][1]["content"] == [
             {"type": "input_text", "text": "reply", "prompt_cache_breakpoint": {"mode": "explicit"}}
@@ -98,9 +100,7 @@ def test_request_marks_reply_itself_before_later_memory_and_notes():
         assert request["input"][3]["content"] == "author note"
         assert messages[1]["content"] == "reply"
     finally:
-        import asyncio
-
-        asyncio.run(provider.close())
+        await provider.close()
 
 
 async def test_cache_breakpoint_endpoint_and_schema_migration(story):

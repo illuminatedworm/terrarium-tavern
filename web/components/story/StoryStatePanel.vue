@@ -10,7 +10,6 @@ defineProps<{
   session: Session;
   fullAgent: boolean;
   progress: string;
-  character: string;
   disabled: boolean;
   saving: boolean;
 }>();
@@ -57,17 +56,13 @@ const tab = defineModel<StateTab>('tab', { required: true });
       @saved="emit('saved', $event)" />
     <SceneNotes
       v-else
-      kind="memory"
       layout="cards"
-      :snapshot="session.snapshot"
       :memory-view="session.memory_view"
       :archived="session.archived_memory"
       :progress="progress"
       @change="emit('change', $event)"
       @cancel="emit('cancel')"
       :messages="session.messages"
-      :persona="session.persona"
-      :character="character"
       :disabled="disabled"
       :saving="saving"
       @locate="(source, excerpt) => emit('locate', source, excerpt)"

@@ -1,22 +1,3 @@
-export function archiveSourceText(message: any, persona = '', character = ''): string {
-  const document = message.snapshot?.content?.document;
-  const card = document?.data || document;
-  const name = card?.nickname || card?.name || character;
-  return String(message.model ?? message.raw ?? '').replace(/\{\{([^{}]+)}}/g, (match, token: string) => {
-    const key = token.trim();
-    if (key === 'user') return persona;
-    if (key === 'char') return name;
-    if (key.startsWith('getvar::') || key.startsWith('getglobalvar::')) {
-      let value = message.snapshot?.state;
-      for (const part of key.split('::').slice(1).join('::').split('.')) {
-        value = value != null && Object.hasOwn(value, part) ? value[part] : undefined;
-      }
-      return value == null ? match : String(value);
-    }
-    return match;
-  });
-}
-
 export function highlightSource(root: HTMLElement, excerpt: string): boolean {
   const marks = root.querySelectorAll('mark.source-sentence-highlight');
   marks.forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)));

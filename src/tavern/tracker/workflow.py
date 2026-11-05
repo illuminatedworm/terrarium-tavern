@@ -39,7 +39,7 @@ async def before_story(
         snapshot["memory_warning"] = str(error)
     edited = False
     while True:
-        visible, _ = window_history(history, snapshot, enabled=local_window_enabled(settings))
+        visible = window_history(history, snapshot, enabled=local_window_enabled(settings))
         prepared = await retrieval.prepare(
             document,
             visible,
@@ -123,7 +123,7 @@ async def before_story(
 
 
 async def after_story(
-    store, tid, settings, session, history, snapshot, request, document, run_task, *, committed_history
+    store, tid, settings, history, snapshot, request, document, run_task, *, committed_history
 ):
     rounds = completed_rounds(history)
     archive = snapshot.get("memory_archive", {})

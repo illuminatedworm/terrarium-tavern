@@ -21,6 +21,7 @@ from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.state import note_view
 from tavern.full_agent.tools import RESULT_FIELDS, AgentTools, result_field
 from tavern.storage.store import Store
+from tests.support.model_transport import request_payload
 
 LAST = "H_LAST"  # Model resolves it to the last committed H from the request's status line.
 
@@ -282,7 +283,7 @@ class ScriptHost:
 @pytest.fixture
 def story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     settings = store.settings()
     settings.full_agent_config.auto_retrieval = False
     settings.retrieval.channels = ["keyword"]
@@ -299,8 +300,6 @@ def runtime(store):
         raise AssertionError("Full Agent must not invoke Half Agent")
 
     service.half.run = forbidden
-    service.half.tracker.prepare = forbidden
-    service.half.tracker.maintain = forbidden
     return service
 
 
@@ -1237,7 +1236,7 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
             ]
         },
     }
-    card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
+    card = store.import_card(json.dumps(document, ensure_ascii=False).encode())
     settings = store.settings()
     settings.retrieval.channels = ["keyword"]
     store.save_settings(settings)
@@ -1271,7 +1270,8 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
             tool_results[0]["data"]["matches"][0]["text"] == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
         )
         assert set(tool_results[0]["data"]) == {"matches"}
-        assert set(tool_results[0]["data"]["matches"][0]) == {"text"}
+        assert set(tool_results[0]["data"]["matches"][0]) == {"title", "text"}
+        assert tool_results[0]["data"]["matches"][0]["title"] == "旧港"
         assert tool_results[2]["data"]["matches"] == []
         assert (
             sum(m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2])
@@ -1374,7 +1374,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
         """,
         }
     )
-    card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
+    card = store.import_card(json.dumps(document, ensure_ascii=False).encode())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     settings = store.settings()
@@ -1415,7 +1415,7 @@ async def test_real_card_runtime_uses_agent_mvu_tool_and_preview_review(tmp_path
 
 async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/星航状态卡.json").read_bytes())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     settings = store.settings()
@@ -1537,7 +1537,7 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
             ]
         },
     }
-    card = store.import_card(json.dumps(document, ensure_ascii=False).encode(), "card.json")
+    card = store.import_card(json.dumps(document, ensure_ascii=False).encode())
     settings = store.settings()
     settings.retrieval.channels = ["keyword"]
     settings.full_agent_config.auto_retrieval = False
@@ -1551,7 +1551,9 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
         tool_result = next(
             json.loads(m["content"]) for m in model.requests[1]["messages"] if m["role"] == "tool"
         )
-        assert tool_result["data"]["matches"] == [{"text": f"<lorebook>\n{content}\n</lorebook>"}]
+        assert tool_result["data"]["matches"] == [
+            {"title": "长条目", "text": f"<lorebook>\n{content}\n</lorebook>"}
+        ]
     finally:
         await service.close()
 
@@ -2287,7 +2289,8 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
     provider = await make_provider(settings)
     try:
         assert await provider._recover_from_overflow([], None) is None
-        payload = provider._request(
+        payload = await request_payload(
+            provider,
             [{"role": "user", "content": "继续"}],
             extra_body={
                 "tool_choice": {"type": "function", "function": {"name": "new_context"}},

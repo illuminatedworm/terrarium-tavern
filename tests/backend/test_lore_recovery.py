@@ -112,7 +112,6 @@ def test_direct_mention_uses_normal_matching(key, fields, text, direct):
     result = compile_lore(
         [entry(keys=[key], **fields)],
         text=text,
-        requested=("e",),
         retrieval={"ids": ["e"], "query": text, "diagnostics": []},
     )
     assert recovery_note(result)["direct_mention"] is direct
@@ -140,7 +139,7 @@ def test_auxiliary_conditions_and_original_probability_still_gate_activation():
     assert not compile_lore([entry()], text="无关话题")["lore"]
 
 
-def test_failed_draws_do_not_reset_state_and_requests_still_obey_cooldown():
+def test_failed_draws_do_not_reset_state_and_recall_still_obeys_cooldown():
     old = {"e": {"removed_at": 1, "cooldown_until": 999}}
     # Choose an actual deterministic failing draw rather than rely on a lucky fixture.
     parent = next(
@@ -149,13 +148,12 @@ def test_failed_draws_do_not_reset_state_and_requests_still_obey_cooldown():
         if not lore_recovery(entry(), old["e"], 2, False, "session", f"p{i}")["recovery_passed"]
     )
     messages = [{"id": parent, "role": "user", "raw": "灯塔", "retrieval_query": "灯塔"}]
-    for fields, requested in [({}, ()), ({"keys": []}, ("e",))]:
+    for fields in ({}, {"keys": []}):
         result = compile_lore(
             [entry(**fields)],
             prior=old,
             messages=messages,
             text="继续",
-            requested=requested,
             retrieval={"ids": ["e"], "query": "灯塔", "diagnostics": []},
         )
         assert not result["lore"]
@@ -280,7 +278,7 @@ def test_candidate_activation_does_not_consume_usage():
 @pytest.fixture
 def story(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps(document(entry(sticky=0))).encode(), "card.json")
+    card = store.import_card(json.dumps(document(entry(sticky=0))).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     return store, session
 
@@ -439,7 +437,7 @@ async def test_nested_generate_does_not_consume_narrative_usage(story, monkeypat
 async def test_api_preview_is_read_only(tmp_path):
     app = create_app(tmp_path)
     store = app.state.store
-    card = store.import_card(json.dumps(document(entry())).encode(), "card.json")
+    card = store.import_card(json.dumps(document(entry())).encode())
     initial = store.new_session(SessionCreate(card_id=card["id"]))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         a = await client.post(f"/api/sessions/{initial['id']}/preview", json={"text": "灯塔"})

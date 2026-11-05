@@ -4,14 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
-from kohakuterrarium.testing.llm import ScriptedLLM
 from playwright.async_api import Error as PlaywrightError
 
 from tavern.character.card_workflow import validation_report
 from tavern.core.models import SessionCreate
 from tavern.full_agent.context import compile_window
 from tavern.scripting.runtime import ScriptRuntime
-from tavern.scripting.variables import analyze_variables
 from tavern.storage.store import Store, dump
 from tavern.tracker.task import TrackerTask
 from tests.support.tracker_model import TrackerModel
@@ -322,7 +320,7 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
     }
     original = copy.deepcopy(document)
     store = Store(tmp_path)
-    card = store.import_card(dump(document).encode(), "fixture.json")
+    card = store.import_card(dump(document).encode())
     story = store.new_session(SessionCreate(card_id=card["id"]))
     settings = store.settings()
 
@@ -369,28 +367,12 @@ async def test_disabled_initvar_entries_initialize_without_enabling_other_lore(t
             await work.run()
         finally:
             await work.close()
-        provider = ScriptedLLM(["[]"])
-        assert (
-            await analyze_variables(
-                store,
-                "fixture",
-                settings,
-                [],
-                state,
-                "继续",
-                "客人进门。",
-                lambda: provider,
-                document=document,
-                persona=story["persona"],
-            )
-            == []
-        )
         ordinary = compile_window(document, story, story["messages"], snapshot, "继续", settings, [])
         assert not any(m["content"].startswith("<mvu_rules>") for m in ordinary["messages"])
         full = compile_window(
             document, story, story["messages"], snapshot, "继续", settings, [], require_state_patch=True
         )
-        for messages in (model.requests[0]["messages"], provider.last_messages, full["messages"]):
+        for messages in (model.requests[0]["messages"], full["messages"]):
             [rules] = [m["content"] for m in messages if m["content"].startswith("<mvu_rules>")]
             assert 'tracked: [8, "仅在 测试玩家 实际收到款项后增加"]' in rules
             assert 'hp: 100\nname: "测试玩家"\ncharacter: "fixture"' in rules

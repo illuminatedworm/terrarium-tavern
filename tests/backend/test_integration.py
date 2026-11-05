@@ -68,9 +68,7 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
     settings.full_agent_config.auto_retrieval = False
     settings.retrieval.channels = ["keyword"]
     store.save_settings(settings)
-    card = store.import_card(
-        b'{"name":"fixture","first_mes":"opening","description":"BASE_DESCRIPTION"}', "card.json"
-    )
+    card = store.import_card(b'{"name":"fixture","first_mes":"opening","description":"BASE_DESCRIPTION"}')
     session = store.new_session(SessionCreate(card_id=card["id"], agent_mode=mode, policy="automatic"))
     baseline = copy.deepcopy(session["snapshot"])
     baseline["state"] = {"stat_data": {"hp": 0}, "script_runs": 0}
@@ -289,7 +287,7 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
 
 async def test_missing_model_fails_before_creating_turn_or_message(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     try:
@@ -306,7 +304,7 @@ async def test_missing_model_fails_before_creating_turn_or_message(tmp_path):
 
 async def test_delete_session_removes_all_owned_state_and_run_files(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     turn_id, _ = store.create_turn(
         session["id"], TurnRequest(text="测试", operation_id="delete", expected_revision=0)
@@ -334,7 +332,7 @@ async def test_delete_session_removes_all_owned_state_and_run_files(tmp_path):
 
 async def test_real_kt_turn_and_branch_restore(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/星航状态卡.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/星航状态卡.json").read_bytes())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -376,7 +374,7 @@ async def test_script_failure_rolls_back(tmp_path):
     doc["data"]["extensions"]["tavern_helper"]["scripts"][0]["content"] = (
         "eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {throw Error('expected failure')});"
     )
-    card = store.import_card(json.dumps(doc).encode(), "card.json")
+    card = store.import_card(json.dumps(doc).encode())
     with store.connection() as db:
         db.execute("UPDATE cards SET permission=1 WHERE id=?", (card["id"],))
     session = store.new_session(SessionCreate(card_id=card["id"]))
@@ -470,7 +468,7 @@ async def test_api_local_boundary_and_secret_redaction(tmp_path, monkeypatch):
 
 async def test_preview_and_cancel_are_atomic(tmp_path):
     store = Store(tmp_path)
-    c = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    c = store.import_card(Path("samples/雾港来信.json").read_bytes())
     s = store.new_session(SessionCreate(card_id=c["id"], policy="preview"))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["first draft"])
@@ -567,7 +565,7 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
             ]
         },
     }
-    card = store.import_card(json.dumps(document).encode(), "fixture.json")
+    card = store.import_card(json.dumps(document).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     # Constants are pinned at the top; use a triggered ST-depth entry for this wire test.
     session["lore_injection_mode"] = "st_top"
@@ -590,7 +588,7 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
 
 async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     provider = TrackerModel(
         [("search_lore", {"query": "*"}), ("tavern_recall_history", {"ref": "H1", "radius": 0})],
@@ -629,7 +627,7 @@ async def test_native_tool_loop_uses_branch_data_and_preserves_pairs(tmp_path):
 
 async def test_narrative_is_single_call_and_retry_reuses_user_node(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     session = store.new_session(SessionCreate(card_id=card["id"]))
 
     class Narrator(ScriptedLLM):
@@ -674,7 +672,7 @@ async def test_persona_details_are_pinned_and_used_in_context(tmp_path):
 
     store = Store(tmp_path)
     persona = store.save_persona(None, PersonaEdit(name="玩家甲", description="医生，温和，说话简短。"))
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     s = store.new_session(SessionCreate(card_id=card["id"], persona_id=persona["id"]))
     assert s["persona"] == "玩家甲" and s["persona_data"]["description"].startswith("医生")
     store.save_persona(persona["id"], PersonaEdit(name="玩家乙", description="新描述", expected_version=1))
@@ -747,7 +745,7 @@ async def test_regeneration_reuses_the_committed_chunk_window(tmp_path, invalid_
         update={"history_message_cap": 8, "chunk_size": 2, "memory_interval_turns": 1}
     )
     store.save_settings(cfg)
-    card = store.import_card(Path("samples/雾港来信.json").read_bytes(), "card.json")
+    card = store.import_card(Path("samples/雾港来信.json").read_bytes())
     s = store.new_session(SessionCreate(card_id=card["id"]))
     service = RoleplayRuntime(store)
     service.provider_factory = lambda: ScriptedLLM(["剧情继续。"])
@@ -801,7 +799,7 @@ async def test_regeneration_reuses_the_committed_chunk_window(tmp_path, invalid_
 
 async def test_invalid_model_variable_update_keeps_state_and_can_retry(tmp_path):
     store = Store(tmp_path)
-    card = store.import_card(json.dumps({"name": "变量校验", "first_mes": "欢迎"}).encode(), "card.json")
+    card = store.import_card(json.dumps({"name": "变量校验", "first_mes": "欢迎"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"]))
     state = {
         "stat_data": {"hp": 5},

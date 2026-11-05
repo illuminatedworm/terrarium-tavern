@@ -90,10 +90,6 @@ def wrap_card_field(field, content):
     return f"<{tag}>\n{content}\n</{tag}>" if content and str(content).strip() else ""
 
 
-def wrap_card_description(content):
-    return wrap_card_field("description", content)
-
-
 def character_content(card):
     return "\n\n".join(
         text
@@ -157,21 +153,18 @@ def activate_lore(
     user_input,
     prior,
     seed,
-    requested=(),
     *,
     session_id="",
     turn_number=None,
     retained=(),
-    recursive_sources=(),
     max_entries=None,
     expand_content=str,
-    recursive=True,
-    recursion_depth=3,
     timeline="",
     retrieval=None,
     query=None,
     title_heading=True,
 ):
+    """Apply entry admission once; RetrievalEngine owns recursive candidate discovery."""
     entries = lore_entries(document, "writer")
     retrieval_ids = {eid: i for i, eid in enumerate(retrieval["ids"])} if retrieval is not None else {}
     selected, notes, checked = {}, [], set()
@@ -182,7 +175,6 @@ def activate_lore(
     }
     turn_number = turn_number or sum(x["role"] == "user" for x in history) + 1
     parent_id = history[-1]["id"] if history else "empty-history"
-    recursive_text = "\n".join(recursive_sources)
     lore_count = 0
     budget_priority = None
 
@@ -193,169 +185,127 @@ def activate_lore(
             (0, int(eid)) if eid.isdigit() else (1, eid),
         )
 
-    for iteration in range(1 + (recursion_depth if recursive else 0)):
-        added = False
-        candidates = []
-        for e in entries:
-            eid = e["id"]
-            if (
-                (eid in retained and not e.get("constant"))
-                or eid in selected
-                or eid in checked
-                or not e["enabled"]
-                or is_initvar(e)
-            ):
-                continue
-            timelines = e.get("timelines", [])
-            timelines = [timelines] if isinstance(timelines, str) else timelines
-            if (
-                not e.get("constant")
-                and timeline
-                and isinstance(timelines, list)
-                and timelines
-                and timeline not in timelines
-            ):
-                checked.add(eid)
-                notes.append({"id": eid, "reason": "条目不适用于当前时间线，未注入", "timeline": timeline})
-                continue
-            if iteration and e.get("excludeRecursion"):
-                continue
-            depth = max(0, int(e.get("scan_depth", e.get("scanDepth", 4)) or 0))
-            scan = (
-                "\n".join(x.get("model", x.get("raw", "")) for x in (history[-depth:] if depth else []))
-                + "\n"
-                + user_input
-            )
-            if iteration:
-                scan += "\n" + recursive_text
-            matched_keys = [k for k in e["keys"] if matches(k, scan, e)]
-            direct_keys = [k for k in e["keys"] if matches(k, user_input, e)]
-            primary = bool(matched_keys)
-            secondary = [matches(k, scan, e) for k in e["secondary_keys"]]
-            logic = int(e.get("selectiveLogic", 0))
+    candidates = []
+    for e in entries:
+        eid = e["id"]
+        if (eid in retained and not e.get("constant")) or eid in checked or not e["enabled"] or is_initvar(e):
+            continue
+        timelines = e.get("timelines", [])
+        timelines = [timelines] if isinstance(timelines, str) else timelines
+        if (
+            not e.get("constant")
+            and timeline
+            and isinstance(timelines, list)
+            and timelines
+            and timeline not in timelines
+        ):
+            checked.add(eid)
+            notes.append({"id": eid, "reason": "条目不适用于当前时间线，未注入", "timeline": timeline})
+            continue
+        depth = max(0, int(e.get("scan_depth", e.get("scanDepth", 4)) or 0))
+        scan = (
+            "\n".join(x.get("model", x.get("raw", "")) for x in (history[-depth:] if depth else []))
+            + "\n"
+            + user_input
+        )
+        matched_keys = [k for k in e["keys"] if matches(k, scan, e)]
+        direct_keys = [k for k in e["keys"] if matches(k, user_input, e)]
+        primary = bool(matched_keys)
+        secondary = [matches(k, scan, e) for k in e["secondary_keys"]]
+        logic = int(e.get("selectiveLogic", 0))
+        secondary_ok = (
+            not secondary
+            or [any(secondary), not all(secondary), not any(secondary), all(secondary)][
+                logic if 0 <= logic <= 3 else 0
+            ]
+        )
+        hybrid = eid in retrieval_ids
+        if hybrid and query is not None:
+            secondary = [matches(k, query, e) for k in e["secondary_keys"]]
             secondary_ok = (
                 not secondary
                 or [any(secondary), not all(secondary), not any(secondary), all(secondary)][
                     logic if 0 <= logic <= 3 else 0
                 ]
             )
-            hybrid = iteration == 0 and eid in retrieval_ids
-            if hybrid and query is not None:
-                secondary = [matches(k, query, e) for k in e["secondary_keys"]]
-                secondary_ok = (
-                    not secondary
-                    or [any(secondary), not all(secondary), not any(secondary), all(secondary)][
-                        logic if 0 <= logic <= 3 else 0
-                    ]
-                )
-            reason = (
-                "Tracker 授权检索"
-                if eid in requested
-                else "常驻"
-                if e.get("constant")
-                else "混合召回"
-                if hybrid and not retrieval.get("keyword_only")
-                else "关键词"
+        reason = (
+            "常驻"
+            if e.get("constant")
+            else "混合召回"
+            if hybrid and not retrieval.get("keyword_only")
+            else "关键词"
+        )
+        if not (e.get("constant") or ((hybrid if retrieval is not None else primary) and secondary_ok)):
+            if hybrid and not secondary_ok:
+                notes.append({"id": eid, "reason": "次级关键词条件不满足，未注入"})
+            continue
+        # Prefer explicit current-input subjects over broad body keywords.
+        # Heading matches are a lightweight signal, not semantic understanding.
+        heading = (lore_title(e) if title_heading else "") + " " + e.get("content", "").split("\n", 1)[0]
+        heading_keys = [k for k in e["keys"] if matches(k, heading, e)]
+        # A short body-only word should not activate a named subject on its own.
+        # Preserve explicit regex/whole-word author rules and simple keyword books.
+        if (
+            reason == "关键词"
+            and heading_keys
+            and matched_keys
+            and all(len(k) <= 2 for k in matched_keys)
+            and not any(k in heading_keys for k in matched_keys)
+            and not e.get("matchWholeWords")
+            and not (e.get("use_regex") and any(re.search(r"[\.^$*+?{}\[\]|()]", k) for k in matched_keys))
+            and not any(k.startswith("/") and k.rfind("/") > 0 for k in matched_keys)
+        ):
+            notes.append(
+                {
+                    "id": eid,
+                    "reason": "仅命中正文短关键词，未提及条目主体，未注入",
+                    "matched_keys": matched_keys,
+                    "recursion_depth": 0,
+                }
             )
-            if not (
-                eid in requested
-                or e.get("constant")
-                or ((hybrid if retrieval is not None and not iteration else primary) and secondary_ok)
-            ):
-                if hybrid and not secondary_ok:
-                    notes.append({"id": eid, "reason": "次级关键词条件不满足，未注入"})
-                continue
-            # Prefer explicit current-input subjects over broad body keywords.
-            # Heading matches are a lightweight signal, not semantic understanding.
-            heading = (lore_title(e) if title_heading else "") + " " + e.get("content", "").split("\n", 1)[0]
-            heading_keys = [k for k in e["keys"] if matches(k, heading, e)]
-            # A short body-only word should not activate a named subject on its own.
-            # Preserve explicit regex/whole-word author rules and simple keyword books.
-            if (
-                reason == "关键词"
-                and heading_keys
-                and matched_keys
-                and all(len(k) <= 2 for k in matched_keys)
-                and not any(k in heading_keys for k in matched_keys)
-                and not e.get("matchWholeWords")
-                and not (
-                    e.get("use_regex") and any(re.search(r"[\.^$*+?{}\[\]|()]", k) for k in matched_keys)
-                )
-                and not any(k.startswith("/") and k.rfind("/") > 0 for k in matched_keys)
-            ):
-                notes.append(
-                    {
-                        "id": eid,
-                        "reason": "仅命中正文短关键词，未提及条目主体，未注入",
-                        "matched_keys": matched_keys,
-                        "recursion_depth": iteration,
-                    }
-                )
-                continue
-            subject = any(k in heading_keys for k in direct_keys)
-            tier = (
-                0
-                if eid in requested or e.get("constant")
-                else 1
-                if direct_keys
-                else 2
-                if not iteration
-                else 3
-            )
-            rank = (tier, -int(subject), -max((len(k) for k in direct_keys), default=0), *order(e))
-            if hybrid and not retrieval.get("keyword_only"):
-                rank = (1, 0, retrieval_ids[eid], *order(e))
-            candidates.append((rank, e, reason, matched_keys, bool(direct_keys)))
-        for rank, e, reason, matched_keys, direct in sorted(candidates, key=lambda x: x[0]):
-            eid = e["id"]
-            old = prior.get(eid, {})
-            already_present = old.get("present", False) or bool(e.get("constant"))
-            checked.add(eid)
-            if budget_priority is not None and rank[:2] > budget_priority and not e.get("constant"):
-                notes.append({"id": eid, "reason": "优先条目预算不足，不以较低相关条目填充剩余额度"})
-                continue
-            recovery = {}
-            if not already_present:
-                recovery = lore_recovery(e, old, turn_number, direct, session_id, parent_id)
-                notes.append({"id": eid, "reason": "冷却恢复判断", **recovery})
-            probability = float(e.get("probability", 100) if e.get("useProbability", True) else 100)
-            roll = int(hashlib.sha256(f"{seed}:{eid}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF * 100
-            if not already_present and roll >= probability:
-                notes.append({"id": eid, "reason": "概率未命中", "roll": roll})
-                continue
-            if not already_present and not recovery["recovery_passed"]:
-                notes.append({"id": eid, "reason": "冷却概率未命中", **recovery})
-                continue
-            content = expand_content(e.get("content", ""))
-            cost = len(content) if content.strip() and not e.get("constant") else 0
-            if cost and max_entries is not None and lore_count >= max_entries:
-                if direct and rank[1] == -1:
-                    budget_priority = rank[:2] if budget_priority is None else min(budget_priority, rank[:2])
-                notes.append({"id": eid, "reason": "本次世界书新增条目数量上限，未注入"})
-                continue
-            lore_count += bool(cost)
-            selected[eid] = {
-                **e,
-                "reason": reason,
-                "roll": roll,
-                **recovery,
-                "matched_keys": matched_keys,
-                "recursion_depth": iteration,
-                "match_source": "requested"
-                if eid in requested
-                else "constant"
-                if e.get("constant")
-                else "input"
-                if direct
-                else "history"
-                if not iteration
-                else "recursive",
-            }
-            if not e.get("constant") and not e.get("preventRecursion"):
-                recursive_text += "\n" + e.get("content", "")
-            added = True
-        if not added and not (iteration == 0 and recursive_sources):
-            break
+            continue
+        subject = any(k in heading_keys for k in direct_keys)
+        tier = 0 if e.get("constant") else 1 if direct_keys else 2
+        rank = (tier, -int(subject), -max((len(k) for k in direct_keys), default=0), *order(e))
+        if hybrid and not retrieval.get("keyword_only"):
+            rank = (1, 0, retrieval_ids[eid], *order(e))
+        candidates.append((rank, e, reason, matched_keys, bool(direct_keys)))
+    for rank, e, reason, matched_keys, direct in sorted(candidates, key=lambda x: x[0]):
+        eid = e["id"]
+        old = prior.get(eid, {})
+        already_present = old.get("present", False) or bool(e.get("constant"))
+        if budget_priority is not None and rank[:2] > budget_priority and not e.get("constant"):
+            notes.append({"id": eid, "reason": "优先条目预算不足，不以较低相关条目填充剩余额度"})
+            continue
+        recovery = {}
+        if not already_present:
+            recovery = lore_recovery(e, old, turn_number, direct, session_id, parent_id)
+            notes.append({"id": eid, "reason": "冷却恢复判断", **recovery})
+        probability = float(e.get("probability", 100) if e.get("useProbability", True) else 100)
+        roll = int(hashlib.sha256(f"{seed}:{eid}".encode()).hexdigest()[:8], 16) / 0xFFFFFFFF * 100
+        if not already_present and roll >= probability:
+            notes.append({"id": eid, "reason": "概率未命中", "roll": roll})
+            continue
+        if not already_present and not recovery["recovery_passed"]:
+            notes.append({"id": eid, "reason": "冷却概率未命中", **recovery})
+            continue
+        content = expand_content(e.get("content", ""))
+        cost = len(content) if content.strip() and not e.get("constant") else 0
+        if cost and max_entries is not None and lore_count >= max_entries:
+            if direct and rank[1] == -1:
+                budget_priority = rank[:2] if budget_priority is None else min(budget_priority, rank[:2])
+            notes.append({"id": eid, "reason": "本次世界书新增条目数量上限，未注入"})
+            continue
+        lore_count += bool(cost)
+        selected[eid] = {
+            **e,
+            "reason": reason,
+            "roll": roll,
+            **recovery,
+            "matched_keys": matched_keys,
+            "recursion_depth": 0,
+            "match_source": "constant" if e.get("constant") else "input" if direct else "history",
+        }
     return sorted(selected.values(), key=order), notes, updated
 
 
@@ -406,7 +356,6 @@ def compile_context(
     user_input,
     settings,
     seed,
-    requested=(),
     generate=None,
     *,
     enforce_budget=True,
@@ -441,7 +390,7 @@ def compile_context(
     recipe = ContextRecipe.model_validate(session["recipe"])
     persona = session["persona"]
     state = snapshot.get("state", {})
-    visible_history, story_summary = window_history(history, snapshot, enabled=local_window_enabled(settings))
+    visible_history = window_history(history, snapshot, enabled=local_window_enabled(settings))
     memory_text = render_memory(snapshot, history)
     protected_memory = memory_text if len(visible_history) < len(history) else ""
     # Callers pass script options through core.models.without_nulls, so omitted
@@ -546,14 +495,12 @@ def compile_context(
         user_input,
         prior,
         seed,
-        set(requested) & set(retrieval["ids"]),
         retrieval=retrieval,
         query=retrieval["query"],
         session_id=session.get("id", ""),
         turn_number=turn_number,
         retained=retained_ids | exiting_ids if conversation_lore else (),
         max_entries=settings.lore_max_entries,
-        recursive=False,
         timeline=get_path(state, "世界.当前时间线", ""),
         expand_content=expand,
         title_heading=settings.retrieval.title_in_retrieval,
@@ -570,7 +517,7 @@ def compile_context(
         "persona": "用户名字：" + persona + "\n" + session.get("persona_data", {}).get("description", ""),
         "examples": wrap_card_field("mes_example", card.get("mes_example", "")),
         "post": wrap_card_field("post_history_instructions", card.get("post_history_instructions", "")),
-        "memory": "\n".join(part for part in (story_summary, memory_text) if part),
+        "memory": memory_text,
         "state": (
             "<tavern_state>\n当前剧情状态：\n"
             + json.dumps(state_for_model(state), ensure_ascii=False)

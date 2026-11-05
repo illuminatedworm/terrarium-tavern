@@ -239,10 +239,10 @@ def compact(items, *, visuals=False):
     return result
 
 
-def part_page(items, activity_id, part, offset, limit=12000):
+def part_page(items, activity_id, part, offset):
     item = next((item for item in items if item["id"] == activity_id), None)
     if item is None or part not in item["details"]:
         raise NotFound("工具记录字段不存在")
     text = item["details"][part]
-    end = min(len(text), offset + limit)
+    end = min(len(text), offset + 12000)
     return {"text": text[offset:end], "next": end if end < len(text) else None, "total": len(text)}

@@ -11,6 +11,7 @@ from tavern.core.models import Settings
 from tavern.core.settings import migrate_settings
 from tavern.scripting.agent import make_provider
 from tavern.search.retrieval_config import ModelProfile, Provider
+from tests.support.model_transport import request_payload
 
 
 def response(output, *, status="completed"):
@@ -84,11 +85,12 @@ async def test_all_roles_send_their_own_model_parameters(role, temperature, mode
         assert provider.config.model == role
         assert provider.config.temperature == temperature
         assert provider.settings.cache.mode == mode
-        request = provider._request(
+        request = await request_payload(
+            provider,
             [
                 {"role": "system", "content": "stable instructions", "_cache_breakpoint": True},
                 {"role": "user", "content": "hello"},
-            ]
+            ],
         )
         assert request["model"] == role and request.get("temperature") == temperature
         assert request["top_p"] == 0.7
@@ -376,7 +378,9 @@ async def test_responses_legacy_cache_retention_wire():
         )
     )
     try:
-        request = provider._request([{"role": "user", "content": "hello", "_cache_breakpoint": True}])
+        request = await request_payload(
+            provider, [{"role": "user", "content": "hello", "_cache_breakpoint": True}]
+        )
         assert request["prompt_cache_retention"] == "24h"
         assert "prompt_cache_options" not in request
     finally:

@@ -142,10 +142,6 @@ def counting_payload(message, settings=None):
     return result
 
 
-def message_tokens(message, settings=None):
-    return payload_tokens(counting_payload(message, settings), settings)
-
-
 def payload_tokens(payload, settings=None):
     payload = visible_payload(payload)
     if "native" in payload:
