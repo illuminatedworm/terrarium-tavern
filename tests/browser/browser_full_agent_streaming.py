@@ -19,6 +19,7 @@ from tavern.desktop_browser import system_browser
 from tavern.novel.source import import_file
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import uid
+from tests.backend.test_full_agent import visual_spec
 from tests.backend.test_full_agent_streaming import (
     body_delta,
     body_end,
@@ -65,6 +66,8 @@ async def main(single_viewport=False, report_activity_only=False):
         cfg.shared.model_request_mode = "stream"
         store.save_settings(cfg)
         session = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
+        with store.connection() as db:
+            db.execute("UPDATE sessions SET disabled_tools='[]' WHERE id=?", (session["id"],))
         other = store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
         research = app.state.service.full.novel
         source = uid()
@@ -85,6 +88,12 @@ async def main(single_viewport=False, report_activity_only=False):
         research.data.save(job, mail={"kind": "report", "content": "钟声来自旧港。", "operation": "report"})
         store.update_session(session["id"], 0, title="流式正文测试")
         store.update_session(other["id"], 0, title="另一个故事")
+        second_segment = tool_events("submit_story", {"content": "第二轮续写的第二段。"})
+        for piece in second_segment:
+            for call in piece["choices"][0]["delta"].get("tool_calls", []):
+                call["index"] = 2
+                if "id" in call:
+                    call["id"] = "story-2"
         streams = [
             BrowserStream(gates[0], *tool_events()),
             BrowserStream(
@@ -92,7 +101,8 @@ async def main(single_viewport=False, report_activity_only=False):
             ),
             BrowserStream(
                 *story_events("第二轮已接收的第一段。\n\n---")[:-1],
-                *tool_events("submit_story", {"content": "第二轮续写的第二段。"}),
+                *tool_events("present_ui", {"spec": visual_spec()})[:-1],
+                *second_segment,
             ),
             BrowserStream(gates[3], body_start("第三段的残片"), RuntimeError("第三段连接中断")),
             BrowserStream(gates[4], terminal()),
@@ -157,7 +167,7 @@ async def main(single_viewport=False, report_activity_only=False):
                     await expect(page.locator(".draft")).to_have_count(0)
                     gates[1].set()
                     await expect(page.locator(".draft")).to_contain_text("第一段正在生成。")
-                    await expect(page.locator(".message .badge").last).to_have_text("正文预览 · 未保存")
+                    await expect(page.locator(".message .badge").last).to_have_text("本轮预览 · 未提交")
                     await page.reload()
                     await expect(runtime).to_contain_text("主模型请求已发出")
                     await expect(page.locator(".draft .prose")).to_have_text("第一段正在生成。")
@@ -218,6 +228,13 @@ async def main(single_viewport=False, report_activity_only=False):
                     await expect(page.locator(".draft")).to_contain_text("第二轮续写的第二段。")
                     await expect(page.locator(".draft .story-segment-divider")).to_have_count(1)
                     await expect(page.locator(".draft .prose hr")).to_have_count(1)
+                    graphic = page.locator(".draft .story-visual")
+                    await expect(graphic).to_contain_text("完整图形尾标")
+                    await expect(graphic).to_contain_text("预览 · 尚未提交")
+                    assert len(store.session(session["id"])["messages"]) == 3
+                    assert await page.locator(".draft > .prose, .draft > .story-visuals").evaluate_all(
+                        "nodes => nodes.map(n => n.classList.contains('story-visuals') ? 'visual' : 'story')"
+                    ) == ["story", "visual", "story"]
                     gates[3].set()
                     retry = page.locator(".story").get_by_role("button", name="重新生成", exact=True)
                     await expect(retry).to_be_enabled()
@@ -227,6 +244,7 @@ async def main(single_viewport=False, report_activity_only=False):
                     await expect(page.locator(".draft")).to_contain_text("第二轮已接收的第一段。")
                     await expect(page.locator(".draft")).to_contain_text("第二轮续写的第二段。")
                     await expect(page.locator(".draft .story-segment-divider")).to_have_count(1)
+                    await expect(graphic).to_contain_text("完整图形尾标")
                     await page.screenshot(path=str(output / "story-segments.png"))
                     failed = store.session(session["id"])["turns"][0]["id"]
                     assert "第三段" in store.turn(failed)["error"]
@@ -245,6 +263,8 @@ async def main(single_viewport=False, report_activity_only=False):
                     assert len(store.session(session["id"])["messages"]) == 3
                     assert await asyncio.to_thread(streams[4].started.wait, 5), "Continuation did not start"
                     assert "下一轮的新发言" not in json.dumps(bodies[4], ensure_ascii=False)
+                    await expect(graphic).to_have_count(1)
+                    await expect(graphic).to_contain_text("完整图形尾标")
                     gates[4].set()
                     await expect(page.locator(".message.assistant").last).to_contain_text("第三轮的新回复")
                     await expect(send).to_be_visible()
@@ -260,6 +280,7 @@ async def main(single_viewport=False, report_activity_only=False):
                     ]
                     assert len(bodies) == 6
                     await expect(page.locator(".message.assistant .story-segment-divider")).to_have_count(1)
+                    await expect(page.locator(".message.assistant .story-visual")).to_have_count(1)
                     assert "下一轮的新发言" in json.dumps(bodies[5], ensure_ascii=False)
                     assert all(stream.closed for stream in streams)
                     assert not errors, errors

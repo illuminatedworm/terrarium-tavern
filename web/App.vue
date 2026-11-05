@@ -19,7 +19,7 @@ import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJ
 import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
 import { channelLabels, type Channel } from './lib/channels';
 import { api } from './lib/api';
-import { appendVisualInput } from './lib/visuals';
+import { appendVisualInput, hasVisuals } from './lib/visuals';
 import { saveDownload } from './lib/download';
 import { androidHost } from './lib/hostCapabilities';
 import { loreTitle } from './lib/loreBook';
@@ -47,7 +47,7 @@ import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryProse from './components/story/StoryProse.vue';
-import StorySegmentDivider from './components/story/StorySegmentDivider.vue';
+import StoryDraft from './components/story/StoryDraft.vue';
 import { splitStorySegments } from './lib/storySegments';
 import ExperimentalRecords from './components/story/ExperimentalRecords.vue';
 import { latestAuxiliary } from './lib/kemini';
@@ -2968,8 +2968,12 @@ useTimedError(error);
                   </article>
                 </template>
               </template>
-              <template #draft>
-                <article v-if="draft && pendingVisible" ref="draftArticle" class="message assistant">
+              <template #draft="{ activities }">
+                <article
+                  v-if="pendingVisible && (draft || hasVisuals(activities))"
+                  ref="draftArticle"
+                  class="message assistant"
+                >
                   <header class="message-meta">
                     <CharacterPortrait class="avatar" :src="storyPortrait" :name="name" size="message" />
                     <strong>{{ name }}</strong
@@ -2980,17 +2984,19 @@ useTimedError(error);
                           ? '正在更新变量'
                           : busy
                             ? isFullAgent
-                              ? '正文预览 · 未保存'
+                              ? '本轮预览 · 未提交'
                               : '正在书写'
                             : '未提交草稿'
                     }}</span>
                   </header>
                   <div class="message-body">
                     <div class="draft">
-                      <template v-for="(segment, index) in draftSegments" :key="index">
-                        <StorySegmentDivider v-if="index" />
-                        <StoryProse :text="segment" />
-                      </template>
+                      <StoryDraft
+                        :key="activeTurn?.id"
+                        :segments="draft ? draftSegments : []"
+                        :activities="activities"
+                        @compose="input = appendVisualInput(input, $event)"
+                      />
                       <span v-if="busy" class="cursor">▍</span>
                       <ExperimentalRecords :parts="latestAuxiliary(trace)" />
                     </div>

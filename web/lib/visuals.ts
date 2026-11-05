@@ -1,6 +1,7 @@
 import { rawApi } from './api';
 import type { Spec } from '@json-render/core';
 import type { AgentActivity } from './agentActivity';
+import type { StoryContent } from './storyPresentation';
 
 export function hasVisuals(items: readonly AgentActivity[] = [], kemini = false) {
   return !kemini && items.some((item) => item.name === 'present_ui' && item.status === 'returned');
@@ -13,6 +14,66 @@ export function appendVisualInput(current: string, text: string) {
 
 export interface VisualSpec extends Spec {
   state: { selection: string; detail: string };
+}
+export interface VisualOutput {
+  specs: VisualSpec[];
+  order: Array<'story' | 'visual'>;
+}
+export type StoryOutputItem =
+  | { key: string; kind: 'content'; content: StoryContent }
+  | { key: string; kind: 'visual'; spec: VisualSpec };
+
+/** Accepted calls place graphics; the current, possibly unfinished prose stays intact. */
+export function draftStoryContents(segments: readonly string[], activities: readonly AgentActivity[]) {
+  const items: Array<
+    | { key: string; kind: 'story'; text: string; divider: boolean }
+    | { key: string; kind: 'visual'; spec: VisualSpec }
+  > = [];
+  let story = 0;
+  function appendStory() {
+    if (story < segments.length) {
+      items.push({ key: `story-${story}`, kind: 'story', text: segments[story], divider: story > 0 });
+      story++;
+    }
+  }
+  for (const item of activities) {
+    if (item.status !== 'returned') continue;
+    if (item.name === 'submit_story') appendStory();
+    else if (item.visual) items.push({ key: item.id, kind: 'visual', spec: item.visual });
+  }
+  while (story < segments.length) appendStory();
+  return items;
+}
+
+/** Keep body node identities stable when lazy graphics arrive between them. */
+export function orderedStoryContents(contents: readonly StoryContent[], output: VisualOutput | null) {
+  const body: StoryOutputItem[] = contents.map((content, index) => ({
+    key: `content-${index}`,
+    kind: 'content',
+    content,
+  }));
+  if (!output?.specs.length) return { items: body, unaligned: false };
+  const groups: StoryOutputItem[][] = [[]];
+  for (const item of body) {
+    if (item.kind === 'content' && item.content.segmentBreak) groups.push([]);
+    groups[groups.length - 1].push(item);
+  }
+  const visuals: StoryOutputItem[] = output.specs.map((spec, index) => ({
+    key: `visual-${index}`,
+    kind: 'visual',
+    spec,
+  }));
+  if (output.order.filter((kind) => kind === 'story').length !== groups.length) {
+    // Whole-message regex/scripts can retire the original boundaries. Keep
+    // their complete result; do not guess offsets or replay the raw tool text.
+    return { items: [...body, ...visuals], unaligned: true };
+  }
+  let story = 0,
+    visual = 0;
+  return {
+    items: output.order.flatMap((kind) => (kind === 'story' ? groups[story++] : [visuals[visual++]])),
+    unaligned: false,
+  };
 }
 export type Paint = 'none' | 'surface' | 'muted' | 'ink' | 'accent' | 'secondary';
 interface Shape {
@@ -41,7 +102,7 @@ export interface SceneProps {
 }
 
 interface Waiting {
-  resolve: (specs: VisualSpec[]) => void;
+  resolve: (output: VisualOutput) => void;
   reject: (error: unknown) => void;
 }
 const batches = new Map<string, Map<string, Waiting[]>>();
@@ -81,7 +142,7 @@ export function observeVisuals(element: Element, load: () => void) {
 }
 
 /** Visible message components share a request; no unbounded historical spec cache. */
-export function loadVisuals(session: string, message: string): Promise<VisualSpec[]> {
+export function loadVisuals(session: string, message: string): Promise<VisualOutput> {
   return new Promise((resolve, reject) => {
     let batch = batches.get(session);
     if (!batch) {

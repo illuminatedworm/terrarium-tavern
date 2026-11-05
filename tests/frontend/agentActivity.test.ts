@@ -1,10 +1,51 @@
 import { expect, it, vi } from 'vitest';
 import { liveActivity, mergeActivity } from '../../web/lib/agentActivity';
 import { mergeWorkTurns } from '../../web/lib/workRecords';
-import { appendVisualInput, hasVisuals, loadVisuals, observeVisuals } from '../../web/lib/visuals';
+import {
+  appendVisualInput,
+  draftStoryContents,
+  hasVisuals,
+  loadVisuals,
+  observeVisuals,
+} from '../../web/lib/visuals';
 import { rawApi } from '../../web/lib/api';
 
 vi.mock('../../web/lib/api', () => ({ rawApi: vi.fn() }));
+
+it('previews only accepted graphics, preserving order and unfinished prose across replay and reopen', () => {
+  const spec = { root: 'scene', elements: {}, state: { selection: '', detail: '' } };
+  const event = (seq: number, name: string, ok: boolean) => ({
+    seq,
+    turn: 'current',
+    kind: 'full_agent_tool',
+    payload: {
+      activity_id: `call-${seq}`,
+      order: seq,
+      name,
+      arguments: JSON.stringify({ spec }),
+      result: { ok },
+    },
+  });
+  const graphic = event(2, 'present_ui', true);
+  const events = [
+    event(1, 'submit_story', true),
+    graphic,
+    graphic,
+    event(3, 'present_ui', false),
+    { ...event(4, 'present_ui', true), kind: 'full_agent_tool_started' },
+    { ...event(5, 'present_ui', true), turn: 'other' },
+  ];
+  const activity = liveActivity(events, 'current', 'running');
+  const preview = draftStoryContents(['第一段全文', '尚未交付的第二段'], activity);
+  expect(preview.map((item) => item.key)).toEqual(['story-0', 'call-2', 'story-1']);
+  expect(preview[1]).toMatchObject({ kind: 'visual', spec });
+  expect(preview[2]).toMatchObject({ text: '尚未交付的第二段', divider: true });
+  const snapshot = activity.map(({ details, ...item }) => item);
+  expect(draftStoryContents(['第一段全文', '尚未交付的第二段'], mergeActivity(snapshot, activity))).toEqual(
+    preview,
+  );
+  expect(draftStoryContents([], [activity[1]])).toEqual([preview[1]]);
+});
 
 it('batches visible graphics across callback microtasks and preserves unsent drafts', async () => {
   const frames: FrameRequestCallback[] = [];
@@ -19,7 +60,9 @@ it('batches visible graphics across callback microtasks and preserves unsent dra
   }
   vi.stubGlobal('IntersectionObserver', Observer);
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
-  vi.mocked(rawApi).mockResolvedValue({ messages: { a: [], b: [] } });
+  vi.mocked(rawApi).mockResolvedValue({
+    messages: { a: { specs: [], order: [] }, b: { specs: [], order: [] } },
+  });
   const first = {} as Element,
     second = {} as Element;
   const requests: ReturnType<typeof loadVisuals>[] = [];

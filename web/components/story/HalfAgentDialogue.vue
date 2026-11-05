@@ -34,7 +34,7 @@ defineExpose({
       </template>
     </StoryHistory>
     <slot name="pending" />
-    <slot name="draft" />
+    <slot name="draft" :activities="[]" />
     <slot name="waiting" />
   </div>
 </template>

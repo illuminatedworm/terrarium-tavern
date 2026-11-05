@@ -259,7 +259,7 @@ def successful_specs(records):
 def message_visuals(store, sid, message_ids):
     from tavern.storage.store import NotFound
 
-    groups = {mid: [] for mid in message_ids}
+    groups = {mid: {"specs": [], "order": []} for mid in message_ids}
     placeholders = ",".join("?" for _ in groups)
     with store.connection() as db:
         # A batch needs branch identity, not Store.session()'s complete message
@@ -297,7 +297,7 @@ def message_visuals(store, sid, message_ids):
             "ORDER BY t.seq,CAST(c.key AS INTEGER)) AS next_call "
             "FROM full_agent_trace t,json_each(t.payload,'$.tool_calls') c "
             "WHERE t.session=? AND t.message_id IN (" + placeholders + ")"
-            ") SELECT c.message_id,c.arguments FROM calls c WHERE c.name='present_ui' AND ("
+            ") SELECT c.message_id,c.name,c.arguments FROM calls c WHERE c.name IN ('present_ui','submit_story') AND ("
             "SELECT CASE WHEN json_valid(json_extract(r.payload,'$.content')) "
             "THEN json_type(json_extract(r.payload,'$.content'),'$.ok') END "
             "FROM full_agent_trace r WHERE r.session=? AND r.message_id=c.message_id "
@@ -308,11 +308,18 @@ def message_visuals(store, sid, message_ids):
             (sid, *groups, sid),
         )
         for row in rows:
-            groups[row["message_id"]].append(json.loads(row["arguments"])["spec"])
+            output = groups[row["message_id"]]
+            if row["name"] == "present_ui":
+                output["specs"].append(json.loads(row["arguments"])["spec"])
+                output["order"].append("visual")
+            else:
+                # Delivery identity/order only: the reader already has the
+                # final processed prose. Never fetch/copy submit_story text.
+                output["order"].append("story")
     return groups
 
 
-DESCRIPTION = """Show a frozen interactive graphic below this turn's story when it helps (map, relationship graph, structure diagram); do not repeat panels every turn. At most 3 accepted specs per turn; failed calls do not count. To change an older graphic, send a new complete spec in a later turn. No HTML, SVG markup, scripts or URLs.
+DESCRIPTION = """Show a frozen interactive graphic when it helps (map, relationship graph, structure diagram); do not repeat panels every turn. Call submit_story and present_ui in the intended reading order, including within one batch: accepted calls determine how prose segments and graphics are interleaved. At most 3 accepted specs per turn; failed calls do not count. To change an older graphic, send a new complete spec in a later turn. No HTML, SVG markup, scripts or URLs.
 Spec: {root:'root',elements:{root:{type:'Stack',props:{direction:'vertical'},children:['map','go']},map:{type:'Scene',props:{...},children:[]},go:{type:'Button',props:{label:'Go'},on:{press:{...}},children:[]}},state:{selection:'overview',detail:''}}. Every element has type, props and children; only Stack has children. Keys: a letter, then letters/digits/_/- (max 31). At most 40 elements forming one tree from root, with 1-3 Scenes. state has exactly selection (max 40 chars) and detail (max 4000).
 Stack: direction 'vertical'|'horizontal'. Text: text (string or {$state:'/detail'}). Button: label (max 60); on.press sits beside props.
 Scene: title (max 120), height (240-600 px), selection {$state:'/selection'}, items (1-100, drawn in order; put labels last). The canvas is 768 px wide: coordinates are 0-100 percent, x/width/rx of 768 and y/height/ry of height.

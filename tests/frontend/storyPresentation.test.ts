@@ -1,6 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import { responseData, storyPresentation } from '../../web/lib/storyPresentation';
 import { shareDocument, shareEntries, shareRangeLabel, shareRounds } from '../../web/lib/conversationShare';
+import { orderedStoryContents, type VisualOutput } from '../../web/lib/visuals';
+
+it('interleaves delivered graphics without remounting body blocks or guessing rewritten boundaries', () => {
+  const first = '第一段正文。';
+  const html = '<div><script>console.log("once")</script>完整的第二段界面</div>';
+  const body = storyPresentation(`${first}\n\n${html}`, 'assistant', [first.length]).body;
+  const output: VisualOutput = {
+    specs: Array.from({ length: 3 }, () => ({
+      root: 'root',
+      elements: {},
+      state: { selection: '', detail: '' },
+    })),
+    order: ['visual', 'story', 'visual', 'story', 'visual'],
+  };
+  const initial = orderedStoryContents(body, null);
+  const loaded = orderedStoryContents(body, output);
+  expect(loaded.unaligned).toBe(false);
+  expect(loaded.items.map((item) => item.key)).toEqual([
+    'visual-0',
+    'content-0',
+    'visual-1',
+    'content-1',
+    'content-2',
+    'visual-2',
+  ]);
+  // Inserting graphics only adds new sibling keys; the existing iframe/prose
+  // components and their complete source remain the same keyed nodes.
+  expect(loaded.items.filter((item) => item.kind === 'content')).toEqual(initial.items);
+  expect(loaded.items.filter((item) => item.kind === 'content').at(-1)).toMatchObject({
+    content: { format: 'html', text: html },
+  });
+  const rewritten = storyPresentation('<div>整篇回调后的完整结果</div>', 'assistant').body;
+  const fallback = orderedStoryContents(rewritten, output);
+  expect(fallback.unaligned).toBe(true);
+  expect(fallback.items.map((item) => item.key)).toEqual(['content-0', 'visual-0', 'visual-1', 'visual-2']);
+  expect(fallback.items[0]).toMatchObject({ content: { text: '<div>整篇回调后的完整结果</div>' } });
+});
 
 // Like imported ST status interfaces: <head>/<body>, blank lines, indented CSS
 // and script containing markup. Markdown's indented-code heuristic cuts this up.

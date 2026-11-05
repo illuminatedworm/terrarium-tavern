@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { api } from '../../lib/api';
+import { api, rawApi } from '../../lib/api';
 import { liveActivity, mergeActivity, type AgentActivity } from '../../lib/agentActivity';
 import AgentActivityItem from './AgentActivityItem.vue';
 import StoryHistory from './StoryHistory.vue';
@@ -32,6 +32,7 @@ const pendingRecords = ref<AgentActivity[]>([]);
 const error = ref('');
 let generation = 0;
 let pendingGeneration = 0;
+let pendingTurn = '';
 const prefix = computed(() => `/sessions/${props.sessionId}/full-agent`);
 const activeItems = computed(() =>
   mergeActivity(pendingRecords.value, liveActivity(props.events, props.turn?.id, props.turn?.status)),
@@ -79,10 +80,12 @@ function showMessages(messages: any[]) {
 }
 async function loadPending() {
   const version = ++pendingGeneration;
-  pendingRecords.value = [];
+  const turnId = props.pending ? props.turn?.id || '' : '';
+  if (turnId !== pendingTurn) pendingRecords.value = [];
+  pendingTurn = turnId;
   if (!props.pending || !props.turn?.id) return;
   try {
-    const result = await api(`${prefix.value}/turns/${props.turn.id}/activity`);
+    const result = await rawApi(`${prefix.value}/turns/${props.turn.id}/activity`);
     if (version !== pendingGeneration) return;
     pendingRecords.value = result.items;
     emit('contentChange');
@@ -158,7 +161,7 @@ onBeforeUnmount(() => {
         :endpoint="`${prefix}/turns/${turn.id}/activity`"
       />
     </div>
-    <slot name="draft" />
+    <slot name="draft" :activities="kemini ? [] : activeItems" />
     <slot name="waiting" />
   </div>
 </template>

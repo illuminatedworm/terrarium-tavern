@@ -343,6 +343,7 @@ def test_visual_lookup_projects_only_graphs_without_loading_session(story, monke
             "role": "assistant",
             "tool_calls": [
                 call("read_lore_entry", "lore", unrelated),
+                call("submit_story", "before", json.dumps({"content": unrelated})),
                 call("present_ui", "reused", json.dumps({"spec": spec})),
             ],
         },
@@ -352,10 +353,16 @@ def test_visual_lookup_projects_only_graphs_without_loading_session(story, monke
             "content": json.dumps({"ok": True, "data": {"text": unrelated}}),
         },
         {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
+        {"role": "tool", "tool_call_id": "before", "content": '{"ok":true}'},
         {"role": "assistant", "tool_calls": [call("read_history", "reused", unrelated)]},
         {"role": "tool", "tool_call_id": "reused", "content": json.dumps({"ok": True, "data": unrelated})},
         {"role": "assistant", "tool_calls": [call("present_ui", "reused", "invalid")]},
         {"role": "tool", "tool_call_id": "reused", "content": '{"ok":false}'},
+        {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
+        {
+            "role": "assistant",
+            "tool_calls": [call("submit_story", "reused", json.dumps({"content": unrelated}))],
+        },
         {"role": "tool", "tool_call_id": "reused", "content": '{"ok":true}'},
     ]
     with store.connection() as db:
@@ -386,7 +393,9 @@ def test_visual_lookup_projects_only_graphs_without_loading_session(story, monke
 
     monkeypatch.setattr(store, "connection", projected_connection)
     monkeypatch.setattr(store, "session", forbidden_session)
-    assert message_visuals(store, session["id"], [session["head"]]) == {session["head"]: [spec]}
+    assert message_visuals(store, session["id"], [session["head"]]) == {
+        session["head"]: {"specs": [spec], "order": ["story", "visual", "story"]}
+    }
 
 
 async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
@@ -448,7 +457,7 @@ async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
         model = Model(("present_ui", {"spec": spec}), RuntimeError("fixture interruption"))
         failed, unchanged = await turn(service, session, model, operation_id="visual-failed")
         assert failed["status"] == "error" and unchanged["head"] == session["head"]
-        assert message_visuals(store, unchanged["id"], [unchanged["head"]])[unchanged["head"]] == []
+        assert message_visuals(store, unchanged["id"], [unchanged["head"]])[unchanged["head"]]["specs"] == []
         assert "完整图形尾标" in json.dumps(model.requests[-1]["messages"], ensure_ascii=False)
         result, current = await turn(
             service,
@@ -459,27 +468,33 @@ async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
         )
         assert result["status"] == "committed", result["error"]
         original = current["head"]
-        assert message_visuals(store, current["id"], [original])[original] == [spec]
+        assert message_visuals(store, current["id"], [original])[original] == {
+            "specs": [spec],
+            "order": ["visual", "story"],
+        }
         fork = store.fork_session(current["id"], original, current["revision"])
-        assert message_visuals(store, fork["id"], [fork["head"]])[fork["head"]] == [spec]
+        assert message_visuals(store, fork["id"], [fork["head"]])[fork["head"]]["specs"] == [spec]
         with pytest.raises(NotFound):
             message_visuals(store, fork["id"], [original])
         result, replacement = await turn(
             service, current, Model("这版没有图形。"), mode="regenerate", operation_id="visual-replace"
         )
         assert result["status"] == "committed", result["error"]
-        assert message_visuals(store, replacement["id"], [replacement["head"]])[replacement["head"]] == []
+        assert (
+            message_visuals(store, replacement["id"], [replacement["head"]])[replacement["head"]]["specs"]
+            == []
+        )
         restored = store.switch_message_version(
             current["id"], replacement["head"], original, replacement["revision"]
         )
-        assert message_visuals(store, restored["id"], [original])[original] == [spec]
+        assert message_visuals(store, restored["id"], [original])[original]["specs"] == [spec]
         package, blobs = read_package(
             export_package(store, ExportSelection(settings=False, sessions=[restored["id"]])), store
         )
         imported = import_package(store, package, blobs)
         cloned = store.session(imported["sessions"][0])
         assert "present_ui" not in cloned["disabled_tools"]
-        assert message_visuals(store, cloned["id"], [cloned["head"]])[cloned["head"]] == [spec]
+        assert message_visuals(store, cloned["id"], [cloned["head"]])[cloned["head"]]["specs"] == [spec]
         broken = copy.deepcopy(package)
         for trace in broken["sessions"][0]["full_agent_trace"]:
             for call in trace["payload"].get("tool_calls", []):

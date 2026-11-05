@@ -1,16 +1,13 @@
 <script setup lang="ts">
-import { defineAsyncComponent, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue';
-import { loadVisuals, observeVisuals, type VisualSpec } from '../../lib/visuals';
+import { defineAsyncComponent, h, nextTick, onBeforeUnmount, ref } from 'vue';
+import type { VisualSpec } from '../../lib/visuals';
 import Icon from '../common/Icon.vue';
-const props = defineProps<{ sessionId: string; messageId: string }>();
+defineProps<{ spec: VisualSpec; preview?: boolean }>();
 const emit = defineEmits<{ compose: [text: string] }>();
-const root = ref<HTMLElement>();
 const dialog = ref<HTMLDialogElement>();
 const dialogContent = ref<HTMLElement>();
 const dialogReady = ref(false);
-const expanded = ref<number | null>(null);
-const specs = shallowRef<VisualSpec[]>([]);
-const loading = ref(false);
+const expanded = ref(false);
 const error = ref('');
 // onError's fail() is deliberately not kept: rejecting on unmount would report a
 // loader error to the app handler after the user has already left the message.
@@ -29,44 +26,22 @@ function retry() {
     failedLoad = undefined;
     error.value = '';
     action();
-  } else void load();
-}
-let generation = 0;
-let stopObserving: (() => void) | undefined;
-let previousFocus: HTMLElement | null = null;
-async function load() {
-  const current = ++generation;
-  loading.value = true;
-  error.value = '';
-  try {
-    const result = await loadVisuals(props.sessionId, props.messageId);
-    if (current === generation) specs.value = result;
-  } catch (e) {
-    if (current === generation) error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    if (current === generation) loading.value = false;
   }
 }
-// The parent keys this component by session and message, so a new identity
-// always remounts it; there is no in-place message switch to handle here.
-onMounted(() => {
-  stopObserving = observeVisuals(root.value!, () => void load());
-});
+let previousFocus: HTMLElement | null = null;
 onBeforeUnmount(() => {
-  generation++;
-  stopObserving?.();
   dialog.value?.close();
 });
-async function expand(index: number) {
+async function expand() {
   previousFocus = document.activeElement as HTMLElement;
   dialogReady.value = true;
   await nextTick();
-  expanded.value = index;
+  expanded.value = true;
   await nextTick();
   dialog.value!.showModal();
 }
 function closed() {
-  expanded.value = null;
+  expanded.value = false;
   previousFocus?.focus();
 }
 function compose(text: string) {
@@ -75,16 +50,18 @@ function compose(text: string) {
 }
 </script>
 <template>
-  <div ref="root" class="story-visuals">
+  <div class="story-visuals">
     <p v-if="error" class="error" role="alert">
-      图形加载失败：{{ error }} <button :disabled="loading" @click="retry">重试</button>
+      图形加载失败：{{ error }} <button @click="retry">重试</button>
     </p>
-    <section v-for="(spec, index) in specs" :key="index" class="story-visual" aria-label="交互图形">
+    <section class="story-visual" aria-label="交互图形">
       <header class="visual-header">
-        <span>本轮图形 <small>保留生成时的内容</small></span>
-        <button class="quiet" @click="expand(index)"><Icon name="external" :size="14" />放大查看</button>
+        <span
+          >本轮图形 <small>{{ preview ? '预览 · 尚未提交' : '保留生成时的内容' }}</small></span
+        >
+        <button class="quiet" @click="expand"><Icon name="external" :size="14" />放大查看</button>
       </header>
-      <Teleport :to="dialogContent || 'body'" :disabled="expanded !== index">
+      <Teleport :to="dialogContent || 'body'" :disabled="!expanded">
         <VisualInterface :spec="spec" @compose="compose" />
       </Teleport>
     </section>

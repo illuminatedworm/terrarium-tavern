@@ -205,8 +205,8 @@ def register_full_agent_routes(app, store, context_operations=None):
 
     @app.get("/api/sessions/{sid}/full-agent/turns/{tid}/activity")
     def pending_activity(sid: str, tid: str):
-        require_full(store, sid)
-        return {"items": compact(turn_items(store, sid, tid))}
+        session = require_full(store, sid)
+        return {"items": compact(turn_items(store, sid, tid), visuals=not session["kemini"])}
 
     @app.get("/api/sessions/{sid}/full-agent/turns/{tid}/activity/{activity_id}")
     def pending_activity_part(

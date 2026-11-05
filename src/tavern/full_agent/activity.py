@@ -225,8 +225,18 @@ def turn_items(store, sid, tid):
     return sorted(items.values(), key=lambda item: item["order"])
 
 
-def compact(items):
-    return [{k: v for k, v in item.items() if k != "details"} for item in items]
+def compact(items, *, visuals=False):
+    result = []
+    for item in items:
+        public = {k: v for k, v in item.items() if k != "details"}
+        if visuals and item.get("name") == "present_ui" and item["status"] == "returned":
+            # Only a validated successful call can supply a preview. Historical
+            # activity stays compact and continues to load graphics lazily.
+            receipt = json.loads(item["details"]["result"])
+            if isinstance(receipt, dict) and receipt.get("ok") is True:
+                public["visual"] = json.loads(item["details"]["arguments"])["spec"]
+        result.append(public)
+    return result
 
 
 def part_page(items, activity_id, part, offset, limit=12000):

@@ -1,3 +1,5 @@
+import type { VisualSpec } from './visuals';
+
 export interface AgentActivity {
   id: string;
   order: number;
@@ -8,6 +10,7 @@ export interface AgentActivity {
   summary: string;
   status: 'running' | 'returned' | 'error' | 'interrupted';
   details?: Partial<Record<'arguments' | 'result' | 'content', string>>;
+  visual?: VisualSpec;
 }
 
 export function activityText(value: unknown): string {
@@ -96,6 +99,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
           arguments: activityText(p.arguments),
           ...(finished ? { result: activityText(p.result) } : {}),
         },
+        ...(finished && p.name === 'present_ui' && p.result?.ok === true ? { visual: args.spec } : {}),
       });
     }
   }
