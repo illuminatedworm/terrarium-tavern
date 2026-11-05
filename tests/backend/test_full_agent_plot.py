@@ -401,11 +401,10 @@ def context_fixture(*, compact=False):
     session = {"id": "test-plot", "revision": 0, "persona": "玩家", "messages": [], "plot_enabled": True}
     snapshot = {"state": {}, "scopes": {}}
     full_state(snapshot)["plot"] = {"text": "完整大纲的尾部_MARKER", "revision": 42}
-    req = TurnRequest(operation_id="plot", expected_revision=0)
     records = []
 
     def compile_current():
-        tools = tool_definitions(req, session, settings.full_agent_config)
+        tools = tool_definitions(session, settings.full_agent_config)
         return compile_window(
             {}, session, [], snapshot, "继续", settings, tools, input_id="input", continuation=records
         )
@@ -506,9 +505,7 @@ async def test_player_changes_replace_old_effective_plot_after_real_trace_replay
             current["snapshot"],
             "继续",
             store.settings().for_role("full_agent"),
-            tool_definitions(
-                TurnRequest(operation_id="preview", expected_revision=current["revision"]), current
-            ),
+            tool_definitions(current),
             trace=load_trace(store, current["id"], current["messages"]),
         )
         assert "玩家新大纲" in outlines(compiled["messages"])[-1]
@@ -541,9 +538,7 @@ async def test_context_mode_conversion_preserves_plot_without_writing_or_replann
             assert not result["usage"]
             assert session["plot_enabled"] and session["snapshot"]["full_agent"]["plot"] == original
             settings = store.session_settings(session).for_role("full_agent")
-            tools = tool_definitions(
-                TurnRequest(operation_id="preview", expected_revision=session["revision"]), session
-            )
+            tools = tool_definitions(session)
             compiled = compile_window(
                 store.session_card(session["id"])["document"],
                 session,

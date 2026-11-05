@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from tavern.conversation.update_review import review_changes
+from tavern.core.model_view import ModelView
 from tavern.core.models import SessionCreate, Settings, TurnRequest
 from tavern.core.settings import FullSettings
-from tavern.full_agent.tools import tool_definitions
+from tavern.full_agent.protocol import ToolError
+from tavern.full_agent.tools import AgentTools, tool_definitions
 from tavern.storage.store import Store
 from tavern.tracker.workflow import after_story
 from tests.backend import test_full_agent
@@ -74,10 +76,12 @@ def test_review_compares_real_values_and_content_not_metadata():
 async def test_policy_never_grants_full_or_half_content_permission(policy):
     request = TurnRequest(operation_id="check", expected_revision=0)
     session = {"policy_effective": policy}
-    assert "revise_content" not in {t["function"]["name"] for t in tool_definitions(request, session)}
-    request.allow_content_edit = True
-    assert "revise_content" in {t["function"]["name"] for t in tool_definitions(request, session)}
-    request.allow_content_edit = False
+    definitions = tool_definitions(session)
+    assert "revise_content" in {t["function"]["name"] for t in definitions}
+    tools = AgentTools(SimpleNamespace(request=request, definitions=definitions, model_view=ModelView({})))
+    with pytest.raises(ToolError) as denied:
+        await tools.execute("revise_content", "{}")
+    assert denied.value.result["error"]["code"] == "PERMISSION_DENIED"
     request.update_variables = True
     calls = []
 

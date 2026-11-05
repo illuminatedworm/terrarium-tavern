@@ -438,20 +438,15 @@ async def test_visuals_are_opt_in_and_follow_atomic_reply_versions(story):
     session = store.session(session["id"])
     assert set(session["disabled_tools"]) == {"read_note", "present_ui"}
     assert list(store.root.glob("before-upgrade-schema19-*.sqlite3"))
-    request = TurnRequest(operation_id="catalog", expected_revision=session["revision"])
     settings = store.session_settings(session).for_role("full_agent")
-    assert "present_ui" not in {
-        d["function"]["name"] for d in tool_definitions(request, session, settings=settings)
-    }
+    assert "present_ui" not in {d["function"]["name"] for d in tool_definitions(session, settings=settings)}
     with store.connection() as db:
         db.execute("UPDATE sessions SET disabled_tools='[\"read_note\"]' WHERE id=?", (session["id"],))
     store = Store(store.root)
     session = store.session(session["id"])
     assert session["disabled_tools"] == ["read_note"]  # Reopening never resets the user's opt-in.
     settings.kemini.enabled = True
-    assert "present_ui" not in {
-        d["function"]["name"] for d in tool_definitions(request, session, settings=settings)
-    }
+    assert "present_ui" not in {d["function"]["name"] for d in tool_definitions(session, settings=settings)}
     service = runtime(store)
     try:
         model = Model(("present_ui", {"spec": spec}), RuntimeError("fixture interruption"))
@@ -1502,11 +1497,9 @@ async def test_real_mvu_state_survives_failed_request_resume(tmp_path):
         document = store.session_card(current["id"])["document"]
         settings = store.session_settings(current).for_role("full_agent")
         definitions = tool_definitions(
-            TurnRequest(operation_id="preview", expected_revision=current["revision"]),
             current,
             settings.full_agent_config,
             settings=settings,
-            document=document,
         )
         replayed = compile_window(
             document,
@@ -1770,7 +1763,6 @@ def test_lore_tool_description_matches_enabled_retrieval(story, channels, rerank
     settings.retrieval.channels = channels
     settings.local_models.reranker_enabled = rerank
     definitions = tool_definitions(
-        TurnRequest(operation_id="description", expected_revision=0),
         session,
         settings.full_agent_config,
         settings=settings,
@@ -1978,7 +1970,9 @@ async def test_prompt_tags_and_tool_contracts_reach_model(story):
         definitions = {t["function"]["name"]: t["function"] for t in wire["extra_body"]["tools"]}
         from tavern.novel.tools import MAIN_SPECS
 
-        assert set(definitions) == set(SPECS) - {"revise_content", "write_plot"} - set(MAIN_SPECS)
+        assert set(definitions) == set(SPECS) - {"write_plot"} - set(MAIN_SPECS) - set(
+            session["disabled_tools"]
+        )
         assert (
             "When variable updates are authorized, submit at least one successful patch this turn"
             in definitions["patch_state"]["description"]

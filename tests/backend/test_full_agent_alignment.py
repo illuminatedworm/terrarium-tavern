@@ -938,7 +938,6 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
             assert response.status_code == 200, response.text
             preview = response.json()
         settings = store.settings().for_role("full_agent")
-        request = TurnRequest(operation_id="direct", expected_revision=session["revision"], **payload)
         actual = compile_window(
             store.session_card(session["id"])["document"],
             session,
@@ -947,11 +946,9 @@ async def test_preview_and_committed_replay_use_same_frames_without_new_memory(t
             "next",
             settings,
             tool_definitions(
-                request,
                 session,
                 settings.full_agent_config,
                 settings=settings,
-                document=store.session_card(session["id"])["document"],
             ),
             trace=load_trace(store, session["id"], session["messages"]),
             require_state_patch=True,

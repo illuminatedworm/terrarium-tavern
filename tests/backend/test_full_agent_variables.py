@@ -341,17 +341,16 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(
                 m["content"] for m in request["messages"] if m.get("content", "").startswith("允许修改设定：")
             ] == instructions
         tools = {tool["function"]["name"] for tool in model.requests[0]["extra_body"]["tools"]}
-        assert ("revise_content" in tools) == allow_content_edit
+        assert "revise_content" in tools
+        assert model.requests[0]["extra_body"]["tools"] == plain.json()["tools"]
         async with AsyncClient(transport=ASGITransport(app), base_url="http://testserver") as client:
             unchecked = await client.post(url, json={"text": "我答应明天在钟楼见面。"})
             assert unchecked.status_code == 200
             retained = [m["content"] for m in unchecked.json()["trace"] if m["source"] == "turn_instruction"]
-            # Removing content-edit tools rebuilds the fixed baseline. With an
-            # unchanged catalog, old frames stay and only the revocation is new.
-            assert retained == (
-                []
-                if allow_content_edit
-                else instructions + (["此前的额外回合要求已撤销；遵守当前工具权限。"] if instructions else [])
+            # Revoking per-turn authorization preserves the tool definitions
+            # and prior frames, appending only the revocation.
+            assert retained == instructions + (
+                ["此前的额外回合要求已撤销；遵守当前工具权限。"] if instructions else []
             )
         unchecked_model = Model("Next narrative")
         result, _ = await turn(service, session, unchecked_model)
@@ -362,9 +361,9 @@ async def test_preview_matches_first_request_without_consuming_rule_injection(
         assert strip_local(unchecked.json()["messages"]) == strip_local(
             unchecked_model.requests[0]["messages"]
         )
-        if not allow_content_edit:
-            previous = strip_local(model.requests[-1]["messages"])
-            assert strip_local(unchecked_model.requests[0]["messages"])[: len(previous)] == previous
+        assert unchecked_model.requests[0]["extra_body"]["tools"] == model.requests[0]["extra_body"]["tools"]
+        previous = strip_local(model.requests[-1]["messages"])
+        assert strip_local(unchecked_model.requests[0]["messages"])[: len(previous)] == previous
     finally:
         await service.close()
         await app.state.editor.close()

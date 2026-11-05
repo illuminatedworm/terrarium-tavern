@@ -50,7 +50,7 @@ def owner():
             {"id": "input", "role": "user", "raw": "Now"},
         ],
     )
-    result.definitions = tool_definitions(req, {"policy_effective": "auto"}, document=doc)
+    result.definitions = tool_definitions({"policy_effective": "auto"})
     result.tools = AgentTools(result)
     return result
 

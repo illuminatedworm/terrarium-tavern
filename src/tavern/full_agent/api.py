@@ -6,7 +6,6 @@ from typing import Literal
 from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from tavern.core.models import TurnRequest
 from tavern.core.tokens import count_text
 from tavern.full_agent.activity import compact, message_items, part_page, turn_items
 from tavern.full_agent.handoff import render_text, require_coverage
@@ -84,30 +83,17 @@ def register_full_agent_routes(app, store, context_operations=None):
     def list_tools(sid: str, update_variables: bool = False, allow_content_edit: bool = False):
         session = require_full(store, sid)
         settings = store.session_settings(session).for_role("full_agent")
-        request = TurnRequest(
-            operation_id="tools",
-            expected_revision=session["revision"],
-            update_variables=update_variables,
-            allow_content_edit=allow_content_edit,
-        )
-        available = {
+        defined_tools = {
             t["function"]["name"]
-            for t in tool_definitions(request, session, settings.full_agent_config, settings=settings)
+            for t in tool_definitions(session, settings.full_agent_config, settings=settings)
         }
-        # Keep the model's variable tool schema stable for prefix caching; the
-        # execution gate and this UI availability follow only the turn request.
-        if not update_variables:
-            available.discard("patch_state")
-        document = (session["snapshot"].get("content") or {}).get(
-            "document", store.session_card(sid)["document"]
-        )
-        definitions = tool_definitions(
-            request, session, settings.full_agent_config, settings=settings, catalog=True, document=document
-        )
+        # Authorization only affects UI execution indicators, never the catalog.
+        turn_permissions = {"patch_state": update_variables, "revise_content": allow_content_edit}
+        definitions = tool_definitions(session, settings.full_agent_config, settings=settings, catalog=True)
         edit_capabilities = {
-            "character": "revise_content" in available,
-            "lore_update_remove": "revise_content" in available,
-            "lore_add": "revise_content" in available,
+            "character": "revise_content" in defined_tools and allow_content_edit,
+            "lore_update_remove": "revise_content" in defined_tools and allow_content_edit,
+            "lore_add": "revise_content" in defined_tools and allow_content_edit,
         }
         return {
             "tools": [
@@ -127,7 +113,8 @@ def register_full_agent_routes(app, store, context_operations=None):
                         {"controlled_by": "story_protocol"} if t["function"]["name"] == "submit_story" else {}
                     ),
                     **({"controlled_by": "novel_enabled"} if t["function"]["name"] in MAIN_SPECS else {}),
-                    "available": t["function"]["name"] in available,
+                    "available": t["function"]["name"] in defined_tools
+                    and turn_permissions.get(t["function"]["name"], True),
                     **(
                         {"edit_capabilities": edit_capabilities}
                         if t["function"]["name"] == "revise_content"

@@ -83,7 +83,6 @@ def test_old_bulk_exchanges_cannot_reach_compiled_model_requests(story):
     snapshot = copy.deepcopy(session["snapshot"])
     window = snapshot["full_agent"]["window"]["id"]
     document = store.session_card(session["id"])["document"]
-    req = TurnRequest(operation_id="preview", expected_revision=0)
     messages = [
         {
             "role": "assistant",
@@ -101,7 +100,7 @@ def test_old_bulk_exchanges_cannot_reach_compiled_model_requests(story):
         snapshot,
         "Continue",
         settings,
-        tool_definitions(req, session),
+        tool_definitions(session),
         trace=trace,
         continuation=messages,
     )

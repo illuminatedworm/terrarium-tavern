@@ -317,7 +317,9 @@ SPECS = {
     ),
     "patch_state": (
         StatePatch,
-        "Update MVU variables with JSON Patch. When variable updates are authorized, submit at least one successful "
+        "Update MVU variables with JSON Patch. Only for turns whose instructions authorize variable updates; "
+        "authorization from earlier turns does not carry over, and calls without it are REJECTED. "
+        "When variable updates are authorized, submit at least one successful "
         "patch this turn; validation failures may be corrected and retried and do not count as success. "
         "If nothing changed, submit operations=[]; this needs no read and changes nothing.\n"
         "Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_rules>, keep values consistent "
@@ -328,6 +330,8 @@ SPECS = {
         ContentRevision,
         "Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore "
         "and remove_lore. Use these actions, not JSON Patch or storage IDs.\n"
+        "Only for turns whose instructions authorize content edits; authorization from earlier turns does not "
+        "carry over, and calls without it are REJECTED.\n"
         "Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of "
         "each changed target, which count as current for later edits. Script-bearing targets and execution settings "
         "are protected.",
@@ -358,7 +362,9 @@ SPECS["submit_story"] = (
 )
 
 
-def tool_definitions(request, session, config=None, *, settings=None, catalog=False, document=None):
+def tool_definitions(session, config=None, *, settings=None, catalog=False):
+    # Only tool settings and related features determine the model's catalog.
+    # Per-turn authorization belongs to execution, keeping cached prefixes stable.
     config = config or FullAgentConfig()
     names = set(SPECS)
     if not catalog and not session.get("novel_enabled"):
@@ -378,8 +384,6 @@ def tool_definitions(request, session, config=None, *, settings=None, catalog=Fa
         names.discard("present_ui")
     else:
         names.add("submit_story")
-    if not catalog and not request.allow_content_edit:
-        names.discard("revise_content")
     limits = {
         "write_handoff": f" Limits: current {config.handoff_tokens} tokens, each chapter {config.chapter_tokens}, all chapters {config.chapters_total_tokens}.",
         "new_context": f" Limits: current {config.handoff_tokens} tokens, each chapter {config.chapter_tokens}, all chapters {config.chapters_total_tokens}.",
@@ -470,6 +474,8 @@ class AgentTools:
         if name == "patch_state":
             if not owner.request.update_variables:
                 raise ToolError("PERMISSION_DENIED", "本轮未要求更新 MVU 变量，不允许调用 patch_state")
+        if name == "revise_content" and not owner.request.allow_content_edit:
+            raise ToolError("PERMISSION_DENIED", "本轮未授权修改设定，不允许调用 revise_content")
         model = SPECS[name][0]
         try:
             args = model.model_validate_json(arguments)

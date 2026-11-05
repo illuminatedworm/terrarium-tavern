@@ -71,8 +71,9 @@ async def test_documented_minimal_results_match_execution(name):
         patch_state_done=False,
         story=None,
         must_rollover=False,
-        preview=SimpleNamespace(replace=lambda text: None),
-        definitions=tool_definitions(request, {"policy_effective": "directed", "plot_enabled": True}),
+        preview=SimpleNamespace(replace=lambda text, **_: None),
+        new_trace=[],
+        definitions=tool_definitions({"policy_effective": "directed", "plot_enabled": True}),
     )
 
     async def retrieve(query, **options):

@@ -885,12 +885,6 @@ def create_app(data_dir=None):
             full_settings = bind_adapter(
                 store.session_settings(s).for_role("full_agent"), store, "story", sid
             )
-            preview_request = TurnRequest(
-                operation_id="preview",
-                expected_revision=s["revision"],
-                update_variables=update_variables,
-                allow_content_edit=allow_content_edit,
-            )
             result = compile_window(
                 document,
                 s,
@@ -899,11 +893,9 @@ def create_app(data_dir=None):
                 text,
                 full_settings,
                 tool_definitions(
-                    preview_request,
                     s,
                     full_settings.full_agent_config,
                     settings=full_settings,
-                    document=document,
                 ),
                 trace=load_trace(store, sid, s["messages"]),
                 require_state_patch=update_variables,

@@ -658,6 +658,7 @@ async def test_required_mvu_update_rejects_disabled_dependency(story, tool):
 
 async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
     store, session = story
+    initially_disabled = session["disabled_tools"]
     app = create_app(store.root)
     service = runtime(store)
     url = f"/api/sessions/{session['id']}/full-agent/tools"
@@ -673,13 +674,16 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             rejected = await client.put(
                 url, json={"expected_revision": 0, "disabled_tools": ["submit_story"]}
             )
-            assert rejected.status_code == 400 and store.session(session["id"])["disabled_tools"] == []
+            assert rejected.status_code == 400
+            assert store.session(session["id"])["disabled_tools"] == initially_disabled
             preview_url = f"/api/sessions/{session['id']}/preview"
             original_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
             assert {t["name"] for t in catalog} == set(SPECS)
             assert "read_lore" not in {t["name"] for t in catalog}
             for tool in catalog:
-                assert tool["enabled"] == (tool["name"] not in {"write_plot", *MAIN_SPECS})
+                assert tool["enabled"] == (
+                    tool["name"] not in {"write_plot", *MAIN_SPECS, *initially_disabled}
+                )
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
             lore = next(t for t in catalog if t["name"] == "recall_lore")
@@ -687,8 +691,14 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
             assert set(lore["parameters"]["properties"]) == {"query"}
             patch = next(t for t in catalog if t["name"] == "patch_state")
             assert not patch["available"]
-            authorized = (await client.get(url, params={"update_variables": "true"})).json()["tools"]
+            edit = next(t for t in catalog if t["name"] == "revise_content")
+            assert edit["enabled"] and not edit["available"]
+            assert not any(edit["edit_capabilities"].values())
+            authorized = (
+                await client.get(url, params={"update_variables": "true", "allow_content_edit": "true"})
+            ).json()["tools"]
             assert next(t for t in authorized if t["name"] == "patch_state")["available"]
+            assert next(t for t in authorized if t["name"] == "revise_content")["available"]
             response = await client.put(
                 url, json={"expected_revision": 0, "disabled_tools": ["write_handoff"]}
             )
@@ -741,10 +751,10 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 "submit_story"
             ]
             response = await client.put(
-                url, json={"expected_revision": session["revision"], "disabled_tools": []}
+                url, json={"expected_revision": session["revision"], "disabled_tools": initially_disabled}
             )
             session = response.json()
-            assert session["disabled_tools"] == []
+            assert session["disabled_tools"] == initially_disabled
             restored_tools = (await client.post(preview_url, json={"text": "继续"})).json()["tools"]
             assert json.dumps(restored_tools, ensure_ascii=False) == json.dumps(
                 original_tools, ensure_ascii=False
@@ -884,9 +894,7 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
     data = {"name": "Guide", "description": "Before", "custom_field": "Custom"}
     document = {"spec": "chara_card_v2", "spec_version": "2.0", "data": data} if wrapped else data
     definitions = tool_definitions(
-        TurnRequest(operation_id="guidance", expected_revision=0, allow_content_edit=True),
         {"policy_effective": "auto"},
-        document=document,
     )
     catalog = {item["function"]["name"]: item["function"] for item in definitions}
     assert "custom_field" not in json.dumps(catalog)
@@ -902,6 +910,7 @@ async def test_character_tool_has_same_semantic_contract_for_wrapped_and_legacy_
     owner = SimpleNamespace(
         document=document,
         definitions=definitions,
+        request=TurnRequest(operation_id="guidance", expected_revision=0, allow_content_edit=True),
         state=new_state(),
         snapshot={},
         session={},
@@ -1061,13 +1070,12 @@ async def test_new_context_reuses_handoff_and_checks_only_exiting_history():
 
     # H1 is the greeting; H2-H7 are three complete user/assistant exchanges.
     history = [{"id": f"m{i}", "role": ("assistant", "user")[i % 2], "raw": f"原文{i}"} for i in range(7)]
-    request = TurnRequest(operation_id="optional-handoff", expected_revision=0)
     owner = SimpleNamespace(
         state=new_state(),
         history=history,
         user_message={"id": "input", "role": "user", "raw": "继续"},
         settings=Settings(),
-        definitions=tool_definitions(request, {}),
+        definitions=tool_definitions({}),
         model_view=ModelView({}),
     )
     tools = AgentTools(owner)

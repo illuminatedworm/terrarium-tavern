@@ -80,7 +80,7 @@ def owner(request):
         tid="content",
         model_view=ModelView(document),
         request=req,
-        definitions=tool_definitions(req, {"policy_effective": "auto"}, document=document),
+        definitions=tool_definitions({"policy_effective": "auto"}),
     )
     result.tools = AgentTools(result)
     return result

@@ -31,7 +31,33 @@ NOTICE = "正文完成后与本回合统一提交。"
 EXAMPLES = {
     "submit_story": (
         {"content": "她在港口的灯塔下等你。"},
-        {"saved_to_draft": True, "message": "本轮正文已接收并保存到草稿，请勿再次提交正文。"},
+        {"saved_to_draft": True, "ref": "H2", "message": "已接收第 1/3 段；可继续追加或结束。"},
+    ),
+    "present_ui": (
+        {
+            "spec": {
+                "root": "map",
+                "elements": {
+                    "map": {
+                        "type": "Scene",
+                        "props": {
+                            "title": "港口",
+                            "height": 240,
+                            "selection": {"$state": "/selection"},
+                            "items": [
+                                {"kind": "label", "x": 50, "y": 50, "text": "灯塔", "anchor": "middle"}
+                            ],
+                        },
+                        "children": [],
+                    }
+                },
+                "state": {"selection": "overview", "detail": ""},
+            }
+        },
+        {
+            "saved_to_draft": True,
+            "message": "图形已接收，随本轮正文统一提交；界面操作仅改变本地显示或填写输入框。",
+        },
     ),
     "find_lore_for_edit": (
         {"query": "港口"},
@@ -188,7 +214,7 @@ def descriptions():
             "| `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |",
             "| `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |",
             "",
-            "工具目录由会话开关及设定授权确定，变量授权在执行时检查。动态追加描述见上表。",
+            "工具目录由会话开关及相关功能确定，变量与设定授权在执行时检查。动态追加描述见上表。",
             "",
             "</details>",
             "",

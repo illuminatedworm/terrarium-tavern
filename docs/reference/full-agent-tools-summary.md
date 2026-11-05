@@ -1,6 +1,6 @@
 # Full Agent 工具速查
 
-当前共 **24 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
+当前共 **25 个工具**，其中六个原著调查工具仅在用户绑定文件并开启参考后提供给模型。下表为中文摘要，文末附源码描述全文及每个工具的最小请求／返回示例。带 `=默认值` 的参数可省略，其余必填。
 
 ## 如何工作、为何这样设计
 
@@ -13,7 +13,8 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
 | `submit_story` | 追加本轮新增故事段落 | `content: string` | 必须非空白且结构完整；始终启用，每轮至多成功三次，只追加不改写；普通文本仅作备注。 |
-| `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；提问、失败和暂停不触发。 |
+| `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
+| `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
 | `message_novel_research` | 发送追问或回答 | `ref: string`；`message: string` | 在调查者下一请求前送达，复用原上下文与剩余额度，已暂停或失败的会重新运行；额度耗尽时拒绝。 |
 | `wait_novel_research` | 可选等待调查 | `ref: string`；`timeout_seconds: integer=30` | 允许 1–60 秒，只返回状态，超时不取消；报告和提问在本次工具结果之后单独送达。 |
@@ -32,9 +33,9 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 | `archive_note` | 归档笔记 | `key: string` | 当前全文须已在上下文，否则先 read_note；归档项从普通搜索中退出，仍可按键读取或重新激活。 |
 | `write_plot` | 完整替换独立的作者阶段大纲 | `content: string` | 仅在剧情规划开启时可用；初次为空须先建纲，随后在当前大纲上积累修订（语义要求，不做程序校验）。全文自动提供，无需预读、来源或版本参数；不与 note.kind=plan 混用。 |
 | `read_state` | 按 JSON Pointer 读取状态 | `path: string=""`；`scope: "mvu"或"full"或"other"="mvu"` | mvu 读 stat_data；full 读全部模型可见状态；other 排除顶层 stat_data。路径相对所选范围，空串读完整范围；所有范围都隐藏内部数据，other 不提供变量补丁依据。 |
-| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 本轮授权时收尾前至少成功一次，可据最新状态继续修正；非空须有完整当前变量的上下文依据，否则读取；空数组免读取且不触发补丁脚本回调。 |
+| `patch_state` | 提交变量补丁或确认无变化 | `operations: object[]`（0–100 项）；`comment: string` | 仅限本轮授权，前几轮的授权不延续，未授权的调用被拒绝；本轮授权时收尾前至少成功一次，可据最新状态继续修正；非空须有完整当前变量的上下文依据，否则读取；空数组免读取且不触发补丁脚本回调。 |
 | `read_character` | 完整读取一个人物字段 | `ref: string`（下述七字段之一） | 缺失返回 null；登记读取记录，含执行代码的字段受保护。 |
-| `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
+| `revise_content` | 修改人物或普通世界书设定 | `operations: object[]`（1–100 项）；`comment: string` | 仅限本轮授权，前几轮的授权不延续，未授权的调用被拒绝；四种动作见下表；批次失败不部分写入；成功返回目标完整最终内容并刷新读取记录，可继续编辑。 |
 | `set_retrieval_query` | 覆盖本轮准备保存的下轮检索线索 | `query: string` | 最后一次成功调用生效；空串清空本轮线索，历史线索保留；随正文提交且不进入正文。 |
 
 ## 编辑参数补充
@@ -326,7 +327,7 @@ An empty path reads the whole scope. To refresh all MVU variables before patchin
 ### `patch_state`
 
 ```text
-Update MVU variables with JSON Patch. When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. If nothing changed, submit operations=[]; this needs no read and changes nothing.
+Update MVU variables with JSON Patch. Only for turns whose instructions authorize variable updates; authorization from earlier turns does not carry over, and calls without it are REJECTED. When variable updates are authorized, submit at least one successful patch this turn; validation failures may be corrected and retried and do not count as success. If nothing changed, submit operations=[]; this needs no read and changes nothing.
 Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_rules>, keep values consistent with the final story text, and cite the story evidence in comment. Use this tool instead of writing MVU blocks in the story text.
 ```
 
@@ -346,6 +347,7 @@ Paths are relative to stat_data: /hp, not /stat_data/hp. Follow the latest <mvu_
 
 ```text
 Edit character settings and worldbook entries with semantic actions: set_character, add_lore, update_lore and remove_lore. Use these actions, not JSON Patch or storage IDs.
+Only for turns whose instructions authorize content edits; authorization from earlier turns does not carry over, and calls without it are REJECTED.
 Omitted properties stay unchanged, and a failed batch changes nothing. Success returns the final contents of each changed target, which count as current for later edits. Script-bearing targets and execution settings are protected.
 ```
 
@@ -408,8 +410,6 @@ Delegate a question about the user's novel to a new read-only investigator. Retu
 ```json
 {"question":"查证人物早年经历","background":"本局尚未遇见此人"}
 ```
-
-可选参数 `auto_destroy` 为布尔值，默认 `false`。一次性调查可传 `true`，在第一份最终报告可靠送达后自动销毁并释放名额，保留报告和历史；需要在报告后复用上下文追问时保持 `false`。提问、失败或暂停不触发自动销毁。
 
 成功返回：
 
@@ -507,6 +507,29 @@ Cancel an investigator and free its slot; delivered reports and history are kept
 {"ok":true,"data":{"ref":"R1","status":"destroyed"}}
 ```
 
+### `present_ui`
+
+```text
+Show a frozen interactive graphic when it helps (map, relationship graph, structure diagram); do not repeat panels every turn. Call submit_story and present_ui in the intended reading order, including within one batch: accepted calls determine how prose segments and graphics are interleaved. At most 3 accepted specs per turn; failed calls do not count. To change an older graphic, send a new complete spec in a later turn. No HTML, SVG markup, scripts or URLs.
+Spec: {root:'root',elements:{root:{type:'Stack',props:{direction:'vertical'},children:['map','go']},map:{type:'Scene',props:{...},children:[]},go:{type:'Button',props:{label:'Go'},on:{press:{...}},children:[]}},state:{selection:'overview',detail:''}}. Every element has type, props and children; only Stack has children. Keys: a letter, then letters/digits/_/- (max 31). At most 40 elements forming one tree from root, with 1-3 Scenes. state has exactly selection (max 40 chars) and detail (max 4000).
+Stack: direction 'vertical'|'horizontal'. Text: text (string or {$state:'/detail'}). Button: label (max 60); on.press sits beside props.
+Scene: title (max 120), height (240-600 px), selection {$state:'/selection'}, items (1-100, drawn in order; put labels last). The canvas is 768 px wide: coordinates are 0-100 percent, x/width/rx of 768 and y/height/ry of height.
+Items have kind and optional showFor (1-12 selection values; omit to always show): rect x,y,width,height,fill,stroke; ellipse x,y,rx,ry,fill,stroke; line x1,y1,x2,y2,stroke,dashed?; path points [[x,y],...] (2-30, straight segments),closed,fill,stroke,dashed?; label x,y,text (max 200),anchor 'start'|'middle'|'end'. Paint: none|surface|muted|ink|accent|secondary. Mark unconfirmed relations with dashed lines and labels; keep labels apart.
+press is one action or a list of 1-3: setState {statePath:'/selection'|'/detail',value}, or composeDraft {text: string or {$state:'/detail'}}, which only appends to the user's input for them to edit and send; never imply it happened. Prose goes in submit_story; do not restate the spec.
+```
+
+请求：
+
+```json
+{"spec":{"root":"map","elements":{"map":{"type":"Scene","props":{"title":"港口","height":240,"selection":{"$state":"/selection"},"items":[{"kind":"label","x":50,"y":50,"text":"灯塔","anchor":"middle"}]},"children":[]}},"state":{"selection":"overview","detail":""}}}
+```
+
+成功返回：
+
+```json
+{"ok":true,"data":{"saved_to_draft":true,"message":"图形已接收，随本轮正文统一提交；界面操作仅改变本地显示或填写输入框。"}}
+```
+
 ### `submit_story`
 
 ```text
@@ -522,7 +545,7 @@ Append a new story segment to this turn's draft. At most 3 successful submission
 成功返回：
 
 ```json
-{"ok":true,"data":{"saved_to_draft":true,"ref":"H3","message":"已接收第 1/3 段；可继续追加或结束。"}}
+{"ok":true,"data":{"saved_to_draft":true,"ref":"H2","message":"已接收第 1/3 段；可继续追加或结束。"}}
 ```
 
 ### 运行时追加的描述
@@ -538,6 +561,6 @@ Append a new story segment to this turn's draft. At most 3 successful submission
 | `recall_lore` | `Uses {channel_names} recall.` | 提供检索设置时追加；通道依次去重，映射为 keyword、BM25、semantic；多项使用逗号及最后的 ` and ` 连接。 |
 | `recall_lore` | `Reranking orders and filters candidates by relevance.` | 开启 reranker 时追加在上一句之后。 |
 
-工具目录由会话开关及设定授权确定，变量授权在执行时检查。动态追加描述见上表。
+工具目录由会话开关及相关功能确定，变量与设定授权在执行时检查。动态追加描述见上表。
 
 </details>

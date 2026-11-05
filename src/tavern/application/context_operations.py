@@ -13,7 +13,6 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_overflow, exceeds
 from tavern.core.errors import NotFound
 from tavern.core.message_adapter import adapter_snapshot, bind_adapter
-from tavern.core.models import TurnRequest
 from tavern.core.provider import make_provider
 from tavern.full_agent.compaction import rebuild_local
 from tavern.full_agent.context import compile_window, load_trace
@@ -172,14 +171,7 @@ class ContextOperations:
             document = (snapshot.get("content") or {}).get(
                 "document", self.store.session_card(session["id"])["document"]
             )
-            request = TurnRequest(operation_id=op["operation"], expected_revision=session["revision"])
-            tools = (
-                []
-                if half
-                else tool_definitions(
-                    request, source, settings.full_agent_config, settings=settings, document=document
-                )
-            )
+            tools = [] if half else tool_definitions(source, settings.full_agent_config, settings=settings)
 
             def compile_current():
                 if half:
