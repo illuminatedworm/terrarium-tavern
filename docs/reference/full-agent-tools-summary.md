@@ -121,7 +121,7 @@ Write a short, self-contained query in the worldbook's language. Returns complet
 成功返回：
 
 ```json
-{"ok":true,"data":{"matches":[{"text":"<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}}
+{"ok":true,"data":{"matches":[{"title":"港口","text":"<lorebook>\n港口有一座灯塔。\n</lorebook>"}]}}
 ```
 
 ### `search_history`

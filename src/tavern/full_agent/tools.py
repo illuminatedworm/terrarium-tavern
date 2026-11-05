@@ -195,7 +195,7 @@ class StateRead(Arguments):
 
 
 RESULT_FIELDS = {
-    "recall_lore": {"include_ref": False, "include_title": False},
+    "recall_lore": {"include_ref": False, "include_title": True},
     "search_history": {"include_preview": True},
     "read_history": {"include_metadata": True},
     "search_notes": {"include_preview": True},

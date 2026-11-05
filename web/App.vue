@@ -2878,6 +2878,7 @@ useTimedError(error);
                 <LoreInjectionRecords
                   v-if="loreRecords.has(message.id)"
                   :records="loreRecords.get(message.id)!"
+                  :show-title="activeSettings.lore_injection_title !== false"
                   :removable="!pendingVisible"
                   :disabled="storyLocked || removingLore"
                   @remove="removeLore"
@@ -2919,7 +2920,11 @@ useTimedError(error);
               </template>
               <template #pending>
                 <template v-if="pendingVisible">
-                  <LoreInjectionRecords v-if="pendingInputLore.length" :records="pendingInputLore" />
+                  <LoreInjectionRecords
+                    v-if="pendingInputLore.length"
+                    :records="pendingInputLore"
+                    :show-title="activeSettings.lore_injection_title !== false"
+                  />
                   <article
                     v-if="
                       visiblePendingInput && !session.messages.some((m) => m.id === visiblePendingInput?.id)

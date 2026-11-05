@@ -233,7 +233,7 @@ def test_tool_result_field_options(story):
     assert tools.search(rows, "旧港", 5, include_preview=False)["matches"] == [{"ref": "H1", "role": "user"}]
     assert tools.search(rows, "旧港", 5)["matches"][0]["preview"] == "旧港的船只出发"
     assert result_field({}, "recall_lore", "include_ref") is False
-    assert result_field({}, "recall_lore", "include_title") is False
+    assert result_field({}, "recall_lore", "include_title") is True
     assert result_field({}, "search_history", "include_preview") is True
     assert result_field({}, "read_history", "include_metadata") is True
     assert (
@@ -1247,7 +1247,8 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
             "<card_description>\n你是向导。\n</card_description>" in m.get("content", "") for m in requests[0]
         )
         assert (
-            sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0]) == 1
+            sum(m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[0])
+            == 1
         )
         assert not any(
             "旧港的船只明晨出发。" in m.get("content", "")
@@ -1263,7 +1264,8 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert set(tool_results[0]["data"]["matches"][0]) == {"text"}
         assert tool_results[2]["data"]["matches"] == []
         assert (
-            sum(m.get("content") == "<lorebook>\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2]) == 1
+            sum(m.get("content") == "<lorebook>\n钟楼\n\n钟楼每晚九点关门。\n</lorebook>" for m in requests[2])
+            == 1
         )
         records = current["snapshot"]["lore_injections"]
         assert len(records) == 1 and records[0]["title"] == "钟楼"
@@ -1335,7 +1337,7 @@ async def test_real_index_tool_lore_shares_presence_and_cooldown_without_duplica
         assert [r["id"] for r in current["snapshot"]["lore_injections"]] == ["port"]
         assert (
             sum(
-                m.get("content") == "<lorebook>\n旧港的船只明晨出发。\n</lorebook>"
+                m.get("content") == "<lorebook>\n旧港\n\n旧港的船只明晨出发。\n</lorebook>"
                 for m in model.requests[0]["messages"]
             )
             == 1

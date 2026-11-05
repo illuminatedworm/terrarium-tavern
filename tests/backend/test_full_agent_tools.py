@@ -683,7 +683,7 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
             lore = next(t for t in catalog if t["name"] == "recall_lore")
-            assert lore["result_options"] == {"include_ref": False, "include_title": False}
+            assert lore["result_options"] == {"include_ref": False, "include_title": True}
             assert set(lore["parameters"]["properties"]) == {"query"}
             patch = next(t for t in catalog if t["name"] == "patch_state")
             assert not patch["available"]

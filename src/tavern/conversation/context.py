@@ -72,7 +72,7 @@ def lore_text(entry, content, with_title, expand=str):
     """Writer-visible body of one entry. The title is a first body line, not a tag
     attribute: the message adapter strips and rewraps the lorebook tag per user rule."""
     title = expand(lore_title(entry)).strip() if with_title else ""
-    return f"【{title}】\n{content}" if title else content
+    return f"{title}\n\n{content}" if title else content
 
 
 CARD_FIELDS = {

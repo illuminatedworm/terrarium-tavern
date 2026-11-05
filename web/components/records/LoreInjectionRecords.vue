@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LoreRecord } from '../../lib/loreRecords';
 import RemoveLoreConfirm from '../story/RemoveLoreConfirm.vue';
-defineProps<{ records: LoreRecord[]; removable?: boolean; disabled?: boolean }>();
+defineProps<{ records: LoreRecord[]; showTitle: boolean; removable?: boolean; disabled?: boolean }>();
 const emit = defineEmits<{ remove: [record: LoreRecord] }>();
 </script>
 
@@ -21,7 +21,7 @@ const emit = defineEmits<{ remove: [record: LoreRecord] }>();
             @confirm="emit('remove', record)"
           />
         </summary>
-        <pre>{{ record.content }}</pre>
+        <pre>{{ showTitle && record.title ? `${record.title}\n\n${record.content}` : record.content }}</pre>
       </details>
     </div>
   </details>

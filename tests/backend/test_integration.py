@@ -578,7 +578,7 @@ async def test_saved_provider_payload_retains_mid_system(tmp_path):
     compiled = compile_context(document, session, history, session["snapshot"], "marker", settings, "wire")
     messages = compiled["messages"]
     index = next(i for i, item in enumerate(compiled["trace"]) if item["source"] == "lore:1")
-    assert messages[index] == {"role": "system", "content": "<lorebook>\nmid-scene\n</lorebook>"}
+    assert messages[index] == {"role": "system", "content": "<lorebook>\n场景标记\n\nmid-scene\n</lorebook>"}
     assert strip_label(messages[index - 1]["content"]) == "a"
     assert strip_label(messages[index + 1]["content"]) == "b"
     try:

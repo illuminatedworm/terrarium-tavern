@@ -330,7 +330,7 @@ def test_each_st_top_lore_entry_has_its_own_wrapper():
         assert content.count(f"<lorebook>\n灯塔设定{i}\n</lorebook>") == 1
 
 
-def test_injection_title_is_opt_in_and_prefers_comment_over_name():
+def test_injection_title_defaults_on_and_prefers_comment_over_name():
     entries = [
         {"id": "c", "constant": True, "comment": "常驻标题", "name": "旧名", "content": "常驻设定"},
         {"id": "e", "keys": ["灯塔"], "comment": "", "name": "灯塔条目", "content": "灯塔设定"},
@@ -348,13 +348,15 @@ def test_injection_title_is_opt_in_and_prefers_comment_over_name():
             for part in m.get("runtime_parts") or [m["content"]]
         ]
 
-    assert not any("【" in body for body in lore_bodies("conversation"))
+    assert not any(
+        title in body
+        for body in lore_bodies("conversation", lore_injection_title=False)
+        for title in ("常驻标题", "灯塔条目")
+    )
     for mode in ("conversation", "st_top"):
-        bodies = lore_bodies(mode, lore_injection_title=True)
-        assert any("<lorebook>\n【常驻标题】\n常驻设定\n</lorebook>" == body for body in bodies)
-        assert any(
-            body.startswith(("【灯塔条目】\n灯塔设定", "<lorebook>\n【灯塔条目】\n")) for body in bodies
-        )
+        bodies = lore_bodies(mode)
+        assert any("<lorebook>\n常驻标题\n\n常驻设定\n</lorebook>" == body for body in bodies)
+        assert any(body.startswith(("灯塔条目\n\n灯塔设定", "<lorebook>\n灯塔条目\n\n")) for body in bodies)
 
 
 def test_constant_over_reference_budget_remains_complete():

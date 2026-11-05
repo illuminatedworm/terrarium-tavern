@@ -76,8 +76,12 @@ async def test_documented_minimal_results_match_execution(name):
     )
 
     async def retrieve(query, **options):
-        assert query == "港口" and not options["include_ref"] and not options["include_title"]
-        return {"matches": [{"text": "<lorebook>\n" + ENTRY["content"] + "\n</lorebook>"}]}
+        assert query == "港口" and not options["include_ref"] and options["include_title"]
+        return {
+            "matches": [
+                {"title": ENTRY["title"], "text": "<lorebook>\n" + ENTRY["content"] + "\n</lorebook>"}
+            ]
+        }
 
     owner.retrieve = retrieve
     owner.script = Script([{"id": "draft-body", "role": "assistant", "raw": ""}], owner.snapshot)
