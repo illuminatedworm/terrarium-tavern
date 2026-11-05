@@ -1,7 +1,6 @@
 # Android 本地开发环境
 
-此目录长期保存 Android 开发所需的工具和文件，不属于 `.cache/`，清理临时产物时不要删除。
-只有本说明纳入 Git，其余内容均被忽略；目录丢失后按开发说明重新准备。
+此目录长期保存 Android 开发所需的工具和文件，不属于 `.cache/`，清理临时产物时不要删除。只有本说明纳入 Git，其余内容均被忽略；目录丢失后按开发说明重新准备。
 
 | 路径 | 用途 |
 | --- | --- |
@@ -15,5 +14,4 @@
 | `gradle-home/`、`gradle-project/`、`build/` | Gradle 依赖、增量构建状态和 APK |
 | `dev/` | 最近一次开发构建、安装和真机自检记录 |
 
-从零准备、构建和安装步骤见 [Android 开发说明](../docs/development/android.md)。
-源码与构建脚本位于 `packaging/android/` 和 `tools/android/`；本目录不存放故事或用户设置。
+从零准备、构建和安装步骤见 [Android 开发说明](../docs/development/android.md)。源码与构建脚本位于 `packaging/android/` 和 `tools/android/`；本目录不存放故事或用户设置。

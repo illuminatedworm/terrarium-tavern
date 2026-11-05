@@ -104,7 +104,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 | **源码安装** | Windows 或 Linux，跟进开发分支或自行修改 | Edge 或 Chrome 稳定版；安装脚本准备其余依赖 |
 | **Android APK** | 在手机上本地游玩 | Android 9+、ARM64、4 KiB 内存页 |
 
-所有桌面方式都复用系统安装的 Microsoft Edge 或 Google Chrome 稳定版运行桌面窗口与卡片脚本，不再下载 Chromium；仅有 WebView2 Runtime 不够。
+桌面版使用系统已安装的 Microsoft Edge 或 Google Chrome 稳定版运行窗口与卡片脚本；只有 WebView2 Runtime 不够。
 
 ### Windows 便携包
 
@@ -159,7 +159,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ### 启动之后
 
-桌面版启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**（默认端口自 v0.8.5 起改为 51273）。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
+桌面版启动后访问 **[http://127.0.0.1:51273](http://127.0.0.1:51273)**。停止服务使用 `.\stop.ps1`（Windows）或 `./stop.sh`（Linux）。
 
 - **浏览器选择**：Windows 优先 Edge、其次 Chrome；Linux 优先 Chrome、其次 Edge，启动时显示实际路径。可用环境变量 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定，见[系统浏览器](docs/development/desktop.md#系统浏览器)。
 - **日文词典**：中英文检索不需要。含日文的故事首次检索时自动联网下载；离线使用请提前在「设置 → 通用 → 本地资源」导入，见[日文词典](docs/guides/retrieval.md#日文词典)。

@@ -28,7 +28,14 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 
 ## 前端与生成资源
 
-[App.vue](../../web/App.vue) 和 [main.ts](../../web/main.ts) 组装应用；App.vue 持有页面切换与共享状态，首页（[HomeView.vue](../../web/components/story/HomeView.vue)）、侧栏列表（[SessionList.vue](../../web/components/story/SessionList.vue)、[CardList.vue](../../web/components/character/CardList.vue)、[WorldbookList.vue](../../web/components/character/WorldbookList.vue)、[CardConversationList.vue](../../web/components/character/CardConversationList.vue)）和[阅读排版](../../web/components/settings/ReadingLayoutPanel.vue)各自成组件；右侧栏的 MVU 变量、场景与会话设置页（[MvuInspector.vue](../../web/components/story/MvuInspector.vue)、[SceneInspector.vue](../../web/components/story/SceneInspector.vue)、[SessionOptions.vue](../../web/components/story/SessionOptions.vue)，会话设置编辑本地草稿，保存后才写回）以及弹窗内的变量与记忆、分支、记忆重建、删除角色卡和关于面板也各自成组件。故事 API 的响应类型集中在 [types.ts](../../web/lib/types.ts)。`components/` 按 `common`、`story`、`settings`、`character`、`records` 分类；`lib/` 保存请求与业务辅助逻辑，`composables/` 保存组合式函数。
+[App.vue](../../web/App.vue) 和 [main.ts](../../web/main.ts) 组装应用，App.vue 持有页面切换与共享状态。其余界面各自成组件：
+
+- 首页：[HomeView.vue](../../web/components/story/HomeView.vue)。
+- 侧栏列表：[SessionList.vue](../../web/components/story/SessionList.vue)、[CardList.vue](../../web/components/character/CardList.vue)、[WorldbookList.vue](../../web/components/character/WorldbookList.vue)、[CardConversationList.vue](../../web/components/character/CardConversationList.vue)；[阅读排版](../../web/components/settings/ReadingLayoutPanel.vue)。
+- 右侧栏：MVU 变量、场景与会话设置页（[MvuInspector.vue](../../web/components/story/MvuInspector.vue)、[SceneInspector.vue](../../web/components/story/SceneInspector.vue)、[SessionOptions.vue](../../web/components/story/SessionOptions.vue)；会话设置编辑本地草稿，保存后才写回）。
+- 弹窗：变量与记忆、分支、记忆重建、删除角色卡和关于面板。
+
+故事 API 的响应类型集中在 [types.ts](../../web/lib/types.ts)。`components/` 按 `common`、`story`、`settings`、`character`、`records` 分类；`lib/` 保存请求与业务辅助逻辑，`composables/` 保存组合式函数。
 
 世界书条目的列表、筛选、导入与条目弹窗集中在 [LoreBookEditor.vue](../../web/components/character/LoreBookEditor.vue)，角色卡编辑页与世界书库编辑页（[WorldbookEditor.vue](../../web/components/character/WorldbookEditor.vue)）共用。
 

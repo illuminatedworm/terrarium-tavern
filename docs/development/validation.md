@@ -63,9 +63,7 @@ npm.cmd run build
 
 日常改动只运行上表中直接相关的文件。全套后端可用 `-n 4 --dist worksteal` 并行。`tests/conftest.py` 在测试进程内关闭 SQLite 同步写盘，以减少磁盘压力，不影响应用本身。`--durations=20` 可定位耗时。
 
-`browser_release` 使用 8015/8016 端口，覆盖设置、角色编辑、故事、工作记录、上下文、分支和 MVU；CSS 视口为 2560×1440、1920×1080、360×792/DPR 3（1080×2376 设备像素）和 960×540/DPR 2（1920×1080 的 200% 缩放等效布局）。
-
-布局专项还覆盖 2560×1440、1920×1080、360×792/DPR 3 和 960×540/DPR 2。DPR 场景验证对应 CSS 布局，原生浏览器缩放和真实手机交互可另行实测。
+`browser_release` 使用 8015/8016 端口，覆盖设置、角色编辑、故事、工作记录、上下文、分支和 MVU；CSS 视口为 2560×1440、1920×1080、360×792/DPR 3（1080×2376 设备像素）和 960×540/DPR 2（1920×1080 的 200% 缩放等效布局），布局专项使用同一组视口。DPR 场景验证的是对应的 CSS 布局，原生浏览器缩放和真实手机交互可另行实测。
 
 ChatGPT 订阅专项：
 
@@ -111,11 +109,7 @@ ChatGPT 订阅专项：
 
 ## 版本维护
 
-项目版本采用 `0.MINOR.PATCH`：补丁版本用于现有功能修复与小幅完善，次版本用于新能力或核心行为调整；`0.x` 保持实验阶段，兼容变化须在[版本记录](../changelog.md)明确说明。进入 `1.0.0` 前应稳定核心行为和升级兼容约定，并完成发行验证。应用版本与数据库 schema、设置文档版本分别维护，不因应用升版而机械递增。
-
-升版时同步 `pyproject.toml`、`package.json`、`uv.lock` 中本项目条目、`package-lock.json` 中根包的两处版本，以及 `src/tavern/application/api.py` 的 OpenAPI 与健康检查版本。锁文件中第三方依赖版本保持不变。同时更新 README、文档导航、安装维护说明和版本记录。
-
-版本提交使用中文说明，创建带注释的 `vX.Y.Z` 标签。两种系统共用标签；`linux` 通过 rebase 同步 `main` 的通用修改，有平台独有提交时保留并检查适配。历史补标的范围与依据应明确记录，不能把补标日期或测试状态写成当年的正式发行记录。此后已公开的版本标签保持固定，修复使用新版本。
+项目版本采用 `0.MINOR.PATCH`，应用版本与数据库 schema、设置文档版本分别维护。级别判定、发版时机、`1.0.0` 条件、需要同步修改的文件和打标签方式统一见[版本号基准](../../.agents/VERSIONING.md)。
 
 ## 打包与产物
 
@@ -127,10 +121,7 @@ ChatGPT 订阅专项：
 
 ZIP、清单和校验值输出到 `releases/`。[verify_release.py](../../tools/verify_release.py)在 Windows 新目录校验归档、安装依赖、启动服务并检查备份恢复。该脚本带有本机工具与网络配置假设，运行前需核对其环境配置。
 
-Windows/Linux 便携包使用 `tools/package_portable.py` 在各自目标平台构建，附带独立 Python、
-锁定依赖（含 Playwright 自带 Node 驱动）和界面；不另带 Node/npm 工具链或浏览器组件。
-`verify_release.py` 自动识别便携包，不再在线安装依赖，检查包内没有浏览器组件，并使用系统 Edge/Chrome 的无头模式验证执行。
-详细命令、平台边界及隔离验证范围见[桌面开发与便携包](desktop.md)。
+Windows/Linux 便携包用 `tools/package_portable.py` 在各自的目标平台构建，附带独立 Python、锁定依赖（含 Playwright 自带的 Node 驱动）和界面，不带 Node/npm 工具链或浏览器组件。`verify_release.py` 会自动识别便携包：不在线安装依赖，检查包内没有浏览器组件，并用系统 Edge/Chrome 的无头模式验证运行。详细命令、平台边界和隔离验证范围见[桌面开发与便携包](desktop.md)。
 
 `verify_release.py` 和 `prepare_tokenizers.py` 沿用调用环境中的代理，不内置代理地址；`probe_prefix_cache.py` 默认直连，可用 `--proxy` 显式指定。应用及制卡评测使用应用内保存的网络配置。
 

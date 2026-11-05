@@ -1,10 +1,10 @@
 # Half Agent 回合工作流
 
-Half Agent 的回合由 Runtime 统一编排；Full Agent 的执行与续接见[独立回合生命周期](full-agent.md#回合生命周期)。前台 Writer 生成正文，后台 Tracker 整理记忆及执行授权维护，Roleplay Runtime 负责程序编排。正式职责和代码映射见[架构](architecture.md#正式角色与职责)。Writer 与 Tracker 通过 Runtime 管理的回合草稿交换数据。SQLite 是剧情与状态的权威来源。
+Half Agent 的回合由 Roleplay Runtime 统一编排：前台 Writer 生成正文，后台 Tracker 整理记忆并执行授权的维护，两者通过 Runtime 管理的回合草稿交换数据。SQLite 是剧情与状态的权威来源。正式职责和代码映射见[架构](architecture.md#正式角色与职责)；Full Agent 的执行与续接见[独立回合生命周期](full-agent.md#回合生命周期)。
 
 ## 普通发送
 
-以下步骤均由 Roleplay Runtime 驱动；Tracker 与 Writer 按阶段执行，“后台”表示维护职责。
+以下步骤都由 Roleplay Runtime 驱动，Tracker 与 Writer 按阶段执行（“后台”指维护职责）。
 
 1. 校验模型配置、operation_id 和会话 revision；一个会话只允许一个运行或待审核回合。
 2. 恢复分支快照，建立隔离脚本环境，执行输入变换。
@@ -19,7 +19,7 @@ Tracker 使用专属上下文和 `tracker_system_prompt`，不复用 Writer 的�
 
 Tracker 的 `patch_state` 和 `revise_content` 参数为 `operations` 与 `comment`。`comment` 是必填的简短操作备注，1–2000 字符；旧调用记录保留原字段。
 
-每个前置/后置任务最多 `tracker_max_steps` 次模型请求，新配置默认 12、范围 2–100，已有保存值保持原样；分批、工具续答、复核共用额度。自动记忆最多两批和一次可选复核。手动重建按批使用调用额度并建立新的批次上下文，携带已整理记忆而不累积全部旧工具交换；历史补查仍整次操作共用3次。工具结果先进入草稿，MVU 修改经最终校验后随正文提交。
+每个前置/后置任务最多 `tracker_max_steps` 次模型请求（新配置默认 12，范围 2–100），分批、工具续答和复核共用这一额度。自动记忆最多两批加一次可选复核。手动重建按批使用调用额度，每批建立新的上下文，携带已整理的记忆而不累积全部旧工具交换；历史补查仍是整次操作共用 3 次。工具结果先进入草稿，MVU 修改经最终校验后随正文提交。
 
 ## 操作边界
 
@@ -37,11 +37,9 @@ Tracker 的 `patch_state` 和 `revise_content` 参数为 `operations` 与 `comme
 | 断线/重新打开 | 服务端继续执行，SSE 按序号观察；前端去重并隔离旧视图响应 |
 | 服务重启 | 未完成回合标记 interrupted，保留草稿 |
 
-消息修改只使用 `POST /api/sessions/{sid}/turns`：已提交输入使用 `mode="regenerate"`、最新回复的 `message_id` 和 `replacement_text`；失败发言使用新的 `send` 请求，失败的输入替换使用新的 `regenerate` 请求。原消息 PUT 接口与失败输入 PUT 接口均已移除。输入变更时不传 `resume_turn_id`；服务端仍校验操作幂等、会话版本、最新轮次和运行／审核互斥。
+消息修改只通过 `POST /api/sessions/{sid}/turns`（没有修改消息的 PUT 接口）：修改已提交的输入用 `mode="regenerate"`、最新回复的 `message_id` 和 `replacement_text`；失败的发言用新的 `send` 请求，替换失败的输入用新的 `regenerate` 请求。输入变更时不传 `resume_turn_id`；服务端照常校验操作幂等、会话版本、最新轮次和运行／审核互斥。
 
-周期记忆失败且无需裁剪时继续正文，页面持续提示；必须裁剪而覆盖不足时停止发送。
-工作记录按回合分页，徽标统计当前对话的回合总数，完整载荷按需加载。
-过期详细载荷转为紧凑摘要，剧情、分支及恢复所需快照不被删除。
+周期记忆失败且无需裁剪时继续生成正文，页面持续提示；必须裁剪而覆盖不足时停止发送。工作记录按回合分页，徽标统计当前对话的回合总数，完整载荷按需加载；过期的详细载荷转为紧凑摘要，剧情、分支和恢复所需的快照不会被删除。
 
 ## 请求身份与原生回复
 

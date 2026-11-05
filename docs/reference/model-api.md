@@ -13,7 +13,9 @@
 | `anthropic` | `v1` | `/messages` |
 | `gemini` | `v1beta` | `/models/{model}:generateContent`；流式使用 `:streamGenerateContent` |
 
-显式填写的 API 路径按原值拼接。模型列表从本地持久缓存读取，只有点击“更新模型列表”或模型选单内的“获取模型列表”才请求提供商。同一提供商的所有 agent 全局共用一份模型列表缓存，不因协议或 API 路径不同而拆分；提供商身份、主域名或密钥不同仍隔离。刷新使用发起处的协议和路径，成功后替换共享列表，失败时保留原列表。只有候选目录共享，各 agent 的模型选择、连接参数和生成设置保持独立。旧版按连接保存的缓存会从当前及已保存的提供商连接中读取，以最近一次成功更新的列表初始化共享缓存，不修改连接设置。
+显式填写的 API 路径按原值拼接。
+
+模型列表从本地持久缓存读取，只有点击“更新模型列表”或模型选单内的“获取模型列表”才请求提供商。同一提供商的所有 agent 共用一份列表缓存，不因协议或 API 路径不同而拆分；提供商身份、主域名或密钥不同则分开。刷新使用发起处的协议和路径，成功后替换共享列表，失败时保留原列表。共享的只是候选目录，各 agent 的模型选择、连接参数和生成设置各自独立。旧版按连接保存的缓存，会以其中最近一次成功更新的列表初始化共享缓存，不修改连接设置。
 
 `gemini` 在界面显示为“Google GenAI · Gemini”，通过官方 Python `google-genai` SDK 调用 GenerateContent、流式生成、模型列表及显式缓存对象 API；配置键仍为 `gemini`，现有配置无需改名。使用 Gemini Developer API 的 API Key 方式，可保留自定义服务地址和路径，不自动切换到 Vertex AI／Enterprise 服务。SDK 自动工具执行、自动续写和自动重试均关闭，工具权限与续答仍由 Roleplay Runtime 调度；只有明确拒绝缓存对象时允许一次完整上下文重发。请求日志记录 SDK 最终序列化的 HTTP 正文，而非调用前的估算结构。
 
@@ -21,11 +23,11 @@
 
 Chat Completions 的原生结束原因不封闭流式内容接收：在 HTTP 响应体读取结束前，后续正文、思考、推理详情和工具 ID／函数名／参数仍合并到同一响应，用量帧也继续计入；空尾帧与角色等元数据不生成正文。重复结束状态按优先级处理：`tool_calls` 优先于普通 `stop`，截断、过滤或未知原因优先于成功状态，不能被后续正常尾帧掩盖。HTTP 读取结束后统一校验完整响应；流中错误仍立即使本轮失败。
 
-普通 API 的 HTTP 失败会在回合错误与后台工作记录中保留状态码、服务端错误码及说明，不依赖开启失败请求 Debug。JSON 响应读取 `error` 对象／字符串或顶层的错误说明；非 JSON 响应显示文本。错误说明先脱敏当前请求密钥和 Bearer 凭据，最多显示 4000 字符，超出时标明为片段；后台错误行的悬停提示保留该说明，完整 HTTP 原始证据仍按失败请求 Debug 设置保存。
+普通 API 的 HTTP 失败（包括 HTTP 200 流中的错误）会在回合错误与后台工作记录中保留状态码、服务端错误码及说明，无需开启失败请求 Debug。JSON 响应读取 `error` 对象／字符串或顶层的错误说明，非 JSON 响应显示文本。说明先脱敏当前请求的密钥和 Bearer 凭据，最多显示 4000 字符，超出时标明为片段；后台错误行的悬停提示保留该说明。完整的 HTTP 原始证据按失败请求 Debug 设置保存。
 
 请求使用提供商的密钥；缺少密钥时可从 `TAVERN_API_KEY` 读取。本地免密端点也需要非空占位值，例如 `local`。HTTP 客户端使用应用内 API 代理配置，不继承 shell 的代理环境变量。
 
-Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`；HTTP 200 但结束原因缺失、为空或不受支持时，整轮失败，不把部分正文或工具调用当成完整回复提交。HTTP 200 流中的错误说明也会先脱敏实际请求密钥和 Bearer 凭据，再限量显示及记录，不依赖开启调试。
+Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`；HTTP 200 但结束原因缺失、为空或不受支持时整轮失败，不把部分正文或工具调用当作完整回复提交。
 
 ## ChatGPT 订阅模式
 
@@ -36,7 +38,7 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 - system 消息原位转为 developer，保留完整原文和顺序；输入包含全部需要的历史，不发送 `previous_response_id`。
 - 函数工具放入 `tavern` namespace，工具调用及结果保留命名空间；仅接收本轮允许的工具。指定单个工具时只暴露它，并使用 `tool_choice=required`。
 - 请求体由订阅分支的允许字段构建，不发送普通采样、最大输出 token、显式缓存及其他通道自定义参数。缓存由服务端管理，仅使用稳定的 `prompt_cache_key`；不发送 `session-id`、`thread-id` 或 `x-codex-turn-state`。
-- 官方 Full Agent 选择云端 compact 后，用户发起回合时由运行时检查上次有效接口实测及匹配的服务端超限拒绝；开启自动压缩且实测超过窗口上限或存在明确超限拒绝时，先通过独立整理请求发送 `context_management` 与 `compact_threshold`，再继续本轮。已有压缩状态失效时，开启自动压缩会在下一次实际请求前从完整已完成交流重建，同回合工具续答也适用，不依赖本地长度估算。正文与工具续答不携带自动压缩配置。支持完整加密项续接；独立 `/responses/compact` 不用于此 OAuth 通道。双向模式转换从完整原文按整轮交流重放；切回本地且需要换窗时使用专用的 `prepare_handoff` 结构化调用，验证后再更新本地状态，不执行剧情工具。
+- 官方 Full Agent 的云端 compact（触发条件与重建规则见 [Full Agent 架构](../design/full-agent.md#官方云端-compact)）：独立整理请求发送 `context_management` 与 `compact_threshold`，正文与工具续答不携带自动压缩配置；支持完整加密项续接，不使用独立的 `/responses/compact`。切回本地且需要换窗时，使用专用的 `prepare_handoff` 结构化调用，验证后再更新本地状态，不执行剧情工具。
 - 原生回复归属由账号注册、授权会话代次和模型确定。正常刷新保持归属，重新授权／退出和切换账号会隔离旧的原生状态；操作内固定授权代次，不能中途切换到新登录。
 - 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
 - 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。订阅档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
@@ -104,7 +106,7 @@ Google GenAI 原生模式不显示自定义断点字段、JSON 值与附加缓�
 
 传输层保留 Anthropic `content` 和 Responses `output` 的块顺序、工具 ID、思考签名及加密推理，用于兼容来源的续答。编辑、脚本改写或切换模型来源后是否回放，由对应上下文记录层判定；通用剧情历史始终保留。
 
-Full Agent、Tracker、记忆历史补查和 制卡 agent 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
+Full Agent、Tracker、记忆历史补查和制卡 agent 在生成工具结果时记录执行失败状态，Anthropic 续答将其映射为 `tool_result.is_error=true`；保留的工具记录经过上下文投影与回放时不丢失此状态。参数错误、权限拒绝、补查额度耗尽，以及制卡中因用户补充要求而取消的未执行调用均属于失败；正常搜索零命中、重复查询提示，以及读取到含 `error` 或 `ok:false` 字段的业务数据不据此判为失败。Chat Completions、Responses 和 Gemini 保留错误正文，不发送 Anthropic 专属字段。Writer 与普通脚本生成不执行工具循环。
 
 应用保存原始 `usage`，并提供统一显示字段。缓存读取或写入字段缺失表示未知，不能显示为零命中。
 

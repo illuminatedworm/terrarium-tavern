@@ -136,7 +136,6 @@
 - 布局改动按需检查长内容、内部滚动和弹窗高度；多视口与缩放验收见 [长期使用与发行](.agents/RELEASE.md)。
 - 交付说明改动、验证证据、未验证范围与已知限制；实际执行结果才可报告为通过。
 
-常用命令：`npm.cmd test -- <文件>`、`.venv/Scripts/python.exe -m pytest -q <文件或用例>`、`npm.cmd run format:check`、
-`.venv/Scripts/python.exe -m ruff check src tests tools`；用户要求时的全量：`npm.cmd test`、`.venv/Scripts/python.exe -m pytest -q tests/backend`。
-详细职责见 [Full Agent 架构](docs/design/full-agent.md)、[Half Agent 工作流](docs/design/agent-workflow.md)、[Half Agent 上下文](docs/design/context-lifecycle.md)、
-[计数口径](docs/guides/token-counting.md)、[维护](docs/guides/maintenance.md)和[验证说明](docs/development/validation.md)。
+常用命令：`npm.cmd test -- <文件>`、`.venv/Scripts/python.exe -m pytest -q <文件或用例>`、`npm.cmd run format:check`、`.venv/Scripts/python.exe -m ruff check src tests tools`；用户要求时的全量：`npm.cmd test`、`.venv/Scripts/python.exe -m pytest -q tests/backend`。
+
+详细职责见 [Full Agent 架构](docs/design/full-agent.md)、[Half Agent 工作流](docs/design/agent-workflow.md)、[Half Agent 上下文](docs/design/context-lifecycle.md)、[计数口径](docs/guides/token-counting.md)、[维护](docs/guides/maintenance.md)和[验证说明](docs/development/validation.md)。

@@ -31,7 +31,10 @@ Writer 编译、模型文本宏、Tracker 状态读取、MVU 输入和记忆辅�
 
 ## 来源短编号
 
-H 是当前分支消息位置（开场白为 H1），Half Agent 的 Tracker、Full Agent、参谋 agent 与剧情界面共用 [history_refs.py](../../src/tavern/core/history_refs.py) 的同一定义，Writer 请求不自动添加 H 编号；`H41-H50` 表示连续闭区间，`H52#3` 表示 H52 的第 3 个原文片段。H 只是渲染形式，存档仍保存消息 ID、指纹与逐字摘录。Tracker 的 H 片段指向原文，R 指向已有记忆，E 指向参考资料。模型通过 `write_memory` 的 `operations/questions` 提交语义增量，程序恢复真实消息、原文摘录与指纹。只有本次实际展示的片段可以引用，完整协议见[记忆设计](memory-consistency.md#短编号输出协议)。
+- **H** 是当前分支的消息位置（开场白为 H1），Half Agent 的 Tracker、Full Agent、参谋 agent 与剧情界面共用 [history_refs.py](../../src/tavern/core/history_refs.py) 的定义；Writer 请求不自动添加 H 编号。`H41-H50` 表示连续闭区间，`H52#3` 表示 H52 的第 3 个原文片段。H 只是渲染形式，存档仍保存消息 ID、指纹与逐字摘录。
+- Tracker 中，H 片段指向原文，R 指向已有记忆，E 指向参考资料。
+
+模型通过 `write_memory` 的 `operations/questions` 提交语义增量，程序恢复真实消息、原文摘录与指纹。只有本次实际展示的片段可以引用，完整协议见[记忆设计](memory-consistency.md#短编号输出协议)。
 
 Tracker 的 `search_lore` 返回命中的启用条目名称和完整正文，不提供 L 编号，不改变 Writer 的注入选择。设定修改后 Runtime 重新检索。Full Agent 的 `recall_lore` 也直接返回正文，其可选 L 编号仅标识资料，详见[工具参考](../reference/full-agent-tools.md)。
 

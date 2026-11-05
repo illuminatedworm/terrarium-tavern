@@ -13,9 +13,7 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 .\点击开始.cmd
 ```
 
-此命令使用直连下载。使用代理时，将 `-Proxy ''` 改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`。
-
-省略 `-Proxy` 时，Windows 安装脚本沿用调用环境中的代理，与 Linux 脚本一致；显式传入空字符串禁用安装代理。安装代理和应用内的代理设置分别生效。
+`-Proxy ''` 表示直连下载；使用代理时改为 `-Proxy '<完整的 HTTP(S) 代理地址>'`；省略 `-Proxy` 则沿用调用环境中的代理（与 Linux 脚本一致）。安装代理和应用内的代理设置分别生效。
 
 **Linux（Bash）**
 
@@ -26,26 +24,28 @@ Terrarium Tavern 在本机运行，提供 Windows PowerShell 和 Linux Bash 脚�
 
 Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代理地址>'` 指定，或用 `--proxy ''` 选择直连。已有 uv 时直接使用，否则通过 Python 在 `.cache/uv/` 中准备 uv。浏览器及其系统依赖需通过浏览器官方安装包准备。
 
-安装脚本准备 Python 3.13 和锁定依赖、内置 Node.js，构建前端并检查系统浏览器，不下载 Chromium。
-长期使用的工具链位于 `desktop-dev/`，不要按临时缓存清理。已有系统 Node.js 22+ 时可加
-`-SkipNodeDownload` 或 `--skip-node-download`；启动、构建和开发脚本优先使用已准备的内置 Node。
-已有 `.venv` 对 `.cache/python` 的引用不会自动搬迁，重建环境和便携包说明见[桌面开发](../development/desktop.md)。
+安装脚本准备 Python 3.13、锁定依赖和内置 Node.js，构建前端并检查系统浏览器。
+
+- 长期使用的工具链位于 `desktop-dev/`，不要当作临时缓存清理。
+- 已有系统 Node.js 22+ 时可加 `-SkipNodeDownload` 或 `--skip-node-download`；启动、构建和开发脚本优先使用已准备的内置 Node。
+- 已有 `.venv` 对 `.cache/python` 的引用不会自动搬迁；重建环境的方法见[桌面开发](../development/desktop.md)。
+
 启动后访问 [http://127.0.0.1:51273](http://127.0.0.1:51273)。
 
-便携包已附带 Python、锁定依赖（含 Playwright 自带 Node 驱动）和界面，复用系统 Edge/Chrome 稳定版。
-准备好浏览器后，解压并使用 `点击开始.cmd` / `start.ps1` 或 `./start.sh`，无需运行源码安装脚本。
-Windows 包使用 embeddable Python；Linux 包要求 glibc x64。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
+**便携包**已附带 Python、锁定依赖（含 Playwright 自带的 Node 驱动）和界面，使用系统的 Edge/Chrome 稳定版。准备好浏览器后，解压并运行 `点击开始.cmd` / `start.ps1` 或 `./start.sh` 即可，无需运行源码安装脚本。Windows 包使用 embeddable Python，Linux 包要求 glibc x64。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
 
-v0.8.10 的 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.10) 附件中，`terrarium-tavern-0.8.10-windows-x64.zip` 是可直接运行的 Windows 基础包，`terrarium-tavern-0.8.10-android-arm64-build7.apk` 是 Android 安装包；旁边的 `.sha256` 用于校验下载完整性。GitHub 自动生成的 Source code 归档是源码，需要另行准备开发环境。本次不提供 Linux 二进制包，Linux 仍可按源码安装。
+v0.8.10 的 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.10) 附件中，`terrarium-tavern-0.8.10-windows-x64.zip` 是可直接运行的 Windows 基础包，`terrarium-tavern-0.8.10-android-arm64-build7.apk` 是 Android 安装包，同名 `.sha256` 用于校验下载完整性。GitHub 自动生成的 Source code 归档是源码，需要另行准备开发环境。本次不提供 Linux 二进制包，Linux 可按源码安装。
 
 Android APK 使用 debug 签名，要求 Android 9+、ARM64 和 4 KiB 内存页，不支持 16 KiB 内存页设备。同签名可保留数据覆盖安装；更新前先导出备份，不要为处理签名冲突直接卸载旧应用。模型权重需单独导入，详见[Android 开发与设备范围](../development/android.md)。
 
-Windows 默认优先 Edge、其次 Chrome，Linux 优先 Chrome、其次 Edge；启动会输出实际路径。
-可用 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定，`auto` 恢复默认选择。
-安装和启动缺少所选浏览器时会报错；WebView2 Runtime 不能代替它。具体设置方法见[系统浏览器](../development/desktop.md#系统浏览器)。
+**浏览器选择**：Windows 默认优先 Edge、其次 Chrome，Linux 优先 Chrome、其次 Edge，启动时输出实际路径。可用 `TAVERN_BROWSER=msedge` 或 `TAVERN_BROWSER=chrome` 明确指定，`auto` 恢复默认。缺少所选浏览器时安装和启动都会报错，WebView2 Runtime 不能代替。设置方法见[系统浏览器](../development/desktop.md#系统浏览器)。
 
-可选的受控桌面窗口（`-Desktop` / `--desktop`）额外在每个文档执行脚本前禁用 WebRTC；关闭窗口会取消尚未完成的任务、等待回滚并停止后端，外部链接在系统浏览器中打开。它使用所选数据目录的 `desktop-profile/` 保存独立浏览器资料和阅读布局，不读取系统浏览器的资料目录，阅读布局可通过设置数据包导出导入；CLI 完整备份不打包该目录。
-切换浏览器或回退其版本前，先导出阅读布局并备份该目录；应用不会因浏览器启动失败而清除资料。
+**受控桌面窗口**（`-Desktop` / `--desktop`，可选）：
+
+- 在每个文档执行脚本前额外禁用 WebRTC；外部链接在系统浏览器中打开。
+- 关闭窗口会取消尚未完成的任务、等待回滚并停止后端。
+- 使用所选数据目录下的 `desktop-profile/` 保存独立的浏览器资料和阅读布局，不读取系统浏览器的资料目录。阅读布局可通过设置数据包导出导入；CLI 完整备份不包含该目录。
+- 切换浏览器或回退其版本前，先导出阅读布局并备份该目录。浏览器启动失败不会导致资料被清除。
 
 | 操作 | Windows | Linux |
 |---|---|---|
@@ -92,11 +92,18 @@ Linux 使用 `./start.sh --data restored-data` 启动恢复的数据。
 2. 将新版源码或发行包放入新程序目录，安装依赖。
 3. 用 `-Data` 或 `--data` 指向原数据目录并启动。
 
-v0.8.0 将 Python 基准升级为 3.13。此前使用其他 Python 版本的 Windows 和 Linux 安装都需要重新运行 `setup.ps1` 或 `setup.sh`；uv 会按 `.python-version` 准备 Python 3.13，并重建不兼容的 `.venv` 和锁定依赖。先停止旧服务，不能直接沿用旧环境启动。重新安装可能下载较大的依赖；使用本地向量检索或重排的用户仍须加 `-LocalRetrieval` 或 `--local-retrieval`，以重新安装 torch 等可选检索依赖。已下载的模型权重位于数据目录中，不属于 `.venv`，不需要因这次 Python 升级重新下载。
+**从 v0.8.0 之前升级**：v0.8.0 把 Python 基准升到 3.13，此前的 Windows 和 Linux 安装都需要先停止旧服务，再重新运行 `setup.ps1` 或 `setup.sh`，不能直接沿用旧环境启动。uv 会按 `.python-version` 准备 Python 3.13，并重建不兼容的 `.venv` 和锁定依赖，可能需要下载较大的依赖。使用本地向量检索或重排的用户仍须加 `-LocalRetrieval` 或 `--local-retrieval`，以重新安装 torch 等可选依赖；已下载的模型权重在数据目录中，不需要重新下载。
 
-当前数据库格式为 **schema 20**，设置文档版本为 **15**，个人数据包格式为 **10**。schema 20 为普通 Full Agent 增加默认关闭的交互图形能力，既有工具开关保留；图形完整保存在工具轨迹中，随剧情备份、版本和分支保留。个人数据包 version 10 校验并保留图形，旧包导入默认关闭该能力。schema 19 保存 Full Agent 正文分段边界与预览边界，已有消息按单段读取；数据包 version 9 携带分段信息，旧包按单段导入。升级沿用先备份后迁移，旧程序不能打开新数据库或导入新数据包。schema 18 为原著调查者保存自动销毁选项，旧调查者补为关闭；数据包 version 8 携带该选项，旧包缺少时保持关闭。原著参考新增独立调查数据，全文副本位于 `data/blobs/novels/`，随完整备份保存；对话导出可选择携带文件，导入调查保持暂停，详见[原著参考](../design/novel-research.md)。升级前先完整备份；schema 16 将上下文校准样本改为接口实测快照，旧样本失效，旧待续任务中的估值强制换窗标记同步失效，正文草稿和已完成工具保留，等待新请求，不回填日志或本地估值。快照按会话／工作区和用途保存来源、内容指纹及真实用量分项，不复制提示词正文；详细日志清理保留快照，删除所属数据时一并删除。设置 version 14 将旧 Half Agent `tokens` 模式迁移为消息批次，保留消息 cap 和批量大小，`off` 保持关闭；移除旧历史 token 预算和压力目标，设置页明确说明。不修改剧情、已有逐次用量或应用版本。
+**数据格式**：当前数据库为 **schema 20**，设置文档为 **version 15**，个人数据包为 **version 10**。程序在任何写入前先只读核对格式，需要升级时先生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 完整备份，再迁移；旧程序不能打开升级后的数据库，也不能导入新版数据包。各版本的具体变化见[格式规则](../reference/settings-api.md#数据库与设置迁移)，与日常使用相关的几点：
 
-schema 14 保存开场白的永久锁定状态，升级前完整备份；旧对话不推断首次请求历史，保持开场白只读。新数据包保留此状态，旧数据包中的对话导入后保持锁定。schema 1–8 若包含剧情对话，会在任何写入前明确拒绝，原文件保留，并提示使用根目录的 `clear-conversations.cmd` 清理脚本。需要继续旧剧情时，请使用兼容旧版打开原数据；也可用旧版导出非对话资料，在新的空数据目录中导入。旧版个人数据包只支持导入非对话资料。没有剧情的旧数据库仍先只读核对，并在升级前生成 `before-upgrade-schema<旧版本>-settings<旧版本>-*.sqlite3` 完整备份。schema 13 将 Full Agent 恢复进度升为 version 3，分别保存普通正文和模型原生结束状态；旧版交付进度可续接，已保存轨迹保留审计，新数据包拒绝由旧程序误读；设置 version 10 新增可见的总运行时限（默认 900 秒），保留其他设置与已存提示词。设置 version 11 新增可见的单条向量索引时限（默认 60 秒，范围 1–3600 秒），两种模式分别保存；升级前同样备份，保留其他设置与剧情。设置 version 12 允许两个 Android 模型分别显式选择 CPU、OpenCL GPU 或实验性 Hexagon NPU；升级前备份，已有设备与其他配置原样保留。设置 version 13 将 Kemini 三项格式提示恢复为 Interleaving 成对输出；升级前备份，默认值和自定义值都迁移，保留首尾空白、换行及其他自定义内容。旧进度中已完成的工具和脚本副作用保留，不回滚旧数据。当前格式的备份恢复和整轮版本保留照常工作，详见[格式规则](../reference/settings-api.md#数据库与设置迁移)。
+- **schema 1–8 中的剧情对话不能升级**：打开时在任何写入前明确拒绝，原文件保留，并提示使用根目录的 `clear-conversations.cmd` 清理脚本（见下文）。需要继续旧剧情时，用兼容的旧版打开原数据；也可以用旧版导出非对话资料，再在新的空数据目录中导入。旧版个人数据包只能导入非对话资料。
+- **开场白锁定（schema 14）**：旧对话不推断首次请求的历史，开场白保持只读；旧数据包中的对话导入后也保持锁定。
+- **上下文实测（schema 16）**：上下文校准样本改为接口实测快照，旧样本失效；旧待续任务中按估值强制换窗的标记同步失效，正文草稿和已完成工具保留，等待新请求。
+- **原著参考（schema 17、18）**：全文副本位于 `data/blobs/novels/`，随完整备份保存；对话导出可选择携带文件，导入的调查保持暂停，详见[原著参考](../design/novel-research.md)。
+- **Full Agent 正文分段与交互图形（schema 19、20）**：已有消息按单段读取，旧数据包按单段导入；交互图形默认关闭，图形完整保存在工具轨迹中，随备份、版本和分支保留。
+- **设置**：迁移会补齐新增字段的可见默认值（如总运行时限 900 秒、单条向量索引时限 60 秒），保留已有设置、提示词和剧情。设置 version 14 把旧 Half Agent `tokens` 分批模式迁移为按消息分批，保留消息 cap 和批量大小，`off` 保持关闭，并移除旧的历史 token 预算和压力目标，设置页会说明这一变化。
+
+旧进度中已完成的工具和脚本副作用会保留，不回滚。当前格式的备份恢复和整轮版本照常工作。
 
 需要清空剧情对话并保留现有资料时，先停止酒馆服务。Windows 默认数据目录可双击根目录的 `clear-conversations.cmd`，按提示输入 `y`；自定义目录必须传入与启动时一致的路径：
 
