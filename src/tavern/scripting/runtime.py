@@ -14,6 +14,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from tavern.character.cards import card_scripts, is_initvar, lore_entries, normalize
+from tavern.core.story_segments import split_segments
 from tavern.scripting.realm import RealmBackend, default_backend
 
 SDK = Path(__file__).parents[1] / "static" / "runtime.js"
@@ -219,11 +220,15 @@ class ScriptRuntime:
 def message_frames(history, prepare_markup):
     """Yield (index, html) for history messages that mount a server-side frame."""
     for index, message in enumerate(history):
-        html = message.get("display", message.get("raw", ""))
-        if prepare_markup and "<" in html:
-            html = prepare_markup(html)
-        if "<script" in html.lower():
-            yield index, html
+        text = message.get("display", message.get("raw", ""))
+        breaks = message.get("story_segments", {}).get("display", [])
+        # Match initial delivery: adjacent HTML roots from separate segments
+        # must not merge into one realm when this message becomes history.
+        for html in split_segments(text, breaks):
+            if prepare_markup and "<" in html:
+                html = prepare_markup(html)
+            if "<script" in html.lower():
+                yield index, html
 
 
 # generateSchema({}) in vendor/mvu/schema.ts when no previous schema exists.

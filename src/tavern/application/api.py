@@ -624,7 +624,12 @@ def create_app(data_dir=None):
                             "document", card["document"]
                         ),
                     }
-                    message["display"] = service.dependencies.markup(source, message["display"])
+                    from tavern.core.story_segments import join_segments, split_segments
+
+                    parts = split_segments(message["display"], message["story_segments"]["display"])
+                    message["display"], message["story_segments"]["display"] = join_segments(
+                        [service.dependencies.markup(source, part) for part in parts]
+                    )
         service.prepare_indexes(sid)
         return result
 

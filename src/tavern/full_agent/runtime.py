@@ -9,11 +9,13 @@ from tavern.conversation.update_review import finish_turn
 from tavern.core.cache_policy import fingerprint
 from tavern.core.models import TurnRequest
 from tavern.core.provider import require_model_connection
+from tavern.core.story_segments import split_segments
 from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.prefix_debug import PrefixDebug
 from tavern.full_agent.protocol import TurnError
 from tavern.scripting.runtime import ScriptRuntime
+from tavern.scripting.story_display import transform_display
 from tavern.storage.store import dump, uid
 
 
@@ -221,26 +223,46 @@ class FullAgentRuntime:
                     mirror = await script.call("snapshot")
                     mirror["messages"][-1]["message"] = text
                     await script.call("update", mirror)
-                    candidate = await script.call("transform", text, rules, 2, "display", 0)
-                    if card["permission"] and "<script" in candidate.lower():
-                        await script.add_message_frame(
-                            self.dependencies.markup({**card, "document": document}, candidate),
-                            {**mirror, "serverMain": False, "currentMessage": len(mirror["messages"]) - 1},
-                            host,
-                        )
+                    raw_breaks = agent.story["breaks"]
+                    candidate, candidate_breaks = await transform_display(
+                        script, text, rules, breaks=raw_breaks
+                    )
+                    for part in split_segments(candidate, candidate_breaks):
+                        if card["permission"] and "<script" in part.lower():
+                            await script.add_message_frame(
+                                self.dependencies.markup({**card, "document": document}, part),
+                                {
+                                    **mirror,
+                                    "serverMain": False,
+                                    "currentMessage": len(mirror["messages"]) - 1,
+                                },
+                                host,
+                            )
                     processed = await script.call("process", text, [], "")
                     snapshot.update(state=processed["state"], scopes=processed["scopes"])
                     if processed.get("loreModified"):
                         # The mirror can predate model edits and successful variable
                         # tools. Only this final callback's delta may replace them.
                         agent.apply_script_lore(mirror["lore"], processed)
+                    if processed["text"] != text:
+                        # The callback's complete text is authoritative; delivery
+                        # offsets no longer describe it, but cannot block commit.
+                        raw_breaks = []
                     text = processed["text"]
                     if not text.strip():
                         raise ValueError("正文回调返回了空白内容，本回合未提交")
                     model = await script.call("transform", text, rules, 2, "model", 0)
-                    display = await script.call("transform", text, rules, 2, "display", 0)
-                    if card["permission"] and "<" in display:
-                        display = self.dependencies.markup({**card, "document": document}, display)
+                    display, display_breaks = await transform_display(
+                        script,
+                        text,
+                        rules,
+                        breaks=raw_breaks,
+                        markup=(lambda part: self.dependencies.markup({**card, "document": document}, part))
+                        if card["permission"]
+                        else None,
+                    )
+                    if not display_breaks:
+                        raw_breaks = []
                 except Exception as error:
                     # Progress was saved before callbacks. A user continuation
                     # retries only this local phase, without accumulating partial
@@ -260,6 +282,7 @@ class FullAgentRuntime:
                     "snapshot": snapshot,
                     "retrieval_query": agent.retrieval_query,
                     "auxiliary": agent.story["auxiliary"],
+                    "story_segments": {"raw": raw_breaks, "display": display_breaks},
                 }
                 # The story and native replies already live in the trace. This
                 # marker records observations without replaying another body.
@@ -283,10 +306,11 @@ class FullAgentRuntime:
                     "reason": "Full Agent 回合提交",
                     "full_agent_trace": agent.new_trace,
                 }
-                agent.preview.replace(text)
+                agent.preview.replace(text, breaks=raw_breaks)
                 finish_turn(self.store, tid, session, pending, snapshot)
-        except asyncio.CancelledError:
-            self.store.set_turn(tid, status="cancelled", error="用户取消，草稿未提交")
+        except asyncio.CancelledError as error:
+            message = "\n".join(["用户取消，草稿未提交", *getattr(error, "__notes__", [])])
+            self.store.set_turn(tid, status="cancelled", error=message)
             self.store.event(tid, "cancelled", {})
         except Exception as error:
             if isinstance(error, TimeoutError) and deadline.expired():
@@ -294,7 +318,7 @@ class FullAgentRuntime:
                     "TIME_BUDGET_EXHAUSTED",
                     f"本次运行达到 {settings.full_agent_config.max_duration_seconds} 秒总时限；草稿未提交，可显式继续。",
                 )
-            message = str(error) or type(error).__name__
+            message = "\n".join([str(error) or type(error).__name__, *getattr(error, "__notes__", [])])
             self.store.set_turn(tid, status="error", error=message)
             self.store.event(
                 tid,

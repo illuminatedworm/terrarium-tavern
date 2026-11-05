@@ -7,7 +7,7 @@ function hasMvuScript(text: string): boolean {
 }
 const voidTags = new Set('area base br col embed hr img input link meta param source track wbr'.split(' '));
 type Fragment = { start: number; end: number; html: string; fenced?: boolean };
-export type StoryContent = { format: 'markdown' | 'html'; text: string };
+export type StoryContent = { format: 'markdown' | 'html'; text: string; segmentBreak?: boolean };
 export type StoryPresentation = { body: StoryContent[]; panel: StoryContent[] };
 const isInterface = (html: string) =>
   /<(?:html|!doctype|head|body|script|style|div|section|details|main|article|table|form)\b/i.test(html);

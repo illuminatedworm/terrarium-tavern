@@ -17,13 +17,14 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_tokens
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
+from tavern.core.story_segments import MAX_SEGMENTS
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.handoff import render_chapters, render_current
 from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
-from tavern.full_agent.story import committed_story, story_history
+from tavern.full_agent.story import committed_records, committed_story, story_history
 
 
 def load_trace(store, sid, history):
@@ -185,9 +186,11 @@ def compile_window(
     records.extend({**message, "_content_owner": None} for message in continuation)
     records, _ = story_history(records)
     if story is not None:
+        # Only Kemini parses its delivery into different story text. submit_story
+        # arguments are each one accepted segment and already match the draft.
         records = [
             committed_story(message, story["content"])
-            if message.get("_story_received", {}).get("input_id") == input_id
+            if settings.kemini.enabled and message.get("_story_received", {}).get("input_id") == input_id
             else message
             for message in records
         ]
@@ -205,8 +208,14 @@ def compile_window(
         else:
             by_owner.setdefault(owner, []).append(message)
 
-    records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}
+    for message in visible:
+        by_owner[message["id"]] = committed_records(
+            by_owner.get(message["id"], []),
+            history_text[message["id"]],
+            len(message.get("story_segments", {}).get("raw", [])) + 1,
+        )
+    records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     ledger = ContextLedger(
         settings,
         items,
@@ -276,8 +285,6 @@ def compile_window(
                 # or the reply message carries the committed story instead.
                 # Only the cached prefix after that point changes.
                 continue
-            if record.get("_story_received"):
-                record = committed_story(record, history_text[message["id"]])
             if replay(record) is not None and record.get("_story_received"):
                 story_in_trace = True
         if not story_in_trace:
@@ -333,21 +340,43 @@ def compile_window(
         "input",
         message_id=input_id,
     )
+    replayed_continuation = []
     for message in continuation:
-        replay(message)
-    story_in_context = any(
-        message.get("_story_received", {}).get("input_id") == input_id for message in continuation
-    )
+        if (replayed := replay(message)) is not None:
+            replayed_continuation.append(replayed)
+    covered_segments = set()
+    for message in replayed_continuation:
+        if message.get("_story_received", {}).get("input_id") == input_id:
+            covered_segments.update(message.get("_story_segments", {}).values() or [1])
+        value = message.get("_runtime_context", {}).get("value")
+        if (
+            message.get("source") == "roleplay_draft"
+            and isinstance(value, dict)
+            and value.get("input_id") == input_id
+            and not value.get("in_response")
+        ):
+            covered_segments.update(range(1, value.get("segment_count", 1) + 1))
+    segment_count = len((story or {}).get("breaks", [])) + 1
+    story_in_context = set(range(1, segment_count + 1)) <= covered_segments
     update(
         "roleplay_draft",
-        # Tool continuations and resumed turns read this frame; a second story is
-        # rejected, so it says how to finish instead of only stating progress.
         (
             f"本轮正文 {message_ref(len(history) + 2)} 已接收，不要再输出正文；"
             if settings.kemini.enabled
-            else f"本轮正文 {message_ref(len(history) + 2)} 已接收并保存到草稿，请勿再次调用 submit_story。普通文本仅作备注；"
+            else f"本轮正文 {message_ref(len(history) + 2)} 已接收 {segment_count}/{MAX_SEGMENTS} 段并保存到草稿，"
+            + (
+                "可按需追加后续段落，不重写或重复前文；"
+                if segment_count < MAX_SEGMENTS
+                else "已达上限，不再调用 submit_story；"
+            )
+            + "所有段落共用此 H 引用，read_history 返回已接收的累计全文。普通文本仅作备注；"
         )
-        + "如有未完成的工具调用就继续，否则直接结束本次回复。"
+        # Below the limit, appending is a valid reason to continue; Kemini text stays unchanged.
+        + (
+            "如需追加段落或有未完成的工具调用就继续，否则直接结束本次回复。"
+            if not settings.kemini.enabled and segment_count < MAX_SEGMENTS
+            else "如有未完成的工具调用就继续，否则直接结束本次回复。"
+        )
         + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
         if story is not None
         else "",
@@ -355,7 +384,11 @@ def compile_window(
             "input_id": input_id,
             "content_hash": fingerprint(story["content"]),
             "in_response": story_in_context,
-            **({} if settings.kemini.enabled else {"delivery": "submit_story"}),
+            **(
+                {}
+                if settings.kemini.enabled
+                else {"delivery": "submit_story", "segment_count": segment_count}
+            ),
         }
         if story is not None
         else False,

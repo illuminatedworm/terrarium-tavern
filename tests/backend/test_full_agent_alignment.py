@@ -1468,22 +1468,30 @@ async def test_source_rebase_preserves_unchanged_native_replies_from_same_model(
         await service.close()
 
 
-async def test_duplicate_story_rejects_delivery_without_replacing_body(tmp_path):
+async def test_story_limit_preserves_three_segments_and_independent_tools(tmp_path):
     store, service, session = game(tmp_path)
     doc = store.settings_document()
     doc.full_agent.tools.max_steps = 2
     store.save_settings(doc)
     try:
         model = Model(
-            {"content": "accepted one", "calls": [("read_history", {"ref": "H2"})]},
-            {"content": "rejected two", "calls": [("write_handoff", handoff("must not run", through=None))]},
+            {
+                "calls": [
+                    ("submit_story", {"content": "accepted one"}),
+                    ("submit_story", {"content": "accepted two"}),
+                    ("submit_story", {"content": "accepted three"}),
+                    ("read_history", {"ref": "H3"}),
+                ]
+            },
+            {"content": "rejected four", "calls": [("write_handoff", handoff("still runs", through=None))]},
         )
         result, current = await turn(service, session, model)
         assert result["status"] == "error" and current["revision"] == 0
         assert len(model.requests) == 2
         progress = store.full_agent_progress(result["id"])
-        assert progress["story"]["content"] == "accepted one"
-        assert current_text(progress["snapshot"]["full_agent"]) == "must not run"
+        assert progress["story"]["content"] == "accepted one\n\naccepted two\n\naccepted three"
+        assert len(progress["story"]["breaks"]) == 2
+        assert current_text(progress["snapshot"]["full_agent"]) == "still runs"
         duplicate = next(
             e["payload"]["result"]
             for e in store.events(result["id"])
@@ -1491,7 +1499,7 @@ async def test_duplicate_story_rejects_delivery_without_replacing_body(tmp_path)
             and e["payload"]["name"] == "submit_story"
             and not e["payload"]["result"]["ok"]
         )
-        assert duplicate["error"]["code"] == "STORY_ALREADY_RECEIVED"
+        assert duplicate["error"]["code"] == "STORY_LIMIT_REACHED"
         assert not progress["model_completed"]
     finally:
         await service.close()

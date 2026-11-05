@@ -3,6 +3,7 @@
 import copy
 import json
 
+from tavern.core.story_segments import SEPARATOR
 from tavern.scripting.native_response import portable
 
 LEGACY_TURN_TOOLS = frozenset({"roleplay", "finish_turn"})
@@ -78,4 +79,71 @@ def committed_story(message, text):
         return item
     if message.get("content") == text:
         return message
-    return {**portable(message), "content": text}
+    return portable({**message, "content": text})
+
+
+def committed_records(records, text, segment_count):
+    """Replay accepted segments once, or project the final text at the last delivery.
+
+    Whole-message model regex/macros can change or remove segment boundaries.
+    In that case one canonical delivery replaces the accepted delivery calls in
+    the request only; their original arguments/results remain in the audit log.
+    Other tools and commentary keep their order. Native state after a rewritten
+    exchange cannot retain the superseded prose or deleted function calls.
+    """
+    deliveries = []
+    for index, record in enumerate(records):
+        if not record.get("_story_received"):
+            continue
+        segments = record.get("_story_segments")
+        if not segments and record.get("_story_call_id"):
+            segments = {record["_story_call_id"]: 1}
+        if segments:
+            for call in record.get("tool_calls", []):
+                if call["id"] in segments:
+                    deliveries.append(
+                        (
+                            index,
+                            call["id"],
+                            segments[call["id"]],
+                            json.loads(call["function"]["arguments"])["content"],
+                        )
+                    )
+        else:
+            deliveries.append((index, None, 1, record.get("content", "")))
+    if not deliveries:
+        return records
+    if [part for _, _, part, _ in deliveries] == list(range(1, segment_count + 1)) and SEPARATOR.join(
+        content for _, _, _, content in deliveries
+    ) == text:
+        return records
+    last_index, last_call, _, _ = deliveries[-1]
+    accepted = {}
+    for index, call_id, _, _ in deliveries:
+        accepted.setdefault(index, set()).add(call_id)
+    result, removed, changed = [], set(), False
+    for index, original in enumerate(records):
+        item = original
+        if item.get("role") == "assistant":
+            removed = accepted.get(index, set()).copy()
+            if index == last_index:
+                removed.discard(last_call)
+            if removed or index == last_index:
+                changed = True
+                item = copy.deepcopy(item)
+                item["tool_calls"] = [
+                    call for call in item.get("tool_calls", []) if call["id"] not in removed
+                ]
+                if index == last_index:
+                    item["_story_call_id"] = last_call
+                    item = committed_story(item, text)
+                else:
+                    if None in removed:
+                        item["content"] = ""
+                    item.pop("_story_received", None)
+                    item.pop("_story_call_id", None)
+                item.pop("_story_segments", None)
+        elif item.get("role") == "tool" and item.get("tool_call_id") in removed:
+            continue
+        result.append(portable(item) if changed else item)
+    return result

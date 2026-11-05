@@ -21,6 +21,7 @@ from tavern.core.kemini import AuxiliaryPart
 from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.models import ContextRecipe, PersonaEdit, WorldbookEdit
 from tavern.core.settings import SettingsDocument, migrate_settings
+from tavern.core.story_segments import validate_segments
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.search.retrieval_config import ModelProfile
 from tavern.storage.store import Conflict, dump, uid, write_blob
@@ -41,7 +42,7 @@ JSON_FIELDS = {
         "tool_result_options",
         "cache_breakpoint_follow",
     },
-    "messages": {"snapshot", "auxiliary"},
+    "messages": {"snapshot", "auxiliary", "story_segments"},
     "full_agent_trace": {"payload"},
     "half_agent_trace": {"payload"},
     "message_adapter_configs": {"config"},
@@ -137,7 +138,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 8,
+        "version": 9,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -314,7 +315,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8, 9):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -481,6 +482,8 @@ def validate_package(store, package, blobs):
             messages = bundle["messages"]
             by_id = {}
             for message in messages:
+                if package["version"] < 9:
+                    message.setdefault("story_segments", {"raw": [], "display": []})
                 required = {
                     "id",
                     "session",
@@ -492,8 +495,14 @@ def validate_package(store, package, blobs):
                     "snapshot",
                     "created",
                     "auxiliary",
+                    "story_segments",
                 }
                 validate_row(schema, "messages", message, required)
+                validate_segments(message["story_segments"], message["raw"], message["display"])
+                if message["story_segments"]["raw"] and (
+                    session["agent_mode"] != "full_agent" or kemini or message["role"] != "assistant"
+                ):
+                    raise ValueError("只有普通 Full Agent 回复可以包含多段正文")
                 if not isinstance(message["auxiliary"], list):
                     raise ValueError("实验辅助记录必须是列表")
                 message["auxiliary"] = [

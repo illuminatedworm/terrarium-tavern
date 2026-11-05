@@ -123,6 +123,7 @@ export interface TurnRecord {
   /** The submitted `TurnRequest`; scripts may add generate options. */
   request: TurnRequest;
   draft: string;
+  draft_breaks?: number[];
   error: string | null;
   pending: JsonObject | null;
   resumable: boolean;

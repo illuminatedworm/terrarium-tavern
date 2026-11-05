@@ -731,6 +731,7 @@ class ModelTransport(BaseLLMProvider):
     def _reset_kemini(self):
         self._kemini, self.last_auxiliary, self._story_tool = None, [], False
         self._submit_preview, self._submit_preview_stopped = None, False
+        self.story_preview_breaks = []
 
     def _begin_kemini(self, tools, kwargs):
         # Full Agent accepts ordinary prose itself and keeps the opt-in Kemini
@@ -738,9 +739,9 @@ class ModelTransport(BaseLLMProvider):
         self._reset_kemini()
         self._story_tool = kwargs.get("_full_agent_story", False)
         if kwargs.get("_submit_story"):
-            from tavern.scripting.kemini import ToolArguments
+            from tavern.scripting.story_preview import StoryArguments
 
-            self._submit_preview = ToolArguments({"submit_story"})
+            self._submit_preview = StoryArguments(kwargs.get("_story_segments_remaining", 3))
         config = self.settings.kemini
         if (
             getattr(self, "operation_purpose", None) == "narrative"
@@ -762,7 +763,9 @@ class ModelTransport(BaseLLMProvider):
             if self._submit_preview_stopped:
                 return ""
             try:
-                return self._submit_preview.feed(event, api)
+                delta = self._submit_preview.feed(event, api)
+                self.story_preview_breaks = self._submit_preview.breaks
+                return delta
             except ValueError:
                 # Preview is provisional. The full response must still reach
                 # JSON/schema validation and retain its provider diagnostics.

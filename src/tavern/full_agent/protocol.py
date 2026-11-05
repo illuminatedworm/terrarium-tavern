@@ -1,6 +1,7 @@
 """Full Agent result envelopes and explicit, actionable failure categories."""
 
 RECOVERY = {
+    "STORY_LIMIT_REACHED": (False, "完成必要收尾后结束。"),
     "STORY_ALREADY_RECEIVED": (False, "保留已接收的正文，继续必要工具或正常结束回复；不要再次提交正文。"),
     "UNKNOWN_TOOL": (True, "使用本轮工具目录中的名称。"),
     "PERMISSION_DENIED": (False, "遵守本轮授权；需要时由用户调整工具开关或授权。"),

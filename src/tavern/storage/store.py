@@ -96,7 +96,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 SETTINGS_VERSIONS = range(2, 16)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -120,7 +120,10 @@ SESSION_COLUMNS = {
     # Old stories have no durable first-request fact; never infer it from prunable logs.
     "opening_locked": "INTEGER NOT NULL DEFAULT 1",
 }
-MESSAGE_COLUMNS = {"auxiliary": "TEXT NOT NULL DEFAULT '[]'"}
+MESSAGE_COLUMNS = {
+    "auxiliary": "TEXT NOT NULL DEFAULT '[]'",
+    "story_segments": 'TEXT NOT NULL DEFAULT \'{"raw":[],"display":[]}\'',
+}
 
 
 def add_columns(db, table, columns):
@@ -227,6 +230,7 @@ class Store(MessageAdapters):
                 UNIQUE(session, operation))""")
             added = add_columns(db, "sessions", SESSION_COLUMNS)
             add_columns(db, "messages", MESSAGE_COLUMNS)
+            add_columns(db, "turns", {"draft_breaks": "TEXT NOT NULL DEFAULT '[]'"})
             if "title" in added:
                 db.execute("""UPDATE sessions SET title=COALESCE(
                     (SELECT name FROM cards WHERE cards.id=sessions.card),
@@ -839,6 +843,7 @@ class Store(MessageAdapters):
                 message = rows[cursor]
                 message["snapshot"] = json.loads(message["snapshot"])
                 message["auxiliary"] = json.loads(message["auxiliary"])
+                message["story_segments"] = json.loads(message["story_segments"])
                 prefix.append(message)
                 seen.add(cursor)
                 cursor = message["parent"]
@@ -887,6 +892,7 @@ class Store(MessageAdapters):
                         **message,
                         "snapshot": dump(message["snapshot"]),
                         "auxiliary": dump(message["auxiliary"]),
+                        "story_segments": dump(message["story_segments"]),
                     },
                 )
             self.copy_message_adapter(db, "story", sid, new_sid)
@@ -1048,6 +1054,7 @@ class Store(MessageAdapters):
             row = rows[head]
             row["snapshot"] = json.loads(row["snapshot"])
             row["auxiliary"] = json.loads(row["auxiliary"])
+            row["story_segments"] = json.loads(row["story_segments"])
             if row["role"] == "assistant":
                 row["versions"] = versions[version_group(row)]
                 row["version_index"] = row["versions"].index(row["id"])
@@ -1619,6 +1626,7 @@ class Store(MessageAdapters):
                 source = db.execute("SELECT request FROM turns WHERE id=?", (previous,)).fetchone()
             anchor = retry_head(db, r)
         result = dict(r)
+        result["draft_breaks"] = json.loads(result["draft_breaks"])
         result["resumable"] = resumable
         result["resume_failures"] = resume_failures
         result["retry_head"] = anchor
@@ -1650,7 +1658,7 @@ class Store(MessageAdapters):
             )
             return cur.lastrowid
 
-    def write_turn_draft(self, tid: str, text: str, *, replace: bool = False) -> None:
+    def write_turn_draft(self, tid: str, text: str, *, replace: bool = False, breaks=None) -> None:
         """Persist a provisional preview and its replay event in one transaction.
 
         Draft writes cannot change committed history or resurrect a stopped turn.
@@ -1658,14 +1666,23 @@ class Store(MessageAdapters):
         """
         with self.connection() as db:
             value = "?" if replace else "draft || ?"
+            if replace and breaks is None:
+                breaks = []
+            boundary_update = ",draft_breaks=?" if breaks is not None else ""
             changed = db.execute(
-                f"UPDATE turns SET draft={value} WHERE id=? AND status='running'", (text, tid)
+                f"UPDATE turns SET draft={value}{boundary_update} WHERE id=? AND status='running'",
+                (text, *([dump(breaks)] if breaks is not None else []), tid),
             )
             if changed.rowcount != 1:
                 raise Conflict("回合已结束，不能继续更新正文预览")
             db.execute(
                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
-                (tid, "text_reset" if replace else "text", dump({"text": text}), time.time()),
+                (
+                    tid,
+                    "text_reset" if replace else "text",
+                    dump({"text": text, **({"breaks": breaks} if breaks is not None else {})}),
+                    time.time(),
+                ),
             )
 
     def events(self, tid, after=0):
@@ -1814,7 +1831,8 @@ class Store(MessageAdapters):
             for m in pending.get("messages", []):
                 settle_message_archive(db, turn["session"], m["parent"], m["snapshot"])
                 db.execute(
-                    "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created,"
+                    "retrieval_query,auxiliary,story_segments) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         m["id"],
                         turn["session"],
@@ -1825,14 +1843,10 @@ class Store(MessageAdapters):
                         m["display"],
                         dump(m["snapshot"]),
                         time.time(),
+                        m.get("retrieval_query", ""),
+                        dump(m.get("auxiliary", [])),
+                        dump(m.get("story_segments", {"raw": [], "display": []})),
                     ),
-                )
-                db.execute(
-                    "UPDATE messages SET retrieval_query=? WHERE id=?",
-                    (m.get("retrieval_query", ""), m["id"]),
-                )
-                db.execute(
-                    "UPDATE messages SET auxiliary=? WHERE id=?", (dump(m.get("auxiliary", [])), m["id"])
                 )
             self._update_cache_follow(
                 db, turn["session"], last, advance=not scene and req.get("mode", "send") != "regenerate"

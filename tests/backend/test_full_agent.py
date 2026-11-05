@@ -1403,11 +1403,28 @@ async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(stor
         assert owner.state["notes"]["事实"] == note
 
 
-async def test_submit_story_keeps_commentary_out_of_prose_and_resumes_without_overwrite(story):
+async def test_submit_story_appends_across_resume_and_rollover_with_one_history_reference(story):
+    from tavern.core.story_segments import join_segments, validate_segments
     from tavern.full_agent.activity import message_items
+    from tavern.storage.transfer import ExportSelection, export_package, read_package
 
     store, session = story
     service = runtime(store)
+
+    class DisplayScript(Script):
+        async def call(self, method, *args):
+            if method == "transform" and args[2] == 2:
+                return (
+                    f"【{args[0]}】"
+                    if args[3] == "display"
+                    else args[0].replace("第一段🙂。\n\n第二段。", "整篇模型变换。")
+                )
+            return await super().call(method, *args)
+
+    async def open_script(document, history, snapshot, *args, **kwargs):
+        return DisplayScript(history, snapshot)
+
+    service.full.runtime.open = open_script
 
     class ReusedIds(Model):
         async def chat_complete(self, messages, **kwargs):
@@ -1421,15 +1438,18 @@ async def test_submit_story_keeps_commentary_out_of_prose_and_resumes_without_ov
         {
             "content": "先核对资料。",
             "commentary": True,
-            "calls": [("submit_story", {"content": "唯一正文。"})],
+            "calls": [("submit_story", {"content": "第一段🙂。"})],
         },
         ("read_history", {"ref": "H3"}),
+        ("write_note", {"key": "事实", "content": "第一段的事实", "kind": "fact", "sources": ["H3"]}),
+        ("submit_story", {"content": "第二段。"}),
         RuntimeError("connection lost after story receipt"),
     )
     try:
         failed, unchanged = await turn(service, session, first)
         assert failed["status"] == "error" and unchanged["head"] == session["head"]
-        assert failed["draft"] == "唯一正文。"
+        assert failed["draft"] == "第一段🙂。\n\n第二段。"
+        assert failed["draft_breaks"] == [6]
         receipt = next(
             json.loads(m["content"])
             for m in first.requests[2]["messages"]
@@ -1437,23 +1457,74 @@ async def test_submit_story_keeps_commentary_out_of_prose_and_resumes_without_ov
         )
         assert receipt == {
             "ok": True,
-            "data": {"saved_to_draft": True, "message": "本轮正文已接收并保存到草稿，请勿再次提交正文。"},
+            "data": {"saved_to_draft": True, "ref": "H3", "message": "已接收第 1/3 段；可继续追加或结束。"},
         }
-        assert any('"text":"唯一正文。"' in m.get("content", "") for m in first.requests[3]["messages"])
+        assert any('"text":"第一段🙂。"' in m.get("content", "") for m in first.requests[3]["messages"])
         resumed_model = Model(
-            ("submit_story", {"content": "不可覆盖的第二份正文。"}),
+            ("new_context", {"handoff": handoff("开场前情"), "keep_recent": 0}),
+            {
+                "calls": [
+                    ("submit_story", {"content": "第三段。"}),
+                    ("read_history", {"ref": "H3"}),
+                    ("submit_story", {"content": "第四段不接收。"}),
+                ]
+            },
             {"content": "本轮正文已输出完毕，我现在直接结束回复。", "commentary": True},
         )
         resumed, current = await turn(
             service, session, resumed_model, operation_id="submit-resume", resume_turn_id=failed["id"]
         )
         assert resumed["status"] == "committed", resumed["error"]
-        assert current["messages"][-1]["raw"] == "唯一正文。"
-        assert current["messages"][-1]["id"] == store.full_agent_progress(failed["id"])["output_id"]
+        output = current["messages"][-1]
+        raw, _ = join_segments(["第一段🙂。", "第二段。", "第三段。"])
+        display = f"【{raw}】"
+        assert output["raw"] == raw and output["display"] == display
+        assert output["model"] == "整篇模型变换。\n\n第三段。"
+        assert output["story_segments"] == {"raw": [], "display": []}
+        assert output["id"] == store.full_agent_progress(failed["id"])["output_id"]
+        assert output["ref"] == "H3" and len(current["messages"]) == 3
+        assert note_view(current["snapshot"]["full_agent"]["notes"]["事实"], current["messages"])[
+            "sources"
+        ] == ["H3"]
+        # A rollover must carry the whole accepted prefix, not merely the last segment.
+        assert failed["draft"] in json.dumps(
+            resumed_model.requests[1]["messages"], ensure_ascii=False
+        ).replace("\\n", "\n")
         errors = [
-            json.loads(m["content"]) for m in resumed_model.requests[1]["messages"] if m["role"] == "tool"
+            json.loads(m["content"]) for m in resumed_model.requests[2]["messages"] if m["role"] == "tool"
         ]
-        assert errors[-1]["error"]["code"] == "STORY_ALREADY_RECEIVED"
+        assert errors[-1]["error"]["code"] == "STORY_LIMIT_REACHED"
+        assert errors[-2]["data"]["text"] == raw
+        # Final model text is replayed once even when only the last delivery survives the window.
+        compiled = compile_window(
+            store.session_card(session["id"])["document"],
+            current,
+            current["messages"],
+            current["snapshot"],
+            "继续",
+            store.settings("full_agent"),
+            [],
+            trace=load_trace(store, session["id"], current["messages"]),
+        )
+        delivered = [
+            json.loads(c["function"]["arguments"])["content"]
+            for m in compiled["messages"]
+            for c in m.get("tool_calls", [])
+            if c["function"]["name"] == "submit_story"
+        ]
+        assert delivered == [output["model"], "第四段不接收。"]
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        assert fork["messages"][-1]["story_segments"] == output["story_segments"]
+        assert note_view(fork["snapshot"]["full_agent"]["notes"]["事实"], fork["messages"])["sources"] == [
+            "H3"
+        ]
+        package, _ = read_package(
+            export_package(store, ExportSelection(settings=False, sessions=[fork["id"]])), store
+        )
+        packed = package["sessions"][0]["messages"][-1]
+        assert packed["story_segments"] == output["story_segments"]
+        with pytest.raises(ValueError, match="分段边界"):
+            validate_segments({"raw": [1], "display": [1]}, "🙂\n\n后文", "🙂\n\n后文")
         items = message_items(store, current, [current["head"]])[current["head"]]
         notes = [i for i in items if i["kind"] == "assistant"]
         assert [i["details"]["content"] for i in notes] == [

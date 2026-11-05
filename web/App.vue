@@ -46,6 +46,8 @@ import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
 import PromptField from './components/common/PromptField.vue';
 import { highlightSource } from './lib/sceneNotes';
 import StoryProse from './components/story/StoryProse.vue';
+import StorySegmentDivider from './components/story/StorySegmentDivider.vue';
+import { splitStorySegments } from './lib/storySegments';
 import ExperimentalRecords from './components/story/ExperimentalRecords.vue';
 import { latestAuxiliary } from './lib/kemini';
 import { clampRightWidth, defaultReadingLayout, type ReadingLayout } from './lib/dataTransfer';
@@ -226,6 +228,8 @@ const input = ref(''),
   busy = ref(false),
   activeTurn = ref<TurnRecord | null>(null),
   draft = ref('');
+const draftBreaks = ref<number[]>([]);
+const draftSegments = computed(() => splitStorySegments(draft.value, draftBreaks.value));
 const panel = ref(''),
   settings = ref<SettingsDocument | null>(null),
   selected = ref<CardRecord | null>(null);
@@ -1164,6 +1168,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
     sessionCard.value = card;
     activeTurn.value = restored;
     draft.value = restoredDraft;
+    draftBreaks.value = restored?.draft_breaks || [];
     busy.value = !!active && active.status !== 'awaiting_review';
     if (window.innerWidth < 760) layout.value.leftCollapsed = true;
     localStorage.setItem('tavern-session', id);
@@ -1755,6 +1760,7 @@ function observe(id: string) {
   // Rebuild from sequence zero on reopen instead of appending replay to a draft snapshot.
   const ownsTurn = () => viewScope.owns(token) && activeTurn.value?.id === id;
   draft.value = '';
+  draftBreaks.value = [];
   trace.value = [];
   events = observeTurn(
     id,
@@ -1762,6 +1768,8 @@ function observe(id: string) {
     (event) => {
       if (event.kind === 'text' || event.kind === 'text_reset') {
         draft.value = turnDraft(draft.value, event);
+        if (event.payload.breaks) draftBreaks.value = event.payload.breaks;
+        else if (event.kind === 'text_reset') draftBreaks.value = [];
         void scroll();
       } else {
         const reading = draftReadingOffset();
@@ -1808,6 +1816,7 @@ function observe(id: string) {
         }
         activeTurn.value = turn;
         draft.value = turn.draft;
+        draftBreaks.value = turn.draft_breaks || [];
         busy.value = false;
         session.value = updated;
         await nextTick();
@@ -2960,7 +2969,11 @@ useTimedError(error);
                   </header>
                   <div class="message-body">
                     <div class="draft">
-                      <StoryProse :text="draft" /><span v-if="busy" class="cursor">▍</span>
+                      <template v-for="(segment, index) in draftSegments" :key="index">
+                        <StorySegmentDivider v-if="index" />
+                        <StoryProse :text="segment" />
+                      </template>
+                      <span v-if="busy" class="cursor">▍</span>
                       <ExperimentalRecords :parts="latestAuxiliary(trace)" />
                     </div>
                   </div>

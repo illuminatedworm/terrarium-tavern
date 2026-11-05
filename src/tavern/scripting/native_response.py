@@ -77,8 +77,10 @@ def portable(message):
         result.pop(key, None)
     if result.get("web_sources") and isinstance(result.get("content"), str):
         # A model/account switch invalidates native items, not the public evidence.
+        # Consume only the copied metadata: subsequent projections must not append
+        # the same sources again. The stored native record remains untouched.
         result["content"] += "\n\n网页来源：\n" + "\n".join(
-            f"{row['title']} — {row['url']}" for row in result["web_sources"]
+            f"{row['title']} — {row['url']}" for row in result.pop("web_sources")
         )
     return result
 

@@ -1,6 +1,7 @@
 import { visibleLoreData } from './loreRecords';
 import { parseStoryDisplay } from '../../compat/presentation';
 import { snapshotMacros } from '../../compat/variable-macros';
+import { STORY_SEGMENT_SEPARATOR, splitStorySegments } from './storySegments';
 import type { StoryContent, StoryPresentation } from '../../compat/presentation';
 export type { StoryContent, StoryPresentation } from '../../compat/presentation';
 
@@ -47,15 +48,21 @@ export function copyableText(message: any, session: any): string {
 export function createPresentationCache(limit = 16 * 1024 * 1024, entries = 128) {
   const cache = new Map<string, { value: StoryPresentation; size: number }>();
   let size = 0;
-  return (text: string, role = 'assistant') => {
-    const key = role + '\0' + text;
+  return (text: string, role = 'assistant', breaks: readonly number[] = []) => {
+    const key = role + '\0' + breaks.join(',') + '\0' + text;
     const hit = cache.get(key);
     if (hit) {
       cache.delete(key);
       cache.set(key, hit);
       return hit.value;
     }
-    const value = parseStoryDisplay(text, role);
+    const value: StoryPresentation = { body: [], panel: [] };
+    for (const [index, segment] of splitStorySegments(text, breaks).entries()) {
+      const parsed = parseStoryDisplay(segment, role);
+      if (index) value.body.push({ format: 'markdown', text: STORY_SEGMENT_SEPARATOR, segmentBreak: true });
+      value.body.push(...parsed.body);
+      value.panel.push(...parsed.panel);
+    }
     for (const part of [...value.body, ...value.panel]) Object.freeze(part);
     Object.freeze(value.body);
     Object.freeze(value.panel);
@@ -86,7 +93,10 @@ export function responseData<T>(value: T): T {
     }
     let result = item;
     if (typeof item.raw === 'string' && typeof item.display === 'string' && item.snapshot && item.role) {
-      result = { ...item, presentation: storyPresentation(item.display, item.role) };
+      result = {
+        ...item,
+        presentation: storyPresentation(item.display, item.role, item.story_segments?.display),
+      };
     }
     for (const [key, child] of Object.entries(item)) {
       // Card content and state are user data, not message envelopes.

@@ -220,7 +220,8 @@ async def test_other_agent_cannot_enable_search_through_request_flag(tmp_path):
 
 
 def test_provider_switch_preserves_portable_source_urls():
-    from tavern.scripting.native_response import prepare_messages
+    from tavern.full_agent.story import committed_records
+    from tavern.scripting.native_response import portable, prepare_messages
 
     message = {
         "role": "assistant",
@@ -230,4 +231,18 @@ def test_provider_switch_preserves_portable_source_urls():
     }
     replay, invalid = prepare_messages([message], {"api": "anthropic", "model": "new"})
     assert invalid and "https://example.org/source" in replay[0]["content"]
+    assert portable(portable(replay[0])) == replay[0]
+    delivery = {
+        **message,
+        "_story_received": {"input_id": "input"},
+        "_story_segments": {"one": 1, "two": 2},
+        "_story_call_id": "two",
+        "tool_calls": [
+            {"id": cid, "function": {"name": "submit_story", "arguments": json.dumps({"content": cid})}}
+            for cid in ("one", "two")
+        ],
+    }
+    projected = committed_records([delivery], "整篇处理后的正文", 2)
+    assert projected[0]["content"].count("https://example.org/source") == 1
+    assert len(delivery["tool_calls"]) == 2 and delivery["web_sources"] == message["web_sources"]
     assert message["content"] == "已查证"

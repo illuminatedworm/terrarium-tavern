@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import StoryProse from './StoryProse.vue';
 import StoryFrame from './StoryFrame.vue';
 import ExperimentalRecords from './ExperimentalRecords.vue';
+import StorySegmentDivider from './StorySegmentDivider.vue';
 import { messageCharacter, messageContents } from '../../lib/storyPresentation';
 import type { StoryContent } from '../../lib/storyPresentation';
 
@@ -39,8 +40,9 @@ function forwardAction(
 </script>
 <template>
   <template v-for="(content, index) in contents" :key="index">
+    <StorySegmentDivider v-if="content.segmentBreak" />
     <StoryFrame
-      v-if="content.format === 'html'"
+      v-else-if="content.format === 'html'"
       :html="content.text"
       :character="character"
       :message="message"

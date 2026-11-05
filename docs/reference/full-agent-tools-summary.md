@@ -4,7 +4,7 @@
 
 ## 如何工作、为何这样设计
 
-Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型。普通对话以 `submit_story` 交付一次完整正文，普通文本仅作备注，并按模型原生协议自然结束。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。Kemini 实验对话维持独立传输协议。
+Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把工具名称、说明和 JSON 参数结构交给模型；模型提出调用，运行时检查权限、参数及读取记录，执行后把结果送回模型。普通对话以 `submit_story` 追加 1–3 段并合成一条正文，普通文本仅作备注，并按模型原生协议自然结束。写入先进入当前分支的回合草稿，正文、脚本处理及必要审核完成后统一提交。Kemini 实验对话维持独立传输协议。
 
 设计目的是让模型按需取得完整资料，用交接笔记和长期笔记延续故事，并在授权下维护变量与设定。模型负责语义判断，程序负责身份定位、来源校验和一致性：H 引用定位剧情，L 引用定位世界书，真实 ID、版本和指纹留在后端。换窗降低上下文占用，原始剧情仍可查询；长期笔记按需读取，不自动全文注入。
 
@@ -12,7 +12,7 @@ Full Agent 由同一个模型生成剧情、查资料和维护状态。后端把
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
-| `submit_story` | 接收本轮完整故事正文到草稿 | `content: string` | 必须非空白；始终启用，每轮只成功一次，不覆盖正文；普通文本仅作备注。 |
+| `submit_story` | 追加本轮新增故事段落 | `content: string` | 必须非空白且结构完整；始终启用，每轮至多成功三次，只追加不改写；普通文本仅作备注。 |
 | `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |
 | `message_novel_research` | 发送追问或回答 | `ref: string`；`message: string` | 在调查者下一请求前送达，复用原上下文与剩余额度，已暂停或失败的会重新运行；额度耗尽时拒绝。 |
@@ -510,7 +510,7 @@ Cancel an investigator and free its slot; delivered reports and history are kept
 ### `submit_story`
 
 ```text
-Deliver the complete story prose to this turn's draft exactly once. Ordinary assistant text is commentary, not story prose. You may use necessary tools before or after delivery. Success does not commit the turn; finish the remaining work and end your reply normally. Do not resubmit an accepted story.
+Append a new story segment to this turn's draft. At most 3 successful submissions per turn; 1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. Ordinary assistant text is commentary. Tools may run before, between or after segments, including after the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.
 ```
 
 请求：
@@ -522,7 +522,7 @@ Deliver the complete story prose to this turn's draft exactly once. Ordinary ass
 成功返回：
 
 ```json
-{"ok":true,"data":{"saved_to_draft":true,"message":"本轮正文已接收并保存到草稿，请勿再次提交正文。"}}
+{"ok":true,"data":{"saved_to_draft":true,"ref":"H3","message":"已接收第 1/3 段；可继续追加或结束。"}}
 ```
 
 ### 运行时追加的描述

@@ -459,6 +459,8 @@ async def test_opening_initialization_callback_sees_replacement_and_runs_once():
 
 
 async def test_message_closure_callback_and_isolation():
+    from tavern.core.story_segments import join_segments
+
     runtime = ScriptRuntime()
     document = json.loads(Path("samples/星航状态卡.json").read_text(encoding="utf-8"))
     snapshot = {"state": {}, "scopes": {}}
@@ -466,7 +468,19 @@ async def test_message_closure_callback_and_isolation():
     const floorLimit=Number(document.getElementById('limit').textContent);
     eventOn(Mvu.events.VARIABLE_UPDATE_ENDED,data=>{data.stat_data.能量=Math.max(floorLimit,data.stat_data.能量)});
     </script>"""
-    history = [{"id": "greeting", "role": "assistant", "raw": html, "display": html, "snapshot": snapshot}]
+    # The same DOM ID belongs to separate segment realms. Reopening a saved
+    # reply must not let the second callback read the first segment's limit.
+    text, breaks = join_segments([html, html.replace(">2</div>", ">4</div>")])
+    history = [
+        {
+            "id": "greeting",
+            "role": "assistant",
+            "raw": text,
+            "display": text,
+            "story_segments": {"raw": breaks, "display": breaks},
+            "snapshot": snapshot,
+        }
+    ]
 
     async def host(method, args):
         if method == "log":
@@ -476,7 +490,7 @@ async def test_message_closure_callback_and_isolation():
     session = None
     try:
         session = await runtime.open(document, history, snapshot, True, host)
-        assert (await session.call("process", "_.add('能量',-10);"))["state"]["stat_data"]["能量"] == 2
+        assert (await session.call("process", "_.add('能量',-10);"))["state"]["stat_data"]["能量"] == 4
         assert await session.page.evaluate("typeof process") == "undefined"
         result = await session.page.evaluate(
             "async()=>{try{await fetch('http://127.0.0.1:8000/api/settings');return 'leak'}catch{return 'blocked'}}"

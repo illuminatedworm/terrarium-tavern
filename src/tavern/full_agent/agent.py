@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+import sys
 import time
 
 import jsonpatch
@@ -19,6 +20,7 @@ from tavern.core.history_refs import message_ref
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
+from tavern.core.story_segments import MAX_SEGMENTS, SEPARATOR, text_length
 from tavern.full_agent.activity import novel_report_item, observe_report_dispatch
 from tavern.full_agent.content import lore_references
 from tavern.full_agent.content_history import CONTENT_TOOLS_VERSION, content_history, retired_content_call
@@ -107,6 +109,7 @@ class FullAgent:
         self.resumed = progress is not None
         self.story = copy.deepcopy((progress or {}).get("story"))
         if self.story is not None:
+            self.story.setdefault("breaks", [])
             self.source_history.append(
                 {
                     "id": self.output_id,
@@ -151,7 +154,7 @@ class FullAgent:
         return self.store.save_full_agent_progress(
             self.tid,
             {
-                "version": 4,
+                "version": 5,
                 "user": self.user_message,
                 "output_id": self.output_id,
                 "snapshot": self.snapshot,
@@ -178,7 +181,7 @@ class FullAgent:
         """A terminal response never becomes an automatic paid correction loop."""
         self.model_completed = False
         self.resume_reason = reason
-        self.preview.replace(self.story["content"] if self.story else "")
+        self.restore_preview()
         await self.save_progress()
         raise TurnError(code, reason + "；草稿未提交，继续时保留已完成的工作")
 
@@ -232,20 +235,36 @@ class FullAgent:
 
     async def receive_story(self, text, auxiliary):
         if self.story is not None:
-            if not self.settings.kemini.enabled:
-                raise ToolError("STORY_ALREADY_RECEIVED", "本轮正文已接收，不允许再次提交")
-            await self.stop_for_user("STORY_ALREADY_RECEIVED", "本轮已输出正文，第二次正文未接收")
+            if self.settings.kemini.enabled:
+                await self.stop_for_user("STORY_ALREADY_RECEIVED", "本轮已输出正文，第二次正文未接收")
+            if len(self.story["breaks"]) + 1 >= MAX_SEGMENTS:
+                raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {MAX_SEGMENTS} 段正文，不能再追加。")
         if self.must_rollover:
             await self.stop_for_user("CONTEXT_ROLLOVER_REQUIRED", "当前须先换窗，本次正文未接收")
+        breaks = []
+        if self.story is not None:
+            breaks = [*self.story["breaks"], text_length(self.story["content"])]
+            text = self.story["content"] + SEPARATOR + text
         mirror = await self.script.call("snapshot")
         mirror["messages"][-1]["message"] = text
         await self.script.call("update", mirror)
-        self.story = {"content": text, "auxiliary": auxiliary}
-        self.source_history.append({"id": self.output_id, "role": "assistant", "raw": text})
-        self.preview.replace(text)
+        source = {"id": self.output_id, "role": "assistant", "raw": text}
+        if self.story is None:
+            self.source_history.append(source)
+        else:
+            # All deliveries belong to the same message and H reference.
+            self.source_history[-1] = source
+        self.story = {"content": text, "auxiliary": auxiliary, "breaks": breaks}
+        self.preview.replace(text, breaks=breaks)
         if auxiliary:
             self.event("kemini_auxiliary", {"items": auxiliary})
         return {"input_id": self.user_message["id"], "content_hash": fingerprint(text)}
+
+    def restore_preview(self):
+        self.preview.replace(
+            self.story["content"] if self.story else "",
+            breaks=self.story["breaks"] if self.story else [],
+        )
 
     def event(self, kind, payload):
         self.store.event(self.tid, kind, {"purpose": "full_agent", **payload})
@@ -433,7 +452,7 @@ class FullAgent:
             )
             if self.resumed:
                 if self.story is not None:
-                    self.preview.replace(self.story["content"])
+                    self.restore_preview()
                 await self.resume_tools()
                 if self.model_completed:
                     return await self.finished_text()
@@ -548,7 +567,10 @@ class FullAgent:
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
-                if self.story is None:
+                if not self.settings.kemini.enabled:
+                    self.restore_preview()
+                    self.preview.begin_segment()
+                elif self.story is None:
                     self.preview.replace("")
                 try:
                     messages = provider_messages(provider, model_messages(compiled), self.settings)
@@ -556,12 +578,24 @@ class FullAgent:
                     # continuation acknowledges forwarding the newly received reports.
                     dispatching_reports = reports.copy()
                     complete = getattr(provider, "chat_complete_with_preview", None)
+                    remaining = MAX_SEGMENTS - (len(self.story["breaks"]) + 1 if self.story else 0)
+
+                    def preview_story(chunk):
+                        self.preview.append_segment(
+                            chunk, breaks=getattr(provider, "story_preview_breaks", ())
+                        )
+
+                    if self.settings.kemini.enabled:
+                        on_preview = self.preview.append if self.story is None else None
+                    else:
+                        on_preview = preview_story if remaining else None
                     if complete:
                         response = await complete(
                             messages,
-                            self.preview.append if self.story is None else None,
+                            on_preview,
                             _full_agent_story=True,
                             _submit_story=not self.settings.kemini.enabled,
+                            _story_segments_remaining=remaining,
                             extra_body=tool_options,
                         )
                     else:
@@ -667,14 +701,26 @@ class FullAgent:
                 "BUDGET_EXHAUSTED", "Full Agent 达到本回合模型调用上限，草稿未提交；换窗不会重置调用额度"
             )
         finally:
-            if provider is not None:
-                try:
-                    await asyncio.wait_for(provider.close(), timeout=10)
-                except TimeoutError:
-                    # A stuck HTTP connection can hang client shutdown. Closing
-                    # only releases it; it must not replace the story already
-                    # returned or the real error that ended the loop.
-                    self.event("runtime_warning", {"message": "模型连接关闭超时"})
+            failure = sys.exception()
+            try:
+                if not self.settings.kemini.enabled and self.story is not None:
+                    # Failed later segments must not obscure the accepted prefix.
+                    self.restore_preview()
+            except Exception as error:
+                if failure is None:
+                    raise
+                # A failed draft write is secondary to the model error/cancellation.
+                # Keep its diagnostic for the host without replacing that outcome.
+                failure.add_note(f"正文预览恢复失败：{error}")
+            finally:
+                if provider is not None:
+                    try:
+                        await asyncio.wait_for(provider.close(), timeout=10)
+                    except TimeoutError:
+                        # A stuck HTTP connection can hang client shutdown. Closing
+                        # only releases it; it must not replace the story already
+                        # returned or the real error that ended the loop.
+                        self.event("runtime_warning", {"message": "模型连接关闭超时"})
 
     async def resume_tools(self):
         records = list(self.new_trace)
@@ -798,6 +844,9 @@ class FullAgent:
                         for record in records:
                             record["_story_received"] = receipt
                             record["_story_call_id"] = call["id"]
+                            record.setdefault("_story_segments", {})[call["id"]] = (
+                                len(self.story["breaks"]) + 1
+                            )
             except TurnError:
                 raise
             except ToolError as error:

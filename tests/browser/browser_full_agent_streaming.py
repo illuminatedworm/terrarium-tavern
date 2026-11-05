@@ -24,6 +24,7 @@ from tests.backend.test_full_agent_streaming import (
     body_end,
     body_start,
     story_events,
+    terminal,
     tool_events,
 )
 
@@ -89,9 +90,12 @@ async def main(single_viewport=False, report_activity_only=False):
             BrowserStream(
                 gates[1], body_start("第一段正在生成。"), gates[2], body_delta("这是第二段。"), *body_end()
             ),
-            BrowserStream(body_start("第二轮已接收的完整正文"), *tool_events()),
-            BrowserStream(gates[3], *story_events("第二次正文不接收")),
-            BrowserStream(gates[4], *body_end()),
+            BrowserStream(
+                *story_events("第二轮已接收的第一段。\n\n---")[:-1],
+                *tool_events("submit_story", {"content": "第二轮续写的第二段。"}),
+            ),
+            BrowserStream(gates[3], body_start("第三段的残片"), RuntimeError("第三段连接中断")),
+            BrowserStream(gates[4], terminal()),
             BrowserStream(*story_events("第三轮的新回复")),
         ]
         bodies = []
@@ -211,22 +215,29 @@ async def main(single_viewport=False, report_activity_only=False):
                         return
                     await page.get_by_role("textbox", name="用户输入", exact=True).fill("第二轮")
                     await send.click()
-                    await expect(page.locator(".draft")).to_contain_text("第二轮已接收的完整正文")
+                    await expect(page.locator(".draft")).to_contain_text("第二轮续写的第二段。")
+                    await expect(page.locator(".draft .story-segment-divider")).to_have_count(1)
+                    await expect(page.locator(".draft .prose hr")).to_have_count(1)
                     gates[3].set()
                     retry = page.locator(".story").get_by_role("button", name="重新生成", exact=True)
                     await expect(retry).to_be_enabled()
                     await expect(page.locator(".message .badge").last).to_have_text("未提交草稿")
                     assert len(store.session(session["id"])["messages"]) == 3
                     await page.reload()
-                    await expect(page.locator(".draft")).to_have_text("第二轮已接收的完整正文")
+                    await expect(page.locator(".draft")).to_contain_text("第二轮已接收的第一段。")
+                    await expect(page.locator(".draft")).to_contain_text("第二轮续写的第二段。")
+                    await expect(page.locator(".draft .story-segment-divider")).to_have_count(1)
+                    await page.screenshot(path=str(output / "story-segments.png"))
                     failed = store.session(session["id"])["turns"][0]["id"]
-                    assert "第二次正文" in store.turn(failed)["error"]
+                    assert "第三段" in store.turn(failed)["error"]
                     composer = page.get_by_role("textbox", name="用户输入", exact=True)
                     await composer.fill("下一轮的新发言")
+                    await send.click()
+                    await expect(page.locator(".composer-notice")).to_contain_text("请先选择如何完成上一轮")
                     async with page.expect_request(
                         lambda request: request.method == "POST" and request.url.endswith("/turns")
                     ) as submitted:
-                        await send.click()
+                        await page.get_by_role("button", name="继续本轮", exact=True).click()
                     request = (await submitted.value).post_data_json
                     assert request["resume_turn_id"] == failed and request["text"] == "第二轮"
                     await expect(page.locator(".composer-notice")).to_contain_text("正在继续上一轮")
@@ -239,15 +250,16 @@ async def main(single_viewport=False, report_activity_only=False):
                     await expect(send).to_be_visible()
                     await expect(page.locator(".draft")).to_have_count(0)
                     await expect(composer).to_have_value("")
-                    assert "第二次正文不接收" not in json.dumps(bodies[4], ensure_ascii=False)
+                    assert "第三段的残片" not in json.dumps(bodies[4], ensure_ascii=False)
                     history = store.session(session["id"])["messages"]
                     assert [message["raw"] for message in history[-4:]] == [
                         "第二轮",
-                        "第二轮已接收的完整正文",
+                        "第二轮已接收的第一段。\n\n---\n\n第二轮续写的第二段。",
                         "下一轮的新发言",
                         "第三轮的新回复",
                     ]
                     assert len(bodies) == 6
+                    await expect(page.locator(".message.assistant .story-segment-divider")).to_have_count(1)
                     assert "下一轮的新发言" in json.dumps(bodies[5], ensure_ascii=False)
                     assert all(stream.closed for stream in streams)
                     assert not errors, errors

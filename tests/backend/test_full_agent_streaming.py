@@ -500,8 +500,8 @@ async def test_final_script_processing_and_review_still_gate_persistence(tmp_pat
     # An explicit native stop can accompany tools. Drain them before callbacks,
     # without paying for an extra response to confirm completion.
     first = WireStream(
-        *story_events("模型原始正文")[:-1],
-        *tool_events()[:-1],
+        *story_events("模型原始正文第一段")[:-1],
+        *tool_events("submit_story", {"content": "模型原始正文第二段"})[:-1],
         terminal(),
     )
     _, requests = connect(store, service, first)
@@ -511,17 +511,47 @@ async def test_final_script_processing_and_review_still_gate_persistence(tmp_pat
         assert store.turn(tid)["status"] == "awaiting_review", store.turn(tid)["error"]
         assert len(requests) == 1
         assert store.turn(tid)["draft"] == replay(store, tid) == "脚本处理后的正文"
+        assert store.turn(tid)["draft_breaks"] == []
         assert store.session(session["id"])["snapshot"] == session["snapshot"]
         service.review(tid, accept)
         result, current = store.turn(tid), store.session(session["id"])
         if accept:
             assert result["status"] == "committed"
             assert current["messages"][-1]["raw"] == "脚本处理后的正文"
+            assert current["messages"][-1]["story_segments"] == {"raw": [], "display": []}
             assert current["snapshot"]["state"]["stat_data"]["energy"] == 4
         else:
             assert result["status"] == "cancelled" and not result["resumable"]
             assert result["draft"] == replay(store, tid) == ""
             assert current["head"] == session["head"] and current["snapshot"] == session["snapshot"]
+    finally:
+        await service.close()
+
+
+async def test_failed_preview_restore_closes_model_without_masking_error(tmp_path, monkeypatch):
+    store, service, session = game(tmp_path, "chat_completions")
+    accepted = "已接收的正文"
+    first = WireStream(*story_events(accepted)[:-1], terminal("tool_calls"))
+    second = WireStream(body_start("后续残片"), RuntimeError("fixture model disconnected"))
+    provider, _ = connect(store, service, first, second)
+    write_draft = store.write_turn_draft
+
+    def fail_restore(tid, text, *, replace=False, breaks=None):
+        if replace and text == accepted:
+            raise OSError("fixture preview write failed")
+        return write_draft(tid, text, replace=replace, breaks=breaks)
+
+    monkeypatch.setattr(store, "write_turn_draft", fail_restore)
+    try:
+        tid = submit(service, session)
+        await service.tasks[tid]
+        result = store.turn(tid)
+        assert result["status"] == "error"
+        assert "fixture model disconnected" in result["error"]
+        assert "fixture preview write failed" in result["error"]
+        assert first.closed and second.closed and provider.http.is_closed
+        assert store.full_agent_progress(tid)["story"]["content"] == accepted
+        assert store.session(session["id"])["head"] == session["head"]
     finally:
         await service.close()
 
