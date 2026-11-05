@@ -150,7 +150,7 @@ async function refresh() {
             v-model="text"
             rows="10"
             :disabled="working || !session.head"
-            placeholder="当前阶段、可能事件与转折、伏笔及推进条件…"
+            placeholder="核心、各方动向、人物变化、当前阶段、后续方向、伏笔…"
           />
         </label>
         <p v-if="!session.head" class="plot-note">可以先开启功能；发送第一条消息后即可保存和编辑大纲。</p>

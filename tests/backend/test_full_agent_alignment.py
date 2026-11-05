@@ -1375,7 +1375,7 @@ def test_committed_story_replays_only_final_model_text_without_draft_revocation(
     assert not any(m.get("source") == "roleplay_draft" for m in compiled["context_additions"])
 
 
-@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency"])
+@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency", "before_plot_guide"])
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
     from tavern.full_agent.config import FULL_AGENT_PROMPT

@@ -96,7 +96,7 @@ class Plot(Arguments):
     content: str = Field(
         min_length=1,
         max_length=64000,
-        description="Complete updated author-level stage outline, built on the current one; future possibilities, not established story facts. Must contain non-whitespace text.",
+        description="Complete updated author-level outline, built on the current one; future possibilities, not established story facts. Must contain non-whitespace text.",
     )
 
 
@@ -293,14 +293,12 @@ SPECS = {
     ),
     "write_plot": (
         Plot,
-        "Create or fully replace this branch's author-level stage outline. The current outline is in <tavern_plot>; "
-        "no read is needed.\n"
-        "Updates are cumulative: revise the current outline instead of starting over. Keep stages, foreshadowing and "
-        "conditions that still hold, change what progress has affected, and condense finished stages without dropping "
-        "unresolved foreshadowing.\n"
-        "Keep near stages concrete and distant stages broad: possible events, turning points, foreshadowing and the "
-        "conditions that trigger them. These are revisable possibilities, not established facts, things characters "
-        "know, or actions decided for the user.",
+        "Create or fully replace this branch's author-level outline of where the story may go. The current outline is "
+        "in <tavern_plot>; no read is needed.\n"
+        "Updates are cumulative: revise the current outline instead of starting over, keeping its structure and "
+        "everything that still holds. The tool protocol describes the suggested sections.\n"
+        "Contents are revisable possibilities, not established facts, things characters know, or actions decided "
+        "for the user.",
     ),
     "archive_note": (
         NoteKey,

@@ -102,7 +102,10 @@ EXAMPLES = {
         {"key": NOTE_KEY, "saved_to_draft": True},
     ),
     "write_plot": (
-        {"content": "近期：若玩家前往港口，让守塔人的隐瞒引出冲突；远期：视选择揭开旧信来历。"},
+        {
+            "content": "## 核心\n- 守塔人为何藏起旧信？\n## 各方动向\n- 守塔人：想让旧信永远沉默；若用户追问，会提前出海。\n"
+            "## 当前阶段\n- 若用户前往港口，守塔人的隐瞒引出冲突。\n## 伏笔\n- 旧信的火漆：远期视选择揭开来历，尚未回收。"
+        },
         {"saved_to_draft": True},
     ),
     "archive_note": ({"key": NOTE_KEY}, {"key": NOTE_KEY, "archived": True}),

@@ -265,15 +265,15 @@ Writing to an archived key reactivates it.
 ### `write_plot`
 
 ```text
-Create or fully replace this branch's author-level stage outline. The current outline is in <tavern_plot>; no read is needed.
-Updates are cumulative: revise the current outline instead of starting over. Keep stages, foreshadowing and conditions that still hold, change what progress has affected, and condense finished stages without dropping unresolved foreshadowing.
-Keep near stages concrete and distant stages broad: possible events, turning points, foreshadowing and the conditions that trigger them. These are revisable possibilities, not established facts, things characters know, or actions decided for the user.
+Create or fully replace this branch's author-level outline of where the story may go. The current outline is in <tavern_plot>; no read is needed.
+Updates are cumulative: revise the current outline instead of starting over, keeping its structure and everything that still holds. The tool protocol describes the suggested sections.
+Contents are revisable possibilities, not established facts, things characters know, or actions decided for the user.
 ```
 
 请求：
 
 ```json
-{"content":"近期：若玩家前往港口，让守塔人的隐瞒引出冲突；远期：视选择揭开旧信来历。"}
+{"content":"## 核心\n- 守塔人为何藏起旧信？\n## 各方动向\n- 守塔人：想让旧信永远沉默；若用户追问，会提前出海。\n## 当前阶段\n- 若用户前往港口，守塔人的隐瞒引出冲突。\n## 伏笔\n- 旧信的火漆：远期视选择揭开来历，尚未回收。"}
 ```
 
 成功返回：
