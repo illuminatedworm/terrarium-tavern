@@ -27,6 +27,7 @@
 
 | 机制 | 设计文档 |
 |---|---|
+| Full Agent 原著文件、异步调查与报告送达 | [原著参考](design/novel-research.md) |
 | Full Agent 窗口、笔记与恢复 | [Full Agent 架构](design/full-agent.md) |
 | Half Agent 调用顺序、失败和审核 | [Half Agent 回合工作流](design/agent-workflow.md) |
 | Half Agent 消息编排、窗口和覆盖水位 | [Half Agent 上下文生命周期](design/context-lifecycle.md) |
@@ -49,6 +50,7 @@
 | Full Agent 全部工具的简短列表与作用 | [工具速查](reference/full-agent-tools-summary.md) |
 | Full Agent 工具参数、引用和路径规则 | [工具协议](reference/full-agent-tools.md) |
 | 开发运行、测试选择、实测与打包 | [验证与发行](development/validation.md) |
+| 桌面工具链、系统浏览器与便携包 | [桌面开发](development/desktop.md) |
 | Android 构建、真机开发及与桌面的共用／隔离边界 | [Android 开发](development/android.md) |
 | 原创和第三方许可、发行未决事项 | [许可范围与发行维护](development/licensing.md)、[许可文件](../LICENSE/README.md) |
 

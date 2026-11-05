@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，并通过修订号处理并发修改。当前设置格式为 15、数据库 schema 为 19、个人数据包格式为 9。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，并通过修订号处理并发修改。当前设置格式为 15、数据库 schema 为 20、个人数据包格式为 10。旧设置和旧包中的非对话资料可以导入；旧剧情对话不兼容整轮重试格式，读取或导入时明确拒绝。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 `shared.kemini` 属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本。`enabled` 允许创建并继续 Kemini 实验对话，不直接改变任何对话；为 `false` 时 `POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合被拒绝。免责声明在 Kemini 实验对话中且 `normal_disclaimer_enabled` 为 `true` 时生效；主开关关闭时保留其保存值，界面将其置灰。复用共享设置 PATCH、修订检查和页面撤回。
 
@@ -8,11 +8,11 @@
 
 `thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加自拟包装。默认值来自原预设对应条目，移除 SillyTavern 宏，独立边界标签仍用 Markdown 分隔，Interleaving 三段式示例和自检原文完整保留在同一条 `kemini_control` 消息中；CLEAR 和末尾输出提示仅引用名称，不放置孤立开标签。新增的 roleplay_prompt 位于助手确认前，content_prompt 位于自检后，output_prompt 位于传输指令后；均可显式保存。请求只读取已保存文本；设置 version 13 对三项指定提示的旧格式进行原位迁移，包括自定义文本；保留原有首尾空白、换行形式及其他自定义要求，缺少可识别格式段时将完整对应原文模块写入同一可编辑字段，不在请求时隐藏追加。
 
-参谋 agent 配置位于 `shared.advisor`，设置文档为版本 10。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
+参谋 agent 配置位于 `shared.advisor`。`model` 与 `official_model` 分别引用同渠道供应商；`system_prompt` 进入共享提示词目录并支持显式保存。故事级覆盖、默认范围、工具与接口见[参谋 agent 设计](../design/advisor.md)。参谋 agent 存储引入数据库 schema 4，旧数据库在迁移前备份。
 
 ## ChatGPT 账号接口
 
-提供商新增 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。设置文档为版本 10；账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
+提供商保存 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示需要重新连接。
 
 以下接口受本地访问／跨来源边界保护。账号操作立即生效，不属于设置修订或撤回。
 
@@ -35,7 +35,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 配置范围与修订号
 
-数据库中的设置文档版本为 12，由三个独立范围组成：
+数据库中的设置文档由三个独立范围组成，当前格式版本见本页开头：
 
 | 范围 | 主要内容 | 模型字段 |
 |---|---|---|
@@ -59,7 +59,7 @@ API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调
 
 ## 读取与写入
 
-Chat Completions 流式响应兼容在结束后追加 `delta: {}` 的重复收尾包（结束原因为 `stop` 或与首次相同），保留首次结束原因与已收集的工具调用，并继续接收用量统计；结束后新增正文、推理或工具参数仍会报错，不提交回合。
+Chat Completions 的 `finish_reason` 只记录原生完成状态，不终止 HTTP 响应体读取；后续正文、推理、工具参数和用量仍完整接收。`tool_calls` 优先于普通 `stop`，截断、过滤和未知结束原因不能被后续成功状态覆盖。响应体读取结束后统一校验并执行工具，具体规则见[模型接入参考](model-api.md#连接与协议)。
 
 `shared.model_request_mode` 可取 `auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一使用流式传输）、`non_stream`（普通 API 统一使用非流式传输）。通过 `PATCH /api/settings/shared` 的 `changes` 写入 `{"model_request_mode":"stream"}`；它属于 `shared.web` 设置页面（“联网与代理”），支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求；ChatGPT 订阅通道始终流式，独立的 compact、向量、目录和缓存管理端点使用各自请求。
 
@@ -126,7 +126,7 @@ Content-Type: application/json
 | 接口 | 请求与响应 |
 |---|---|
 | `GET /api/data-transfer` | 返回可导出的用户角色、世界书、角色卡（含 `defaults`）和对话简表 |
-| `POST /api/data-transfer/export` | JSON：`settings`、`include_api_keys`、`personas`、`worldbooks`、`cards`、`sessions`、`browser_preferences`；四组条目为 ID 数组，响应为 ZIP 附件 |
+| `POST /api/data-transfer/export` | JSON：`settings`、`include_api_keys`、`include_novel_files`（默认 `true`）、`personas`、`worldbooks`、`cards`、`sessions`、`browser_preferences`；四组条目为 ID 数组，响应为 ZIP 附件 |
 | `POST /api/data-transfer/preview` | multipart `file`；返回类别和条目预览、`sha256`、`settings_revisions` |
 | `POST /api/data-transfer/import` | multipart `file` 与 JSON 字符串 `options`；包含预览的 `sha256`、`restore_settings`，恢复设置时还需 `settings_revisions` |
 
@@ -134,7 +134,7 @@ Content-Type: application/json
 
 角色卡记录附带 `defaults`（`persona_id`、`worldbook_ids`），导出时只保留同一包中的用户角色和世界书；导入时随新身份重映射。对话快照中的挂载记录同样重映射到包内世界书，未随包的世界书保留原名称，按“书库中已删除”显示。
 
-ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 8，仍可读取版本 1–7（版本 1–3 视为没有世界书库）；版本 5 包含普通正文响应及原生结束轨迹，版本 6 还保留开场白的永久锁定状态，版本 7 包含原著资料，版本 8 保存调查者自动销毁选项，旧版程序拒绝读取新版包。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
+ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-tavern-personal-data`、版本 10，仍可读取版本 1–9（版本 1–3 视为没有世界书库，旧剧情兼容限制见下文迁移说明）；版本 5 包含普通正文响应及原生结束轨迹，版本 6 还保留开场白的永久锁定状态，版本 7 包含原著资料，版本 8 保存调查者自动销毁选项，版本 9 保存正文分段边界，版本 10 校验交互图形，旧版程序拒绝读取新版包。上传最多 256 MiB，解压最多 512 MiB，清单最多 64 MiB、文件最多 20000 个。导入校验资源哈希、记录类型和完整分支图，再在单一数据库事务中创建新身份、重映射消息和状态引用。附件写入失败时回滚数据及本次新建文件。运行中的所选对话不能导出；恢复设置时还校验全局修订号并拒绝覆盖运行中任务。
 
 导出 API Key 默认关闭，提供商地址和标识完全一致时才保留本地已有密钥。恢复的模型能力检查结果清空。对话包保留会话自己的角色资源和上下文轨迹，排除可重建索引、模型权重、未提交回合及制卡 agent 对话/草稿；完整目录迁移使用 CLI 完整备份。
 

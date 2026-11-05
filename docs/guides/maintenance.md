@@ -136,7 +136,7 @@ Linux 使用 `.venv/bin/python clear-conversations.py --data '/path/to/My Storie
 | 端口占用 | 停止旧服务，或指定其他端口 |
 | Half Agent 记忆失败 | 检查 Tracker 模型、密钥、代理及预算，再手动整理，见[窗口与记忆](history-maintenance-settings.md) |
 | Full Agent 无法继续 | 检查工具开关、调用额度和交接笔记，见[失败恢复](full-agent.md#失败恢复与排查) |
-| 预计输入过大 | 查看[上下文内容占比](token-counting.md#查看占比) |
+| 请求超出上下文窗口 | 查看[接口实测与完整预览](token-counting.md#查看实测与完整预览) |
 | 世界书未注入或本地模型不可用 | 按[检索排查顺序](retrieval.md#排查未命中与误注入)检查 |
 | 详细事件已过期 | 查看紧凑活动记录和已保存剧情 |
 

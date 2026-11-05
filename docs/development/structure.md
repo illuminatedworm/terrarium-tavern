@@ -15,6 +15,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `tracker/` | Half Agent 前后置维护任务、原生工具循环和变量草稿 |
 | `memories/` | 分类记忆、来源协议、投影、准出与历史补查 |
 | `full_agent/` | Full Agent 模型循环、窗口、笔记、工具、检索仲裁与失败恢复 |
+| `novel/` | Full Agent 授权原著文件的导入、索引、独立调查者、消息送达及生命周期 |
 | `advisor/` | 两种模式共用的参谋 agent 聊天、独立上下文、只读工具、联网与偏好提交 |
 | `chatgpt/` | ChatGPT 账号授权、凭据存储、模型目录和订阅通道传输 |
 | `web/` | 参谋 agent 与制卡 agent 共用的联网服务、分页和来源记录 |

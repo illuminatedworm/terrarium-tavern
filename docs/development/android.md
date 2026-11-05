@@ -33,7 +33,7 @@ Android 版把 Python/FastAPI 后端、Vue 前端和脚本 WebView 装入同一�
 | 位置 | 桌面 | Android |
 | --- | --- | --- |
 | [`application/api.py`](../../src/tavern/application/api.py) `create_app` | 本地访问边界 | 另加启动令牌认证、固定 Host、CSP 与 `AndroidFiles` 缓存策略 |
-| [`scripting/realm.py`](../../src/tavern/scripting/realm.py) `default_backend` | Playwright Chromium | [`android_realm.py`](../../src/tavern/scripting/android_realm.py)，`:realm` / `:realm_tools` 进程 |
+| [`scripting/realm.py`](../../src/tavern/scripting/realm.py) `default_backend` | Playwright 驱动系统 Edge/Chrome 稳定版 | [`android_realm.py`](../../src/tavern/scripting/android_realm.py)，`:realm` / `:realm_tools` 进程 |
 | [`search/local_models.py`](../../src/tavern/search/local_models.py) `create_local_model_manager` | CUDA/Hugging Face 子进程 | [`android/local_models.py`](../../src/tavern/android/local_models.py)，llama.cpp GGUF |
 | [`character/editor_files.py`](../../src/tavern/character/editor_files.py) | MarkItDown | [`android/documents.py`](../../src/tavern/android/documents.py)，`:documents` 进程 |
 | [`chatgpt/vault.py`](../../src/tavern/chatgpt/vault.py) | Windows DPAPI / Linux 明文加权限 | Android Keystore AES-GCM |

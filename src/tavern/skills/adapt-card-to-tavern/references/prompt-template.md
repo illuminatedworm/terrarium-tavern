@@ -22,7 +22,7 @@
 
 | 插件用法 | 改写为 | 可靠性 |
 |---|---|---|
-| `<%- getvar('stat_data.x') %>`、`<%= variables.stat_data.x %>`、`print(…)` 输出变量 | 模型文本用 `{{getvar::stat_data.x}}`；展示用 `{{format_message_variable::stat_data.x}}` 或 `get_message_variable` | 等价（只读）。放在角色字段或常驻条目会使请求前缀随取值变化；Half Agent 的 Writer 每轮都能看到完整变量，通常删掉插值、写清变量含义即可 |
+| `<%- getvar('stat_data.x') %>`、`<%= variables.stat_data.x %>`、`print(…)` 输出变量 | 模型文本用 `{{getvar::stat_data.x}}`；展示用 `{{format_message_variable::stat_data.x}}` 或 `get_message_variable` | 等价（只读）。放在角色字段或常驻条目会使请求前缀随取值变化；Half Agent 默认配方提供完整变量，确认状态块启用且未被条件或脚本编排排除后，通常可删掉重复插值、写清变量含义 |
 | `[InitialVariables]` 标题、`@@initial_variables` 装饰器 | 标题改为 `[InitVar] …`，正文保留 YAML/JSON 对象，删除装饰器行 | 等价。插件初值位于变量根，本项目初值位于 `stat_data` 下；正文顶层若是 `stat_data:` 则去掉这一层，其他位置引用这些变量的路径统一补上 `stat_data.` |
 | `userName`、`charName`、`assistantName` | `{{user}}`、`{{char}}` | 等价 |
 | `<#escape-ejs>` 包裹、`<%%` 转义 | 去掉包裹标签，`<%%` 改为字面 `<%` | 等价 |
@@ -34,10 +34,10 @@
 | 渲染时的显示计算（格式化数值、按变量选择显示文本） | 展示面板脚本读取变量后计算 | 近似；只影响显示，不进入模型文本 |
 | `activateRegex(模式, 字符串)` | `extensions.regex_scripts`：选项 `generate` 对应 `promptOnly`，`message` 与 `html` 对应 `markdownOnly`，`placement` 按作用对象填写 | 等价（仅字符串替换） |
 | 模型输出 `<% setvar/incvar/decvar/delvar/insvar/patchVariables %>`，或要求模型这样输出的指令 | 删除输出要求，把每个变量何时变化、何时保持写进 `tracker_mvu` 规则 | 近似：数值由变量任务判断后提交，不再由代码确定计算；变量只在用户勾选“本轮更新变量”时更新 |
-| `[GENERATE:BEFORE]`、`@@generate_before` 中的普通文本 | 启用的常驻条目，`position: 0` | 近似 |
-| `[GENERATE:AFTER]`、`@@generate_after`、`@INJECT pos/target … role=` | 启用的常驻条目，`position: 4`，按原位置换算 `depth` 并设置 `role` | 近似：只在 Half Agent 的“按角色卡位置注入”方案中按位置生效；“随对话滚动”与 Full Agent 都不按条目位置排列 |
+| `[GENERATE:BEFORE]`、`@@generate_before` 中的普通文本 | 启用的常驻条目 | 近似：文本进入固定前缀，不执行插件代码或复现其精确位置 |
+| `[GENERATE:AFTER]`、`@@generate_after`、`@INJECT pos/target … role=` | 若保留为常驻资料，放入启用的常驻条目 | 降级：常驻条目集中在固定前缀，`position`、`depth` 仅用于区内排序，不能复现剧情插入位置。Half Agent 的“按角色卡位置注入”只对非常驻条目按位置生效；改为非常驻会改变触发条件，须说明并确认 |
 | `@INJECT regex=`、`[GENERATE:REGEX:模式]` | 普通条目，把模式改为关键词或关键词正则 | 近似：本项目关键词还要通过准入过滤；`matched_message` 等插值无法保留 |
-| `injectPrompt(键, 文本)` 配合 `getPromptsInjected(键)` | 文本写入 `position: 7` 的条目，`outletName` 填原键 | 近似：出口位置由用户在会话配方中添加 `outlet:键` 块，卡片无法自带；接收端在预设中时提醒用户手动配置 |
+| `injectPrompt(键, 文本)` 配合 `getPromptsInjected(键)` | 文本写入 `position: 7` 的条目，`outletName` 填原键 | 近似：仅适用于 Half Agent“按角色卡位置注入”的非常驻条目；常驻条目不会进入出口。出口位置由用户在会话配方中添加 `outlet:键` 块，卡片无法自带；接收端在预设中时提醒用户手动配置 |
 
 ## 低可靠改写（降级）
 

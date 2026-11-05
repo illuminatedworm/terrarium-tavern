@@ -23,7 +23,7 @@
 | 世界书写入 | 受设定修改策略控制，保存为当前分支的内容草稿 |
 | generate / generateRaw | Half Agent 支持当前模型、文本、取消、流式通知、覆盖和有序内容块；使用本项目模型配置 |
 | 外部模块 | 下载和哈希缓存，离线 esbuild 打包静态可解析的浏览器模块 |
-| 中途 system | 所有端点原位发送；能力检查仅诊断，不支持时显示实际错误 |
+| 中途 system | 普通请求保留适配后的角色；Google GenAI 仅接受开头连续的 system，正文中的不支持角色在发送前报错。Kemini 剧情请求按独立保序规则将中途 system 转为 user，见[消息适配](message-adapter.md) |
 
 角色卡导出（JSON、PNG、CHARX）会把世界书的 `matchWholeWords`、`excludeRecursion`、`preventRecursion`、`caseSensitive` 统一为 `extensions` 下的 `match_whole_words`、`exclude_recursion`、`prevent_recursion`、`case_sensitive`，清除顶层及扩展中的重复同义字段。值沿用[运行时读取优先级](retrieval.md#候选如何进入上下文)，包括明确的 `false`／`null`；缺失字段不补默认值，本地已保存原稿和其他字段不变。读取仍兼容两种拼写。
 
@@ -75,7 +75,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 | ST DOM、内部模块、完整 `getContext()`、STscript、EJS 与插件机制 | 需要改写为本项目支持的接口和展示方式；EJS 见下文“ST-Prompt-Template（EJS）” |
 | `global`、`character`、`preset` 等变量 | 作为当前会话分支内的命名空间保存 |
 | 脚本持久状态 | 通过变量 API 保存，后台脚本按回合重新加载 |
-| 世界书位置 | 支持角色前后、作者注释、示例前后、深度和命名 outlet；复杂 JavaScript 正则需适配 Python 检索环境 |
+| 世界书位置 | Half Agent“按角色卡位置注入”的非常驻条目支持角色前后、作者注释、示例前后、深度和命名 outlet；常驻条目集中在固定前缀，位置与深度只用于区内排序。复杂 JavaScript 正则需适配 Python 检索环境 |
 | `generateRaw` | 支持角色描述、性格、场景、世界书、示例、历史及输入占位符，复杂预设脚本另行适配 |
 | HTML 中的 ES module | 将模块放入角色脚本，或预先适配为可执行的浏览器脚本 |
 | 外部资源 | 静态依赖下载并固定缓存；图片的正则捕获组、变量宏与 JavaScript 模板在展开后加载，支持动态 `src`、`srcset`、SVG 图片引用、视频封面与内联背景图；特殊 CDN 加载器和 ST 相对导入仍需适配 |
@@ -105,7 +105,7 @@ Full Agent 的非空变量补丁只触发 MVU 变量事件；`MESSAGE_RECEIVED` 
 | 等级 | 典型用法 | 说明 |
 |---|---|---|
 | 等价 | 变量插值、`[InitialVariables]`、`activateRegex` 字符串替换、`[RENDER]`/`@@iframe` 面板、启停类装饰器 | 改为变量宏、`[InitVar]`（路径补 `stat_data.`）、`regex_scripts` 与展示正则 |
-| 近似 | `[GENERATE]`/`@INJECT` 位置注入、`[GENERATE:REGEX]`、`injectPrompt` 出口、模型输出 `setvar` | 改为条目位置与深度、关键词、命名 outlet、`tracker_mvu` 规则；位置只在 Half Agent“按角色卡位置注入”时生效，outlet 需用户在会话配方中添加，变量变化由变量任务判断 |
+| 近似 | `[GENERATE]`/`@INJECT` 位置注入、`[GENERATE:REGEX]`、`injectPrompt` 出口、模型输出 `setvar` | 改为条目位置与深度、关键词、命名 outlet、`tracker_mvu` 规则；位置只对 Half Agent“按角色卡位置注入”的非常驻条目生效，常驻条目不能复现剧情插入位置；outlet 需用户在会话配方中添加，变量变化由变量任务判断 |
 | 降级（低可靠） | `@@if`、`<% if %>` 条件段与多分支文本、`getwi`/`activewi`/`@@preprocessing` 按状态激活 | 插件在条件为假时不发送文本；改写后文本常驻，写明适用条件，由模型按当前变量判断，可能误用并多占 tokens。Full Agent 的变量需按需读取，可靠性更低 |
 | 未转换 | 见下 | 保留原文并列为待处理项，适配报告为部分适配 |
 
