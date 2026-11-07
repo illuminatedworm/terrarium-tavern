@@ -9,7 +9,7 @@ export interface CacheSettings {
   retention?: string;
 }
 
-export function cacheRetention(model: string, api: string, cache: CacheSettings) {
+export function cacheRetention(model: string, api: string, cache: CacheSettings, officialApi = false) {
   const name = model.toLowerCase();
   const apiLabel =
     (
@@ -42,6 +42,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
       enabled: false,
       explicit: false,
       implicit: true,
+      error: '',
       note: '当前 Gemini 模型仅支持隐式缓存，缓存前缀和时效由服务端管理；已保存的本地缓存参数不发送。',
       options: [] as Array<{ value: string; label: string }>,
     };
@@ -70,7 +71,7 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
       minor = Number(match?.[2] || 0);
     if (match && (major > 5 || (major === 5 && minor >= 6))) {
       kind = 'openai_ttl';
-      values = ['30m'];
+      values = api === 'responses' ? ['30m', '12h'] : ['30m'];
     } else if (match && major === 5 && minor === 5) {
       kind = 'openai_retention';
       values = ['24h'];
@@ -86,16 +87,27 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     '5m': '5 分钟',
     '15m': '15 分钟',
     '1h': '1 小时',
+    '12h': '12 小时',
     '24h': '24 小时',
     '30m': '30 分钟',
     in_memory: '内存缓存',
   };
-  const value = values.includes(cache.retention || '') ? cache.retention! : values[0] || '';
+  const saved = cache.retention || 'default';
+  const value = officialApi ? saved : values.includes(saved) ? saved : values[0] || '';
+  const error =
+    officialApi && saved !== 'default' && !values.includes(saved)
+      ? `当前模型不支持已保存的缓存时效 ${saved}，请选择其他档位或服务端默认；原值未修改。`
+      : '';
   const enabled =
-    !!kind &&
-    (cache.mode === 'runtime' || kind.startsWith('openai') || (kind === 'anthropic' && api === 'anthropic'));
+    officialApi ||
+    (!!kind &&
+      (cache.mode === 'runtime' ||
+        kind.startsWith('openai') ||
+        (kind === 'anthropic' && api === 'anthropic')));
   const note = !kind
-    ? '当前接入方式没有可选的缓存时效参数。'
+    ? officialApi
+      ? '当前模型的缓存时效能力未知，仅提供服务端默认。'
+      : '当前接入方式没有可选的缓存时效参数。'
     : !enabled
       ? '云端默认缓存的时效由服务商管理；切换本地运行时控制后可设置。'
       : kind === 'anthropic'
@@ -105,7 +117,9 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
         : kind === 'gemini'
           ? '控制显式缓存对象的保存时长；保存越久，存储费用越高。'
           : kind === 'openai_ttl'
-            ? '当前模型支持的最低缓存时效为 30 分钟，仅有这一档。'
+            ? api === 'responses'
+              ? '这是最低保留时长。12 小时写入价格高于 30 分钟，适合跨较长间隔复用的前缀；默认不指定时效。'
+              : '当前接口支持的最低缓存时效为 30 分钟。'
             : '实际保留时间由服务端决定' +
               (values.includes('in_memory') ? '；内存缓存通常 5–10 分钟' : '') +
               (values.includes('24h') ? '，24 小时是最长保留上限。' : '。');
@@ -124,7 +138,11 @@ export function cacheRetention(model: string, api: string, cache: CacheSettings)
     note,
     explicit,
     implicit: false,
-    options: values.map((value) => ({ value, label: labels[value] })),
+    error,
+    options: [
+      ...(officialApi ? [{ value: 'default', label: '服务端默认' }] : []),
+      ...values.map((value) => ({ value, label: labels[value] })),
+    ],
   };
 }
 
@@ -163,9 +181,9 @@ function baseCachePreset(
   return { kind: 'unknown' };
 }
 
-export function cachePreset(model: string, api: string, cache: CacheSettings) {
+export function cachePreset(model: string, api: string, cache: CacheSettings, officialApi = false) {
   const result = baseCachePreset(model, api, cache);
-  const policy = cacheRetention(model, api, cache);
+  const policy = cacheRetention(model, api, cache, officialApi);
   if (
     policy.kind === 'anthropic' &&
     result.field === 'cache_control' &&
@@ -177,7 +195,7 @@ export function cachePreset(model: string, api: string, cache: CacheSettings) {
     else delete value.ttl;
     result.value = value;
   }
-  if (policy.kind.startsWith('openai')) {
+  if (policy.kind.startsWith('openai') && policy.value !== 'default' && !policy.error) {
     result.request =
       policy.kind === 'openai_ttl'
         ? {

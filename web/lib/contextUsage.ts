@@ -44,6 +44,14 @@ interface ContextStats {
   context_usage?: ContextUsage;
 }
 
+/** Failed Responses billing is displayed separately from the window meter. */
+export function failedUsageText(usage: { raw_usage?: Record<string, any> }) {
+  const raw = usage.raw_usage || {};
+  const count = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value.toLocaleString() : '未知';
+  return `失败请求用量：输入 ${count(raw.input_tokens)}、输出 ${count(raw.output_tokens)} tokens（其中思考 ${count(raw.output_tokens_details?.reasoning_tokens)}）。不作为有效窗口实测。`;
+}
+
 export function contextTokens(stats?: ContextStats | null): number | null {
   // Archived previews can still contain the pre-migration local/calibrated
   // shape. Those estimates must never acquire a provider-measurement label.

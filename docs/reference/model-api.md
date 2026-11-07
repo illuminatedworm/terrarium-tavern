@@ -45,9 +45,25 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 
 实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类；Writer、Tracker、Full Agent、参谋 agent、制卡 agent、脚本嵌套调用和探测共用同一入口。字段要求依据 [OpenAI 订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。后续章节的通用协议／缓存预设不覆盖订阅分支的限制。
 
+## OpenAI 官方 API 模式
+
+`auth_mode=openai_api_key` 与订阅并列属于官方渠道，已有 `api_key` 配置保持普通渠道归属。提供商只配置 Base URL（默认 `https://api.openai.com`）与 API Key；主机可自定义，协议固定 Responses、路径固定 `/v1`。保存或导入与固定协议冲突的模型连接会报错。设置格式为 17，升级前沿用整库备份机制。
+
+- 使用填写的 API Key，不回退到 `TAVERN_API_KEY`。共享官方流式完成校验、完整原生回放和授权校验；API 使用标准扁平函数列表，订阅保留 `tavern` 命名空间；发送 `store:false`，不依赖服务端保存的 response ID，不发送兼容路线的会话路由头。
+- 保留实际 `max_output_tokens`、可选采样及思考参数，始终请求加密推理项。模型目录显式刷新 `/v1/models`，解析 `data[].id`；目录没有声明的能力不推断为已支持。
+- 缓存复用 Responses 编译与已发送断点记录，默认隐式且不指定时效。支持新协议的 Responses 模型可选择 `30m` 或 `12h` 最低保留时长；12 小时写入价格更高。切模型后保留已保存值，不支持则在请求前报错。设置页与缓存侧栏读写同一角色、同一渠道的 `cache.retention`。
+- 附加缓存 JSON 仅在本地控制模式生效：支持 `prompt_cache_key` 和 `prompt_cache_options.mode`（`implicit` / `explicit`）；请求时效只由 `cache.retention` 控制，JSON 中重复的 `ttl` / `prompt_cache_retention` 明确报错并保留原值供修正。自定义断点固定使用 `prompt_cache_breakpoint`，值为 `mode:explicit`；时效统一由选择器控制，不支持在断点 JSON 中另设 TTL，以免恢复旧断点时重新带回旧时效。生成请求不接受 `prewarm` 或缓存诊断参数。云端默认不读取此前保存的附加 JSON（包括缓存 key）。
+- 强制指定工具时保留完整函数定义、顺序和 schema，通过 `allowed_tools` / `required` 限制可调用集合；Runtime 再次拒绝集合外的调用。未声明 `strict` 的函数显式发送 `strict:false`，保留“省略参数使用本地默认值”的语义；显式声明的 strict schema 保持其选择，不把可选字段偷偷改为必填或 null。
+- 思考档位使用官方文档中的已知模型规则，匹配准确模型名及其日期快照；未知别名明确提示能力未知并交由服务端判断。已知不支持的档位在请求前报错，不换档。设置页和输入区共用此规则，普通渠道与订阅目录的处理保持独立。
+- `incomplete` / `failed` 响应中的实际 usage 单独记录为失败请求用量，并计入所属任务的累计消耗；没有 usage 时不补零或复用旧值。正文、工具和原生状态不提交，也不调用窗口计量的成功完成路径。`max_output_tokens` 包含内部思考，上限耗尽时提示检查输出预算和思考档位。
+- 复用独立维护请求上的 `context_management` 压缩机制，正常正文和工具续答不携带该字段。密文、计量和缓存断点按连接类型、端点、密钥、模型与工具传输格式隔离，切换后从本地完整历史按既有规则重建。
+- 参谋 agent、制卡 agent 的托管联网共用既有开关、授权及本地搜索回退，事件标明 `api_key` 计费来源；不扩展其他角色的联网权限。
+
+协议依据：[官方压缩文档](https://developers.openai.com/api/docs/guides/compaction)、[官方缓存文档](https://developers.openai.com/api/docs/guides/prompt-caching)。
+
 ## 请求身份
 
-会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
+会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；普通渠道 Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`；官方渠道只发送 `prompt_cache_key`，不发送这些兼容路由头。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
 
 Half Agent 前台使用剧情会话 UUID，Tracker 前置、后置、重建和脚本调用按会话与用途派生身份。Full Agent 的失败续接保持同一会话身份，分支使用新身份；制卡 agent 每个编辑对话有独立稳定身份。
 
@@ -68,7 +84,7 @@ Responses 的 `x-codex-turn-state` 只在同一逻辑操作内回传；新操作
 | Gemini 2.5 原生 | minimal=128、low=1024、medium=4096、high=8192、xhigh=16384 思考 tokens；支持关闭时另有 none=0；Flash-Lite 不提供 minimal | `generationConfig.thinkingConfig.thinkingBudget`，界面显示对应预算 |
 | Gemini 2.5 Chat 兼容 | low、medium、high；支持关闭时另有 none | 使用 Chat 的思考字段，由服务商将文字档位转换为预算 |
 
-OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支持范围仍由服务商决定；不会仅凭非 OpenAI 名称将 Responses 切为其他协议。已知旧 Claude 不提供文字档位，仍可选择默认或其支持的关闭思考。未知 Anthropic 中转别名提供 low、medium、high 与关闭思考，由服务商校验。
+普通渠道的 OpenAI 两种协议提供协议支持的完整集合，具体模型与中转支持范围仍由服务商决定；不会仅凭非 OpenAI 名称将 Responses 切为其他协议。已知旧 Claude 不提供文字档位，仍可选择默认或其支持的关闭思考。未知 Anthropic 中转别名提供 low、medium、high 与关闭思考，由服务商校验。
 
 应用将 Opus 4.6/4.7/4.8/5/5.5、Sonnet 4.6/5/5.5 及已登记的 Fable/Mythos 名称归入 adaptive 路线。Opus 4.5 仅单独发送 effort；已知旧模型不能接受文字档位时，在请求前提示。未知中转别名采用标准字段，由服务商校验。
 
@@ -87,7 +103,8 @@ Gemini 3.6 Flash、3.5 Flash-Lite 及后续型号已废弃 `temperature`、`top_
 | 匹配路径 | 可选档位 | 发送字段 |
 |---|---|---|
 | Claude Messages／Chat 兼容 | `5m`、`1h` | 内容块 `cache_control`；5m 省略 `ttl`，1h 显式设置 |
-| GPT-5.6 及以后 Chat／Responses | `30m` | `prompt_cache_options.ttl` |
+| GPT-5.6 及以后 Responses | `30m`、`12h` | `prompt_cache_options.ttl`（最低保留时长） |
+| GPT-5.6 及以后 Chat | `30m` | `prompt_cache_options.ttl` |
 | GPT-5.5 Chat／Responses | `24h` | `prompt_cache_retention` |
 | GPT-5、5.1、5.2、5.4、4.1 Chat／Responses | `in_memory`、`24h` | `prompt_cache_retention` |
 | 其他匹配 GPT 及 o1/o3/o4 的路线 | `in_memory` | `prompt_cache_retention` |

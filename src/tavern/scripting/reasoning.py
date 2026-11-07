@@ -53,6 +53,31 @@ def anthropic_policy(model):
 GEMINI_BUDGETS = {"none": 0, "minimal": 128, "low": 1024, "medium": 4096, "high": 8192, "xhigh": 16384}
 OPENAI_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
+# Official model pages, checked 2026-11-07. Exact names and dated snapshots only:
+# custom deployment aliases must remain unknown rather than inheriting guessed limits.
+# https://developers.openai.com/api/docs/models/<model>
+OPENAI_REASONING = {
+    "gpt-6.1-sol": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6-astra": ("low", "medium", "high", "xhigh", "max"),
+    "gpt-6.1-terra": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-6-sol": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-5.6": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-5.6-sol": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-5.6-terra": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-5.6-luna": ("none", "low", "medium", "high", "xhigh", "max"),
+    "gpt-5.5": ("none", "low", "medium", "high", "xhigh"),
+    "gpt-5.4": ("none", "low", "medium", "high", "xhigh"),
+    "gpt-5.3-codex": ("low", "medium", "high", "xhigh"),
+    "gpt-5.2": ("none", "low", "medium", "high", "xhigh"),
+    "gpt-5.1": ("none", "low", "medium", "high"),
+    "gpt-5": ("minimal", "low", "medium", "high"),
+}
+
+
+def openai_levels(model: str) -> tuple[str, ...] | None:
+    return OPENAI_REASONING.get(re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model))
+
 
 def gemini_levels(model, *, native=True):
     name = model.lower()
@@ -74,10 +99,18 @@ def gemini_levels(model, *, native=True):
     return levels
 
 
-def reasoning_capabilities(api, model):
+def reasoning_capabilities(api, model, *, official_api=False):
     """Local presets, not a claim about arbitrary relay model capabilities."""
     descriptions = {}
-    if api == "anthropic":
+    if official_api:
+        known = openai_levels(model)
+        levels = OPENAI_EFFORTS if known is None else known
+        note = (
+            "此模型名称的官方能力未知；以下是接口可表达的档位，实际支持范围由服务端判断，不自动换档。"
+            if known is None
+            else "思考档位按 OpenAI 官方模型文档匹配；不支持的已保存值须重选，不自动换档。"
+        ) + "模型默认不发送思考参数。"
+    elif api == "anthropic":
         policy = anthropic_policy(model)
         levels = ["none"] if policy.can_disable else []
         if policy.mode != "unsupported":

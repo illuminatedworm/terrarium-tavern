@@ -158,7 +158,7 @@ Kemini 实验对话中，四条绝对前缀位于上述应用规则之前。`kem
 
 ## 容量与换窗
 
-每个游玩对话的渠道归属不可变。普通 API 渠道只用本地 `new_context`；ChatGPT 官方（OAuth）渠道默认也是本地换窗，可改选 `openai_compact`。用 API Key 直连 OpenAI 也算普通渠道。模型设置按渠道分别保存，Half Agent 的 Writer／Tracker 同样按渠道隔离，记忆流程不变。
+每个游玩对话的渠道归属不可变。普通 API 渠道只用本地 `new_context`；ChatGPT 官方渠道（订阅或官方 API Key）默认也是本地换窗，可改选 `openai_compact`。在普通渠道创建的 API Key 连接仍属于普通渠道，包括已有的 OpenAI 直连配置；官方 API 连接须在官方渠道显式创建。模型设置按渠道分别保存，Half Agent 的 Writer／Tracker 同样按渠道隔离，记忆流程不变。
 
 两种上下文方式共用 notes 和全部剧情存档。云端方式隐藏 `new_context`、`write_handoff`，不注入 handoff、窗口机制说明或本地换窗命令。主规则只保留通用叙事与连续性要求，本地机制指导放在本地方式的工具协议里；自定义主规则保持用户原文。
 

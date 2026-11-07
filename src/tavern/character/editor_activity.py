@@ -5,6 +5,7 @@ import json
 PUBLIC_KINDS = (
     "started",
     "model_call",
+    "usage",
     "text",
     "tool_started",
     "tool_finished",

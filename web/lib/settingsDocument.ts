@@ -38,7 +38,7 @@ export interface Provider {
   api_key?: string;
   has_api_key?: boolean;
   use_proxy: boolean;
-  auth_mode?: 'api_key' | 'chatgpt_subscription';
+  auth_mode?: 'api_key' | 'chatgpt_subscription' | 'openai_api_key';
   chatgpt_account_id?: string | null;
 }
 export interface PreferencePreset {
@@ -84,7 +84,7 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 15;
+  version: 17;
   full_agent: SettingsObject & {
     novel_research: NovelConfig;
     model: ModelProfile;

@@ -18,7 +18,12 @@ import AdvisorPreview from './AdvisorPreview.vue';
 import WebSources from '../common/WebSources.vue';
 import { webActivityLabel, webSources } from '../../lib/webSearch';
 import { handleComposerKeydown, sendShortcutHint } from '../../lib/composerShortcut';
-import { contextTokens, contextUsageDetails, contextUsageLabel } from '../../lib/contextUsage';
+import {
+  contextTokens,
+  contextUsageDetails,
+  contextUsageLabel,
+  failedUsageText,
+} from '../../lib/contextUsage';
 
 const props = defineProps<{
   sessionId: string;
@@ -90,6 +95,7 @@ const savedProfile = computed(() =>
   conversationModelProfile(
     base.value || props.settings.shared.advisor.model,
     state.value?.effective.model_selection,
+    props.settings.shared.providers,
   ),
 );
 const profile = computed(() => ({
@@ -118,6 +124,9 @@ const unavailable = computed(
 );
 const tools = computed(() => events.value.filter((e) => ['tool_started', 'tool_finished'].includes(e.kind)));
 const webActivities = computed(() => events.value.filter((e) => e.kind === 'web_activity'));
+const failedUsage = computed(() =>
+  events.value.filter((e) => e.kind === 'usage' && e.payload.status === 'failed'),
+);
 const liveSources = computed(() =>
   webSources(
     events.value.filter((e) => e.kind === 'web_sources').map((e) => ({ web_sources: e.payload.sources })),
@@ -568,6 +577,9 @@ const callCount = (trace: Array<{ tool_calls?: unknown[] }>) =>
     </div>
     <div class="advisor-compose-area">
       <p v-if="notice" class="advisor-notice" role="status">{{ notice }}</p>
+      <p v-for="event in failedUsage" :key="event.seq" class="advisor-notice">
+        {{ failedUsageText(event.payload.usage) }}
+      </p>
       <div v-if="error || state?.run?.error" class="advisor-error" role="alert">
         {{ error || state?.run?.error }}
         <div v-if="pending">

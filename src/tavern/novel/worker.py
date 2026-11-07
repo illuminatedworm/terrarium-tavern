@@ -116,19 +116,23 @@ class NovelWorker:
             ),
         )
         usage = getattr(provider, "last_usage", None) or getattr(response, "usage", None) or {}
-        measured = observed_usage(usage, self.cfg.api_mode)
-        for key in ("tokens", "output_tokens", "thinking_tokens", "cached_input_tokens"):
-            value = measured.get(key)
-            if value is not None:
-                self.job["usage"][key] = self.job["usage"].get(key, 0) + value
-        self.job["progress"]["latest_usage"] = measured
-        self.save()
+        self.record_usage(usage)
         completion = getattr(provider, "last_completion", None)
         if completion and completion.action == "incomplete":
             raise ValueError(completion_message("原著调查响应未完整结束，进度保留", completion))
         if getattr(response, "finish_reason", None) in {"length", "content_filter"}:
             raise ValueError("原著调查响应被截断或过滤，未保存为报告")
         return response
+
+    def record_usage(self, usage, *, failed=False):
+        measured = observed_usage(usage, self.cfg.api_mode)
+        for key in ("tokens", "output_tokens", "thinking_tokens", "cached_input_tokens"):
+            value = measured.get(key)
+            if value is not None:
+                self.job["usage"][key] = self.job["usage"].get(key, 0) + value
+        if not failed:
+            self.job["progress"]["latest_usage"] = measured
+        self.save()
 
     async def compact(self, provider):
         context = self.job["progress"].get("context", {})
@@ -249,6 +253,7 @@ class NovelWorker:
 
     async def run(self, provider):
         configure_operation(provider, self.request_context, lambda *_: None, "novel_research")
+        provider.failed_usage_capture = lambda payload: self.record_usage(payload["usage"], failed=True)
         await self.execute_pending()
         while True:
             incoming = self.data.receive_worker(self.job)

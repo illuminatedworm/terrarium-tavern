@@ -34,6 +34,13 @@ describe('cache configuration', () => {
     expect(cacheRetention('gpt-5.4', 'responses', cache).value).toBe('in_memory');
     expect(cacheRetention('gpt-5.5', 'responses', cache).options.map((o) => o.value)).toEqual(['24h']);
     expect(cacheRetention('gpt-6-sol', 'responses', { ...cache, retention: '1h' }).value).toBe('30m');
+    const official = cacheRetention('gpt-6-sol', 'responses', { ...cache, retention: '24h' }, true);
+    expect(official.value).toBe('24h');
+    expect(official.error).toContain('不支持');
+    expect(official.options.map((option) => option.value)).toEqual(['default', '30m', '12h']);
+    expect(cachePreset('gpt-6-sol', 'responses', cache, true).request).toEqual({
+      prompt_cache_options: { mode: 'explicit' },
+    });
     expect(cacheRetention('unknown', 'responses', cache).enabled).toBe(false);
     expect(cacheRetention('claude', 'responses', cache).enabled).toBe(false);
     expect(cachePreset('claude', 'responses', cache).kind).toBe('unknown');

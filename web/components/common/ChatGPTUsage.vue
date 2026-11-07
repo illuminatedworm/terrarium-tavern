@@ -1,19 +1,31 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { CHATGPT_USAGE_URL } from '../../lib/chatgptAccounts';
-defineProps<{ active?: boolean; label?: string; error?: string }>();
+import type { Provider } from '../../lib/settingsDocument';
+const props = defineProps<{
+  active?: boolean;
+  label?: string;
+  error?: string;
+  authMode?: Provider['auth_mode'];
+}>();
+const officialApi = computed(() => props.authMode === 'openai_api_key');
+const subscriptionLimit = computed(
+  () => !officialApi.value && props.error?.includes('subscription_sharing_usage_limit_exceeded'),
+);
 </script>
 <template>
-  <span
-    v-if="active"
-    class="chatgpt-usage"
-    :class="{ 'chatgpt-limit': error?.includes('subscription_sharing_usage_limit_exceeded') }"
-  >
+  <span v-if="active" class="chatgpt-usage" :class="{ 'chatgpt-limit': subscriptionLimit }">
     <span>{{
-      error?.includes('subscription_sharing_usage_limit_exceeded')
+      subscriptionLimit
         ? 'ChatGPT 用量已达限制'
-        : label || '使用 ChatGPT 订阅'
+        : label || (officialApi ? 'OpenAI 官方 API · API 计费' : '使用 ChatGPT 订阅')
     }}</span>
-    <a :href="CHATGPT_USAGE_URL" target="_blank" rel="noopener noreferrer">管理用量</a>
+    <a
+      :href="officialApi ? 'https://platform.openai.com/usage' : CHATGPT_USAGE_URL"
+      target="_blank"
+      rel="noopener noreferrer"
+      >管理用量</a
+    >
   </span>
 </template>
 <style scoped>

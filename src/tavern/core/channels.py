@@ -9,7 +9,7 @@ LABELS = {"standard": "普通 API", "chatgpt": "ChatGPT 官方"}
 
 def provider_channel(provider):
     mode = provider.get("auth_mode", "api_key") if isinstance(provider, dict) else provider.auth_mode
-    return "chatgpt" if mode == "chatgpt_subscription" else "standard"
+    return "chatgpt" if mode in ("chatgpt_subscription", "openai_api_key") else "standard"
 
 
 def require_channel(settings, channel):

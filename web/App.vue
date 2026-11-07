@@ -17,7 +17,7 @@ import { useContextOperations } from './composables/useContextOperations';
 import { useModelWarmup, type LocalModelStatus, type StartupModels } from './composables/useModelWarmup';
 import { japaneseDictionaryKey, useJapaneseDictionary } from './composables/useJapaneseDictionary';
 import JapaneseDictionaryNotice from './components/common/JapaneseDictionaryNotice.vue';
-import { channelLabels, type Channel } from './lib/channels';
+import { channelLabels, profileKey, type Channel } from './lib/channels';
 import { api } from './lib/api';
 import { appendVisualInput, hasVisuals } from './lib/visuals';
 import { saveDownload } from './lib/download';
@@ -267,7 +267,11 @@ const configuredModel = computed(
         ]) || {},
 );
 const activeModel = computed(() =>
-  conversationModelProfile(configuredModel.value, session.value?.model_selection),
+  conversationModelProfile(
+    configuredModel.value,
+    session.value?.model_selection,
+    settings.value?.shared.providers,
+  ),
 );
 const modelSaving = ref(false);
 async function selectStoryModel(selection: ConversationModelSelection) {
@@ -534,7 +538,15 @@ const writerCacheRetention = computed(() => {
     value: {},
     request: {},
   };
-  const retention = cacheRetention(profile?.model || '', profile?.api_mode || 'chat_completions', cache);
+  const officialApi =
+    settings.value?.shared.providers.find((p) => p.id === profile?.provider_id)?.auth_mode ===
+    'openai_api_key';
+  const retention = cacheRetention(
+    profile?.model || '',
+    profile?.api_mode || 'chat_completions',
+    cache,
+    officialApi,
+  );
   // Who controls the cache, as the 缓存 page shows it: the subscription and
   // implicit-only Gemini leave it to the server; otherwise the saved cache mode.
   const page = {
@@ -2226,8 +2238,13 @@ function toggleCacheBreakpointFollow() {
 }
 async function saveCacheRetention(value: string) {
   if (busy.value || cacheBreakpointBusy.value || !writerCacheRetention.value.enabled) return;
+  const channel = openStory().channel_origin;
+  if (!channel) {
+    notify('请先确认此旧对话的渠道归属，再修改缓存时效。');
+    return;
+  }
   const scope = isFullAgent.value ? 'full_agent' : 'half_agent';
-  const path = isFullAgent.value ? 'model.cache.retention' : 'foreground.cache.retention';
+  const path = profileKey(isFullAgent.value ? 'full_agent' : 'foreground', channel) + '.cache.retention';
   cacheBreakpointBusy.value = true;
   try {
     await guarded(async () => {

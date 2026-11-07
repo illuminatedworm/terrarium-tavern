@@ -19,6 +19,7 @@ const props = defineProps<{
     enabled: boolean;
     explicit: boolean;
     note: string;
+    error?: string;
     options: { value: string; label: string }[];
     channel: string;
     role: string;
@@ -57,6 +58,7 @@ const retentionLabel = computed(
 );
 const status = computed(() => {
   const { control, explicit } = props.retention;
+  if (props.retention.error) return { badge: '配置待修正', summary: '缓存时效与当前模型不兼容' };
   if (control === 'subscription') return { badge: '服务端管理', summary: '服务端管理' };
   if (control === 'implicit') return { badge: '仅隐式', summary: '服务端隐式缓存' };
   const timing = props.retention.enabled && retentionLabel.value ? `时效 ${retentionLabel.value}` : '';
@@ -136,6 +138,7 @@ function save() {
     </div>
 
     <section class="cache-section" aria-label="缓存时效">
+      <p v-if="retention.error" class="cache-warn" role="alert">{{ retention.error }}</p>
       <div class="cache-section-head">
         <h3>时效</h3>
         <span v-if="!retentionOff" class="cache-scope">全局 · {{ retention.role }}</span>
@@ -149,7 +152,10 @@ function save() {
         </p>
       </template>
       <template v-else>
-        <div v-if="retention.options.length === 1" class="cache-value">
+        <div
+          v-if="retention.options.length === 1 && retention.options[0].value !== 'default'"
+          class="cache-value"
+        >
           <b>{{ retention.options[0].label }}</b
           ><small>当前模型唯一档位</small>
         </div>

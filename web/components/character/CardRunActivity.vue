@@ -16,6 +16,7 @@ import CardMessage from './CardMessage.vue';
 import CardModelRequests from './CardModelRequests.vue';
 import WebSources from '../common/WebSources.vue';
 import { webSources } from '../../lib/webSearch';
+import { failedUsageText } from '../../lib/contextUsage';
 
 const props = defineProps<{ run: EditorRun; events?: EditorEvent[] }>();
 const emit = defineEmits<{ contentChange: [] }>();
@@ -37,6 +38,11 @@ const blocks = computed(() => {
   const result = editorActivityBlocks(mergeEditorEvents(saved.value, props.events || []), props.run.status);
   return result.length ? result : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
 });
+const failedUsage = computed(() =>
+  mergeEditorEvents(saved.value, props.events || []).filter(
+    (event) => event.kind === 'usage' && event.payload.status === 'failed',
+  ),
+);
 // The run outcome belongs to its latest step; earlier blocks already finished.
 const blockStatus = (id: string) => (id === blocks.value.at(-1)?.id ? props.run.status : 'completed');
 const tools = (actions: EditorAction[]) => actions.filter((step) => !step.id.startsWith('model-'));
@@ -104,6 +110,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="cw-run-sequence" :data-run-id="run.id" aria-label="本回合工具与过程">
+    <p v-for="event in failedUsage" :key="event.seq" class="run-note">
+      {{ failedUsageText(event.payload.usage) }}
+    </p>
     <p v-if="loading" class="run-note" role="status">正在读取过程记录…</p>
     <p v-if="error" class="run-failure" role="alert">{{ error }} <button @click="load">重试</button></p>
     <template v-for="block in blocks" :key="block.id">

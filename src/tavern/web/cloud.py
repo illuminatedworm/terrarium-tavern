@@ -82,8 +82,11 @@ def source_links(payload):
 class WebSession:
     def __init__(self, mode, cfg, role, event=None, *, failed=False):
         self.mode, self.role = mode, role
+        self.auth_mode = "oauth" if cfg.auth_mode == "chatgpt_subscription" else "api_key"
         self.failed = failed
-        self.cloud = mode == "auto" and cfg.auth_mode == "chatgpt_subscription" and not failed
+        self.cloud = (
+            mode == "auto" and cfg.auth_mode in ("chatgpt_subscription", "openai_api_key") and not failed
+        )
         self.event = event or (lambda kind, payload: None)
 
     def definitions(self, base):
@@ -115,7 +118,7 @@ class WebSession:
                     "web_activity",
                     {
                         "service": "openai",
-                        "auth_mode": "oauth",
+                        "auth_mode": self.auth_mode,
                         "operation": "search",
                         "status": "fallback",
                         "reason": str(error) + "；本请求改用共享本地搜索服务",

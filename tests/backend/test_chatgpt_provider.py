@@ -334,3 +334,260 @@ async def test_jwt_shaped_model_text_and_encrypted_reasoning_are_not_redacted(tm
         assert ACCESS not in json.dumps(provider.last_response_record["diagnostics"])
     finally:
         await provider.close()
+
+
+async def test_official_api_preserves_cache_compaction_and_credential_bound_native_state(monkeypatch):
+    from tavern.scripting.sent_breakpoints import marked_boundaries
+
+    tools = copy.deepcopy(TOOLS)
+    tools[0]["function"]["parameters"]["properties"]["limit"] = {"type": "integer", "default": 5}
+    wire = []
+    fail = False
+    wrong_tool = False
+
+    def route(request):
+        wire.append(request)
+        if fail:
+            return httpx.Response(400, json={"error": {"message": "unsupported prompt_cache_options"}})
+        body = json.loads(request.content)
+        payload = completed("OK" if "context_management" in body else "完成")
+        if isinstance(body.get("tool_choice"), dict):
+            name = "lookup" if wrong_tool else body["tool_choice"]["tools"][0]["name"]
+            payload = completed("", [(name, {})])
+            for item in payload["output"]:
+                item.pop("namespace", None)
+        if "context_management" in body:
+            payload["output"].insert(0, {"type": "compaction", "id": "cmp-1", "encrypted_content": "opaque"})
+        return sse(payload)
+
+    client_type = httpx.AsyncClient
+
+    class Client(client_type):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx.MockTransport(route), **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    settings = Settings(
+        auth_mode="openai_api_key",
+        api_key="official-api-test-key",
+        base_url="https://official.test",
+        api_mode="responses",
+        api_path="v1",
+        model="gpt-6-sol",
+        reply_tokens=4096,
+        cache={"mode": "cloud"},
+    )
+    context = ProviderRequestContext(str(uuid.uuid4()), "turn", "window", "device")
+    context.routing["turn_state"] = "must-not-send"
+    provider = await make_provider(settings, request_context=context)
+    header = {"role": "system", "content": "完整固定规则" * 2000 + "固定尾部", "_cache_breakpoint": True}
+    messages = [header, {"role": "user", "content": "完整用户输入"}]
+    try:
+        await provider.chat_complete(messages, tools=tools)
+        body = json.loads(wire[-1].content)
+        assert str(wire[-1].url) == "https://official.test/v1/responses"
+        assert wire[-1].headers["authorization"] == "Bearer official-api-test-key"
+        assert not {"session-id", "thread-id", "x-codex-turn-state"} & set(wire[-1].headers)
+        assert body["store"] is False and body["stream"] is True
+        assert body["max_output_tokens"] == 4096
+        assert body["input"][0]["content"] == header["content"]
+        assert body["input"][0]["role"] == "developer"
+        assert body["include"] == ["reasoning.encrypted_content"]
+        assert not {"context_management", "prompt_cache_options", "prompt_cache_retention"} & body.keys()
+        assert body["prompt_cache_key"] == context.session_id
+        original_tools = body["tools"]
+        assert all(tool["type"] == "function" and tool["strict"] is False for tool in original_tools)
+        assert original_tools[0]["parameters"] == tools[0]["function"]["parameters"]
+
+        forced = {"tool_choice": {"type": "function", "function": {"name": "new_context"}}}
+        await provider.chat_complete(messages, tools=tools, extra_body=forced)
+        body = json.loads(wire[-1].content)
+        assert body["tools"] == original_tools
+        assert body["tool_choice"] == {
+            "type": "allowed_tools",
+            "mode": "required",
+            "tools": [{"type": "function", "name": "new_context"}],
+        }
+        assert provider.last_tool_calls[0].name == "new_context"
+        wrong_tool = True
+        with pytest.raises(ChatGPTError, match="invalid_tool_call"):
+            await provider.chat_complete(messages, tools=tools, extra_body=forced)
+        assert provider.last_native_response is None and not provider.last_tool_calls
+        wrong_tool = False
+
+        provider.settings.cache.mode = "runtime"
+        provider.settings.cache.retention = "12h"
+        await provider.chat_complete(messages, tools=tools)
+        body = json.loads(wire[-1].content)
+        assert body["prompt_cache_options"] == {"mode": "explicit", "ttl": "12h"}
+        assert len(marked_boundaries(body, "responses")) == 1
+        # Moving the live marker must retain the previously sent prefix boundary.
+        continued = [
+            dict(header, _cache_breakpoint=False),
+            messages[1],
+            {"role": "assistant", "content": "完整旧回复", "_cache_breakpoint": True},
+        ]
+        await provider.chat_complete(continued, tools=tools)
+        assert len(marked_boundaries(json.loads(wire[-1].content), "responses")) == 2
+
+        await provider.chat_complete(
+            continued,
+            tools=tools,
+            extra_body={"tool_choice": "none"},
+            _compact_threshold=1024,
+            _maintenance_instructions="只整理历史",
+        )
+        body = json.loads(wire[-1].content)
+        assert body["context_management"] == [{"type": "compaction", "compact_threshold": 1024}]
+        assert body["tool_choice"] == "none"
+        native = copy.deepcopy(provider.last_native_response)
+        assert native["items"][0]["encrypted_content"] == "opaque"
+        replay = [
+            {"role": "assistant", "content": "OK", "_native_response": native},
+            {"role": "user", "content": "当前交流保持完整"},
+        ]
+        await provider.chat_complete(replay)
+        body = json.loads(wire[-1].content)
+        assert "context_management" not in body
+        assert body["input"][0]["encrypted_content"] == "opaque"
+        changed = provider.settings.model_copy(update={"api_key": "different-key"})
+        _, invalid = prepare_messages(replay, response_origin(changed))
+        assert invalid
+        ordinary = provider.settings.model_copy(update={"auth_mode": "api_key"})
+        assert response_origin(ordinary) != response_origin(provider.settings)
+        legacy = copy.deepcopy(replay)
+        legacy[0]["_native_response"]["origin"].pop("tool_format")
+        portable, invalid = prepare_messages(legacy, response_origin(provider.settings))
+        assert invalid and portable[0]["content"] == "OK" and "_native_response" not in portable[0]
+
+        count = len(wire)
+        provider.settings.model, provider.settings.reasoning_effort = "gpt-6-astra", "none"
+        with pytest.raises(ValueError, match="思考档位"):
+            await provider.chat_complete(messages)
+        assert len(wire) == count and provider.settings.reasoning_effort == "none"
+        provider.settings.model, provider.settings.reasoning_effort = "gpt-6-sol", "default"
+
+        fail = True
+        count = len(wire)
+        with pytest.raises(ChatGPTError, match="unsupported prompt_cache_options") as rejected:
+            await provider.chat_complete(messages)
+        assert rejected.value.public()["usage_url"] == "https://platform.openai.com/usage"
+        assert len(wire) == count + 1  # No implicit cache fallback or billing-source switch.
+    finally:
+        await provider.close()
+
+
+def test_official_api_cache_configuration_keeps_user_values_and_rejects_non_generation_controls():
+    from tavern.core.cache_policy import preset, validate_openai_cache
+    from tavern.scripting.reasoning import reasoning_capabilities
+
+    cfg = Settings(
+        auth_mode="openai_api_key",
+        api_mode="responses",
+        model="gpt-6-astra",
+        cache={"mode": "runtime", "retention": "12h"},
+    )
+    validate_openai_cache(cfg)
+    assert preset(cfg)["request"] == {"prompt_cache_options": {"mode": "explicit", "ttl": "12h"}}
+    cfg.model = "gpt-5.5"
+    with pytest.raises(ValueError, match="已保存的缓存时效 12h"):
+        validate_openai_cache(cfg)
+    assert cfg.cache.retention == "12h"
+    cfg.model, cfg.cache.retention = "gpt-6-astra", "default"
+    assert preset(cfg)["request"] == {"prompt_cache_options": {"mode": "explicit"}}
+    cfg.cache.request = {"prompt_cache_options": {"prewarm": True}}
+    with pytest.raises(ValueError, match="独立缓存预热"):
+        validate_openai_cache(cfg)
+    cfg.cache.request = {"prompt_cache_options": {"ttl": "12h"}}
+    with pytest.raises(ValueError, match="时效选择器"):
+        validate_openai_cache(cfg)
+    assert cfg.cache.request["prompt_cache_options"]["ttl"] == "12h"
+    cfg.cache.request = {}
+    cfg.cache.preset, cfg.cache.field = "custom", "prompt_cache_breakpoint"
+    cfg.cache.value = {"mode": "explicit", "ttl": "12h"}
+    with pytest.raises(ValueError, match="时效请使用选择器"):
+        validate_openai_cache(cfg)
+    known = reasoning_capabilities("responses", "gpt-6-astra", official_api=True)
+    assert [level["effort"] for level in known["supported_reasoning_levels"]] == [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    unknown = reasoning_capabilities("responses", "deployment-gpt-6-astra", official_api=True)
+    assert "未知" in unknown["note"] and any(
+        level["effort"] == "none" for level in unknown["supported_reasoning_levels"]
+    )
+
+
+async def test_official_api_failed_billing_is_recorded_without_replacing_window_observation(tmp_path):
+    from tavern.chatgpt.provider import ChatGPTProvider
+    from tavern.core.context_usage import bind_meter, context_usage
+    from tavern.scripting.request_context import configure_operation
+    from tavern.storage.store import Store
+
+    store = Store(tmp_path)
+    cfg = bind_meter(
+        Settings(
+            auth_mode="openai_api_key",
+            api_mode="responses",
+            api_key="test-api-key",
+            api_path="v1",
+            model="gpt-6-sol",
+        ),
+        store,
+        "story",
+        "billing-fixture",
+    )
+    requests = 0
+    billed = {
+        "input_tokens": 37,
+        "output_tokens": 128,
+        "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 7},
+        "output_tokens_details": {"reasoning_tokens": 128},
+    }
+
+    def route(request):
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return sse(completed("完整回复"))
+        response = {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [],
+        }
+        if requests == 2:
+            response["usage"] = billed
+        return sse(events=[{"type": "response.incomplete", "response": response}])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(route))
+    provider = ChatGPTProvider(cfg, cfg.api_key, http_client=client)
+    events = []
+    context = ProviderRequestContext(str(uuid.uuid4()), "turn", "window", "device")
+    configure_operation(provider, context, lambda kind, payload: events.append((kind, payload)), "narrative")
+    messages = [{"role": "user", "content": "同一完整输入"}]
+    try:
+        await provider.chat_complete(messages)
+        before = context_usage(messages, provider.settings)
+        assert before["tokens"] == 20 and before["last_attempt"] == "completed"
+        with pytest.raises(ChatGPTError, match="输出上限包含思考"):
+            await provider.chat_complete(messages)
+        failed = [payload for kind, payload in events if kind == "usage"]
+        assert len(failed) == 1 and failed[0]["status"] == "failed"
+        assert failed[0]["usage"]["raw_usage"] == billed
+        assert failed[0]["usage"]["total_tokens"] is None
+        assert provider.reported_usage["total_tokens"] is None
+        assert provider.last_response_record["raw_usage"] == billed
+        after = context_usage(messages, provider.settings)
+        assert after["tokens"] == before["tokens"] and after["last_attempt"] == "request_failed"
+        assert provider.last_native_response is None and not provider.last_tool_calls
+        assert len(provider.usage_history) == 2
+        with pytest.raises(ChatGPTError):
+            await provider.chat_complete(messages)
+        assert len(provider.usage_history) == 2
+        assert len([payload for kind, payload in events if kind == "usage"]) == 1
+        assert "raw_usage" not in provider.last_response_record
+    finally:
+        await provider.close()

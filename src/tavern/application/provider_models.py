@@ -44,9 +44,9 @@ def legacy_catalog_keys(document, provider, requested):
 
 def register_model_routes(app, store):
     @app.get("/api/settings/reasoning")
-    async def reasoning_options(api_mode: ApiMode, model: str = ""):
+    async def reasoning_options(api_mode: ApiMode, model: str = "", official_api: bool = False):
         # This reads local protocol rules only, without refreshing a paid provider.
-        return reasoning_capabilities(api_mode, model)
+        return reasoning_capabilities(api_mode, model, official_api=official_api)
 
     def connection(profile):
         document = store.settings_document()
@@ -68,12 +68,18 @@ def register_model_routes(app, store):
                 ]
             )
             return document, provider, url, key
-        url = endpoint(provider.base_url, profile.api_mode, resource="models", api_path=profile.api_path)
+        url = endpoint(
+            provider.base_url,
+            "responses" if provider.auth_mode == "openai_api_key" else profile.api_mode,
+            resource="models",
+            api_path="v1" if provider.auth_mode == "openai_api_key" else profile.api_path,
+        )
         # Catalogue identity belongs to the provider; the requesting role still
         # controls the protocol/path used for an explicit refresh. v2 keeps old
         # connection-specific entries intact while adopting their latest list.
         key = "provider_models:v2:" + fingerprint(
             [provider.id, provider.base_url, fingerprint(provider.api_key)]
+            + ([provider.auth_mode] if provider.auth_mode == "openai_api_key" else [])
         )
         return document, provider, url, key
 
@@ -83,7 +89,7 @@ def register_model_routes(app, store):
         document, provider, _, key = connection(profile)
         with store.connection() as db:
             row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-            if row is None and provider.auth_mode != "chatgpt_subscription":
+            if row is None and provider.auth_mode == "api_key":
                 old_keys = legacy_catalog_keys(document, provider, profile)
                 placeholders = ",".join("?" for _ in old_keys)
                 rows = db.execute(
@@ -116,7 +122,7 @@ def register_model_routes(app, store):
                     (key, json.dumps(result, ensure_ascii=False)),
                 )
             return result
-        mode = profile.api_mode
+        mode = "responses" if provider.auth_mode == "openai_api_key" else profile.api_mode
         headers = (
             (
                 {"x-api-key": provider.api_key, "anthropic-version": "2023-06-01"}

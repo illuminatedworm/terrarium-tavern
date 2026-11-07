@@ -93,7 +93,11 @@ def background_records(events):
             purpose = payload.get("kind", "memory")
         elif kind == "scene_refresh_started":
             purpose = payload.get("kind", "runtime")
-        if kind in ("provider_request", "provider_response", "usage", "activity") and purpose == "narrative":
+        if (
+            kind in ("provider_request", "provider_response", "usage", "activity")
+            and purpose == "narrative"
+            and not (kind == "usage" and payload.get("status") == "failed")
+        ):
             continue
         yield {**event, "purpose": purpose}
 
@@ -114,6 +118,9 @@ def compact_record(event):
             description = result.get("error") or result.get("notice", "")
     if kind == "provider_request":
         description = f"{payload.get('model', '')} · {len(payload.get('messages', []))} 条输入 · {len(payload.get('tools', []))} 个工具"
+    if kind == "usage" and payload.get("status") == "failed":
+        label = "失败请求用量"
+        description = "接口返回的计费用量；正文未提交，不作为有效窗口实测"
     if kind == "activity":
         label = str(payload.get("kind") or label)
     if kind == "context_baseline":

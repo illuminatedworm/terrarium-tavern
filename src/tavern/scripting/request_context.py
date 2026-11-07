@@ -27,7 +27,12 @@ def response_origin(settings, key=None):
         "endpoint": endpoint(
             settings.base_url, settings.api_mode, settings.model, api_path=settings.api_path
         ),
-        "credential": fingerprint(key),
+        "credential": fingerprint(["openai_api_key", key])
+        if settings.auth_mode == "openai_api_key"
+        else fingerprint(key),
+        # API functions now use the standard flat tool list. Old namespace
+        # checkpoints/reasoning must rebuild from portable local history once.
+        **({"tool_format": "functions-v1"} if settings.auth_mode == "openai_api_key" else {}),
     }
 
 
@@ -79,6 +84,10 @@ class ProviderRequestContext:
                     ),
                 )
         elif settings.api_mode == "responses":
+            if settings.auth_mode == "openai_api_key" and settings.cache.mode == "cloud":
+                # Cloud mode explicitly leaves saved custom JSON inactive.
+                body.setdefault("prompt_cache_key", self.session_id)
+                return
             body.setdefault(
                 "prompt_cache_key",
                 settings.cache.request.get("prompt_cache_key", settings.prompt_cache_key or self.session_id),
@@ -156,4 +165,5 @@ def configure_operation(provider, context, event, purpose):
     if hasattr(provider, "settings") and hasattr(provider, "key"):
         context.bind(response_origin(provider.settings, provider.key))
     provider.response_capture = lambda record: event("provider_response", {"purpose": purpose, **record})
+    provider.failed_usage_capture = lambda payload: event("usage", {"purpose": purpose, **payload})
     provider.auxiliary_capture = lambda items: event("kemini_auxiliary", {"purpose": purpose, "items": items})

@@ -348,3 +348,74 @@ async def test_legacy_provider_catalog_migrates_without_network(tmp_path):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
         result = await api.get("/api/settings/models", params={"provider_id": provider.id})
         assert result.json() == {"models": ["responses"], "updated_at": 2}
+
+
+async def test_official_api_connection_is_explicit_persistent_and_fixed_protocol(tmp_path, monkeypatch):
+    from tavern.core.channels import provider_channel
+
+    app = create_app(tmp_path)
+    store = app.state.store
+    doc = store.settings_document()
+    legacy = doc.model_dump()
+    legacy["version"] = 15
+    assert migrate_settings(legacy).shared.providers[0].auth_mode == "api_key"
+    official = Provider(
+        id="official-api",
+        auth_mode="openai_api_key",
+        api_key="official-test-key",
+        base_url="https://official.test",
+    )
+    doc.shared.providers.append(official)
+    profile = ModelProfile(provider_id=official.id, model="gpt-6-sol", api_mode="responses", api_path="v1")
+    doc.full_agent.official_model = profile.model_copy(deep=True)
+    doc.half_agent.official_foreground = profile.model_copy(deep=True)
+    doc.half_agent.official_background = profile.model_copy(deep=True)
+    doc.shared.advisor.official_model = profile.model_copy(deep=True)
+    doc.shared.card_author = profile.model_copy(deep=True)
+    doc.full_agent.novel_research.official_model = profile.model_copy(deep=True)
+    store.save_settings(doc)
+    saved = store.settings_document()
+    assert saved.model_dump(exclude={"revisions"}) == doc.model_dump(exclude={"revisions"})
+    assert saved.version == 17
+    assert provider_channel(saved.shared.providers[0]) == "standard"
+    assert provider_channel(official) == "chatgpt"
+    for mode, role in (
+        ("full_agent", "full_agent"),
+        ("half_agent", "foreground"),
+        ("half_agent", "background"),
+        ("half_agent", "card_author"),
+    ):
+        runtime = saved.runtime(mode, "chatgpt").for_role(role)
+        assert (runtime.auth_mode, runtime.api_mode, runtime.api_path) == (
+            "openai_api_key",
+            "responses",
+            "v1",
+        )
+        assert runtime.base_url == "https://official.test/v1" and runtime.api_key == "official-test-key"
+    invalid = saved.model_dump()
+    invalid["full_agent"]["official_model"]["api_path"] = "custom"
+    with pytest.raises(ValidationError, match="固定使用 Responses"):
+        SettingsDocument.model_validate(invalid)
+
+    calls = []
+
+    def route(request):
+        calls.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-6-sol"}]})
+
+    client_type = httpx.AsyncClient
+    async with client_type(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as api:
+        monkeypatch.setattr(
+            httpx, "AsyncClient", lambda **kwargs: client_type(transport=httpx.MockTransport(route), **kwargs)
+        )
+        # A stale caller cannot select a different catalogue protocol or API path.
+        response = await api.post(
+            "/api/settings/models",
+            json={"provider_id": official.id, "api_mode": "gemini", "api_path": "custom"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["models"] == ["gpt-6-sol"]
+        assert str(calls[0].url) == "https://official.test/v1/models"
+        assert calls[0].headers["authorization"] == "Bearer official-test-key"
+        cached = await api.get("/api/settings/models", params={"provider_id": official.id})
+        assert cached.json() == response.json() and len(calls) == 1

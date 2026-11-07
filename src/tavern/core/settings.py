@@ -194,7 +194,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[15] = 15
+    version: Literal[17] = 17
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -246,6 +246,25 @@ class SettingsDocument(StrictSettings):
                 raise ValueError("提供商仍被原著调查模型引用，请先切换调查模型的提供商")
             if provider_channel(provider) != ("chatgpt" if key == "official_model" else "standard"):
                 raise ValueError("原著调查模型与渠道不一致")
+        profiles = [profile for _, _, profile in self.profiles()]
+        profiles.extend(
+            (
+                self.shared.advisor.model,
+                self.shared.advisor.official_model,
+                self.full_agent.novel_research.model,
+                self.full_agent.novel_research.official_model,
+            )
+        )
+        official_ids = {p.id for p in self.shared.providers if p.auth_mode == "openai_api_key"}
+        for profile in profiles:
+            if profile is None:
+                continue
+            connections = list(profile.provider_connections.items()) + [(profile.provider_id, profile)]
+            for provider_id, connection in connections:
+                if provider_id in official_ids and (
+                    connection.api_mode != "responses" or connection.api_path != "v1"
+                ):
+                    raise ValueError("OpenAI 官方 API 固定使用 Responses 和 /v1，请修正模型连接配置")
         return self
 
     def runtime(self, mode="half_agent", channel=None) -> Settings:
@@ -360,6 +379,8 @@ def migrate_model_connections(raw):
             profile["api_path"] = "" if path == ("v1beta" if mode == "gemini" else "v1") else path
             changed.add(scope)
     for provider in providers:
+        if provider.get("auth_mode") == "openai_api_key":
+            continue  # New official connections never carried legacy provider paths.
         original = deepcopy(provider)
         provider.pop("api_mode", None)
         parsed = urlsplit(provider.get("base_url", "https://api.openai.com"))
@@ -578,6 +599,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             raw["version"] = 15
             raw.setdefault("full_agent", {}).setdefault("novel_research", NovelConfig().model_dump())
             changed_scopes.add("full_agent")
+        if raw["version"] == 15:
+            raw["version"] = 16
+        if raw["version"] == 16:
+            raw["version"] = 17
         for scope in changed_scopes:
             revisions = raw.setdefault(
                 "revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")}

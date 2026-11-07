@@ -34,17 +34,24 @@ const cacheValid = ref(true);
 const adapterEditor = ref<InstanceType<typeof GlobalMessageAdapter>>();
 const provider = computed(() => props.providers.find((item) => item.id === props.profile.provider_id));
 const subscription = computed(() => subscriptionProvider(provider.value));
+const official = computed(() => providerChannel(provider.value) === 'chatgpt');
 const gemini = computed(() => geminiControls(props.profile.api_mode, props.profile.model));
 const { details: apiReasoning, note: reasoningNote } = useApiReasoning(
   () => props.profile,
   () => !subscription.value,
+  () => official.value && !subscription.value,
 );
 const editorChannel = ref<Channel>(providerChannel(provider.value));
 const visibleProviders = computed(() =>
   props.role === 'card_author' ? channelProviders(props.providers, editorChannel.value) : props.providers,
 );
 const providerOptions = computed(() =>
-  visibleProviders.value.map((item) => ({ value: item.id, label: item.name })),
+  visibleProviders.value.map((item) => ({
+    value: item.id,
+    label:
+      item.name +
+      (item.auth_mode === 'openai_api_key' ? ' · API' : subscriptionProvider(item) ? ' · 订阅' : ''),
+  })),
 );
 function switchEditorChannel(channel: Channel) {
   editorChannel.value = channel;
@@ -53,12 +60,17 @@ function switchEditorChannel(channel: Channel) {
   chooseProvider(previous?.id || providers[0]?.id || '');
 }
 function chooseProvider(value: string) {
+  const firstOfficialApi =
+    props.providers.find((item) => item.id === value)?.auth_mode === 'openai_api_key' &&
+    value !== props.profile.provider_id &&
+    !(value in props.profile.provider_connections);
+  if (firstOfficialApi) props.profile.cache.mode = 'cloud';
   Object.assign(
     props.profile,
     selectProfileProvider(
       props.profile,
       value,
-      subscriptionProvider(props.providers.find((item) => item.id === value)),
+      providerChannel(props.providers.find((item) => item.id === value)) === 'chatgpt',
     ),
   );
 }
@@ -215,7 +227,7 @@ async function action(check: boolean) {
             @update:model-value="chooseProvider"
           />
         </div>
-        <label v-if="!subscription"
+        <label v-if="!official"
           >接口方式<select
             v-model="profile.api_mode"
             aria-label="接口方式"
@@ -228,10 +240,12 @@ async function action(check: boolean) {
             <option value="gemini">Google GenAI · Gemini</option>
           </select></label
         >
-        <label v-if="!subscription"
+        <label v-if="!official"
           >API 路径<input v-model="profile.api_path" :placeholder="`默认：${defaultPath}`" :disabled="busy"
         /></label>
-        <p v-else class="muted">ChatGPT 订阅 · Responses</p>
+        <p v-else class="muted">
+          {{ subscription ? 'ChatGPT 订阅' : 'OpenAI 官方 API · API 计费' }} · Responses · /v1
+        </p>
         <div class="settings-select-field">
           <span>模型名称</span>
           <ModelSelect
@@ -251,7 +265,13 @@ async function action(check: boolean) {
         </button>
       </div>
     </div>
-    <p class="muted">API 路径、接口方式和模型名称按本页的提供商分别保存；切换提供商会恢复上次设置。</p>
+    <p class="muted">
+      {{
+        official
+          ? '官方连接固定使用 Responses 和 /v1，模型名称按提供商分别保存。切换连接会重建云端压缩状态，可能增加下一次请求的输入量。'
+          : 'API 路径、接口方式和模型名称按本页的提供商分别保存；切换提供商会恢复上次设置。'
+      }}
+    </p>
     <p v-if="feedback" role="status" class="inline-feedback">{{ feedback }}</p>
     <p v-else-if="catalogError.message" class="inline-feedback">{{ catalogError.message }}</p>
     <p class="muted">
@@ -274,6 +294,9 @@ async function action(check: boolean) {
       ><slot name="common-extra"
     /></SettingsFields>
     <p v-if="!subscription" class="muted">{{ reasoningNote }}</p>
+    <p v-if="official && !subscription" class="muted">
+      输出上限包含正文与内部思考 tokens；达到上限时本次结果不会提交，接口已返回的失败用量仍会记录。
+    </p>
     <p v-if="!subscription && !gemini.sampling" class="muted">
       当前 Gemini 模型已废弃温度、top-p、top-k，由服务端控制采样；此前保存的这些值不发送。
     </p>
@@ -289,6 +312,7 @@ async function action(check: boolean) {
         :cache="profile.cache"
         :model="profile.model"
         :api="profile.api_mode"
+        :official-api="official && !subscription"
         @validity="cacheValid = $event"
       />
       <p v-if="!subscription" class="muted">

@@ -104,6 +104,7 @@ class ModelTransport(BaseLLMProvider):
         self.last_completion = None
         self.last_response_record = {}
         self.response_capture = None
+        self.failed_usage_capture: Callable[[dict], None] | None = None
         self.auxiliary_capture = None
         self._reset_kemini()
         self.request_observer: Callable[[httpx.Request], None] | None = None
@@ -186,6 +187,8 @@ class ModelTransport(BaseLLMProvider):
     def reported_usage(self):
         result = {
             key: sum(u[key] for u in self.usage_history)
+            if all(u[key] is not None for u in self.usage_history)
+            else None
             for key in ("prompt_tokens", "completion_tokens", "total_tokens")
         }
         for key in ("cached_tokens", "cache_write_tokens"):
@@ -381,7 +384,8 @@ class ModelTransport(BaseLLMProvider):
             raise ValueError("普通渠道使用本地上下文机制，不能通过自定义请求参数启用云端 compact")
         if self.request_context:
             self.request_context.apply(body, cfg)
-        if api in APIS and marker and marker.get("field") == FIELD:
+        if api in APIS and marker and marker.get("field") == FIELD and cfg.auth_mode != "openai_api_key":
+            # The official adapter restores only after its final role/tool projection.
             self._breakpoint_history().restore(body, api, self._breakpoint_identity())
         return body
 
@@ -514,20 +518,22 @@ class ModelTransport(BaseLLMProvider):
             ]
         if meter:
             effective, _ = prepare_messages(messages, response_origin(self.settings, self.key))
-            if self.settings.auth_mode == "chatgpt_subscription":
+            if self.settings.auth_mode in ("chatgpt_subscription", "openai_api_key"):
                 # The subscription route wraps functions in a namespace and can
                 # select a forced subset or add a hosted tool outside that namespace.
                 actual = body.get("tools", [])
-                names = {
-                    tool["name"]
-                    for group in actual
-                    if group.get("type") == "namespace"
-                    for tool in group["tools"]
-                }
+                functions = (
+                    [tool for group in actual if group.get("type") == "namespace" for tool in group["tools"]]
+                    if self.settings.auth_mode == "chatgpt_subscription"
+                    else [tool for tool in actual if tool.get("type") == "function"]
+                )
+                names = {tool["name"] for tool in functions}
                 effective_tools = [
                     tool for tool in effective_tools if tool.get("function", tool).get("name") in names
                 ]
-                effective_tools += [tool for tool in actual if tool.get("type") != "namespace"]
+                effective_tools += [
+                    tool for tool in actual if tool.get("type") not in ("namespace", "function")
+                ]
             sample = describe(
                 effective, self.settings, effective_tools, instructions=body.get("instructions", "")
             )

@@ -33,7 +33,7 @@ import CardFileReference from './CardFileReference.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
 import ReferenceTag from './ReferenceTag.vue';
 import ConversationModelControls from '../settings/ConversationModelControls.vue';
-import { type Channel } from '../../lib/channels';
+import { providerChannel, type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 import CacheRateStat from '../common/CacheRateStat.vue';
@@ -60,7 +60,10 @@ const portraitFiles = computed(() =>
 const input = ref(sessionStorage.getItem(`tavern-editor-input-${props.conversationId}`) || '');
 const quickEffort = ref(localStorage.getItem(`tavern-editor-effort-${props.conversationId}`) || 'inherit');
 const selectedProfile = computed(() =>
-  conversationModelProfile(props.modelProfile, workspace.value?.model_selection),
+  conversationModelProfile(props.modelProfile, workspace.value?.model_selection, props.providers),
+);
+const selectedProvider = computed(() =>
+  props.providers.find((provider) => provider.id === selectedProfile.value.provider_id),
 );
 async function selectModel(selection: ConversationModelSelection) {
   if (busy.value || active.value) return;
@@ -822,7 +825,11 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p class="composer-meta cw-composer-meta" aria-label="制卡上下文用量">
-            <ChatGPTUsage :active="workspace?.channel_origin === 'chatgpt'" :error="error" />
+            <ChatGPTUsage
+              :active="providerChannel(selectedProvider) === 'chatgpt'"
+              :auth-mode="selectedProvider?.auth_mode"
+              :error="error"
+            />
             <span :title="contextTitle" :class="{ 'cw-stats-error': statsError }">{{ contextLabel }}</span>
             <CacheRateStat :usage="cacheUsage" />
           </p>

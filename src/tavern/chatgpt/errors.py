@@ -59,6 +59,7 @@ class ChatGPTError(ValueError):
     def __init__(self, message, *, code="chatgpt_error", status=None, request_id=None, diagnostic=None):
         self.code, self.status, self.request_id = code, status, request_id
         self.diagnostic = diagnostic or {}
+        self.usage_url = USAGE_URL
         suffix = (
             f"（{code}"
             + (f"，HTTP {status}" if status else "")
@@ -73,11 +74,11 @@ class ChatGPTError(ValueError):
             "code": self.code,
             "upstream_status": self.status,
             "request_id": self.request_id,
-            "usage_url": USAGE_URL,
+            "usage_url": self.usage_url,
         }
 
 
-def response_error(payload, status=None, request_id=None, *, secrets=()):
+def response_error(payload, status=None, request_id=None, *, secrets=(), subscription=True):
     body = payload.get("response", payload) if isinstance(payload, dict) else payload
     source = body.get("error", {}) if isinstance(body, dict) else {}
     code = source.get("code") or source.get("type") if isinstance(source, dict) else source
@@ -96,14 +97,27 @@ def response_error(payload, status=None, request_id=None, *, secrets=()):
             503: "ChatGPT 服务暂不可用，请稍后重试",
         }.get(status, "ChatGPT 请求未完成"),
     )
+    if not subscription:
+        message = {
+            401: "OpenAI API Key 未被接受，请检查官方 API 连接中的密钥",
+            403: "OpenAI API 拒绝此请求，请检查项目权限及服务地区",
+            429: "OpenAI API 请求达到限制，请检查 API 用量或稍后重试",
+            503: "OpenAI API 服务暂不可用，请稍后重试",
+        }.get(status, "OpenAI API 请求未完成")
     safe_payload = redact(payload, secrets)
     detail = upstream_detail(safe_payload)
     if detail:
         message = detail
-    return ChatGPTError(
+    incomplete = body.get("incomplete_details") if isinstance(body, dict) else None
+    if not subscription and isinstance(incomplete, dict) and incomplete.get("reason") == "max_output_tokens":
+        message += "；输出上限包含思考 tokens，可能尚未生成正文就已耗尽；可提高输出上限或调整思考档位，本次结果未提交"
+    error = ChatGPTError(
         message,
         code=code,
         status=status,
         request_id=request_id,
         diagnostic={"status": status, "request_id": request_id, "body": safe_payload},
     )
+    if not subscription:
+        error.usage_url = "https://platform.openai.com/usage"
+    return error

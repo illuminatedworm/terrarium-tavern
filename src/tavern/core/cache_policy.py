@@ -59,7 +59,7 @@ class CacheSettings(BaseModel):
     field: str = Field(default="cache_control", min_length=1, max_length=100)
     value: Any = Field(default_factory=lambda: {"type": "ephemeral"})
     request: dict = Field(default_factory=dict)
-    retention: Literal["default", "5m", "15m", "1h", "24h", "30m", "in_memory"] = "default"
+    retention: Literal["default", "5m", "15m", "1h", "12h", "24h", "30m", "in_memory"] = "default"
 
     @model_validator(mode="before")
     @classmethod
@@ -77,7 +77,7 @@ class CacheSettings(BaseModel):
                 or request.get("prompt_cache_retention")
                 or (options.get("ttl") if isinstance(options, dict) else None)
             )
-            if ttl in ("5m", "1h", "24h", "30m", "in_memory"):
+            if ttl in ("5m", "1h", "12h", "24h", "30m", "in_memory"):
                 value["retention"] = ttl
         return value
 
@@ -134,7 +134,7 @@ def retention_policy(settings):
     if version:
         major, minor = int(version[1]), int(version[2] or 0)
         if (major, minor) >= (5, 6):
-            return "openai_ttl", ("30m",)
+            return "openai_ttl", ("30m", "12h") if api == "responses" else ("30m",)
         if (major, minor) == (5, 5):
             return "openai_retention", ("24h",)
         if (major == 5 and minor in (0, 1, 2, 4)) or (major, minor) == (4, 1):
@@ -147,11 +147,19 @@ def retention_policy(settings):
 def effective_retention(settings):
     kind, options = retention_policy(settings)
     value = settings.cache.retention
+    if settings.auth_mode == "openai_api_key":
+        if value == "default":
+            return kind, None
+        if value not in options:
+            raise ValueError(f"当前官方 API 模型不支持已保存的缓存时效 {value}，请重新选择或使用服务端默认")
+        return kind, value
     return kind, value if value in options else options[0] if options else None
 
 
 def retention_request(settings):
     kind, value = effective_retention(settings)
+    if settings.auth_mode == "openai_api_key" and settings.cache.retention == "default":
+        return {}
     if (
         kind == "anthropic"
         and settings.api_mode == "anthropic"
@@ -166,6 +174,59 @@ def retention_request(settings):
     if kind == "openai_retention":
         return {"prompt_cache_retention": value}
     return {}
+
+
+def validate_openai_cache(settings):
+    """Validate active user extensions before compiling or dispatching a paid request.
+
+    The visible retention selector owns the request lifetime. Do not silently
+    overwrite legacy JSON lifetimes; leave conflicting data intact for repair.
+    Breakpoints carry only their position, so replaying an old boundary cannot
+    silently restore an older, more expensive lifetime.
+    """
+    kind, _ = effective_retention(settings)
+    cache = settings.cache
+    if cache.mode != "runtime":
+        return
+    request = cache.request
+    if request.keys() - {"prompt_cache_key", "prompt_cache_options", "prompt_cache_retention"}:
+        raise ValueError("官方 API 缓存仅支持 OpenAI 官方缓存参数")
+    if "prompt_cache_retention" in request:
+        raise ValueError(
+            "请从附加缓存 JSON 移除 prompt_cache_retention，并在缓存时效选择器中设置；原值未修改"
+        )
+    key = request.get("prompt_cache_key")
+    if key is not None and not isinstance(key, str):
+        raise ValueError("prompt_cache_key 必须为字符串或 null")
+    if "prompt_cache_options" in request:
+        options = request["prompt_cache_options"]
+        if not isinstance(options, dict):
+            raise ValueError("prompt_cache_options 必须为 JSON 对象")
+        if "prewarm" in options:
+            raise ValueError("prewarm 只用于独立缓存预热，不能放入剧情或其他生成请求")
+        if "ttl" in options:
+            raise ValueError(
+                "请从附加缓存 JSON 移除 prompt_cache_options.ttl，并在缓存时效选择器中设置；原值未修改"
+            )
+        if options.keys() - {"mode"}:
+            raise ValueError("附加 prompt_cache_options 仅支持 mode；诊断和预热不是生成请求的缓存设置")
+        if "mode" in options and options["mode"] not in ("implicit", "explicit"):
+            raise ValueError("prompt_cache_options.mode 只能为 implicit 或 explicit")
+        if kind == "openai_retention":
+            raise ValueError("当前官方模型不支持 prompt_cache_options，请移除该附加参数")
+    if cache.preset == "custom":
+        if kind == "openai_retention":
+            raise ValueError("当前官方模型仅支持隐式缓存，请使用自动格式或云端默认")
+        marker = cache.value
+        if (
+            cache.field != "prompt_cache_breakpoint"
+            or not isinstance(marker, dict)
+            or marker.keys() - {"mode"}
+            or marker.get("mode") != "explicit"
+        ):
+            raise ValueError(
+                "官方 API 显式断点须使用 prompt_cache_breakpoint: {mode: explicit}；时效请使用选择器"
+            )
 
 
 def _preset(settings):

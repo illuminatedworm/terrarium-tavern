@@ -15,16 +15,17 @@ const channel = ref<Channel>(props.initialChannel || 'standard');
 const visible = computed(() => channelProviders(props.providers, channel.value));
 const emit = defineEmits<{ 'update:providers': [providers: Provider[]]; channel: [channel: Channel] }>();
 watch(channel, (value) => emit('channel', value));
-function add() {
+function add(officialApi = false) {
   emit('update:providers', [
     ...props.providers,
     {
       id: crypto.randomUUID(),
-      name: channel.value === 'chatgpt' ? 'OpenAI Official' : '新提供商',
+      name: channel.value === 'chatgpt' ? (officialApi ? 'OpenAI 官方 API' : 'ChatGPT 订阅') : '新提供商',
       base_url: 'https://api.openai.com',
       api_key: '',
       use_proxy: false,
-      auth_mode: channel.value === 'chatgpt' ? 'chatgpt_subscription' : 'api_key',
+      auth_mode:
+        channel.value === 'chatgpt' ? (officialApi ? 'openai_api_key' : 'chatgpt_subscription') : 'api_key',
       chatgpt_account_id: null,
     },
   ]);
@@ -41,25 +42,32 @@ function add() {
       <p class="muted">
         {{
           channel === 'chatgpt'
-            ? '使用 ChatGPT 订阅额度，模型与账号权限保持一致。'
+            ? '可连接 ChatGPT 订阅或 OpenAI 官方 API，各角色独立选择连接与计费来源。'
             : '使用 API Key 连接提供商，支持各类兼容接口。'
         }}
       </p>
     </div>
-    <button @click="add">{{ channel === 'chatgpt' ? '连接 ChatGPT 账号' : '添加提供商' }}</button>
+    <div class="actions">
+      <button @click="add()">{{ channel === 'chatgpt' ? '连接 ChatGPT 账号' : '添加提供商' }}</button>
+      <button v-if="channel === 'chatgpt'" @click="add(true)">添加官方 API</button>
+    </div>
   </div>
   <section
     v-for="provider in visible"
     :key="provider.id"
     class="provider-editor"
-    :class="{ 'official-provider': subscriptionProvider(provider) }"
+    :class="{ 'official-provider': channel === 'chatgpt' }"
   >
     <details :open="!subscriptionProvider(provider) || !provider.chatgpt_account_id">
       <summary class="provider-summary">
         <span
           ><strong>{{ provider.name || '新提供商' }}</strong
           ><small>{{
-            subscriptionProvider(provider) ? '工作区账号 · 订阅连接' : 'API Key 连接'
+            subscriptionProvider(provider)
+              ? '工作区账号 · 订阅连接'
+              : provider.auth_mode === 'openai_api_key'
+                ? 'OpenAI 官方 API · API 计费'
+                : 'API Key 连接'
           }}</small></span
         >
         <span class="provider-summary-status" v-if="subscriptionProvider(provider)">{{
@@ -74,7 +82,7 @@ function add() {
       <div class="settings-field-grid">
         <label>名称<input v-model="provider.name" /></label>
         <label v-if="!subscriptionProvider(provider)"
-          >主域名<input v-model="provider.base_url" placeholder="https://api.example.com"
+          >Base URL（主域名）<input v-model="provider.base_url" placeholder="https://api.openai.com"
         /></label>
         <label v-if="!subscriptionProvider(provider)"
           >接口密钥<input
@@ -87,6 +95,10 @@ function add() {
           ><span>使用接口代理</span><input v-model="provider.use_proxy" type="checkbox"
         /></label>
       </div>
+      <p v-if="provider.auth_mode === 'openai_api_key'" class="muted">
+        固定使用 Responses，程序追加 /v1/responses；只填写主机地址，不含 /v1。自定义主机须支持 OpenAI
+        官方协议。
+      </p>
       <ChatGPTConnection v-if="subscriptionProvider(provider)" :provider="provider" :flush="flush" />
       <button
         class="danger-button"
@@ -107,7 +119,7 @@ function add() {
     {{
       channel === 'chatgpt'
         ? '官方渠道的两种 Agent 模式均支持本地上下文与云端 compact，新对话默认使用本地方式。'
-        : '普通渠道的 Full Agent 使用本地换窗。API Key 连接始终属于普通渠道。'
+        : '普通渠道的 Full Agent 使用本地换窗。此处创建的连接保持普通渠道归属。'
     }}
   </p>
   <ChatGPTWelcome />

@@ -12,10 +12,15 @@ const pending = new Map<string, Promise<ApiReasoningDetails>>();
 export function useApiReasoning(
   profile: () => { api_mode?: string; model?: string },
   enabled: () => boolean,
+  officialApi: () => boolean = () => false,
 ) {
   const query = computed(() =>
     enabled() && profile().api_mode
-      ? new URLSearchParams({ api_mode: profile().api_mode!, model: profile().model || '' }).toString()
+      ? new URLSearchParams({
+          api_mode: profile().api_mode!,
+          model: profile().model || '',
+          ...(officialApi() ? { official_api: 'true' } : {}),
+        }).toString()
       : '',
   );
   const errors = reactive<Record<string, string>>({});

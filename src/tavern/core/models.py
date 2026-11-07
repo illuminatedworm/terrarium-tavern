@@ -179,6 +179,9 @@ class Settings(BaseModel):
                 "chatgpt_account_id": provider.chatgpt_account_id,
             },
         )
+        if provider.auth_mode == "openai_api_key":
+            result.base_url = api_root(provider.base_url, "responses", "v1")
+            result.api_mode, result.api_path = "responses", "v1"
         if provider.auth_mode == "chatgpt_subscription":
             result.base_url, result.api_mode, result.api_path = "https://api.openai.com/v1", "responses", "v1"
             result.api_key = ""
@@ -202,7 +205,7 @@ class Settings(BaseModel):
     model: str = ""
     tokenizer: Literal["auto", "o200k_base", "cl100k_base"] = "auto"
     api_key: str = Field(default="", exclude=True)
-    auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
+    auth_mode: Literal["api_key", "chatgpt_subscription", "openai_api_key"] = "api_key"
     chatgpt_account_id: str | None = None
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     # Compatibility fields for old flat profiles; production Tracker uses the

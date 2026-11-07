@@ -27,7 +27,7 @@ class Provider(BaseModel):
     base_url: str = "https://api.openai.com"
     api_key: str = ""
     use_proxy: bool = False
-    auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key"
+    auth_mode: Literal["api_key", "chatgpt_subscription", "openai_api_key"] = "api_key"
     chatgpt_account_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
     @model_validator(mode="after")
@@ -42,6 +42,8 @@ class Provider(BaseModel):
         if parsed.query or parsed.fragment or parsed.username or parsed.password:
             raise ValueError("接口地址不能包含查询参数、片段或登录凭据")
         if parsed.path.strip("/"):
+            if self.auth_mode == "openai_api_key":
+                raise ValueError("官方 API 的 Base URL 只填写主域名，程序固定追加 /v1")
             raise ValueError("提供商只填写主域名，API 路径请在模型设置中填写")
         self.base_url = self.base_url.rstrip("/")
         return self

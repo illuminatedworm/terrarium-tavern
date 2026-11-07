@@ -21,6 +21,8 @@ def require_model_connection(settings):
             raise ValueError("此任务开始时尚未连接 ChatGPT 账号，请连接后重新开始任务")
         settings._chatgpt.require_account(settings.chatgpt_account_id, settings._auth_generation)
         return
+    if settings.auth_mode == "openai_api_key" and not settings.api_key:
+        raise ValueError("请在官方 API 连接中填写 API Key")
     key = settings.api_key or os.environ.get("TAVERN_API_KEY", "")
     if not key:
         raise ValueError("请先设置 API Key；本地免密端点可填 local")
@@ -64,4 +66,8 @@ async def make_provider(settings, capture=None, *, request_timeout=120, request_
         timeout=request_timeout,
         trust_env=False,
     )
+    if settings.auth_mode == "openai_api_key":
+        from tavern.chatgpt.provider import ChatGPTProvider
+
+        return ChatGPTProvider(settings, key, capture, http_client=client, request_context=request_context)
     return ModelTransport(settings, key, capture, http_client=client, request_context=request_context)

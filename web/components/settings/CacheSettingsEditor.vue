@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, useId, watch, type Ref } from 'vue';
-import { cachePreset, type CacheSettings } from '../../lib/cachePolicy';
+import { cachePreset, cacheRetention, type CacheSettings } from '../../lib/cachePolicy';
 import { geminiControls } from '../../lib/geminiCapabilities';
-const props = defineProps<{ cache: CacheSettings; model: string; api: string }>();
+const props = defineProps<{ cache: CacheSettings; model: string; api: string; officialApi?: boolean }>();
 const emit = defineEmits<{ validity: [valid: boolean] }>();
 const valueText = ref('');
 const requestText = ref('');
@@ -53,11 +53,17 @@ watch(
       props.cache.field === 'cache_control' &&
       JSON.stringify(props.cache.value) === '{"type":"ephemeral"}'
     ) {
-      const matched = cachePreset(props.model, props.api, { ...props.cache, preset: 'auto' });
+      const matched = cachePreset(
+        props.model,
+        props.api,
+        { ...props.cache, preset: 'auto' },
+        props.officialApi,
+      );
       if (matched.kind === 'block' && matched.field) {
         props.cache.field = matched.field;
         props.cache.value = matched.value;
-        props.cache.request = { ...matched.request, ...props.cache.request };
+        const request = props.officialApi ? { prompt_cache_options: { mode: 'explicit' } } : matched.request;
+        props.cache.request = { ...request, ...props.cache.request };
       }
     }
     if (preset === 'auto') {
@@ -67,7 +73,8 @@ watch(
     }
   },
 );
-const selected = computed(() => cachePreset(props.model, props.api, props.cache));
+const retention = computed(() => cacheRetention(props.model, props.api, props.cache, props.officialApi));
+const selected = computed(() => cachePreset(props.model, props.api, props.cache, props.officialApi));
 const explicitCache = computed(() => geminiControls(props.api, props.model).explicitCache);
 const customCache = computed(() => props.api !== 'gemini' && explicitCache.value);
 watch(customCache, (enabled) => {
@@ -108,6 +115,23 @@ function edit(kind: 'value' | 'request', event: Event) {
           <option value="runtime">本地运行时控制</option>
         </select></label
       >
+      <template v-if="officialApi">
+        <label
+          >缓存时效<select v-model="cache.retention" aria-label="缓存时效">
+            <option v-if="retention.error" :value="cache.retention" disabled>
+              {{ cache.retention }} · 当前模型不支持
+            </option>
+            <option v-for="option in retention.options" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select></label
+        >
+        <p class="muted">
+          官方 API 使用 API 计费。默认不指定缓存时效；显式配置只支持 OpenAI 官方缓存字段，不支持时会报错。
+        </p>
+        <p v-if="retention.error" role="alert">{{ retention.error }}</p>
+        <p class="muted">{{ retention.note }}</p>
+      </template>
       <p v-if="cache.mode === 'cloud'" class="muted">
         不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
       </p>
@@ -138,7 +162,7 @@ function edit(kind: 'value' | 'request', event: Event) {
         <template v-if="customCache && cache.preset === 'custom'">
           <label>断点字段名<input v-model="cache.field" :list="editorId" aria-label="断点字段名" /></label>
           <datalist :id="editorId">
-            <option value="cache_control" />
+            <option v-if="!officialApi" value="cache_control" />
             <option value="prompt_cache_breakpoint" />
           </datalist>
           <label
@@ -163,7 +187,14 @@ function edit(kind: 'value' | 'request', event: Event) {
             />
           </label>
           <p v-if="errors.request" role="alert">{{ errors.request }}</p>
-          <p class="muted">仅在本地控制生效时发送。不能覆盖模型、消息、工具和输出额度；云端降级时不发送。</p>
+          <p v-if="officialApi" class="muted">
+            仅在本地控制时发送。支持 prompt_cache_key 与 prompt_cache_options.mode（implicit /
+            explicit）；时效使用上方选择器，JSON 中的重复时效会报错。断点 JSON 仅标注
+            mode:explicit，时效统一由选择器控制。预热和诊断参数不用于生成请求。
+          </p>
+          <p v-else class="muted">
+            仅在本地控制生效时发送。不能覆盖模型、消息、工具和输出额度；云端降级时不发送。
+          </p>
         </template>
         <p v-else class="muted">
           Google GenAI 使用原生缓存对象，不支持自定义断点字段和附加缓存 JSON；此前保存的这些值不发送。

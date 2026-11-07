@@ -488,6 +488,7 @@ class FullAgent:
                 observe_request if self.session.get("novel_enabled") else request_observer
             )
             provider.operation_purpose = "narrative"
+            provider.failed_usage_capture = lambda payload: self.event("usage", payload)
             provider.auxiliary_capture = lambda items: self.event("kemini_auxiliary", {"items": items})
             if hasattr(provider, "request_context"):
                 provider.request_context = self.request_context

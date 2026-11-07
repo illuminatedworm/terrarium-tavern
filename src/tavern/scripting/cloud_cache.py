@@ -21,6 +21,7 @@ LOCKS = {}
 def capability_key(settings, key):
     return fingerprint(
         [settings.base_url, fingerprint(key), settings.model, settings.api_mode, settings.cache.model_dump()]
+        + ([settings.auth_mode] if settings.auth_mode == "openai_api_key" else [])
     )
 
 

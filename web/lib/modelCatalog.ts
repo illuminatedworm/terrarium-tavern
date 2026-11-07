@@ -1,5 +1,6 @@
 import { computed, reactive, watch } from 'vue';
 import { api } from './api';
+import { providerChannel } from './channels';
 import type { ModelProfile, Provider } from './settingsDocument';
 import { chatgptGeneration, chatgptState, subscriptionProvider } from './chatgptAccounts';
 
@@ -27,12 +28,13 @@ export function useModelCatalog(
 ) {
   const request = computed(() => ({
     provider_id: profile().provider_id,
-    api_mode: subscriptionProvider(provider()) ? 'responses' : profile().api_mode,
-    api_path: subscriptionProvider(provider())
-      ? 'v1'
-      : profile()
-          .api_path.trim()
-          .replace(/^\/+|\/+$/g, '') || (profile().api_mode === 'gemini' ? 'v1beta' : 'v1'),
+    api_mode: providerChannel(provider()) === 'chatgpt' ? 'responses' : profile().api_mode,
+    api_path:
+      providerChannel(provider()) === 'chatgpt'
+        ? 'v1'
+        : profile()
+            .api_path.trim()
+            .replace(/^\/+|\/+$/g, '') || (profile().api_mode === 'gemini' ? 'v1beta' : 'v1'),
   }));
   const key = computed(() =>
     JSON.stringify([

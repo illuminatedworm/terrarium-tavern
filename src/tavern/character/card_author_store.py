@@ -91,7 +91,7 @@ class EditorStore(Conversations):
             rows = db.execute(
                 """SELECT r.id,e.kind,e.payload FROM card_edit_runs r
                 LEFT JOIN card_edit_events e ON e.run=r.id AND
-                    (e.kind='completed' OR (e.kind='context_stats' AND json_type(e.payload,'$.usage')='object'))
+                    (e.kind='completed' OR (e.kind IN ('context_stats','usage') AND json_type(e.payload,'$.usage')='object'))
                 WHERE r.workspace=? ORDER BY r.created,r.id,e.seq""",
                 (wid,),
             ).fetchall()
@@ -99,7 +99,7 @@ class EditorStore(Conversations):
         for row in rows:
             run = runs.setdefault(row["id"], {"usages": [], "calls": 0})
             payload = json.loads(row["payload"]) if row["payload"] else {}
-            if row["kind"] == "context_stats":
+            if row["kind"] in ("context_stats", "usage"):
                 run["usages"].append(payload["usage"])
             elif row["kind"] == "completed":
                 # completed repeats the last response, not a new request. Old

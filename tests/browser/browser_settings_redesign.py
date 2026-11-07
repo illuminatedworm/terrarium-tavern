@@ -14,12 +14,12 @@ from playwright.async_api import async_playwright, expect
 from tavern.application.api import create_app
 from tavern.core.models import ContextBlock, SessionCreate
 from tavern.desktop_browser import system_browser
-from tavern.search.retrieval_config import Provider
+from tavern.search.retrieval_config import ModelProfile, Provider
 from tavern.storage.request_debug import RequestDebugLog
-from tests.browser.select_menu import choose_menu, choose_model, menu_popup
+from tests.browser.select_menu import choose_menu, choose_model, menu_option, menu_popup
 
 
-async def main(*, misc_only=False, connections_only=False, models_only=False):
+async def main(*, misc_only=False, connections_only=False, models_only=False, official_api_only=False):
     output = Path(".cache/settings-redesign")
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tavern-settings-browser-") as root:
@@ -34,6 +34,14 @@ async def main(*, misc_only=False, connections_only=False, models_only=False):
         recipe.blocks.insert(2, ContextBlock(id="character", source="character", depth=2, priority=90))
         # The picker cannot choose an empty model, so give the round trip a real original.
         settings.full_agent.model.model = "original-full-model"
+        if official_api_only:
+            settings.shared.providers.append(
+                Provider(id="official-api", auth_mode="openai_api_key", api_key="fixture-key")
+            )
+            settings.full_agent.official_model = ModelProfile(
+                provider_id="official-api", api_mode="responses", api_path="v1", model="gpt-6-astra"
+            )
+            settings.full_agent.default_channel = "chatgpt"
         if connections_only:
             settings.shared.providers += [
                 Provider(id="connection-b", name="连接 B", base_url="https://b.test"),
@@ -49,7 +57,7 @@ async def main(*, misc_only=False, connections_only=False, models_only=False):
                 profile.provider_id = "default"
                 profile.api_mode, profile.api_path, profile.model = "gemini", "a/v1beta", "original-model"
         app.state.store.save_settings(settings)
-        if connections_only:
+        if connections_only or official_api_only:
             card = app.state.store.import_card(b'{"name":"Connection fixture","first_mes":"Opening"}')
             session = app.state.store.new_session(SessionCreate(card_id=card["id"], agent_mode="full_agent"))
         if misc_only:
@@ -89,21 +97,26 @@ async def main(*, misc_only=False, connections_only=False, models_only=False):
         thread = Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
         thread.start()
         vite = None
+        vite_logs = None
         try:
             for _ in range(100):
                 if server.started:
                     break
                 await asyncio.sleep(0.05)
             frontend = address
-            if misc_only or connections_only:
+            if misc_only or connections_only or official_api_only:
                 # Serve current Vue sources, avoiding a production build and
                 # the user's running backend. This process belongs to this test.
                 source = """
 import { createServer } from 'vite';
+import { readFileSync } from 'node:fs';
 const target = process.argv[1];
 const proxy = { target, changeOrigin: true,
   configure: p => p.on('proxyReq', r => r.removeHeader('origin')) };
-const server = await createServer({ logLevel: 'silent', server: {
+// Avoid waiting for the whole lazy Vue source graph during the fixture's first request.
+const include = [...Object.keys(JSON.parse(readFileSync('package.json', 'utf8')).dependencies),
+  'lodash/isPlainObject', 'lodash/toPath', 'lodash/unescape'];
+const server = await createServer({ logLevel: 'silent', optimizeDeps: { noDiscovery: true, include }, server: {
   host: '127.0.0.1', port: 0, proxy: { '/api': proxy, '/static': proxy } } });
 await server.listen();
 console.log('http://127.0.0.1:' + server.httpServer.address().port);
@@ -120,6 +133,9 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                 )
                 frontend = (await asyncio.wait_for(vite.stdout.readline(), 15)).decode().strip()
                 assert frontend.startswith("http://127.0.0.1:"), frontend
+                # Keep draining the owned child's pipe while the browser loads modules.
+                # A full diagnostics pipe otherwise blocks Node's request processing.
+                vite_logs = asyncio.create_task(vite.stdout.read())
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(**system_browser().launch_options)
                 try:
@@ -143,8 +159,13 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
 
                         await page.route("**/api/local-models", mobile_status)
                     errors = []
+                    pending_requests = set()
+                    page.on("request", lambda request: pending_requests.add(request.url))
+                    page.on("requestfinished", lambda request: pending_requests.discard(request.url))
+                    page.on("requestfailed", lambda request: pending_requests.discard(request.url))
                     page.on("pageerror", lambda error: errors.append(str(error)))
-                    await page.goto(frontend)
+                    await page.goto(frontend, timeout=60000 if official_api_only else 30000)
+                    assert not errors, errors
                     await page.get_by_role("button", name="设置", exact=True).click()
                     dialog = page.get_by_role("dialog", name="设置", exact=True)
                     await page.get_by_role("button", name="full agent 模型与生成", exact=True).wait_for()
@@ -161,6 +182,62 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         await expect(page.locator(".settings-save-status")).to_contain_text("已保存")
 
                     before = await read()
+                    if official_api_only:
+                        await select("full agent 模型与生成")
+                        await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                        profile = dialog.locator(".profile-editor")
+                        await expect(profile.get_by_label("接口方式", exact=True)).to_have_count(0)
+                        effort = profile.get_by_role("button", name="思考强度", exact=True)
+                        await expect(await menu_option(effort, "low")).to_be_visible()
+                        await expect(await menu_option(effort, "none")).to_have_count(0)
+                        await page.keyboard.press("Escape")
+                        await profile.get_by_text("更多参数：采样细项、分词器与提示缓存", exact=True).click()
+                        retention = profile.get_by_label("缓存时效", exact=True)
+                        await retention.select_option("12h")
+                        await saved()
+                        await choose_model(
+                            profile.get_by_role("button", name="模型名称", exact=True), "gpt-5.5"
+                        )
+                        await saved()
+                        await expect(profile.get_by_role("alert")).to_contain_text(
+                            "不支持已保存的缓存时效 12h"
+                        )
+                        assert (await read())["full_agent"]["official_model"]["cache"]["retention"] == "12h"
+                        await choose_model(
+                            profile.get_by_role("button", name="模型名称", exact=True), "gpt-6-astra"
+                        )
+                        await saved()
+                        await dialog.get_by_role("button", name="关闭", exact=True).click()
+                        await page.evaluate('sid=>localStorage.setItem("tavern-session",sid)', session["id"])
+                        await page.reload()
+                        await page.get_by_role("tab", name="缓存", exact=True).click()
+                        cache_panel = page.get_by_role("region", name="缓存断点控制", exact=True)
+                        await expect(
+                            cache_panel.get_by_role("button", name="12 小时", exact=True)
+                        ).to_have_attribute("aria-pressed", "true")
+                        async with page.expect_response(
+                            lambda response: (
+                                response.request.method == "PATCH"
+                                and response.url.endswith("/settings/full_agent")
+                            )
+                        ):
+                            await cache_panel.get_by_role("button", name="30 分钟", exact=True).click()
+                        after = await read()
+                        assert after["full_agent"]["official_model"]["cache"]["retention"] == "30m"
+                        assert after["full_agent"]["model"] == before["full_agent"]["model"]
+                        await expect(
+                            cache_panel.get_by_role("button", name="30 分钟", exact=True)
+                        ).to_have_attribute("aria-pressed", "true")
+                        composer_effort = page.get_by_role("button", name="本次思考强度", exact=True)
+                        await expect(await menu_option(composer_effort, "low")).to_be_visible()
+                        await expect(await menu_option(composer_effort, "none")).to_have_count(0)
+                        await page.keyboard.press("Escape")
+                        await page.screenshot(path=str(output / "official-api-cache.png"))
+                        assert not errors, errors
+                        print(
+                            "Official API retention persisted to its own channel; incompatible values and reasoning controls verified."
+                        )
+                        return
                     if models_only:
                         await select("通用 本地资源")
                         for label in ("向量模型", "重排模型"):
@@ -753,6 +830,12 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     (output / "failure-aria.txt").write_text(
                         await page.locator("body").aria_snapshot(), encoding="utf-8"
                     )
+                    (output / "failure-network.json").write_text(
+                        json.dumps(
+                            {"pending": sorted(pending_requests), "errors": errors}, ensure_ascii=False
+                        ),
+                        encoding="utf-8",
+                    )
                     raise
                 finally:
                     await browser.close()
@@ -760,6 +843,8 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
             if vite is not None and vite.returncode is None:
                 vite.terminate()
                 await vite.wait()
+            if vite_logs is not None:
+                (output / "vite.log").write_bytes(await vite_logs)
             server.should_exit = True
             await asyncio.to_thread(thread.join, 10)
 

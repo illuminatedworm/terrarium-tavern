@@ -11,7 +11,9 @@
 | 协议编译 | 模型预设、时效和字段映射 | [cache_policy.py](../../src/tavern/core/cache_policy.py)、[protocols.py](../../src/tavern/scripting/protocols.py) |
 | 传输与记录 | 最终请求、已发送端点、缓存对象和降级 | [model_transport.py](../../src/tavern/scripting/model_transport.py)、[sent_breakpoints.py](../../src/tavern/scripting/sent_breakpoints.py)、[cloud_cache.py](../../src/tavern/scripting/cloud_cache.py) |
 
-模型的 `cache.mode` 为 `cloud` 或 `runtime`。正文默认本地控制，后台与角色编辑默认云端。云端模式不注入本地断点、附加缓存 JSON 或 Gemini 对象引用；独立时效字段按[协议映射](../reference/model-api.md#缓存时效)处理。
+模型的 `cache.mode` 为 `cloud` 或 `runtime`。普通渠道正文默认本地控制，后台与角色编辑默认云端；新建官方 API 配置默认云端隐式，不指定时效。订阅连接始终使用服务端缓存策略。云端模式不注入本地断点、附加缓存 JSON 或 Gemini 对象引用；独立时效字段按[协议映射](../reference/model-api.md#缓存时效)处理。
+
+官方 API 的请求时效选择器是唯一生效来源；JSON 中重复的请求时效会报错，不覆盖选择器。断点 JSON 不另设 TTL，重放旧边界时也采用当前选择器中的时效，避免带回旧的高价写入档位。官方 API 使用稳定的扁平函数定义，强制调用通过 `allowed_tools` 限制，未授权返回仍拒绝。
 
 跟进参数属于会话，模型与时效属于设置范围，实际发送过的端点属于传输记录。计划记录选择的位置，传输记录确认实际发送，服务商用量反映缓存读取与写入。
 

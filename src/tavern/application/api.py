@@ -447,7 +447,11 @@ def create_app(data_dir=None):
                 and (
                     config.api_mode in ("anthropic", "gemini")
                     or captured[-1]["messages"][3]["role"]
-                    == ("developer" if config.auth_mode == "chatgpt_subscription" else "system")
+                    == (
+                        "developer"
+                        if config.auth_mode in ("chatgpt_subscription", "openai_api_key")
+                        else "system"
+                    )
                 )
             )
             config.capability = (

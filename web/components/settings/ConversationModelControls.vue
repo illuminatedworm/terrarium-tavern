@@ -4,6 +4,7 @@ import type { ConversationModelSelection, ModelProfile, Provider } from '../../l
 import { channelProviders, channelLabels, type Channel } from '../../lib/channels';
 import { useModelCatalog } from '../../lib/modelCatalog';
 import { useApiReasoning } from '../../lib/apiReasoning';
+import { subscriptionProvider } from '../../lib/chatgptAccounts';
 import { modelConnectionSummary, selectProfileProvider } from '../../lib/modelConnections';
 import { effortOptions, modelEffortOptions } from '../../lib/reasoningEffort';
 import EffortControl from './EffortControl.vue';
@@ -40,7 +41,7 @@ const providerOptions = computed(() =>
   providers.value.map((provider) => ({ value: provider.id, label: provider.name })),
 );
 const provider = computed(() => providers.value.find((item) => item.id === draft.value.provider_id));
-const subscription = computed(() => props.channel === 'chatgpt');
+const subscription = computed(() => subscriptionProvider(provider.value));
 const {
   catalog,
   error: catalogError,
@@ -51,9 +52,10 @@ const {
   undefined,
   () => !!provider.value,
 );
-const { details } = useApiReasoning(
+const { details, note: reasoningNote } = useApiReasoning(
   () => props.profile,
   () => !subscription.value,
+  () => provider.value?.auth_mode === 'openai_api_key',
 );
 const efforts = computed(() =>
   modelEffortOptions(
@@ -79,7 +81,7 @@ function save() {
   });
 }
 function chooseProvider(value: string) {
-  draft.value = selectProfileProvider(draft.value, value, subscription.value);
+  draft.value = selectProfileProvider(draft.value, value, props.channel === 'chatgpt');
   save();
 }
 function chooseModel(value: string) {
@@ -114,6 +116,7 @@ function chooseModel(value: string) {
       @update:model-value="chooseModel"
     />
     <EffortControl
+      :title="subscription ? undefined : reasoningNote"
       :value="effort"
       :options="efforts"
       :disabled="disabled"
