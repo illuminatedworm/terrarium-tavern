@@ -2827,7 +2827,7 @@ useTimedError(error);
           <button @click="classifyChannel('standard')">归入普通 API</button>
           <button @click="classifyChannel('chatgpt')">归入 ChatGPT 官方</button>
         </div>
-        <div v-if="contextBusy" class="channel-notice" role="status">
+        <div v-if="contextOps.active.value" class="channel-notice" role="status">
           <span
             >正在整理上下文 · 已处理 {{ contextOps.operation.value?.progress?.processed || 0 }} 条记录</span
           >

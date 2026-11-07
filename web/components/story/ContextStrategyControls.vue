@@ -74,7 +74,7 @@ const usage = computed(() => {
         <button class="compact-now" :disabled="working" @click="ops.start('compact')">立即压缩</button>
       </template>
       <div v-if="ops.operation.value" class="context-operation" role="status" aria-live="polite">
-        <template v-if="ops.busy.value">
+        <template v-if="ops.active.value">
           <strong>正在整理历史</strong>
           <progress
             :value="ops.operation.value.progress?.processed || 0"

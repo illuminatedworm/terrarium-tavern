@@ -6,10 +6,9 @@ export function useContextOperations(session: () => any, updated: (value: any) =
     error = ref(''),
     submitting = ref(false),
     awaitingSession = ref(false);
-  const busy = computed(
-    () =>
-      submitting.value || awaitingSession.value || ['queued', 'running'].includes(operation.value?.status),
-  );
+  const active = computed(() => ['queued', 'running'].includes(operation.value?.status));
+  // Synchronizing a completed operation still locks edits, but is not active maintenance.
+  const busy = computed(() => submitting.value || awaitingSession.value || active.value);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let observation = 0;
@@ -135,6 +134,6 @@ export function useContextOperations(session: () => any, updated: (value: any) =
     generation++;
     clearTimeout(timer);
   });
-  return { operation, error, busy, start, control, automatic };
+  return { operation, error, active, busy, start, control, automatic };
 }
 export type ContextOperations = ReturnType<typeof useContextOperations>;
