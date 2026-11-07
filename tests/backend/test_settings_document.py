@@ -122,6 +122,16 @@ async def test_sidebar_retention_persists_with_revision_and_mode_isolation(tmp_p
     assert Store(store.root).settings(scope).cache.retention == "1h"
 
 
+def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
+    # Saved and exported v17 documents carry the switch; the strict model must still load them.
+    raw = SettingsDocument().model_dump()
+    raw["version"] = 17
+    raw["shared"]["reply_locate_start"] = False
+    migrated = migrate_settings(raw)
+    assert migrated.version == 18 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
+
+
 def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_data(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode())
@@ -140,7 +150,7 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 17 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.version == 18 and migrated.full_agent.tools.max_duration_seconds == 900
     assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 7}

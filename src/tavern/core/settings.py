@@ -169,7 +169,6 @@ class LocalResources(StrictSettings):
 class SharedSettings(StrictSettings):
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
-    reply_locate_start: bool = Field(default=True, strict=True)
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
@@ -194,7 +193,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[17] = 17
+    version: Literal[18] = 18
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -603,6 +602,12 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             raw["version"] = 16
         if raw["version"] == 16:
             raw["version"] = 17
+        if raw["version"] == 17:
+            # The reply-completion jump was removed; drop its saved switch so a
+            # strict document cannot carry an option that no longer has any effect.
+            raw["version"] = 18
+            if raw.setdefault("shared", {}).pop("reply_locate_start", None) is not None:
+                changed_scopes.add("shared")
         for scope in changed_scopes:
             revisions = raw.setdefault(
                 "revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")}

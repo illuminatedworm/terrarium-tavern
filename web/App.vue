@@ -501,11 +501,25 @@ watch(composer, (element, previous) => {
 });
 const followLatest = ref(true);
 const readingPinned = ref(false);
+/**
+ * A sent turn follows the latest content only until its reply's start reaches the
+ * top: readers start at the beginning and are slower than the model, so the page
+ * then stops and the rest grows below. Whatever ends following (this stop, the
+ * reader, a jump) also ends the reveal, so returning to the end later is plain
+ * following. Sync, so no later follow can still see a stale reveal.
+ */
+let revealReply = false;
+watch(
+  followLatest,
+  (following) => {
+    if (!following) revealReply = false;
+  },
+  { flush: 'sync' },
+);
 // Android gives the composer's strip back to the prose while the reader is away from
 // the latest message; it returns at the end, with the rewrite panel, or while focused
 // (story.css). The jump-to-latest arrow stays, so reaching the input is one tap.
 const composerTucked = computed(() => androidHost && !followLatest.value && !rewriteExpanded.value);
-const pendingReplyStart = ref('');
 const pageMode = ref(''),
   regenerateNote = ref(''),
   regenerateIncludeReply = ref(false),
@@ -1118,7 +1132,6 @@ async function refreshContextStats() {
   }
 }
 async function openSession(id: string, creating = false, createdSession?: Session) {
-  pendingReplyStart.value = '';
   regenerateIncludeReply.value = false;
   rewriteExpanded.value = false;
   const token = viewScope.enter();
@@ -1190,7 +1203,7 @@ async function openSession(id: string, creating = false, createdSession?: Sessio
       .reverse()
       .find((message) => message.role === 'assistant');
     if (!restored && latest) await navigateMessage(latest.id);
-    else await scroll(true);
+    else await scroll(restored ? 'reply' : 'latest');
     if (viewScope.owns(token)) void refreshContextStats();
   } catch (e: any) {
     if (!viewScope.owns(token)) return;
@@ -1341,8 +1354,11 @@ function pauseFollow(event: WheelEvent) {
   if (event.deltaY < 0 && chat.value && chat.value.scrollHeight > chat.value.clientHeight)
     followLatest.value = false;
 }
+/** Dragging the scrollbar is reading control too; clicks inside the story are not. */
+function grabScrollbar(event: PointerEvent) {
+  if (event.target === event.currentTarget) readingPinned.value = false;
+}
 async function navigateMessage(id: string) {
-  pendingReplyStart.value = '';
   storyView.value = 'dialogue';
   readingPinned.value = true;
   followLatest.value = false;
@@ -1367,22 +1383,19 @@ async function jumpBoundary(edge: 'start' | 'end') {
   await dialogue.value?.jumpBoundary(edge);
   // Reaching the end of the newest message is reading the latest: resume following
   // so the floating jump button does not linger over a fully read story.
-  if (edge === 'end' && atLatest()) await scroll(true);
+  if (edge === 'end' && atLatest()) await scroll('latest');
 }
-watch(storyView, (view) => {
-  if (view === 'dialogue' && pendingReplyStart.value) void navigateMessage(pendingReplyStart.value);
-});
 /**
- * Where the reader sits inside the streaming reply while not following. Tool and
- * story activity is listed above the draft and the committed reply replaces it,
- * so these changes must not move the text being read.
+ * Where the streaming reply sits while not following and its start is on screen
+ * or above it. Tool and story activity is listed above the draft and the committed
+ * reply replaces it, so these changes must not move the text being read.
  */
 function draftReadingOffset() {
   const scroller = chat.value,
     node = draftArticle.value;
   if (followLatest.value || storyView.value !== 'dialogue' || !scroller || !node) return undefined;
   const top = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-  return top <= 24 ? top : undefined;
+  return top < scroller.clientHeight ? top : undefined;
 }
 async function holdDraft(offset: number) {
   await nextTick();
@@ -1391,15 +1404,31 @@ async function holdDraft(offset: number) {
   if (scroller && node)
     scroller.scrollTop += node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
 }
-async function scroll(force = false) {
-  if (force) {
+/** `start` takes over scrolling: follow the latest content, or reveal a sent turn's reply. */
+async function scroll(start?: 'latest' | 'reply') {
+  if (start) {
     readingPinned.value = false;
     dialogue.value?.releaseAnchor();
     followLatest.value = true;
+    revealReply = start === 'reply';
   }
   await nextTick();
-  if (chat.value && followLatest.value)
-    chat.value.scrollTo({ top: chat.value.scrollHeight, behavior: 'instant' });
+  const scroller = chat.value;
+  if (!scroller || !followLatest.value) return;
+  let top = scroller.scrollHeight;
+  const node = revealReply ? draftArticle.value : undefined;
+  if (node) {
+    // Same 16px reading gap as a message jump. Stop before following would pass the
+    // start; the pin keeps the end tolerance from resuming following until the reader acts.
+    const replyTop =
+      scroller.scrollTop + node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 16;
+    if (replyTop < scroller.scrollHeight - scroller.clientHeight) {
+      top = replyTop;
+      readingPinned.value = true;
+      followLatest.value = false;
+    }
+  }
+  scroller.scrollTo({ top, behavior: 'instant' });
 }
 const regenerationNote = computed({
   get: () => (retryableTurn.value ? retryNote.value : regenerateNote.value),
@@ -1751,7 +1780,7 @@ async function submitStoryTurn(request: TurnRequest, continueWithInput = false):
     rewriteExpanded.value = false;
     workCount.value += 1;
     if (continueWithInput) turnContinuation.start(turn.id, token);
-    void scroll(true);
+    void scroll('reply');
     observe(turn.id);
     return turn;
   } catch (e: any) {
@@ -1776,6 +1805,9 @@ function observe(id: string) {
     id,
     ownsTurn,
     (event) => {
+      // A reader who just reached the end resumes following before this event's
+      // content lands; its scroll event may only arrive after the growth.
+      if (!followLatest.value) trackScroll();
       if (event.kind === 'text' || event.kind === 'text_reset') {
         draft.value = turnDraft(draft.value, event);
         if (event.payload.breaks) draftBreaks.value = event.payload.breaks;
@@ -1784,13 +1816,13 @@ function observe(id: string) {
       } else {
         const reading = draftReadingOffset();
         trace.value.push(event);
-        if (reading !== undefined) void holdDraft(reading);
         if (event.kind === 'full_agent_prefix_debug') notify(event.payload.message);
         if (event.kind === 'input_ready') {
           pendingInput.value = event.payload.message;
           pendingLore.value = event.payload.lore_injections || [];
-          void scroll();
         }
+        if (reading !== undefined) void holdDraft(reading);
+        else void scroll();
         if (event.kind === 'scene_refresh_ready' && event.payload.purpose === 'memory') {
           delete openStory().snapshot.memory_warning;
           memoryWarning.value = '';
@@ -1811,8 +1843,7 @@ function observe(id: string) {
         if (!ownsTurn()) return;
         const following = followLatest.value,
           top = chat.value?.scrollTop || 0,
-          reading = draftReadingOffset(),
-          locateStart = loadedSettings().shared.reply_locate_start;
+          reading = draftReadingOffset();
         const completedReply =
           turn.status === 'committed' && !turn.request?.scene_refresh
             ? updated.messages
@@ -1820,10 +1851,9 @@ function observe(id: string) {
                 .reverse()
                 .find((message) => message.role === 'assistant')
             : null;
-        if (following && completedReply && locateStart) {
-          readingPinned.value = true;
-          followLatest.value = false;
-        }
+        // Completion never moves the reader: following stays at the end, and a reply
+        // short enough to never reach the reveal stop simply ends there.
+        revealReply = false;
         activeTurn.value = turn;
         draft.value = turn.draft;
         draftBreaks.value = turn.draft_breaks || [];
@@ -1831,10 +1861,7 @@ function observe(id: string) {
         session.value = updated;
         await nextTick();
         if (!ownsTurn()) return;
-        if (following && completedReply && locateStart) {
-          if (storyView.value === 'dialogue') await navigateMessage(completedReply.id);
-          else pendingReplyStart.value = completedReply.id;
-        } else if (following) await scroll();
+        if (following) await scroll();
         else if (completedReply && reading !== undefined) {
           // Keep the reply where its draft was read; the pin also absorbs its
           // activity records, which load after the commit and sit above it.
@@ -2845,6 +2872,7 @@ useTimedError(error);
             @scroll="trackScroll"
             @wheel.passive="pauseFollow"
             @touchstart.passive="readingPinned = false"
+            @pointerdown="grabScrollbar"
             @keydown="readingPinned = false"
           >
             <div v-if="writerResponseCache && !cacheBreakpointId" class="cache-breakpoint-fallback">
@@ -3097,7 +3125,7 @@ useTimedError(error);
                 class="jump-latest"
                 aria-label="跳到最新"
                 title="跳到最新"
-                @click="scroll(true)"
+                @click="scroll('latest')"
               >
                 <Icon name="arrow-down" :size="18" />
               </button>

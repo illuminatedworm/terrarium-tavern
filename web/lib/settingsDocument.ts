@@ -84,7 +84,7 @@ export interface PromptDefinition {
   default: string;
 }
 export interface SettingsDocument {
-  version: 17;
+  version: 18;
   full_agent: SettingsObject & {
     novel_research: NovelConfig;
     model: ModelProfile;
@@ -106,7 +106,6 @@ export interface SettingsDocument {
     web: WebSettings;
     preference_presets: PreferencePreset[];
     send_shortcut: SendShortcut;
-    reply_locate_start: boolean;
     debug_failed_requests: boolean;
     debug_full_agent_prefix: boolean;
     advisor: {

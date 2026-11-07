@@ -160,7 +160,6 @@ def page_catalog():
             "杂项",
             [
                 "send_shortcut",
-                "reply_locate_start",
                 "debug_failed_requests",
                 "debug_full_agent_prefix",
                 "kemini",
