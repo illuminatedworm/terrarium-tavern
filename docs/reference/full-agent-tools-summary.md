@@ -10,7 +10,7 @@
 
 | 工具名 | 描述 | 参数 | 额外备注 |
 |---|---|---|---|
-| `submit_story` | 追加本轮新增故事段落 | `content: string` | 必须非空白且结构完整；始终启用，每轮至多成功三次，只追加不改写；普通文本仅作备注。 |
+| `submit_story` | 交付本轮故事正文 | `content: string` | 必须非空白且结构完整，始终启用。普通对话每轮最多追加三段，Kemini 实验对话每轮只接收一次完整正文。普通文本仅作备注。 |
 | `present_ui` | 展示冻结的交互图形 | `spec: object`（json-render 规格） | 新建故事默认关闭；Kemini 实验对话不提供。每轮至多接收三份，失败不计数；与 `submit_story` 按调用顺序穿插显示；不接受 HTML、SVG、脚本或 URL，界面操作只改变本地显示或填写输入框。 |
 | `start_novel_research` | 异步委派原著调查者 | `question: string`；`background: string=""`；`auto_destroy: boolean=false` | 调查者看不到主上下文，问题需能独立理解；每分支同时最多三个，每轮最多启动五次，销毁或重生成不退回次数。`auto_destroy=true` 在首份最终报告可靠送达后自动销毁，保留报告和历史；报告后仍需复用上下文追问时保持 `false`；提问、失败和暂停不触发。 |
 | `list_novel_research` | 查看未销毁的调查者 | 无 | 返回 R 编号、状态、剩余额度、是否有待送达消息、失败原因，以及剩余名额和本轮剩余启动次数；不返回原文过程。 |

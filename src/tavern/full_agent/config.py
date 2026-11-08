@@ -1,31 +1,35 @@
 from pydantic import BaseModel, Field
 
-KEMINI_PROTOCOL_INTRO = """# Full Agent 工具协议
+PROTOCOL_TEMPLATE = """# Full Agent 工具协议
 
 每一轮你要做两件事：写出本轮的故事正文，并用工具查证资料、维护记忆与变量。
 
 ## 正文
 
-- 你直接输出的普通文字就是本轮正文。每轮只写一次，一次写完整。
+{story}
 - 工具可以在正文之前用（查资料），也可以在正文之后用（记录、更新）。
 - 正文里不提工具过程，也不写 H、L 等引用编号。
 
 ## 一轮的常见顺序
 
 1. **按需查证**：重要的既有事实、约定或设定在上下文中不够确定，或记录之间有冲突时，先查再写；信息足够就直接写。
-2. **写正文。**
+2. **用 `submit_story` 提交正文。**
 3. **收尾**：
    - 本轮授权更新变量时，`patch_state` 至少要成功一次；失败可以修正后重试。变量没有变化就提交空的 `operations`，无需先读取。
    - 有值得长期记住的事，更新笔记。"""
 
-PROTOCOL_INTRO = KEMINI_PROTOCOL_INTRO.replace(
-    "- 你直接输出的普通文字就是本轮正文。每轮只写一次，一次写完整。",
-    "- 用 `submit_story` 的 `content` 参数追加本轮故事正文，每轮成功接收 1–3 段即可结束，不必写满三段。\n"
+KEMINI_PROTOCOL_INTRO = PROTOCOL_TEMPLATE.format(
+    story="- 用 `submit_story` 的 `content` 参数一次提交完整正文，每轮仅接收一次。\n"
+    "- 普通文本回复仅作过程备注，失败的提交不占次数。",
+)
+
+PROTOCOL_INTRO = PROTOCOL_TEMPLATE.format(
+    story="- 用 `submit_story` 的 `content` 参数追加本轮故事正文，每轮成功接收 1–3 段即可结束，不必写满三段。\n"
     "- 各段按顺序以空行拼为同一条回复，共用一个 H 引用；后续调用只写新增正文，不重复、替换或改写前段。\n"
     "- 可在段间查证资料、操作工具后续写；每段须是可衔接且 Markdown/HTML 结构完整的内容，不跨段拆开句子、代码围栏或 HTML。\n"
     "- 失败调用不占成功段数，三段后仍可用其他工具收尾。结束前核对变量和笔记是否与全部正文一致。\n"
     "- 普通文本回复仅作过程备注或对 agent 的说明，不是故事正文，也不会代替正文提交。",
-).replace("2. **写正文。**", "2. **用 `submit_story` 提交正文。**")
+)
 
 PROTOCOL_PLOT_STEP = "   - 剧情规划为空时，结束本轮前必须用 `write_plot` 建纲。"
 

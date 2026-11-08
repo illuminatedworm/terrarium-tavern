@@ -191,39 +191,20 @@ class ToolArguments:
 
 
 class KeminiReply:
-    def __init__(self, config: KeminiConfig, transport: bool, *, provisional=False):
+    def __init__(self, config: KeminiConfig, transport: bool):
         self.config, self.transport = config, transport
         self.parser = AuxiliaryParser(config)
         self.story = ToolArguments({TOOL_NAME})
         self.emitted = ""
         self.parts = []
         self.transported = False
-        self.provisional, self.preview_stopped = provisional, False
 
     def feed(self, event: dict, plain: str, api: str) -> str:
-        if self.preview_stopped:
-            return ""
-        try:
-            delta = self.parser.feed(self.story.feed(event, api) if self.transport else plain)
-        except ValueError:
-            if not self.provisional:
-                raise
-            # Full Agent validates the complete response. A partially decoded
-            # escape can invalidate only its preview, not interrupt the reader
-            # before authoritative arguments and any error tail arrive.
-            self.preview_stopped = True
-            return ""
+        delta = self.parser.feed(self.story.feed(event, api) if self.transport else plain)
         self.emitted += delta
         return delta
 
-    def finish(
-        self, text: str, calls: list[NativeToolCall], *, preserve_story_tool=False
-    ) -> tuple[str, list[NativeToolCall]]:
-        if preserve_story_tool:
-            # Full Agent counts ordinary prose and the visible experimental
-            # transport together. Keep native calls/signatures until it accepts
-            # the one story; tool results still belong to the model's loop.
-            return text, calls
+    def finish(self, text: str, calls: list[NativeToolCall]) -> tuple[str, list[NativeToolCall]]:
         synthetic = [call for call in calls if call.name == TOOL_NAME] if self.transport else []
         if synthetic:
             if len(synthetic) != 1 or len(calls) != 1:

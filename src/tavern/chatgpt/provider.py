@@ -346,7 +346,7 @@ class ChatGPTProvider(ModelTransport):
         terminal = None
         response = None
         if kwargs.get("_full_agent_story"):
-            # Only Full Agent accepts the visible Kemini transport here.
+            # Full Agent previews the prose carried by submit_story.
             tools = self._begin_kemini(tools, kwargs)
         else:
             # Other ChatGPT requests keep plain transport; never inherit the

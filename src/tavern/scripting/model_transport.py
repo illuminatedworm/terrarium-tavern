@@ -718,20 +718,21 @@ class ModelTransport(BaseLLMProvider):
                     DISABLED[self.capability_key] = fallback
 
     def _reset_kemini(self):
-        self._kemini, self.last_auxiliary, self._story_tool = None, [], False
+        self._kemini, self.last_auxiliary = None, []
         self._submit_preview, self._submit_preview_stopped = None, False
         self.story_preview_breaks = []
 
     def _begin_kemini(self, tools, kwargs):
-        # Full Agent accepts ordinary prose itself and keeps the opt-in Kemini
-        # transport call paired with its native result, including mixed batches.
         self._reset_kemini()
-        self._story_tool = kwargs.get("_full_agent_story", False)
+        config = self.settings.kemini
         if kwargs.get("_submit_story"):
             from tavern.scripting.story_preview import StoryArguments
 
-            self._submit_preview = StoryArguments(kwargs.get("_story_segments_remaining", 3))
-        config = self.settings.kemini
+            self._submit_preview = StoryArguments(
+                kwargs.get("_story_segments_remaining", 3), kemini=config if config.enabled else None
+            )
+        if kwargs.get("_full_agent_story"):
+            return tools
         if (
             getattr(self, "operation_purpose", None) == "narrative"
             and config.enabled
@@ -739,8 +740,8 @@ class ModelTransport(BaseLLMProvider):
             and not kwargs.get("_compact_threshold")
         ):
             choice = (kwargs.get("extra_body") or {}).get("tool_choice", "auto")
-            self._kemini = KeminiReply(config, choice == "auto", provisional=self._story_tool)
-            if self.auxiliary_capture and not self._story_tool:
+            self._kemini = KeminiReply(config, choice == "auto")
+            if self.auxiliary_capture:
                 self.auxiliary_capture([])
             return transport_tools(tools, config, choice)
         return tools
@@ -883,9 +884,7 @@ class ModelTransport(BaseLLMProvider):
         original_text, rewritten = text, False
         if self._kemini:
             try:
-                text, self._last_tool_calls = self._kemini.finish(
-                    text, self._last_tool_calls, preserve_story_tool=self._story_tool
-                )
+                text, self._last_tool_calls = self._kemini.finish(text, self._last_tool_calls)
             except ValueError:
                 if self.last_completion.action != "incomplete":
                     raise
@@ -896,7 +895,7 @@ class ModelTransport(BaseLLMProvider):
                 ) from None
             rewritten = self._kemini.transported or text != original_text
             self.last_auxiliary = self._kemini.parts
-            if self.auxiliary_capture and not self._story_tool:
+            if self.auxiliary_capture:
                 self.auxiliary_capture(copy.deepcopy(self.last_auxiliary))
             if self._kemini.transported and finish == "tool_calls":
                 finish = "stop"
@@ -1016,7 +1015,7 @@ class ModelTransport(BaseLLMProvider):
                         completion_message("模型流未完整结束，本回合未提交", self.last_completion)
                     )
                 self._completed_response = result
-                if self._kemini and not self._last_tool_calls and not self._story_tool:
+                if self._kemini and not self._last_tool_calls:
                     yield self._kemini.tail(result.content)
             return
         response = await self._send(messages, tools, True, kwargs)
@@ -1030,7 +1029,7 @@ class ModelTransport(BaseLLMProvider):
             if result.finish_reason in ("length", "content_filter"):
                 raise ValueError(completion_message("模型流未完整结束，本回合未提交", self.last_completion))
             self._completed_response = result
-            if self._kemini and not self._last_tool_calls and not self._story_tool:
+            if self._kemini and not self._last_tool_calls:
                 yield self._kemini.tail(result.content)
         finally:
             await response.aclose()

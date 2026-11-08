@@ -20,6 +20,10 @@ from tavern.core.kemini_prompts import (
 
 TOOL_NAME = "kemini_emit_story"
 TRANSPORT_PROMPT = TRANSPORT_TEMPLATE.replace("${toolName}", TOOL_NAME)
+FULL_AGENT_TRANSPORT_PROMPT = (
+    "需要交付正文时，把下述格式的完整输出放入 `submit_story` 的 `content` 参数，每轮只成功提交一次。"
+    "普通回复仅作过程备注。正文已接收后，只完成剩余工具任务并结束本轮。"
+)
 PREFIX_SOURCES = ("kemini_filler", "kemini_clear", "kemini_identity", "kemini_info")
 TURN_SOURCES = ("kemini_roleplay", "kemini_acknowledgement", "kemini_control")
 
@@ -65,7 +69,7 @@ def prefix_frames(config: KeminiConfig) -> list[dict]:
     ]
 
 
-def control_text(config: KeminiConfig) -> str:
+def control_text(config: KeminiConfig, *, full_agent=False) -> str:
     if not config.enabled:
         return ""
     parts = [config.thinking_prompt, config.content_prompt]
@@ -73,7 +77,9 @@ def control_text(config: KeminiConfig) -> str:
         parts.append(config.disclaimer_text)
     # The ST script inserts transport instructions immediately before its
     # final format block. Keep that order without depending on an XML anchor.
-    parts.extend((config.transport_prompt, config.output_prompt))
+    parts.extend(
+        (FULL_AGENT_TRANSPORT_PROMPT if full_agent else config.transport_prompt, config.output_prompt)
+    )
     return "\n\n".join(part for part in parts if part.strip())
 
 
@@ -100,7 +106,7 @@ def transport_tools(
     ]
 
 
-def turn_frames(config: KeminiConfig) -> list[dict]:
+def turn_frames(config: KeminiConfig, *, full_agent=False) -> list[dict]:
     """Request-local requirements, never historical dialogue or durable updates."""
     if not config.enabled:
         return []
@@ -109,7 +115,7 @@ def turn_frames(config: KeminiConfig) -> list[dict]:
         for role, text, source in (
             ("system", config.roleplay_prompt, "kemini_roleplay"),
             ("assistant", config.acknowledgement, "kemini_acknowledgement"),
-            ("user", control_text(config), "kemini_control"),
+            ("user", control_text(config, full_agent=full_agent), "kemini_control"),
         )
         if text.strip()
     ]

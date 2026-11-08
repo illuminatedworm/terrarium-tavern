@@ -2304,10 +2304,13 @@ async def test_responses_forced_rollover_tool_choice_matches_protocol(story):
         assert (
             provider._begin_kemini(
                 tools,
-                {"extra_body": {"tool_choice": {"type": "function", "function": {"name": "new_context"}}}},
+                {
+                    "_full_agent_story": True,
+                    "extra_body": {"tool_choice": {"type": "function", "function": {"name": "new_context"}}},
+                },
             )
             == tools
         )
-        assert not provider._kemini.transport
+        assert provider._kemini is None
     finally:
         await provider.close()

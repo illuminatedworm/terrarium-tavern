@@ -83,6 +83,7 @@ Content-Type: application/json
 **`shared.kemini`**：属于 `shared.misc` 页面，包含默认关闭的 `enabled`、`normal_disclaimer_enabled` 及十三项可编辑文本，复用共享设置的 PATCH、修订检查和页面撤回。
 
 - `enabled` 只允许创建并继续 Kemini 实验对话，本身不改变任何对话。为 `false` 时，`POST /api/sessions` 拒绝 `kemini: true`，已有 Kemini 实验对话的生成回合也被拒绝。
+- `transport_prompt`、`tool_description` 和 `content_description` 仅用于 Half Agent Writer 的 `kemini_emit_story`。Full Agent 使用固定的 `submit_story` 工具协议，每轮只接收一次完整正文。
 - 免责声明只在 Kemini 实验对话中、且 `normal_disclaimer_enabled` 为 `true` 时生效。主开关关闭时保留其保存值，界面置灰。
 - `thinking_prompt` 和 `disclaimer_text` 保存完整提示及其格式要求，Runtime 不另加包装。默认值来自原预设的对应条目，去掉了 SillyTavern 宏；独立边界标签仍用 Markdown 分隔，Interleaving 三段式示例和自检原文完整保留在同一条 `kemini_control` 消息中；CLEAR 和末尾输出提示只引用名称，不放孤立的开标签。
 - `roleplay_prompt` 位于助手确认之前，`content_prompt` 位于自检之后，`output_prompt` 位于传输指令之后，均可显式保存。请求只读取已保存的文本。

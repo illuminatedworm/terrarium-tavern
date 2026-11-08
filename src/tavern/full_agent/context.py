@@ -66,9 +66,8 @@ def compile_window(
     replay_all=False,
 ):
     state = full_state(snapshot)
-    from tavern.core.kemini import TOOL_NAME, TURN_SOURCES, prefix_frames, transport_tools, turn_frames
+    from tavern.core.kemini import TURN_SOURCES, prefix_frames, turn_frames
 
-    tools = transport_tools(tools, settings.kemini, "required" if force_rollover else "auto")
     compact = settings.context_strategy == "openai_compact"
     window = state["window"]
     compaction = state.get("compaction") or {}
@@ -104,7 +103,7 @@ def compile_window(
     # This absolute prefix is outside all application ordering and history
     # offsets; no runtime rules or worldbook entries can split its four blocks.
     items = prefix_frames(settings.kemini)
-    request_tail = turn_frames(settings.kemini)
+    request_tail = turn_frames(settings.kemini, full_agent=True)
 
     def add(role, content, source, **metadata):
         if content:
@@ -186,8 +185,7 @@ def compile_window(
     records.extend({**message, "_content_owner": None} for message in continuation)
     records, _ = story_history(records)
     if story is not None:
-        # Only Kemini parses its delivery into different story text. submit_story
-        # arguments are each one accepted segment and already match the draft.
+        # Kemini's accepted draft excludes auxiliary tags and holds one segment.
         records = [
             committed_story(message, story["content"])
             if settings.kemini.enabled and message.get("_story_received", {}).get("input_id") == input_id
@@ -361,7 +359,7 @@ def compile_window(
     update(
         "roleplay_draft",
         (
-            f"本轮正文 {message_ref(len(history) + 2)} 已接收，不要再输出正文；"
+            f"本轮正文 {message_ref(len(history) + 2)} 已接收，不再调用 submit_story；"
             if settings.kemini.enabled
             else f"本轮正文 {message_ref(len(history) + 2)} 已接收 {segment_count}/{MAX_SEGMENTS} 段并保存到草稿，"
             + (
@@ -371,7 +369,7 @@ def compile_window(
             )
             + "所有段落共用此 H 引用，read_history 返回已接收的累计全文。普通文本仅作备注；"
         )
-        # Below the limit, appending is a valid reason to continue; Kemini text stays unchanged.
+        # Only ordinary turns can continue to add another segment.
         + (
             "如需追加段落或有未完成的工具调用就继续，否则直接结束本次回复。"
             if not settings.kemini.enabled and segment_count < MAX_SEGMENTS
@@ -530,10 +528,6 @@ def compile_window(
         update("context_budget", content, value=value)
     elif not complete_source:
         update("context_budget", "")
-    if rollover_required:
-        # The current compilation itself can discover overflow. Match the actual
-        # forced-tool request even before the next compilation sees force_rollover.
-        tools = [tool for tool in tools if tool.get("function", tool)["name"] != TOOL_NAME]
     messages = wire()
     rows = [*items, *request_tail]
     result = {

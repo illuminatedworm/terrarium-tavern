@@ -27,7 +27,7 @@ export const keminiFields: SettingField[] = [
     path: 'kemini.enabled',
     label: '启用 Kemini 式实验功能',
     type: 'checkbox',
-    help: '允许新建 Kemini 实验对话并继续已有的此类对话：正文参数传输、创作提示改写与小说填充仅作用于这些对话。',
+    help: '允许新建和继续 Kemini 实验对话。实验对话使用创作提示改写与小说填充，Full Agent 每轮通过 submit_story 提交一次完整正文。',
   },
   {
     path: 'kemini.normal_disclaimer_enabled',
@@ -86,7 +86,7 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.transport_prompt',
     label: '正文传输指令',
-    help: '位于自检、正文约束与声明之后，末尾输出提示之前，保存文本直接发送。正文传输函数名为 kemini_emit_story，正文参数名为 content。',
+    help: '仅用于 Half Agent Writer。保存文本在末尾输出提示前发送，函数为 kemini_emit_story，参数为 content。Full Agent 使用固定的 submit_story 协议。',
   },
   {
     path: 'kemini.output_prompt',
@@ -96,12 +96,12 @@ export const keminiTextFields: SettingField[] = [
   {
     path: 'kemini.tool_description',
     label: '正文传输工具说明',
-    help: '作为 kemini_emit_story 函数定义的 description 发送，可在上下文预览的工具定义中核对。',
+    help: '仅用于 Half Agent Writer。作为 kemini_emit_story 函数定义的 description 发送，可在上下文预览中核对。',
   },
   {
     path: 'kemini.content_description',
     label: '正文参数说明',
-    help: '作为 content 字符串参数的 description 发送；不改变参数类型与必填约定。',
+    help: '仅用于 Half Agent Writer。作为 kemini_emit_story 的必填字符串参数 content 的 description 发送。',
   },
 ];
 export const miscFields: SettingField[] = [

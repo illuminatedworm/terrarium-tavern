@@ -1,15 +1,16 @@
-"""Provisional multi-call decoding for ordinary Full Agent, isolated from Kemini."""
+"""Provisional decoding of Full Agent story submissions."""
 
 import json
 
 from tavern.core.story_segments import SEPARATOR, text_length
-from tavern.scripting.kemini import ArgumentText, ToolArguments
+from tavern.scripting.kemini import ArgumentText, AuxiliaryParser, ToolArguments
 
 
 class StoryArguments(ToolArguments):
-    def __init__(self, maximum):
+    def __init__(self, maximum, *, kemini=None):
         super().__init__({"submit_story"})
         self.maximum = maximum
+        self.kemini, self.parsers = kemini, {}
         self.parts, self.decoders = {}, {}
         self.order = []
         self.current = self.emitted_units = self.segments = 0
@@ -56,11 +57,16 @@ class StoryArguments(ToolArguments):
             return ""
         if key not in self.decoders:
             self.decoders[key], self.parts[key] = ArgumentText(), []
+            if self.kemini is not None:
+                self.parsers[key] = AuxiliaryParser(self.kemini)
             self.order.append(key)
         decoder = self.decoders[key]
         if decoder.done:
             return ""  # Completed-item echoes must not duplicate streamed arguments.
-        self.parts[key].append(decoder.feed("".join(self.pending.pop(key, [])) + fragment))
+        text = decoder.feed("".join(self.pending.pop(key, [])) + fragment)
+        if key in self.parsers:
+            text = self.parsers[key].feed(text, final=decoder.done)
+        self.parts[key].append(text)
         visible = []
         # Drain only new text. Rejoining/re-encoding the growing story on every
         # token would make long multi-segment previews quadratic.

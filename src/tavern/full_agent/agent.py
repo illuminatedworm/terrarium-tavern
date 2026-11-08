@@ -17,6 +17,7 @@ from tavern.conversation.variable_rules import collect_variable_rules
 from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import exceeds
 from tavern.core.history_refs import message_ref
+from tavern.core.kemini import TOOL_NAME
 from tavern.core.message_adapter import provider_messages
 from tavern.core.model_view import ModelView
 from tavern.core.provider import make_provider
@@ -32,8 +33,9 @@ from tavern.full_agent.state import full_state
 from tavern.full_agent.story import LEGACY_TURN_TOOLS, story_history
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 from tavern.full_agent.visibility import context_messages
+from tavern.scripting.kemini import AuxiliaryParser
 from tavern.scripting.lore import merge_script_lore, sync_runtime_lore
-from tavern.scripting.native_response import completion_message, message_digest, portable
+from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, response_origin
 
 # Each executed call checkpoints the whole draft, so a runaway relay batch costs
@@ -67,6 +69,7 @@ class FullAgent:
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.regenerate_reply = reply_for_regeneration(request, session)
         self.settings, self.user_message, self.lane = settings, user_message, retrieval
+        self.story_limit = 1 if settings.kemini.enabled else MAX_SEGMENTS
         self.output_id = output_id
         self.source_history = history + [user_message]
         self.state = full_state(snapshot)
@@ -186,11 +189,7 @@ class FullAgent:
     async def finished_text(self, *, batch_failed=False):
         missing = []
         if self.story is None:
-            missing.append(
-                "模型已结束，但本轮尚未提交非空白正文；请调用 submit_story"
-                if not self.settings.kemini.enabled
-                else "模型已结束，但本轮尚未输出非空白正文"
-            )
+            missing.append("模型已结束，但本轮尚未提交非空白正文；请调用 submit_story")
         if self.must_rollover:
             missing.append("当前上下文须先完成 new_context 换窗")
         if self.request.update_variables and not self.patch_state_done:
@@ -203,42 +202,21 @@ class FullAgent:
             await self.stop_for_user("TURN_NOT_READY", "；".join(missing))
         return self.story["content"]
 
-    def story_candidate(self, text, calls):
-        """The visible Kemini experiment is the only alternate text transport."""
-        auxiliary, transport_id = [], None
-        if self.settings.kemini.enabled:
-            from tavern.scripting.kemini import AuxiliaryParser
-
-            transports = [call for call in calls if call.name == "kemini_emit_story"]
-            if transports:
-                if len(transports) != 1:
-                    raise TurnError("STORY_ALREADY_RECEIVED", "同一响应包含多次实验正文输出")
-                call = transports[0]
-                args = json.loads(call.arguments)
-                if (
-                    not isinstance(args, dict)
-                    or set(args) != {"content"}
-                    or not isinstance(args["content"], str)
-                ):
-                    raise TurnError("TOOL_PROTOCOL_INVALID", "实验正文传输需要且仅接受字符串 content")
-                if text.strip():
-                    auxiliary.append({"kind": "extra", "text": text})
-                text, transport_id = args["content"], call.id
-            parser = AuxiliaryParser(self.settings.kemini)
-            text = parser.feed(text, final=True)
-            auxiliary.extend(parser.parts)
-            if transport_id and not text.strip():
-                raise TurnError("EMPTY_STORY", "实验输出未包含故事正文")
-        return text, auxiliary, transport_id
-
-    async def receive_story(self, text, auxiliary):
-        if self.story is not None:
-            if self.settings.kemini.enabled:
-                await self.stop_for_user("STORY_ALREADY_RECEIVED", "本轮已输出正文，第二次正文未接收")
-            if len(self.story["breaks"]) + 1 >= MAX_SEGMENTS:
-                raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {MAX_SEGMENTS} 段正文，不能再追加。")
+    async def receive_story(self, text):
+        if self.story is not None and len(self.story["breaks"]) + 1 >= self.story_limit:
+            raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {self.story_limit} 段正文，不能再追加。")
         if self.must_rollover:
             await self.stop_for_user("CONTEXT_ROLLOVER_REQUIRED", "当前须先换窗，本次正文未接收")
+        auxiliary = []
+        if self.settings.kemini.enabled:
+            parser = AuxiliaryParser(self.settings.kemini)
+            try:
+                text = parser.feed(text, final=True)
+            except ValueError as error:
+                raise ToolError("INVALID_ARGUMENTS", str(error)) from error
+            if not text.strip():
+                raise ToolError("INVALID_ARGUMENTS", "实验输出未包含故事正文")
+            auxiliary = parser.parts
         breaks = []
         if self.story is not None:
             breaks = [*self.story["breaks"], text_length(self.story["content"])]
@@ -566,34 +544,27 @@ class FullAgent:
                 # Persist the actual runtime frames even when the very first
                 # model request fails. Resume then reuses them instead of guessing.
                 await self.save_progress()
-                if not self.settings.kemini.enabled:
-                    self.restore_preview()
-                    self.preview.begin_segment()
-                elif self.story is None:
-                    self.preview.replace("")
+                self.restore_preview()
+                self.preview.begin_segment()
                 try:
                     messages = provider_messages(provider, model_messages(compiled), self.settings)
                     # Compaction can send requests too; only this narrative/tool
                     # continuation acknowledges forwarding the newly received reports.
                     dispatching_reports = reports.copy()
                     complete = getattr(provider, "chat_complete_with_preview", None)
-                    remaining = MAX_SEGMENTS - (len(self.story["breaks"]) + 1 if self.story else 0)
+                    remaining = self.story_limit - (len(self.story["breaks"]) + 1 if self.story else 0)
 
                     def preview_story(chunk):
                         self.preview.append_segment(
                             chunk, breaks=getattr(provider, "story_preview_breaks", ())
                         )
 
-                    if self.settings.kemini.enabled:
-                        on_preview = self.preview.append if self.story is None else None
-                    else:
-                        on_preview = preview_story if remaining else None
                     if complete:
                         response = await complete(
                             messages,
-                            on_preview,
+                            preview_story if remaining else None,
                             _full_agent_story=True,
-                            _submit_story=not self.settings.kemini.enabled,
+                            _submit_story=True,
                             _story_segments_remaining=remaining,
                             extra_body=tool_options,
                         )
@@ -602,7 +573,7 @@ class FullAgent:
                             messages,
                             extra_body=tool_options,
                             _full_agent_story=True,
-                            _submit_story=not self.settings.kemini.enabled,
+                            _submit_story=True,
                         )
                 except Exception as error:
                     record = getattr(provider, "last_response_record", {})
@@ -655,22 +626,12 @@ class FullAgent:
                 assistant_seq = len(self.new_trace) + 1
                 assistant = self.response_message(response, provider, calls)
                 text = response.content or ""
-                auxiliary, transport_id = [], None
-                if self.settings.kemini.enabled:
-                    text, auxiliary, transport_id = self.story_candidate(text, calls)
-                if text.strip() and self.settings.kemini.enabled:
-                    receipt = await self.receive_story(text, auxiliary)
-                    assistant["_story_received"] = receipt
-                    if transport_id:
-                        assistant["_story_call_id"] = transport_id
-                    elif assistant["content"] != text:
-                        assistant = {**portable(assistant), "content": text}
                 self.model_completed = completion.action == "end"
                 if self.settings.context_strategy == "openai_compact":
                     from tavern.full_agent.compaction import capture_checkpoint
 
-                    # Invalid or duplicate output must not advance a window or
-                    # install a checkpoint containing an unaccepted story.
+                    # The checkpoint covers the provider response. The tool
+                    # batch below still validates and records any story delivery.
                     if capture_checkpoint(self.state, compiled, self.settings, provider, assistant):
                         self.event(
                             "context_compacted",
@@ -678,14 +639,14 @@ class FullAgent:
                         )
                 window_id = self.state["window"]["id"]
                 self.append(assistant, window_id)
-                if text.strip() and not transport_id:
+                if text.strip():
                     self.event(
                         "full_agent_assistant",
                         {
                             "activity_id": f"text-{assistant_seq}",
                             "order": assistant_seq * 10,
                             "content": text,
-                            "is_story": self.settings.kemini.enabled,
+                            "is_story": False,
                         },
                     )
                 # Save the response before executing a batch, then checkpoint each
@@ -702,7 +663,7 @@ class FullAgent:
         finally:
             failure = sys.exception()
             try:
-                if not self.settings.kemini.enabled and self.story is not None:
+                if self.story is not None:
                     # Failed later segments must not obscure the accepted prefix.
                     self.restore_preview()
             except Exception as error:
@@ -750,11 +711,20 @@ class FullAgent:
 
     async def execute_tools(self, assistant, window_id, assistant_seq, returned=(), *, legacy=False):
         calls = assistant["tool_calls"]
+        # Old checkpoints accepted their prose before saving the call batch.
+        # Resume only its missing receipt; fresh responses cannot use this route.
+        legacy_transport = next(
+            (
+                call
+                for call in calls
+                if call["id"] == assistant.get("_story_call_id") and call["function"]["name"] == TOOL_NAME
+            ),
+            None,
+        )
         business_calls = [
             call
             for call in calls
-            if not (legacy and call["function"]["name"] in LEGACY_TURN_TOOLS)
-            and not (self.settings.kemini.enabled and call["function"]["name"] == "kemini_emit_story")
+            if not (legacy and call["function"]["name"] in LEGACY_TURN_TOOLS) and call is not legacy_transport
         ]
         mixed_rollover = len(business_calls) > 1 and any(
             call["function"]["name"] == "new_context" for call in business_calls
@@ -809,16 +779,14 @@ class FullAgent:
                             not isinstance(args, dict)
                             or set(args) != {"content"}
                             or not isinstance(args["content"], str)
+                            or not args["content"].strip()
                         ):
                             raise ToolError("INVALID_ARGUMENTS", "旧正文调用需要字符串 content")
-                        text, auxiliary, _ = self.story_candidate(args["content"], [])
-                        if not text.strip():
-                            raise ToolError("INVALID_ARGUMENTS", "旧正文调用没有非空白正文")
-                        legacy_receipt = await self.receive_story(text, auxiliary)
+                        legacy_receipt = await self.receive_story(args["content"])
                         result = success(
                             {"saved_to_draft": True, "ref": message_ref(len(self.source_history))}
                         )
-                elif name == "kemini_emit_story" and self.settings.kemini.enabled:
+                elif call is legacy_transport:
                     result = success({"story_received": True, "ref": message_ref(len(self.source_history))})
                 else:
                     self.novel_operation = self.request_context.turn_id + ":" + call["id"]

@@ -3,6 +3,7 @@
 import copy
 import json
 
+from tavern.core.kemini import TOOL_NAME
 from tavern.core.story_segments import SEPARATOR
 from tavern.scripting.native_response import portable
 
@@ -23,6 +24,10 @@ def story_history(messages):
             owner = index
             calls = {call["id"]: call for call in message.get("tool_calls", [])}
             removed = {cid for cid, call in calls.items() if call["function"]["name"] in LEGACY_TURN_TOOLS}
+            cid = message.get("_story_call_id")
+            if cid in calls and calls[cid]["function"]["name"] == TOOL_NAME:
+                deliveries[index] = (calls[cid], message["_story_received"])
+                removed.add(cid)
             if removed:
                 retired[index] = removed
         elif message.get("role") == "tool" and message.get("tool_call_id") in calls:
@@ -56,9 +61,12 @@ def story_history(messages):
                     # its own historical record, never merge it into the story.
                     commentary = portable(item)
                     commentary["tool_calls"] = []
+                    commentary.pop("_story_received", None)
+                    commentary.pop("_story_call_id", None)
                     result.append(commentary)
                 item["content"] = json.loads(call["function"]["arguments"])["content"]
                 item["_story_received"] = copy.deepcopy(receipt)
+                item.pop("_story_call_id", None)
             if not item.get("content") and not item.get("tool_calls"):
                 continue
         result.append(portable(item) if changed else item)

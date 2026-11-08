@@ -175,14 +175,21 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
     settings.shared.kemini.tool_description = "自定义工具说明末尾"
     settings.shared.kemini.content_description = "自定义参数说明末尾"
     store.save_settings(settings)
-    first = WireStream(*tool_events())
+    first = WireStream(delta("过程备注"), *tool_events())
     last = WireStream(
-        *tool_events(
-            "kemini_emit_story",
-            {"content": "<thinking>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"},
-        )
+        body_start("<think"),
+        body_delta("ing>创作安排</thinking>最终正文<disclaimer>声明</disclaimer>"),
+        *body_end()[:-1],
+        terminal("tool_calls"),
     )
-    provider, sent = connect(store, service, first, last, WireStream(terminal()))
+    provider, sent = connect(
+        store,
+        service,
+        first,
+        last,
+        WireStream(*tool_events("submit_story", {"content": "第二次提交"})),
+        WireStream(terminal()),
+    )
     provider.settings.kemini.enabled = True  # Production providers take the Kemini conversation's settings.
     try:
         tid = submit(service, session)
@@ -197,27 +204,34 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
         ]
         assert current_text(current["snapshot"]["full_agent"]) == "已确认的工具进度"
         assert any(m["role"] == "tool" for m in sent[1]["messages"])
-        assert any("已接收，不要再输出正文" in m.get("content", "") for m in sent[2]["messages"])
-        assert json.dumps(sent[2]["messages"], ensure_ascii=False).count("最终正文") == 1
+        assert any("已接收，不再调用 submit_story" in m.get("content", "") for m in sent[2]["messages"])
+        continuation = json.dumps(sent[2]["messages"], ensure_ascii=False)
+        assert continuation.count("最终正文") == 1 and "创作安排" not in continuation
+        assert any(m["role"] == "tool" and "STORY_LIMIT_REACHED" in m["content"] for m in sent[3]["messages"])
+        assert all(
+            not any(text in e["payload"]["text"] for text in ("过程备注", "创作安排", "声明", "第二次提交"))
+            for e in store.events(tid)
+            if e["kind"] in ("text", "text_reset")
+        )
         kemini = settings.shared.kemini
         prefix = [
             {"role": "user", "content": text}
             for text in (kemini.filler_text, kemini.clear_prompt, kemini.identity_prompt, kemini.info_prompt)
         ]
         assert sent[0]["messages"][:4] == sent[1]["messages"][:4] == prefix
-        assert kemini.transport_prompt in json.dumps(sent[0]["messages"], ensure_ascii=False)
-        declaration = next(
-            t["function"] for t in sent[0]["tools"] if t["function"]["name"] == "kemini_emit_story"
-        )
-        assert declaration["description"] == kemini.tool_description
-        assert declaration["parameters"]["properties"]["content"]["description"] == kemini.content_description
+        assert kemini.transport_prompt not in json.dumps(sent[0]["messages"], ensure_ascii=False)
+        declarations = {t["function"]["name"]: t["function"] for t in sent[0]["tools"]}
+        assert "kemini_emit_story" not in declarations
+        assert "exactly once per turn" in declarations["submit_story"]["description"]
         assert all(m["role"] != "system" for m in sent[0]["messages"])
         assert any(
-            e["kind"] == "full_agent_tool_started" and e["payload"].get("name") == "kemini_emit_story"
+            e["kind"] == "full_agent_assistant"
+            and e["payload"]["content"] == "过程备注"
+            and not e["payload"]["is_story"]
             for e in store.events(tid)
         )
         preview = store.turn(tid)["preview"]
-        assert "kemini_emit_story" in str(preview["tools"])
+        assert "submit_story" in str(preview["tools"]) and "kemini_emit_story" not in str(preview["tools"])
         assert all(
             row["cache_static"]
             for row in preview["trace"]

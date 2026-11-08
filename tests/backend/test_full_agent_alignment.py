@@ -443,7 +443,7 @@ async def test_turn_requirements_replay_in_place_and_append_revocations():
 
 
 async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
-    from tavern.core.kemini import TURN_SOURCES, control_text
+    from tavern.core.kemini import FULL_AGENT_TRANSPORT_PROMPT, TURN_SOURCES, control_text
     from tavern.full_agent.state import new_state
 
     settings = config("responses", "cloud")
@@ -487,6 +487,23 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
             ],
         },
         {"role": "tool", "tool_call_id": "read", "content": "完整工具原文尾部"},
+        {
+            "role": "assistant",
+            "content": "旧过程备注",
+            "tool_calls": [
+                {
+                    "id": "old-story",
+                    "type": "function",
+                    "function": {
+                        "name": "kemini_emit_story",
+                        "arguments": '{"content":"<thinking>旧自检</thinking>完整剧情尾部"}',
+                    },
+                },
+            ],
+            "_story_call_id": "old-story",
+            "_story_received": {"input_id": "u1"},
+        },
+        {"role": "tool", "tool_call_id": "old-story", "content": '{"ok":true}'},
     ]
     history = [
         {"id": "u1", "role": "user", "raw": "first"},
@@ -517,13 +534,33 @@ async def test_kemini_turn_prompts_are_request_local_across_legacy_replay():
         assert context["messages"][-3:] == [
             {"role": "user", "content": settings.kemini.roleplay_prompt},
             {"role": "assistant", "content": settings.kemini.acknowledgement},
-            {"role": "user", "content": control_text(settings.kemini)},
+            {"role": "user", "content": control_text(settings.kemini, full_agent=True)},
         ]
-        assert context["messages"][-1]["content"].endswith("当前正文约束\n\n当前传输\n\n当前末尾提示")
+        assert context["messages"][-1]["content"].endswith(
+            f"当前正文约束\n\n{FULL_AGENT_TRANSPORT_PROMPT}\n\n当前末尾提示"
+        )
         assert not any(m.get("source") in TURN_SOURCES for m in context["context_additions"])
         assert "旧提示不可回放" not in json.dumps(context["messages"], ensure_ascii=False)
     assert second["context_ledger"]["rebuild_reason"] is continued["context_ledger"]["rebuild_reason"] is None
     assert [m["content"] for m in continued["messages"] if m["role"] == "tool"] == ["完整工具原文尾部"]
+    sent = json.dumps(continued["messages"], ensure_ascii=False)
+    assert sent.count("完整剧情尾部") == 1
+    assert "kemini_emit_story" not in sent and "旧自检" not in sent
+    resumed = compile_window(
+        document,
+        session,
+        [],
+        snapshot,
+        "first",
+        settings,
+        tools,
+        input_id="u1",
+        continuation=exchange[:-1],
+        story={"content": "完整剧情尾部", "breaks": []},
+    )
+    resumed_wire = json.dumps(resumed["messages"], ensure_ascii=False)
+    assert resumed_wire.count("完整剧情尾部") == resumed_wire.count("旧过程备注") == 1
+    assert "kemini_emit_story" not in resumed_wire and "旧自检" not in resumed_wire
     assert trace == saved
     settings.kemini.enabled = False
     disabled = compile_window(document, session, history, snapshot, "third", settings, tools, trace=trace)
@@ -1375,7 +1412,9 @@ def test_committed_story_replays_only_final_model_text_without_draft_revocation(
     assert not any(m.get("source") == "roleplay_draft" for m in compiled["context_additions"])
 
 
-@pytest.mark.parametrize("previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency", "before_plot_guide"])
+@pytest.mark.parametrize(
+    "previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency", "before_plot_guide"]
+)
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings
     from tavern.full_agent.config import FULL_AGENT_PROMPT
