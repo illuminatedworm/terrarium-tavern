@@ -51,6 +51,11 @@ LEGACY_FULL_AGENT_PROMPT_HASHES = {
     "33c4c671fe89cada3300edc6a3551307c6890864bee0dfc380c00a477b6498ba",
 }
 
+LEGACY_HALF_AGENT_PROMPT_HASHES = {
+    "80e74265bf1a68f979506116b933e16986e416395313a73bb9cd8d24f0bad0c2",
+    "3a27ef0127a54dee3079e8c6270421eb4da2665b9953bf3464a8142ef7a785ec",
+}
+
 LEGACY_ADVISOR_PROMPT_HASHES = {
     "f7071ba980f49b6cb9889c4652bcf9b9d2392a130e208bed162324ed185c8e44",
     "86617163b364451f012f2e8810d1580433a3db6ab2381c9c6df7a7e4e95e7659",
@@ -543,6 +548,9 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         if fingerprint(raw["full_agent"].get("system_prompt")) in LEGACY_FULL_AGENT_PROMPT_HASHES:
             raw["full_agent"]["system_prompt"] = FULL_AGENT_PROMPT
             changed_scopes.add("full_agent")
+        if fingerprint(raw["half_agent"].get("system_prompt")) in LEGACY_HALF_AGENT_PROMPT_HASHES:
+            raw["half_agent"]["system_prompt"] = DEFAULT_SYSTEM_PROMPT
+            changed_scopes.add("half_agent")
         advisor = raw.get("shared", {}).get("advisor", {})
         if fingerprint(advisor.get("system_prompt")) in LEGACY_ADVISOR_PROMPT_HASHES:
             advisor["system_prompt"] = ADVISOR_PROMPT
@@ -592,6 +600,8 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     old = Settings.model_validate(raw)
     if fingerprint(old.full_agent_system_prompt) in LEGACY_FULL_AGENT_PROMPT_HASHES:
         old.full_agent_system_prompt = FULL_AGENT_PROMPT
+    if fingerprint(old.system_prompt) in LEGACY_HALF_AGENT_PROMPT_HASHES:
+        old.system_prompt = DEFAULT_SYSTEM_PROMPT
     if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
         old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
     values = old.model_dump()
