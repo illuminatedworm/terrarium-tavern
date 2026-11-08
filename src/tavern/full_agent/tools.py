@@ -295,9 +295,11 @@ SPECS = {
         "Create or fully replace this branch's author-level outline of where the story may go. The current outline is "
         "in <tavern_plot>; no read is needed.\n"
         "Updates are cumulative: revise the current outline instead of starting over, keeping its structure and "
-        "everything that still holds. The tool protocol describes the suggested sections.\n"
-        "Contents are revisable possibilities, not established facts, things characters know, or actions decided "
-        "for the user.",
+        "everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been "
+        "fulfilled or the user asked out of character to change it. The tool protocol describes the suggested "
+        "sections.\n"
+        "Apart from anchors, contents are revisable possibilities. None of it is an established fact, something "
+        "characters know, or an action decided for the user.",
     ),
     "archive_note": (
         NoteKey,

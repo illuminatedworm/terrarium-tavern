@@ -73,7 +73,7 @@ DEFAULT_PROBE_MARKER_PROMPT = (
 FULL_AGENT_SYSTEM_PROMPT_DEFINITION = {
     "path": "system_prompt",
     "label": "顶级规则/引导",
-    "description": "Full Agent 的叙事、连续性与可选剧情规划原则；工具授权、记录职责和提交规则由运行时协议提供，具体参数与操作条件见工具说明。",
+    "description": "Full Agent 的叙事与连续性原则；工具授权、记录职责和提交规则由运行时协议提供，剧情规划原则也在开启时由协议注入；具体参数与操作条件见工具说明。",
     "default": FULL_AGENT_PROMPT,
 }
 HALF_AGENT_SYSTEM_PROMPT_DEFINITION = {

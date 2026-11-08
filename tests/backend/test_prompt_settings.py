@@ -24,7 +24,7 @@ from tavern.core.prompts import (
     PROMPT_DEFINITIONS,
 )
 from tavern.core.settings import SettingsDocument, migrate_settings
-from tavern.full_agent.config import FULL_AGENT_PROMPT, FullAgentConfig, tool_protocol
+from tavern.full_agent.config import FULL_AGENT_PROMPT
 from tavern.memories.memory import render_memory
 from tavern.search.retrieval_text import query_instruction
 from tests.support.memory_fixtures import memory_snapshot
@@ -43,11 +43,9 @@ def test_defaults_and_custom_prompts():
         assert read_path(defaults, item["path"]) == item["default"]
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
-    assert "玩家" not in DEFAULT_SYSTEM_PROMPT + FULL_AGENT_PROMPT
     assert all(
         "人物不会因为你知道就知道" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT)
     )
-    assert "玩家" not in tool_protocol(FullAgentConfig(), plot_enabled=True)
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
     # Keep the source excerpts as evidence; only the requested boundary markers
     # and references to omitted ST wrappers differ from these saved originals.
@@ -265,7 +263,7 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
             }
             assert system_prompts["full_agent"]["default"] == FULL_AGENT_PROMPT
             assert system_prompts["half_agent"]["default"] == DEFAULT_SYSTEM_PROMPT
-            assert "叙事、连续性与可选剧情规划原则" in system_prompts["full_agent"]["description"]
+            assert "叙事与连续性原则" in system_prompts["full_agent"]["description"]
             assert (
                 "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
             )

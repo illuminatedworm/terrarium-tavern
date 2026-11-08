@@ -1,6 +1,5 @@
 """Persisted settings; runtime projections are disposable, never the source of truth."""
 
-import re
 from copy import deepcopy
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -42,11 +41,14 @@ from tavern.web.config import WebConfig, migrate_web_settings
 
 LEGACY_FULL_AGENT_PROMPT_HASHES = {
     "2ab331d1d01ab9ffeeb9436e27af00b7425f7aed7b1a685e5d38081a84dc7727",
+    "74cfaf344bc123d16a6604b6dcecd8ebbfa335ef0e5c62d54ca27fe641111566",
     "d72b35768688226ad359f3fdc8dcb04286633b4da808a8ee6aa70f7f47e8e00b",
     "4bc871cd5021ed1be8b86b36fd4f072ecd6cbd8e017cd074eaa1107f47af257e",
     "7ee23c619af1a6cb406489c4c9316a8457e2161d68d1ef5feba332c8fdb267ea",
     "95173fea564656ff5b21f15e6a6bcc5b76f3f9d45255346913edf11de955b462",
     "d3a665909b62c5a6a3d739d1f899a1b9782694a9c899ae3ea66d9c00aee9e2e3",
+    "af511dd7f085b1028fe8d610f83014843b3ec24099463db8649f3dd794a6a1ca",
+    "33c4c671fe89cada3300edc6a3551307c6890864bee0dfc380c00a477b6498ba",
 }
 
 LEGACY_ADVISOR_PROMPT_HASHES = {
@@ -536,35 +538,6 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                 changed_scopes.add(scope)
         if migrate_tracker_settings(raw.setdefault("half_agent", {})):
             changed_scopes.add("half_agent")
-        # Only application prompt settings use the human participant terminology.
-        # Character documents, persona names, dialogue and user input stay verbatim.
-        for scope in ("full_agent", "half_agent"):
-            agent = raw.setdefault(scope, {})
-            groups = [
-                (
-                    agent,
-                    (
-                        "system_prompt",
-                        "memory_system_prompt",
-                        "maintenance_system_prompt",
-                        "preference_prompt",
-                        "regenerate_prompt",
-                        "probe_system_prompt",
-                        "probe_marker_prompt",
-                    ),
-                ),
-                (agent.get("retrieval", {}), ("query_prompt", "protocol_prompt")),
-                (agent.get("local_runtime", {}), ("instruction_prompt", "reranker_prompt")),
-            ]
-            for values, fields in groups:
-                for field in fields:
-                    old = values.get(field)
-                    if not isinstance(old, str):
-                        continue
-                    new = re.sub(r"\bplayer\b", "user", old.replace("玩家", "用户"), flags=re.IGNORECASE)
-                    if new != old:
-                        values[field] = new
-                        changed_scopes.add(scope)
         # Upgrade only the exact previous application default. Custom story
         # instructions remain user-owned; tool descriptions carry the new rule too.
         if fingerprint(raw["full_agent"].get("system_prompt")) in LEGACY_FULL_AGENT_PROMPT_HASHES:

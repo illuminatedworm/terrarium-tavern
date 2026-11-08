@@ -132,7 +132,7 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
-def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_data(tmp_path):
+def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode())
     session = store.new_session(SessionCreate(card_id=card["id"], persona="玩家甲"))
@@ -167,10 +167,10 @@ def test_existing_prompt_terminology_is_migrated_once_without_rewriting_story_da
     assert len(list(tmp_path.glob("before-upgrade-schema11-settings9-*.sqlite3"))) == 1
     for mode in ("full_agent", "half_agent"):
         settings = reopened.settings(mode)
-        assert settings.system_prompt == "自定义开头：用户扮演人类角色；user 的选择由 {{user}} 决定。"
-        assert settings.preference_prompt == "用户偏好："
-        assert settings.regenerate_prompt == "本次 user 要求："
-        assert settings.local_models.instruction_prompt == "Retrieve the user's setting."
+        assert settings.system_prompt == "自定义开头：玩家扮演人类角色；Player 的选择由 {{user}} 决定。"
+        assert settings.preference_prompt == "玩家偏好："
+        assert settings.regenerate_prompt == "本次 player 要求："
+        assert settings.local_models.instruction_prompt == "Retrieve the player's setting."
     assert reopened.session(session["id"])["persona"] == "玩家甲"
     assert reopened.session(session["id"])["messages"][0]["raw"] == "玩家走进旧港。"
 

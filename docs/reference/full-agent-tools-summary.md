@@ -266,14 +266,14 @@ Writing to an archived key reactivates it.
 
 ```text
 Create or fully replace this branch's author-level outline of where the story may go. The current outline is in <tavern_plot>; no read is needed.
-Updates are cumulative: revise the current outline instead of starting over, keeping its structure and everything that still holds. The tool protocol describes the suggested sections.
-Contents are revisable possibilities, not established facts, things characters know, or actions decided for the user.
+Updates are cumulative: revise the current outline instead of starting over, keeping its structure and everything that still holds. Keep each anchor (锚点) and its severity (冷酷度) unchanged unless it has been fulfilled or the user asked out of character to change it. The tool protocol describes the suggested sections.
+Apart from anchors, contents are revisable possibilities. None of it is an established fact, something characters know, or an action decided for the user.
 ```
 
 请求：
 
 ```json
-{"content":"## 核心\n- 守塔人为何藏起旧信？\n## 各方动向\n- 守塔人：想让旧信永远沉默；若用户追问，会提前出海。\n## 当前阶段\n- 若用户前往港口，守塔人的隐瞒引出冲突。\n## 伏笔\n- 旧信的火漆：远期视选择揭开来历，尚未回收。"}
+{"content":"## 核心\n- 守塔人为何藏起旧信？\n## 锚点\n- 【严酷】旧信出自守塔人已故的兄长；七日后补给船靠港，守塔人随船离岛。\n## 各方动向\n- 守塔人：想让旧信永远沉默；若用户追问，会提前出海。\n## 当前阶段\n- 若用户前往港口，守塔人的隐瞒引出冲突。\n## 伏笔\n- 旧信的火漆：远期视选择揭开来历，尚未回收。"}
 ```
 
 成功返回：

@@ -1413,7 +1413,15 @@ def test_committed_story_replays_only_final_model_text_without_draft_revocation(
 
 
 @pytest.mark.parametrize(
-    "previous", ["before_ledger", "before_read_guards", "before_plot", "before_agency", "before_plot_guide"]
+    "previous",
+    [
+        "before_ledger",
+        "before_read_guards",
+        "before_plot",
+        "before_agency",
+        "before_plot_guide",
+        "before_plot_control",
+    ],
 )
 def test_only_exact_old_default_memory_prompt_is_migrated(previous):
     from tavern.core.settings import SettingsDocument, migrate_settings

@@ -120,7 +120,7 @@ async function refresh() {
     <div class="scene-block-head">
       <h3>
         剧情规划<FieldHelp
-          tooltip="按当前对话保存可调整的阶段大纲，帮助铺设伏笔与后续转折。关闭后保留大纲并暂停使用。"
+          tooltip="开启后由模型主导局势：你决定角色言行，结果由模型裁决；大纲中的锚点不因故事内言行改变，只能用场外指令调整。关闭后保留大纲并暂停使用。"
         />
       </h3>
       <input
@@ -144,13 +144,13 @@ async function refresh() {
         <label>
           <span
             >阶段大纲（含未来剧情）<FieldHelp
-              tooltip="编辑后模型仍可随剧情调整。明确的创作要求请通过对话或创作偏好传达。保存空白大纲后，开启状态下的下一回合会重新建纲。"
+              tooltip="你写下或改动的锚点模型会原样保留，其余内容模型仍可随剧情调整。保存空白大纲后，开启状态下的下一回合会重新建纲。"
           /></span>
           <textarea
             v-model="text"
             rows="10"
             :disabled="working || !session.head"
-            placeholder="核心、各方动向、人物变化、当前阶段、后续方向、伏笔…"
+            placeholder="核心、锚点、各方动向、人物变化、当前阶段、后续方向、伏笔…"
           />
         </label>
         <p v-if="!session.head" class="plot-note">可以先开启功能；发送第一条消息后即可保存和编辑大纲。</p>
