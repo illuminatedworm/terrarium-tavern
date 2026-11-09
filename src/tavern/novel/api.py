@@ -20,6 +20,12 @@ class Authorization(BaseModel):
     unbind: bool = False
 
 
+class AdvisorAuthorization(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    expected_revision: int = Field(ge=0)
+    enabled: bool
+
+
 def register_routes(app, service, main_runtime):
     store, data = service.store, service.data
 
@@ -68,16 +74,27 @@ def register_routes(app, service, main_runtime):
         service.notify()
         return service.public(sid)
 
+    def check_source(sid):
+        binding = data.binding(sid)
+        if not binding["source"]:
+            raise ValueError("请先导入原著文件")
+        NovelText(store.root, data.source(binding["source"]))
+
     @app.patch("/api/sessions/{sid}/novel")
     async def authorize(sid: str, payload: Authorization):
         if payload.unbind and payload.enabled:
             raise ValueError("解绑和开启不能同时进行")
         if payload.enabled:
-            binding = data.binding(sid)
-            if not binding["source"]:
-                raise ValueError("请先导入原著文件")
-            NovelText(store.root, data.source(binding["source"]))
+            check_source(sid)
         data.configure(sid, payload.expected_revision, enabled=payload.enabled, unbind=payload.unbind)
+        service.notify()
+        return service.public(sid)
+
+    @app.patch("/api/sessions/{sid}/novel/advisor")
+    async def authorize_advisor(sid: str, payload: AdvisorAuthorization):
+        if payload.enabled:
+            check_source(sid)
+        data.configure_advisor(sid, payload.expected_revision, payload.enabled)
         service.notify()
         return service.public(sid)
 

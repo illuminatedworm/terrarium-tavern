@@ -1,6 +1,7 @@
 """Own independently scheduled investigators and wakeups, never story commits."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 
 from tavern.core.channels import require_channel
@@ -99,7 +100,11 @@ class NovelService:
 
     def public(self, sid):
         with self.store.connection() as db:
-            session = db.execute("SELECT agent_mode FROM sessions WHERE id=?", (sid,)).fetchone()
+            session = db.execute(
+                "SELECT s.agent_mode,json_extract(a.options,'$.model_selection') AS advisor_model "
+                "FROM sessions s LEFT JOIN advisor_conversations a ON a.session=s.id WHERE s.id=?",
+                (sid,),
+            ).fetchone()
         if session is None or session[0] != "full_agent":
             raise ValueError("原著调查仅限 Full Agent 对话")
         binding = self.data.binding(sid)
@@ -126,6 +131,10 @@ class NovelService:
             "revision": binding["revision"],
             "event_seq": event_seq,
             "enabled": bool(binding["enabled"]),
+            "advisor_enabled": bool(binding["advisor_enabled"]),
+            "advisor_model_selection": json.loads(session["advisor_model"])
+            if session["advisor_model"]
+            else None,
             "source": next((s for s in history if s["current"]), None),
             "history": history,
             "jobs": jobs,

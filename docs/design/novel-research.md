@@ -1,6 +1,6 @@
 # Full Agent 原著参考
 
-原著参考默认关闭，仅用于 Full Agent。一个对话分支明确绑定一个 txt、md 或 markdown 文件并开启后，主 agent 才获得调查者管理工具及协议。主 agent 没有直接读取小说的工具；原著是参考证据，不能覆盖用户设定和本局已发生剧情，也不能作为 H 剧情事实来源。
+原著参考仅用于 Full Agent 对话，委派调查和[参谋 agent 查阅](advisor.md#工具契约)分别授权，默认关闭。一个对话分支明确绑定一个 txt、md 或 markdown 文件并开启委派授权后，主 agent 才获得调查者管理工具及协议。主 agent 没有直接读取小说的工具；原著是参考证据，不能覆盖用户设定和本局已发生剧情，也不能作为 H 剧情事实来源。
 
 ## 用户入口与文件
 
@@ -8,7 +8,7 @@
 
 原文件复制到 `<当前数据目录>/blobs/novels/<内部编号>/original`，旁边的 `text.utf8` 与 `index.json` 是按已选编码生成的文本和稀疏位置索引。桌面默认数据目录为软件目录下的 `data/`，自定义数据目录时一起迁移。原著全文不写入 SQLite；数据库仅保存绑定、文件信息、调查状态和本次实际读取的片段／报告。原路径之后的变化不会自动生效；当前文件、导入时间、编码、位置与历史版本都可查看。
 
-有任何尚未销毁的调查者时，后端禁止当前分支替换、解绑或停用小说，包括调查中、等待回答、完成后待复用、暂停或失败的调查者。旧文件仍被历史记录引用时保留并明确展示，不能被同名文件静默替换。
+有任何尚未销毁的调查者时，后端禁止当前分支替换、解绑或停用委派授权，包括调查中、等待回答、完成后待复用、暂停或失败的调查者。参谋授权仍可独立修改。旧文件仍被历史记录引用时保留并明确展示，不能被同名文件静默替换。
 
 ## 独立调查者
 
@@ -87,6 +87,7 @@
 
 - `GET /api/sessions/{sid}/novel` 返回绑定、历史文件信息、所有存活调查者与最近销毁记录；`GET .../novel/jobs?before=<R数字部分>` 分页回查更早记录。
 - `POST .../novel/source?filename=...&encoding=utf-8&expected_revision=...` 接收 `application/octet-stream` 文件体，流式限制 64 MiB，发布成功后参考保持关闭。`PATCH .../novel` 使用原著绑定自己的 `expected_revision`，显式设置 `enabled` 或 `unbind`。
+- `PATCH .../novel/advisor` 使用同一绑定的 `expected_revision` 和 `enabled` 设置参谋授权。状态中的 `advisor_enabled` 是参谋授权，`advisor_model_selection` 是参谋模型的对话级选择，空值表示沿用全局设置。
 - `GET .../novel/sources/{source_id}/text?start=0&length=8000` 为用户按范围查看副本，`.../download` 下载原始文件；仅允许当前分支的文件历史，不是主模型工具。
 - `GET .../novel/jobs/{ref}/trace?after=0` 分页查看原始过程与报告；`POST .../novel/jobs/{ref}/pause|resume|destroy` 明确管理调查者，`POST .../novel/stop-all` 同时停止当前主生成和运行中的调查。
 - `GET /api/novel/activity` 与可重连的 `GET /api/novel/events` 提供跨对话状态；前端不轮询模型任务，不因展开面板而调用模型。

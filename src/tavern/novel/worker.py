@@ -13,7 +13,7 @@ from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.usage import observed_usage
 from tavern.novel.config import COMPACT_INSTRUCTION, SYSTEM
 from tavern.novel.source import NovelText
-from tavern.novel.tools import WORKER_SPECS, definitions
+from tavern.novel.tools import WORKER_SPECS, definitions, read_book
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import configure_operation, response_origin
 from tavern.storage.store import dump
@@ -221,14 +221,8 @@ class NovelWorker:
                     result = {"status": "waiting_for_delegator"}
                     self.job["status"] = "waiting"
                     self.job["progress"]["waiting_for_answer"] = True
-                elif name == "read_novel":
-                    result = await asyncio.to_thread(self.book.read, args.start, args.length)
-                elif name == "search_novel":
-                    result = await asyncio.to_thread(
-                        self.book.search, self.view.restore(args.query), args.start, args.limit, args.end
-                    )
                 else:
-                    result = await asyncio.to_thread(self.book.outline, args.start, args.limit)
+                    result = await read_book(self.book, name, args, self.view)
             except ValidationError as error:
                 result = {"error": error.errors(include_input=False, include_url=False)}
             except ValueError as error:

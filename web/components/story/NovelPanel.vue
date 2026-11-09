@@ -15,21 +15,30 @@ import {
 import AppModal from '../common/AppModal.vue';
 import FieldHelp from '../common/FieldHelp.vue';
 import Icon from '../common/Icon.vue';
-import type { Provider } from '../../lib/settingsDocument';
+import type { ModelProfile, Provider } from '../../lib/settingsDocument';
 
-const props = defineProps<{ sessionId: string; locked: boolean; providers: Provider[] }>();
+const props = defineProps<{
+  sessionId: string;
+  locked: boolean;
+  providers: Provider[];
+  advisorDefault: ModelProfile | null;
+}>();
 function providerName(id: string) {
   if (!id || id.startsWith('unconfigured-')) return '未配置';
   return props.providers.find((provider) => provider.id === id)?.name || '原连接已移除';
 }
 const emit = defineEmits<{
   settings: [];
+  advisor: [];
   changed: [value: { enabled: boolean; active: number }];
   stopped: [];
 }>();
 const state = ref<NovelState | null>(null),
   error = ref(''),
   busy = ref('');
+const advisorModel = computed(() =>
+  props.advisorDefault ? state.value?.advisor_model_selection || props.advisorDefault : null,
+);
 const encoding = ref('utf-8'),
   fileInput = ref<HTMLInputElement>();
 const expanded = ref(''),
@@ -158,6 +167,15 @@ async function authorize(enabled: boolean, unbind = false) {
     rawApi(root.value, { expected_revision: state.value!.revision, enabled, unbind }, 'PATCH'),
   );
 }
+async function authorizeAdvisor(event: Event) {
+  if (!state.value) return;
+  const input = event.target as HTMLInputElement;
+  const enabled = input.checked;
+  input.checked = state.value.advisor_enabled;
+  await action('advisor', () =>
+    rawApi(`${root.value}/advisor`, { expected_revision: state.value!.revision, enabled }, 'PATCH'),
+  );
+}
 async function control(ref: string, operation: string) {
   await action(ref, () => rawApi(`${root.value}/jobs/${ref}/${operation}`, {}));
 }
@@ -225,7 +243,7 @@ onBeforeUnmount(() => {
       <button class="quiet" @click="emit('settings')"><Icon name="sliders" :size="16" />模型与额度</button>
       <p v-if="state" class="novel-summary">
         <span>{{ state.source ? '已绑定' : '未绑定' }}</span>
-        <span>· {{ state.enabled ? '已授权' : '未授权' }}</span>
+        <span>· 委派{{ state.enabled ? '已授权' : '未授权' }}</span>
         <span :class="{ 'novel-live': state.active }">· 调查者 {{ state.active }}/3</span>
         <FieldHelp
           tooltip="每个分支只绑定一个纯文本文件。调查者独立查阅原文，主 agent 只接收报告；原著不会覆盖本局剧情。"
@@ -287,7 +305,7 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <h3>尚未绑定原著</h3>
-            <p class="novel-meta">导入一个纯文本文件后，可授权 Full Agent 委派调查。</p>
+            <p class="novel-meta">导入纯文本文件后，可分别授权 Full Agent 委派调查和参谋 agent 查阅。</p>
           </template>
           <div v-if="state.source && !choosingFile" class="novel-book-foot">
             <button
@@ -378,6 +396,31 @@ onBeforeUnmount(() => {
           />
         </p>
         <p class="novel-privacy">开启后，相关原文片段会发送给上述模型服务；每次调查无需再次确认。</p>
+      </div>
+
+      <div class="novel-auth">
+        <label class="novel-auth-row">
+          <span>允许参谋 agent 查阅原著</span>
+          <input
+            type="checkbox"
+            class="switch"
+            role="switch"
+            :checked="state.advisor_enabled"
+            :disabled="!!busy || (!state.advisor_enabled && (!state.source || state.source.missing))"
+            @change="authorizeAdvisor"
+          />
+        </label>
+        <p class="novel-model">
+          <button type="button" @click="emit('advisor')">
+            参谋模型：{{ advisorModel ? providerName(advisorModel.provider_id) + ' / ' : ''
+            }}{{ advisorModel?.model || '尚未配置' }}
+            {{ advisorModel ? (state.advisor_model_selection ? ' · 本对话指定' : ' · 跟随全局') : ''
+            }}<Icon name="arrow-right" :size="12" />
+          </button>
+        </p>
+        <p class="novel-privacy">
+          查阅时原文片段会发送给参谋模型。换模型沿用授权，换书或解绑会关闭授权。关闭后，旧片段仍可能随咨询历史发送，可在参谋栏清空咨询。
+        </p>
       </div>
 
       <div class="novel-section-head">

@@ -39,12 +39,15 @@ Advisor 是两种故事模式共用的独立咨询运行时，入口在 `advisor
 | `search_memory` | Half Agent 使用，沿用 Tracker 的 query，返回完整匹配记忆及来源状态 |
 | `read_story_context` | field 为 handoff/plot/turn_preference/persona/title；只读，缺失不生成 |
 | `search_consultation` / `read_consultation` | query/limit、ref；查阅当前分支旧咨询 |
+| `novel_outline` / `search_novel` / `read_novel` | 仅 Full Agent 对话在单独授权后提供，复用[原著有界读取工具](novel-research.md#独立调查者)，只读当前分支绑定的文件 |
 | `web_search` / `read_webpage` | 搜索使用 query/limit/可选 objective；网页使用 url/offset/limit/可选 service。返回有界摘要或提取片段、续读位置、截断状态、实际服务与尝试记录，见[联网工具协议](../reference/web-tools.md) |
 | `offer_inputs` | options 为 1–6 条完整输入；在回复下方显示为可点击选项，点击只填入主对话输入框 |
 | `offer_titles` | titles 为 1–6 个候选标题（各 1–100 字符）、request_ref=Q1；仅用户明确要求改名或起标题时调用，点击后才修改对话标题 |
 | `update_turn_preference` | action 为 append/replace/clear，content、request_ref=Q1；仅明确用户指令授权 |
 
 两种选项工具不写入任何数据：已持久化的调用参数即界面展示的选项，执行失败的调用不显示；填入输入框与改名均由用户点击触发，改名沿用会话标题接口及修订检查。不注册故事写入、脚本执行或主 Agent 换窗工具。工具 allowlist 在执行时再次检查。用户意图由模型根据真实当前提问判断，Runtime 校验引用、字段、故事修订和互斥状态，不通过关键词猜测授权。
+
+原著查阅沿用参谋模型和请求额度。咨询开始时固定文件与授权修订，每次读取前后复核。咨询中关闭授权或更换文件会停止后续读取，已返回的片段仍按咨询历史规则回放。目录标题、搜索片段和读取原文按返回的 Unicode 字符数计入每次咨询的 40,000 字符上限。超出剩余额度时返回错误，参谋可缩小范围。已用额度和工具轨迹一同保存，续接不会刷新。
 
 ## 存储、事务与恢复
 
@@ -60,6 +63,7 @@ schema 4 新增 `advisor_conversations`、`advisor_exchanges`、`advisor_runs`�
 
 - **清空**须在任务停止后执行：同一事务内删除交流、任务和级联事件，重置摘要及云端上下文并递增修订号；保留故事级设置和已提交的偏好。旧请求会因修订冲突而无法复活记录。
 - **分支和故事导入导出**只保留设置，不复制或恢复咨询；完整目录备份仍保留当时的数据快照与待续任务。
+- **原著授权**随绑定继承到新分支。个人数据包可携带绑定和文件，导入时参谋授权默认关闭。更换参谋模型沿用授权，更换原著文件或解绑会关闭授权。
 - **删除故事**时通过归属关系级联清理。诊断沿用日志的保留和容量设置，保护运行中与待续的记录；当前咨询由用户整体清空。
 
 ## API 与界面

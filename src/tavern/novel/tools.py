@@ -1,4 +1,6 @@
-"""Separate tool surfaces: the investigator reads; the main agent only coordinates."""
+"""Shared read tools and separate Full Agent investigator controls."""
+
+import asyncio
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -146,7 +148,7 @@ MAIN_SPECS = {
     ),
 }
 
-WORKER_SPECS = {
+READ_SPECS = {
     "novel_outline": (
         Outline,
         "List chapter headings in N1, detected by heading format. Detection may miss headings; search and range "
@@ -162,12 +164,26 @@ WORKER_SPECS = {
         Read,
         "Read N1 by character range. The result gives the exact range returned and whether more text follows.",
     ),
+}
+
+WORKER_SPECS = {
+    **READ_SPECS,
     "ask_delegator": (
         Ask,
         "Ask the delegator a necessary question and pause until it answers. It may not reply for a long time; if you "
         "can answer under a stated assumption, report instead. Call alone.",
     ),
 }
+
+
+async def read_book(book, name, args, view):
+    if name == "read_novel":
+        return await asyncio.to_thread(book.read, args.start, args.length)
+    if name == "search_novel":
+        return await asyncio.to_thread(
+            book.search, view.restore(args.query), args.start, args.limit, args.end
+        )
+    return await asyncio.to_thread(book.outline, args.start, args.limit)
 
 
 def definitions(specs):

@@ -4,7 +4,7 @@ import json
 import time
 
 from tavern.core.errors import NotFound
-from tavern.storage.store import Conflict, dump, uid
+from tavern.storage.store import Conflict, add_columns, dump, uid
 
 MAX_LIVING = 3  # Investigators not yet destroyed, per branch.
 MAX_STARTS = 5  # Starts per story turn, including destroyed and regenerated attempts.
@@ -54,6 +54,14 @@ def initialize(store):
             CREATE INDEX IF NOT EXISTS novel_mail_pending ON novel_mail(sender,job,seq) WHERE delivered IS NULL AND revoked=0;
             CREATE INDEX IF NOT EXISTS novel_events_session ON novel_events(session,seq);
         """)
+        add_columns(
+            db,
+            "novel_bindings",
+            {
+                "advisor_enabled": "INTEGER NOT NULL DEFAULT 0",
+                "advisor_revision": "INTEGER NOT NULL DEFAULT 0",
+            },
+        )
 
 
 def event(db, sid, kind, job=None):
@@ -80,7 +88,8 @@ def invalidate(db, sid, reason):
 
 def fork(db, source, target):
     db.execute(
-        "INSERT INTO novel_bindings SELECT ?,source,enabled,0,next_ref FROM novel_bindings WHERE session=?",
+        "INSERT INTO novel_bindings(session,source,enabled,next_ref,advisor_enabled) "
+        "SELECT ?,source,enabled,next_ref,advisor_enabled FROM novel_bindings WHERE session=?",
         (target, source),
     )
     db.execute(
@@ -130,11 +139,27 @@ class NovelStore:
         with self.store.connection() as db:
             row = db.execute("SELECT * FROM novel_bindings WHERE session=?", (sid,)).fetchone()
         return (
-            dict(row) if row else {"session": sid, "source": None, "enabled": 0, "revision": 0, "next_ref": 1}
+            dict(row)
+            if row
+            else {
+                "session": sid,
+                "source": None,
+                "enabled": 0,
+                "revision": 0,
+                "next_ref": 1,
+                "advisor_enabled": 0,
+            }
         )
 
     @staticmethod
-    def editable(db, sid, expected):
+    def advisor_access(db, sid):
+        row = db.execute(
+            "SELECT source,advisor_revision FROM novel_bindings WHERE session=? AND advisor_enabled=1", (sid,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def binding_for_update(db, sid, expected):
         session = db.execute("SELECT agent_mode FROM sessions WHERE id=?", (sid,)).fetchone()
         if session is None:
             raise NotFound("对话不存在")
@@ -144,6 +169,10 @@ class NovelStore:
         row = db.execute("SELECT * FROM novel_bindings WHERE session=?", (sid,)).fetchone()
         if row["revision"] != expected:
             raise Conflict("原著设置已改变，请刷新后重试")
+        return row
+
+    def editable(self, db, sid, expected):
+        row = self.binding_for_update(db, sid, expected)
         if db.execute(
             "SELECT 1 FROM novel_jobs WHERE session=? AND status!='destroyed' LIMIT 1", (sid,)
         ).fetchone():
@@ -177,7 +206,7 @@ class NovelStore:
             )
             db.execute("INSERT INTO novel_source_history VALUES (?,?)", (sid, source_id))
             db.execute(
-                "UPDATE novel_bindings SET source=?,enabled=0,revision=revision+1 WHERE session=?",
+                "UPDATE novel_bindings SET source=?,enabled=0,advisor_enabled=0,revision=revision+1 WHERE session=?",
                 (source_id, sid),
             )
             event(db, sid, "source_imported")
@@ -189,10 +218,30 @@ class NovelStore:
             if enabled and not row["source"]:
                 raise ValueError("请先导入原著文件")
             db.execute(
-                "UPDATE novel_bindings SET source=?,enabled=?,revision=revision+1 WHERE session=?",
-                (None if unbind else row["source"], 0 if unbind else int(enabled), sid),
+                "UPDATE novel_bindings SET source=?,enabled=?,advisor_enabled=?,revision=revision+1 WHERE session=?",
+                (
+                    None if unbind else row["source"],
+                    0 if unbind else int(enabled),
+                    0 if unbind else row["advisor_enabled"],
+                    sid,
+                ),
             )
             event(db, sid, "authorization")
+
+    def configure_advisor(self, sid, expected, enabled):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self.binding_for_update(db, sid, expected)
+            if enabled and not row["source"]:
+                raise ValueError("请先导入原著文件")
+            if row["advisor_enabled"] != enabled:
+                # Revoking and reopening the same book must not reauthorize a pending consultation.
+                db.execute(
+                    "UPDATE novel_bindings SET advisor_enabled=?,advisor_revision=advisor_revision+1,"
+                    "revision=revision+1 WHERE session=?",
+                    (int(enabled), sid),
+                )
+                event(db, sid, "advisor_authorization")
 
     def jobs(self, sid, *, living_only=False, before=None):
         fields = (

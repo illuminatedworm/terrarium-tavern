@@ -24,6 +24,7 @@ from tavern.core.message_adapter import provider_messages
 from tavern.core.model_selection import ModelSelection
 from tavern.core.model_view import HANDLE, ModelView
 from tavern.core.provider import make_provider, require_model_connection
+from tavern.novel.storage import NovelStore
 from tavern.scripting.native_response import completion_message, message_digest
 from tavern.scripting.request_context import ProviderRequestContext, configure_operation, response_origin
 from tavern.storage.store import Conflict, dump, uid
@@ -54,6 +55,7 @@ class OptionsRequest(AdvisorRevisionRequest):
 class AdvisorService:
     def __init__(self, store, retrieval):
         self.store, self.data, self.retrieval = store, AdvisorStore(store), retrieval
+        self.novel = NovelStore(store)
         self.tasks, self.provider_factory = {}, None
         self.web_transport = None
 
@@ -97,6 +99,10 @@ class AdvisorService:
         state, session = self.data.get(sid), self.store.session(sid)
         cfg, config = runtime_config(self.store, session, state["options"])
         web = WebSession(config.web.mode, cfg, "advisor")
+        novel_access = None
+        if session["agent_mode"] == "full_agent":
+            with self.store.connection() as db:
+                novel_access = self.novel.advisor_access(db, sid)
         result = compile_context(
             freeze_story(self.store, session),
             config,
@@ -104,7 +110,7 @@ class AdvisorService:
             state["exchanges"],
             state["context"],
             [],
-            web.definitions(definitions(session["agent_mode"])),
+            web.definitions(definitions(session["agent_mode"], novel=bool(novel_access))),
         )
         if local_estimate:
             from tavern.core.local_estimate import attach_local_estimate
@@ -181,6 +187,9 @@ class AdvisorService:
                     "trace": [],
                     "preference": None,
                     "pending": None,
+                    "novel_access": self.novel.advisor_access(db, sid)
+                    if session["agent_mode"] == "full_agent" and not request.compact
+                    else None,
                 }
             db.execute(
                 "INSERT INTO advisor_runs(id,session,operation,request,status,created,progress) VALUES (?,?,?,?,'queued',?,?)",
@@ -245,6 +254,8 @@ class AdvisorRun:
         self.sid, self.request = run["session"], run["request"]
         progress = run["progress"]
         self.story, self.context = progress["story"], progress["context"]
+        self.novel_access = progress.get("novel_access")
+        self.novel_chars = progress.get("novel_chars", 0)
         self.trace, self.preference, self.pending = (
             progress["trace"],
             progress["preference"],
@@ -262,7 +273,7 @@ class AdvisorRun:
         self.web_session = WebSession(
             config.web.mode, cfg, "advisor", self.event, failed=progress.get("web_fallback", False)
         )
-        self.base_definitions = definitions(self.story["agent_mode"])
+        self.base_definitions = definitions(self.story["agent_mode"], novel=bool(self.novel_access))
         self.definitions = self.web_session.definitions(self.base_definitions)
         self.tools = AdvisorTools(self)
         self.web = WebTools(
@@ -300,6 +311,8 @@ class AdvisorRun:
             "web_fallback": self.web_session.failed,
             "web_events": self.web_events,
             "web_sources": self.web_sources,
+            "novel_access": self.novel_access,
+            "novel_chars": self.novel_chars,
         }
         with self.store.connection() as db:
             db.execute("UPDATE advisor_runs SET progress=? WHERE id=?", (dump(progress), self.rid))

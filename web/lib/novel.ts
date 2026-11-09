@@ -49,6 +49,8 @@ export interface NovelState {
   event_seq: number;
   revision: number;
   enabled: boolean;
+  advisor_enabled: boolean;
+  advisor_model_selection: Pick<ModelProfile, 'provider_id' | 'model'> | null;
   source: NovelSource | null;
   history: NovelSource[];
   jobs: NovelJob[];

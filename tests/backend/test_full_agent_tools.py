@@ -174,11 +174,13 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
         research.data.create(session["id"], "fourth", 2, "", "问题", "", config)
     with pytest.raises(Conflict, match="尚未销毁"):
         research.data.configure(session["id"], 2, enabled=False)
+    research.data.configure_advisor(session["id"], 2, True)
     with pytest.raises(Conflict, match="确认后"):
         store.fork_session(session["id"], session["head"], session["revision"])
     fork = store.fork_session(session["id"], session["head"], session["revision"], confirm_novel=True)
     assert fork["novel_enabled"] and not fork["novel_active"]
     assert research.data.binding(fork["id"])["source"] == source_id
+    assert research.data.binding(fork["id"])["advisor_enabled"]
     assert research.data.job(jobs[0])["status"] == "running"
     for i in range(2):
         research.data.destroy(jobs[i])
@@ -212,6 +214,7 @@ async def test_novel_limits_fork_authorization_and_portable_paused_progress(stor
     assert (imported_job["status"], imported_job["requests"], imported_job["elapsed"]) == ("paused", 7, 13.5)
     assert imported_job["config"]["auto_destroy"] is True
     imported_source = research.data.source(research.data.binding(imported)["source"])
+    assert not research.data.binding(imported)["advisor_enabled"]
     assert imported_source["id"] != source_id
     assert NovelText(store.root, imported_source).read(0, 30)["text"] == "第一章\n证据完整。"
     assert research.data.create(fork["id"], "own", 2, "", "独立问题", "", config)[1]

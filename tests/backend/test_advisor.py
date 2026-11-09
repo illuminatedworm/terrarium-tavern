@@ -1,6 +1,8 @@
 """Advisor authorization, complete context, branch ownership and recovery."""
 
 import copy
+import io
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +12,7 @@ from tavern.advisor.context import recent_history
 from tavern.advisor.runtime import ConsultationRequest, OptionsRequest
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate
+from tavern.novel.source import import_file
 from tavern.storage.store import dump, uid
 from tests.backend.test_card_author import ToolLLM, import_fixture
 
@@ -54,7 +57,110 @@ async def test_readonly_chat_and_complete_history(tmp_path, mode):
     assert session["id"] not in text and session["head"] not in text
     names = {d.name for d in provider.schemas[0]}
     assert not names & {"write_handoff", "write_note", "write_plot", "patch_state", "revise_content"}
+    assert not names & {"novel_outline", "search_novel", "read_novel"}
     assert ("search_memory" in names) == (mode == "half_agent")
+
+
+async def test_advisor_novel_revocation_rejects_an_inflight_excerpt(tmp_path, monkeypatch):
+    from tavern.advisor import tools
+
+    app, _, session, advisor = setup(tmp_path)
+    sid = session["id"]
+    root = f"/api/sessions/{sid}/novel"
+    marker = uid()
+    original = f"已授权证据 {marker}。".ljust(160, "甲") + "撤权后不可见"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+
+        async def upload(text, revision):
+            response = await client.post(
+                root + "/source",
+                params={"filename": "原著.txt", "expected_revision": revision},
+                headers={"Content-Type": "application/octet-stream"},
+                content=text.encode(),
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        async def authorize(enabled, revision):
+            response = await client.patch(
+                root + "/advisor", json={"enabled": enabled, "expected_revision": revision}
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        binding = await upload(original, 0)
+        assert not binding["advisor_enabled"]
+        assert "read_novel" not in {d["function"]["name"] for d in advisor.preview(sid)["tools"]}
+        binding = await authorize(True, binding["revision"])
+        assert binding["advisor_enabled"] and not binding["enabled"]
+        assert {"novel_outline", "search_novel", "read_novel"} <= {
+            d["function"]["name"] for d in advisor.preview(sid)["tools"]
+        }
+        read_book = tools.read_book
+
+        async def revoke_during_read(book, name, args, view):
+            nonlocal binding
+            result = await read_book(book, name, args, view)
+            if args.start == 160:
+                binding = await authorize(False, binding["revision"])
+                binding = await authorize(True, binding["revision"])
+            return result
+
+        monkeypatch.setattr(tools, "read_book", revoke_during_read)
+        provider = ToolLLM([("read_novel", {"length": 60}), ("read_novel", {"start": 160, "length": 20})])
+        run = await ask(advisor, sid, provider)
+        assert run["status"] == "completed", run
+        sent = dump(provider.call_log)
+        assert "已授权证据 @D" in sent
+        assert "原著授权已关闭或文件已更换" in sent
+        assert marker not in sent and binding["source"]["id"] not in sent and "撤权后不可见" not in sent
+        replaced = await upload("新版原著", binding["revision"])
+        assert not replaced["advisor_enabled"]
+
+    provider = ToolLLM([])
+    run = await ask(advisor, sid, provider)
+    assert run["status"] == "completed", run
+    assert "read_novel" not in {d.name for d in provider.schemas[0]}
+    assert "已授权证据" in dump(provider.call_log)
+
+
+async def test_advisor_novel_character_budget_survives_resume(tmp_path):
+    _, store, session, advisor = setup(tmp_path)
+    sid, source = session["id"], uid()
+    metadata = import_file(store.root, source, io.BytesIO(("A" + "甲" * 60_000).encode()), "原著.txt")
+    advisor.novel.bind(sid, 0, source, metadata)
+    advisor.novel.configure_advisor(sid, 1, True)
+
+    class InterruptOnce(ToolLLM):
+        interrupted = False
+
+        async def chat(self, messages, **kwargs):
+            if self.call_count == 2 and not self.interrupted:
+                self.interrupted = True
+                raise RuntimeError("暂时断开")
+            async for chunk in super().chat(messages, **kwargs):
+                yield chunk
+
+    provider = InterruptOnce(
+        [
+            ("search_novel", {"query": "A"}),
+            ("read_novel", {"length": 20_000}),
+            ("read_novel", {"start": 20_000, "length": 20_000}),
+            ("read_novel", {"start": 20_000, "length": 19_799}),
+            ("read_novel", {"start": 40_000, "length": 1}),
+        ]
+    )
+    run = await ask(advisor, sid, provider)
+    assert run["status"] == "error" and run["resumable"], run
+    run = await ask(advisor, sid, provider, text="", resume=run["id"])
+    assert run["status"] == "completed", run
+    trace = advisor.public(sid)["exchanges"][0]["trace"]
+    results = [json.loads(m["content"]) for m in trace if m["role"] == "tool"]
+    assert len(results[0]["matches"][0]["excerpt"]) == 201
+    assert len(results[1]["text"]) == 20_000
+    assert "剩余 19,799" in results[2]["error"]
+    assert len(results[3]["text"]) == 19_799
+    assert "已用完 40,000" in results[4]["error"]
 
 
 async def test_history_spans_return_complete_messages_and_enforce_the_shared_limit():

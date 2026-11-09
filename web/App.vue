@@ -3477,6 +3477,12 @@ useTimedError(error);
             :session-id="session.id"
             :providers="loadedSettings().shared.providers"
             :locked="storyLocked"
+            :advisor-default="
+              session.channel_origin === 'chatgpt'
+                ? loadedSettings().shared.advisor.official_model
+                : loadedSettings().shared.advisor.model
+            "
+            @advisor="showInspector('advisor')"
             @changed="
               session.novel_enabled = $event.enabled;
               session.novel_active = $event.active;

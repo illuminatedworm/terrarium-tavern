@@ -9,11 +9,14 @@ from pydantic import Field, StringConstraints
 from tavern.advisor.context import expanded, memory_rows
 from tavern.character.cards import normalize
 from tavern.core.history_refs import message_ref, parse_span_ref
-from tavern.core.model_view import state_for_model
+from tavern.core.model_view import HANDLE, state_for_model
 from tavern.full_agent.content import editable_entry, entry_rows, entry_view
 from tavern.full_agent.state import note_view, read_full_state
 from tavern.full_agent.tools import HISTORY_SPAN, Arguments, Read, Search
 from tavern.full_agent.tools import SPECS as STORY_SPECS
+from tavern.novel.source import NovelText
+from tavern.novel.tools import READ_SPECS as NOVEL_SPECS
+from tavern.novel.tools import read_book
 from tavern.tracker.tools import SPECS as TRACKER_SPECS
 from tavern.web.tools import SPECS as WEB_SPECS
 
@@ -64,6 +67,7 @@ READ_NAMES = (
     "search_notes",
     "read_note",
 )
+NOVEL_CHAR_LIMIT = 40_000
 SPECS = {name: STORY_SPECS[name] for name in READ_NAMES}
 SPECS.update(
     {
@@ -80,6 +84,7 @@ SPECS.update(
             Read,
             "Read a complete past advisor exchange by C reference. Discussions are not story events.",
         ),
+        **NOVEL_SPECS,
         **WEB_SPECS,
         "offer_inputs": (
             InputOffer,
@@ -97,8 +102,10 @@ SPECS.update(
 )
 
 
-def definitions(mode):
+def definitions(mode, *, novel=False):
     excluded = {"search_memory"} if mode == "full_agent" else {"search_notes", "read_note"}
+    if mode != "full_agent" or not novel:
+        excluded.update(NOVEL_SPECS)
     result = []
     for name, (model, description) in SPECS.items():
         if name in excluded:
@@ -140,6 +147,7 @@ def search(rows, query, limit=10, *, full=False):
 class AdvisorTools:
     def __init__(self, owner):
         self.owner = owner
+        self.book = None
         self.entries = {
             f"L{i + 1}": entry
             for i, (_, raw, entry) in enumerate(entry_rows(owner.story["document"]))
@@ -153,8 +161,41 @@ class AdvisorTools:
         args = SPECS[name][0].model_validate_json(raw)
         return owner.view.expose(await self.dispatch(name, args))
 
+    def check_novel_access(self):
+        o = self.owner
+        with o.store.connection() as db:
+            current = o.service.novel.advisor_access(db, o.sid)
+        if not o.novel_access or current != o.novel_access:
+            raise ValueError("本次咨询的原著授权已关闭或文件已更换")
+
+    async def read_novel(self, name, args):
+        o = self.owner
+        self.check_novel_access()
+        remaining = NOVEL_CHAR_LIMIT - o.novel_chars
+        if not remaining:
+            raise ValueError("本次咨询已用完 40,000 字符的原著读取额度")
+        if self.book is None:
+            self.book = NovelText(o.store.root, o.service.novel.source(o.novel_access["source"]))
+        result = await read_book(self.book, name, args, o.view)
+        # Authorization can change while the worker thread is reading. Do not publish a late result.
+        self.check_novel_access()
+        if name == "read_novel":
+            characters = len(result["text"])
+        elif name == "search_novel":
+            characters = sum(len(match["excerpt"]) for match in result["matches"])
+        else:
+            characters = sum(len(heading["title"]) for heading in result["headings"])
+        if characters > remaining:
+            raise ValueError(f"本次咨询剩余 {remaining:,} 个原著字符，请缩小读取范围或减少返回条数")
+        o.novel_chars += characters
+        result["name"] = self.book.source["name"]
+        o.view.reserved.update(set(HANDLE.findall(str(result))) - o.view.reverse.keys())
+        return result
+
     async def dispatch(self, name, args):
         o, story = self.owner, self.owner.story
+        if name in NOVEL_SPECS:
+            return await self.read_novel(name, args)
         full = read_full_state(story["snapshot"]) if story["agent_mode"] == "full_agent" else {}
         if name in {"search_history", "read_history"}:
             rows = [
