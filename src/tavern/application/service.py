@@ -509,7 +509,7 @@ class RoleplayRuntime:
             card = self.store.session_card(session["id"])
             start = turn_start(session, req)
             history, reused_user, before = start.history, start.reused_user, start.snapshot
-            req.text = start.text
+            req.text, req.ooc = start.text, start.ooc
             snapshot = copy.deepcopy(before)
             document = copy.deepcopy(
                 snapshot.get("content", {}).get("document", card["document"])
@@ -613,7 +613,10 @@ class RoleplayRuntime:
             snapshot["scopes"] = initialized["scopes"]
             rules = regex_scripts(document)
             input_raw = req.text
-            req.text = await runtime.call("transform", input_raw, rules, 1, "model", 0)
+            from tavern.core.ooc import with_ooc
+
+            # Card regex sees only story text; every model reader gets the tagged ooc after it.
+            req.text = with_ooc(await runtime.call("transform", input_raw, rules, 1, "model", 0), req.ooc)
 
             from tavern.memories.history_recall import HistoryBudget
             from tavern.memories.memory_engine import CallBudget
@@ -679,6 +682,7 @@ class RoleplayRuntime:
                 "raw": input_raw,
                 "model": req.text,
                 "display": await runtime.call("transform", input_raw, rules, 1, "display", 0),
+                "ooc": req.ooc,
                 "snapshot": copy.deepcopy(before),
             }
             # The compiler owns input insertion; memory tools may cite the pending user input.

@@ -38,6 +38,7 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
 
     import jsonpatch
 
+    from tavern.core.ooc import ooc_block
     from tavern.storage.store import Conflict, dump, uid
     from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
     from tests.backend.test_full_agent import Model, Script, ScriptHost, handoff
@@ -77,7 +78,9 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
         if mode == "full_agent":
             db.execute("UPDATE sessions SET plot_enabled=1 WHERE id=?", (session["id"],))
     sid, opening = session["id"], session["head"]
-    tracker_models = []
+    tracker_models, tracker_inputs = [], []
+    ooc = "NEW_OOC {{char}}"
+    ooc_suffix = "\n\n" + ooc_block(ooc)
 
     def tracker():
         def first(messages):
@@ -86,7 +89,8 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
                 for m in messages
                 if m["role"] == "user" and '"current_input"' in m["content"]
             )
-            value = payload["current_input"]
+            tracker_inputs.append(payload["current_input"])
+            value = payload["current_input"].removesuffix(ooc_suffix)
             if payload["task"]["phase"] == "pre":
                 assert payload["character"]["description"] == "BASE_DESCRIPTION"
                 return "revise_content", {
@@ -201,7 +205,12 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
                 )
                 assert rejected.status_code == 400
 
-        replacement = {"mode": "regenerate", "message_id": original["head"], "replacement_text": "NEW_INPUT"}
+        replacement = {
+            "mode": "regenerate",
+            "message_id": original["head"],
+            "replacement_text": "NEW_INPUT",
+            "ooc": ooc,
+        }
         failed = await attempt(model("NEW_INPUT", fail=True), **replacement)
         assert failed["status"] == "error"
         assert store.session(sid)["snapshot"] == original["snapshot"]
@@ -236,6 +245,10 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
         assert current["messages"][-2]["id"] != original_user["id"]
         assert current["messages"][-2]["snapshot"] == baseline
         assert [m["raw"] for m in current["messages"]] == ["opening", "NEW_INPUT", "BODY_NEW_INPUT"]
+        # Ooc text stays out of the card-processed raw/display layers and reaches models tagged.
+        user = current["messages"][-2]
+        assert user["ooc"] == ooc and "NEW_OOC" not in user["display"]
+        assert user["model"].endswith(ooc_suffix)
         assert current["snapshot"]["state"] == {"stat_data": {"hp": 2}, "script_runs": 1}
         assert current["messages"][-1]["versions"] == [original["head"], current["head"]]
         assert (
@@ -243,6 +256,7 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
         )
         if mode == "half_agent":
             assert [r["content"] for r in current["memory_view"]["records"]] == ["MEMORY_NEW_INPUT"]
+            assert "NEW_INPUT" + ooc_suffix in tracker_inputs
             assert current["snapshot"]["memory_archive"]["covered_count"] == 3
             sent = fresh_model.last_messages
         else:
@@ -254,6 +268,11 @@ async def test_input_replacement_replays_and_versions_the_whole_exchange(tmp_pat
             sent = fresh_model.requests[0]["messages"]
         wire = json.dumps(sent, ensure_ascii=False)
         assert "NEW_INPUT" in wire and "OLD_INPUT" not in wire
+        assert any(ooc_suffix in m["content"] for m in sent if m["role"] == "user")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as api:
+            preview = await api.post(f"/api/sessions/{sid}/messages-preview", json={"text": "NEXT_INPUT"})
+        assert preview.status_code == 200
+        assert any(ooc_suffix in m["content"] for m in preview.json() if m["role"] == "user")
         assert "message_edit_notice" not in wire
         assert all(snapshot == baseline for snapshot in opened)
         selected = store.switch_message_version(sid, current["head"], original["head"], current["revision"])

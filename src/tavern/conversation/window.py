@@ -23,6 +23,7 @@ def plan_window(
     *,
     replay_records=None,
     read_only=False,
+    ooc="",
 ):
     from tavern.memories.memory import fingerprint, window_valid
 
@@ -48,6 +49,7 @@ def plan_window(
             enforce_budget=False,
             replay_records=replay_records,
             read_only=read_only,
+            ooc=ooc,
         )
         # One provider sample or rejection justifies a single pressure batch:
         # removing history changes the request prefix, so resolve() no longer

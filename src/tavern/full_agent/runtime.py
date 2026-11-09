@@ -116,7 +116,7 @@ class FullAgentRuntime:
                     settings.reasoning_effort = request.reasoning_effort
                 start = turn_start(session, request)
                 history, reused, before = start.history, start.reused_user, start.snapshot
-                request.text = start.text
+                request.text, request.ooc = start.text, start.ooc
                 progress = self.store.full_agent_progress(tid)
                 snapshot = copy.deepcopy(progress["snapshot"] if progress else before)
                 card = self.store.session_card(session["id"])
@@ -153,10 +153,15 @@ class FullAgentRuntime:
                 )
                 snapshot.update(state=mirror["state"], scopes=mirror["scopes"])
                 rules, input_raw = regex_scripts(document), request.text
+                from tavern.core.ooc import with_ooc
+
+                # Card regex sees only story text; every model reader gets the tagged ooc after it.
                 request.text = (
                     progress["user"]["model"]
                     if progress
-                    else await script.call("transform", input_raw, rules, 1, "model", 0)
+                    else with_ooc(
+                        await script.call("transform", input_raw, rules, 1, "model", 0), request.ooc
+                    )
                 )
                 input_id, output_id = (
                     (progress["user"]["id"] if progress else reused["id"] if reused else uid()),
@@ -173,6 +178,7 @@ class FullAgentRuntime:
                         "raw": input_raw,
                         "model": request.text,
                         "display": await script.call("transform", input_raw, rules, 1, "display", 0),
+                        "ooc": request.ooc,
                         "snapshot": copy.deepcopy(before),
                     }
                 )

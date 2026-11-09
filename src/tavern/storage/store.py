@@ -96,7 +96,7 @@ class Conflict(ValueError):
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 SETTINGS_VERSIONS = range(2, 19)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
@@ -123,6 +123,8 @@ SESSION_COLUMNS = {
 MESSAGE_COLUMNS = {
     "auxiliary": "TEXT NOT NULL DEFAULT '[]'",
     "story_segments": 'TEXT NOT NULL DEFAULT \'{"raw":[],"display":[]}\'',
+    # The user's out-of-character text, kept apart from the story text card scripts process.
+    "ooc": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -1443,6 +1445,7 @@ class Store(MessageAdapters):
                 previous = TurnRequest.model_validate_json(source["request"])
                 matching = (
                     "text",
+                    "ooc",
                     "expected_revision",
                     "mode",
                     "message_id",
@@ -1846,7 +1849,7 @@ class Store(MessageAdapters):
                 settle_message_archive(db, turn["session"], m["parent"], m["snapshot"])
                 db.execute(
                     "INSERT INTO messages(id,session,parent,role,raw,model,display,snapshot,created,"
-                    "retrieval_query,auxiliary,story_segments) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "retrieval_query,auxiliary,story_segments,ooc) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         m["id"],
                         turn["session"],
@@ -1860,6 +1863,7 @@ class Store(MessageAdapters):
                         m.get("retrieval_query", ""),
                         dump(m.get("auxiliary", [])),
                         dump(m.get("story_segments", {"raw": [], "display": []})),
+                        m.get("ooc", ""),
                     ),
                 )
             self._update_cache_follow(

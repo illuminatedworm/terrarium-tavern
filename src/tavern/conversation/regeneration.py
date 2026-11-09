@@ -11,13 +11,14 @@ class TurnStart:
     history: list[dict]
     snapshot: dict
     text: str
+    ooc: str
     reused_user: dict | None
 
 
 def turn_start(session: dict, request: TurnRequest) -> TurnStart:
     history = session["messages"]
     user = None
-    text = request.text
+    text, ooc = request.text, request.ooc
     if request.mode == "regenerate":
         target = request.message_id or session["head"]
         index = next((i for i, message in enumerate(history) if message["id"] == target), None)
@@ -30,14 +31,17 @@ def turn_start(session: dict, request: TurnRequest) -> TurnStart:
             raise ValueError("请选择可重生成的角色回复")
         user = history[index - 1]
         history = history[: index - 1]
-        text = user["raw"] if request.replacement_text is None else request.replacement_text
-    if not text.strip():
+        if request.replacement_text is None:
+            text, ooc = user["raw"], user.get("ooc", "")
+        else:
+            text = request.replacement_text
+    if not text.strip() and not ooc:
         raise ValueError("请输入消息")
     # A user snapshot is captured before scripts and Tracker run. Replaying a
     # replacement must never inherit decisions made from the previous input.
     snapshot = copy.deepcopy(user["snapshot"] if user else session["snapshot"])
     reused = copy.deepcopy(user) if user and request.replacement_text is None else None
-    return TurnStart(history, snapshot, text, reused)
+    return TurnStart(history, snapshot, text, ooc, reused)
 
 
 def reply_for_regeneration(request, session):

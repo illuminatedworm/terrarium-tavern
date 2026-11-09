@@ -14,7 +14,7 @@ from functools import lru_cache
 
 from tavern.character.cards import lore_title
 from tavern.search.japanese_dictionary import DictionaryUnavailable, JapaneseDictionary, dictionary_path
-from tavern.search.retrieval_text import query_text
+from tavern.search.retrieval_text import continues, query_input, query_text
 
 _token_lock = threading.Lock()
 _keyword_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lore-keyword")
@@ -200,7 +200,17 @@ def fusion_scores(rankings, config):
 
 
 def lexical_recall(
-    document, history, user_input, snapshot, settings, session, seed, *, cached_only=False, turn_number=None
+    document,
+    history,
+    user_input,
+    snapshot,
+    settings,
+    session,
+    seed,
+    *,
+    cached_only=False,
+    turn_number=None,
+    story=None,
 ):
     from tavern.character.cards import is_initvar, lore_entries, normalize
     from tavern.conversation.context import activate_lore, get_path, macros, matches
@@ -233,14 +243,14 @@ def lexical_recall(
         if isinstance(old, dict) and old.get("present") and eid not in retained
     }
     suppressed = retained | exiting if session.get("lore_injection_mode") == "conversation" else set()
-    query = query_text(history, user_input, config)
+    query = query_text(history, user_input, config, story)
     from tavern.search.lore_admission import keyword_evidence
 
     lexical_ids, evidence = keyword_evidence(entries, query, user_input, config)
     if (
         clues
         and not any(m.get("retrieval_query") for m in history)
-        and user_input.strip().lower() in ("", "继续", "继续剧情", "continue", "続けて")
+        and continues(user_input if story is None else story)
     ):
         clues[-1]["model"] = query
 
@@ -426,9 +436,15 @@ class RetrievalEngine:
         index_only=False,
         archive=None,
         record_collection=True,
+        ooc="",
     ):
-        """Recall lore and optional archive; only story/index owners record live cache references."""
+        """Recall lore and optional archive; only story/index owners record live cache references.
+
+        The user's ooc text joins the query like input text, but only the story
+        part decides whether an empty or "continue" input falls back to history.
+        """
         started = time.perf_counter()
+        story, user_input = user_input, query_input(user_input, ooc)
         from tavern.memories.memory_archive import retrieval_entries
 
         archive_rows = [
@@ -441,6 +457,7 @@ class RetrievalEngine:
                 document,
                 [(m["id"], m.get("retrieval_query", "")) for m in history],
                 user_input,
+                story,
                 snapshot,
                 settings.retrieval.model_dump(),
                 settings.local_models.model_dump(),
@@ -463,7 +480,7 @@ class RetrievalEngine:
             if index_only or "embedding" not in settings.retrieval.channels:
                 return None, None, 0
             try:
-                query = await self.dictionary.run(query_text, history, user_input, settings.retrieval)
+                query = await self.dictionary.run(query_text, history, user_input, settings.retrieval, story)
                 value = await self.models.infer(
                     "embedding",
                     "embed",
@@ -487,6 +504,7 @@ class RetrievalEngine:
                 session,
                 seed,
                 turn_number=turn_number,
+                story=story,
             ),
             embedding_query(),
         )

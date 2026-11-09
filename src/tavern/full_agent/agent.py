@@ -309,14 +309,23 @@ class FullAgent:
         )
         return visible
 
-    async def retrieve(self, query, *, source, include_ref=False, include_title=False):
+    async def retrieve(self, query, *, source, ooc="", include_ref=False, include_title=False):
         visible = self.retain()
         settings = self.settings.model_copy(deep=True)
         if source == "agent":
             settings.retrieval.query_lookback = 0
         result = await self.lane.prepare(
-            self.document, visible, query, self.snapshot, settings, self.session, self.tid, source=source
+            self.document,
+            visible,
+            query,
+            self.snapshot,
+            settings,
+            self.session,
+            self.tid,
+            source=source,
+            ooc=ooc,
         )
+        query = "\n".join(filter(None, [query, ooc]))
         added, notes = inject_lore(
             self.document,
             self.session,
@@ -420,7 +429,11 @@ class FullAgent:
     async def run(self, provider=None, *, provider_factory=None, request_observer=None):
         try:
             if self.settings.full_agent_config.auto_retrieval and not self.resumed:
-                await self.retrieve(self.request.text, source="auto")
+                from tavern.core.ooc import story_of
+
+                await self.retrieve(
+                    story_of(self.request.text, self.request.ooc), source="auto", ooc=self.request.ooc
+                )
             self.store.event(
                 self.tid,
                 "input_ready",

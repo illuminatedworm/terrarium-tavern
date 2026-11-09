@@ -118,7 +118,14 @@ def memory_rows(story):
 def expanded(story, text, message=None):
     snap = (message or {}).get("snapshot") or story["snapshot"]
     document = (snap.get("content") or {}).get("document") or story["document"]
-    return macros(text, card_view(document), story["persona"], snap.get("state", {}), snap.get("scopes"))
+    return macros(
+        text,
+        card_view(document),
+        story["persona"],
+        snap.get("state", {}),
+        snap.get("scopes"),
+        ooc=(message or {}).get("ooc", ""),
+    )
 
 
 def background(story, config):

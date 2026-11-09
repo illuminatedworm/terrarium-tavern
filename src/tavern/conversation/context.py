@@ -10,6 +10,7 @@ from tavern.core.context_usage import exceeds
 from tavern.core.message_adapter import project_context, runtime_messages
 from tavern.core.model_view import state_for_model
 from tavern.core.models import ContextRecipe
+from tavern.core.ooc import story_of, with_ooc
 from tavern.core.tokens import count_text
 from tavern.core.variable_macros import replace_variable_macros
 
@@ -43,9 +44,13 @@ def search(items, query, field="content", limit=8):
     return sorted(scored, key=lambda x: -x["score"])[:limit]
 
 
-def macros(text, character, persona, state, scopes=None):
+def macros(text, character, persona, state, scopes=None, *, ooc=""):
     text = str(text)
     if "{{" not in text:
+        return text
+    # A saved user message contains both parts, but only story text expands macros.
+    story = story_of(text, ooc)
+    if ooc and "{{" not in story:
         return text
     # Macros feed model-bound prose too. An explicit macro must not reintroduce
     # initialization ledgers/hash-bearing internals omitted from the state block.
@@ -61,7 +66,7 @@ def macros(text, character, persona, state, scopes=None):
             return str(value) if value is not None else m[0]
         return m[0]
 
-    return replace_variable_macros(re.sub(r"\{\{([^{}]+)}}", sub, text), state, scopes)
+    return with_ooc(replace_variable_macros(re.sub(r"\{\{([^{}]+)}}", sub, story), state, scopes), ooc)
 
 
 def wrap_lorebook(content):
@@ -367,6 +372,7 @@ def compile_context(
     read_only=False,
     replay_records=None,
     story_turn=True,
+    ooc="",
 ):
     """Compile one Writer request.
 
@@ -458,19 +464,22 @@ def compile_context(
                 old.update(present=False, removed_at=turn_number)
                 exiting_ids.add(eid)
     from tavern.search.retrieval import fuse, lexical_recall
-    from tavern.search.retrieval_text import query_instruction
+    from tavern.search.retrieval_text import query_input, query_instruction
 
+    story = story_of(user_input, ooc)
+    lore_input = query_input(story, ooc)
     if retrieval is None:
         retrieval = lexical_recall(
             document,
             visible_history,
-            user_input,
+            lore_input,
             snapshot,
             settings,
             session,
             seed,
             cached_only=read_only,
             turn_number=turn_number,
+            story=story,
         )
         retrieval.pop("channel_ms", None)  # Keep pure context compilation deterministic.
         retrieval["ids"] = fuse(retrieval["rankings"], retrieval["entries"], settings.retrieval)
@@ -483,8 +492,8 @@ def compile_context(
     )
     clue_history = [{**m, "model": m.get("retrieval_query", ""), "raw": ""} for m in visible_history]
 
-    def expand(text):
-        return macros(text, card, persona, state, snapshot.get("scopes"))
+    def expand(text, ooc=""):
+        return macros(text, card, persona, state, snapshot.get("scopes"), ooc=ooc)
 
     def lore_block(entry, content):
         return wrap_lorebook(lore_text(entry, content, settings.lore_injection_title, expand))
@@ -492,7 +501,7 @@ def compile_context(
     entries, diagnostics, next_lore = activate_lore(
         document,
         clue_history,
-        user_input,
+        lore_input,
         prior,
         seed,
         retrieval=retrieval,
@@ -615,12 +624,12 @@ def compile_context(
     )
     messages, pending_depth = [], []
 
-    def add(role, content, source, priority=50, required=False, **extra):
+    def add(role, content, source, priority=50, required=False, *, ooc="", **extra):
         if content:
             messages.append(
                 {
                     "role": role,
-                    "content": expand(content),
+                    "content": expand(content, ooc),
                     "source": source,
                     "priority": priority,
                     "required": required,
@@ -641,11 +650,13 @@ def compile_context(
                     "history",
                     block.priority,
                     True,
+                    ooc=msg.get("ooc", ""),
                     message_id=msg["id"],
                 )
         else:
             content = sources.get(block.source, block.content)
-            if block.budget and count_text(expand(content), settings) > block.budget:
+            block_ooc = ooc if block.source == "input" else ""
+            if block.budget and count_text(expand(content, block_ooc), settings) > block.budget:
                 diagnostics.append({"id": block.id, "reason": "内容块超过提示阈值，仍完整注入"})
             if block.depth is not None:
                 pending_depth.append(
@@ -667,6 +678,7 @@ def compile_context(
                     block.id,
                     block.priority,
                     block.required or (block.source == "memory" and bool(protected_memory)),
+                    ooc=block_ooc,
                     lore_ids=source_lore_ids.get(block.source, []),
                     context_source=block.source,
                     **({"message_id": input_message_id} if block.source == "input" else {}),
@@ -749,7 +761,7 @@ def compile_context(
             at,
             {
                 "role": role,
-                "content": expand(content),
+                "content": expand(content, ooc if context_source == "input" else ""),
                 "source": source,
                 "context_source": context_source,
                 "lore_ids": lore_ids,

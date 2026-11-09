@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from tavern.application.api import create_app
 from tavern.conversation.context import compile_context
 from tavern.core.models import ContextRecipe, SessionCreate, Settings
+from tavern.core.ooc import with_ooc
 from tavern.memories.memory_archive import ARCHIVE, archive_entry, retrieval_entries
 from tavern.memories.memory_records import Record
 from tavern.search.retrieval import RetrievalEngine, SparseIndex, fuse, tokenize
@@ -46,11 +47,34 @@ def test_query_does_not_scan_whole_history_and_uses_current_input():
     history = [{"id": "old", "model": "禁止旧剧情"}, {"id": "a", "retrieval_query": "港口 守卫"}]
     assert query_text(history, "新人物小舟", RetrievalSettings()) == "港口 守卫\n新人物小舟"
     assert query_text(history[:1], "新人物小舟", RetrievalSettings()) == "新人物小舟"
+    # Ooc text joins the query, but an empty story part still falls back to recent history.
+    fallback = query_text(history[:1], "", RetrievalSettings())
+    assert fallback
+    assert query_text(history[:1], "让小舟出场", RetrievalSettings(), "") == fallback + "\n让小舟出场"
 
 
 def test_long_retrieval_input_keeps_its_tail():
     text = "开头" * 2000 + "尾部人物"
     assert query_text([], text, RetrievalSettings(input_chars=64)) == text
+
+
+def test_preview_retrieval_falls_back_to_history_when_only_ooc_is_added():
+    document = {
+        "name": "Guide",
+        "character_book": {"entries": [{"id": "1", "keys": ["lighthouse"], "content": "Lighthouse lore"}]},
+    }
+    session = {"id": "s", "persona": "Player", "recipe": ContextRecipe().model_dump()}
+    history = [
+        {"id": "opening", "role": "assistant", "raw": "lighthouse", "model": "lighthouse", "snapshot": {}}
+    ]
+    settings = Settings(retrieval={"channels": ["keyword"]})
+    ooc = "Keep {{char}} literal."
+    tagged = with_ooc("continue", ooc)
+    result = compile_context(
+        document, session, history, {"state": {}}, tagged, settings, "preview", read_only=True, ooc=ooc
+    )
+    assert [entry["id"] for entry in result["lore"]] == ["1"]
+    assert [message["content"] for message in result["messages"] if message["role"] == "user"] == [tagged]
 
 
 def test_tokenizers_load_only_the_language_resources_needed(monkeypatch):

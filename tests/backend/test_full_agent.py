@@ -1559,12 +1559,13 @@ async def test_long_lore_tool_result_reaches_model_complete(tmp_path):
 
 
 async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(story):
+    from tavern.core.ooc import ooc_block
     from tavern.full_agent.agent import FullAgent
 
     store, session = story
     settings = store.settings().for_role("full_agent")
-    user = {"id": "pending-input", "role": "user", "raw": "当前输入"}
-    req = TurnRequest(text="当前输入", operation_id="paging", expected_revision=0)
+    user = {"id": "pending-input", "role": "user", "raw": "", "ooc": "场外约束 {{char}}"}
+    req = TurnRequest(ooc=user["ooc"], operation_id="paging", expected_revision=0)
     tid, _ = store.create_turn(session["id"], req)
     owner = FullAgent(
         store,
@@ -1586,6 +1587,12 @@ async def test_long_history_is_complete_and_fact_sources_need_only_be_valid(stor
         "ok": True,
         "data": {"ref": "H1", "role": owner.source_history[0]["role"], "text": text},
     }
+    assert await owner.tools.execute("read_history", '{"ref":"H2"}') == {
+        "ok": True,
+        "data": {"ref": "H2", "role": "user", "text": ooc_block(user["ooc"])},
+    }
+    found = await owner.tools.execute("search_history", '{"query":"场外约束"}')
+    assert [match["ref"] for match in found["data"]["matches"]] == ["H2"]
     with pytest.raises(ValueError, match="没有此历史引用"):
         await owner.tools.execute("read_history", '{"ref":"T1.1"}')
     await owner.tools.execute(

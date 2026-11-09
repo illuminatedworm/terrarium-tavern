@@ -35,6 +35,7 @@ from tavern.core.models import (
     SessionWorldbooks,
     TurnRequest,
 )
+from tavern.core.ooc import with_ooc
 from tavern.storage.store import Conflict, Store, dump
 
 # Application version; bump together with the locations listed in .agents/VERSIONING.md.
@@ -873,14 +874,19 @@ def create_app(data_dir=None):
         )
         return store.update_session(sid, payload["expected_revision"], recipe=validated.model_dump_json())
 
-    def compile_preview(
-        sid: str, text: str, update_variables: bool = False, allow_content_edit: bool = False
-    ):
+    def compile_preview(sid: str, payload: dict):
         # FastAPI runs sync endpoints in its worker pool: token counting and
         # history compilation must not block story reads or turn event streams.
         s = store.session(sid)
         c = store.session_card(sid)
         document = (s["snapshot"].get("content") or {}).get("document", c["document"])
+        text, ooc = payload.get("text", ""), payload.get("ooc", "")
+        if not isinstance(text, str):
+            raise ValueError("故事输入必须为文本")
+        if not isinstance(ooc, str):
+            raise ValueError("场外发言必须为文本")
+        ooc = ooc.strip()
+        text = with_ooc(text, ooc)
         if s["agent_mode"] == "full_agent":
             from tavern.core.message_adapter import bind_adapter
             from tavern.full_agent.context import compile_window, load_trace
@@ -902,8 +908,8 @@ def create_app(data_dir=None):
                     settings=full_settings,
                 ),
                 trace=load_trace(store, sid, s["messages"]),
-                require_state_patch=update_variables,
-                allow_content_edit=allow_content_edit,
+                require_state_patch=payload.get("update_variables") is True,
+                allow_content_edit=payload.get("allow_content_edit") is True,
             )
             return result, s, full_settings
         from tavern.conversation.half_context import load_trace as load_half_trace
@@ -920,6 +926,7 @@ def create_app(data_dir=None):
             "preview",
             replay_records=load_half_trace(store, sid, s["messages"]),
             read_only=True,
+            ooc=ooc,
         )
         from tavern.conversation.cache_breakpoint import prepare_context
 
@@ -931,12 +938,7 @@ def create_app(data_dir=None):
         from tavern.search.japanese_dictionary import dictionary_read_only
 
         with dictionary_read_only():
-            result, s, settings = compile_preview(
-                sid,
-                payload.get("text", ""),
-                payload.get("update_variables") is True,
-                payload.get("allow_content_edit") is True,
-            )
+            result, s, settings = compile_preview(sid, payload)
             if payload.get("local_estimate") is True:
                 # Only the explicit context panel asks; composer stats refreshes
                 # share this route and skip the tokenizer pass.
@@ -953,12 +955,7 @@ def create_app(data_dir=None):
         from tavern.search.japanese_dictionary import dictionary_read_only
 
         with dictionary_read_only():
-            result, _, _ = compile_preview(
-                sid,
-                payload.get("text", ""),
-                payload.get("update_variables") is True,
-                payload.get("allow_content_edit") is True,
-            )
+            result, _, _ = compile_preview(sid, payload)
         return result["messages"]
 
     @app.post("/api/sessions/{sid}/turns", status_code=202)

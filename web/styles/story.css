@@ -429,6 +429,27 @@
   font-size: var(--fs-xs);
   line-height: 1.7;
 }
+/* The user's out-of-character text: muted and set apart from the story it follows. */
+.message-ooc {
+  margin-top: 8px;
+  padding: 6px 0 2px 10px;
+  border-left: 2px solid var(--border-control);
+}
+.message-ooc:first-child {
+  margin-top: 0;
+}
+.message-ooc small {
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+}
+.message-ooc p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .message.regenerating .message-body,
 .message.regenerating .message-meta {
   opacity: 0.45;
@@ -666,9 +687,27 @@
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
+.compose-ooc {
+  --compose-input-height: 44px;
+  --compose-input-min-height: 40px;
+  border-top: 1px solid var(--border-subtle);
+}
+.compose-bottom .ooc-toggle[aria-pressed='true'],
 .compose-bottom .regenerate-toggle[aria-expanded='true'] {
   background: var(--accent-soft);
   color: var(--accent-hover);
+}
+/* Collapsed with text still filled in: it will be sent, so keep it noticeable. */
+.compose-bottom .ooc-toggle.pending {
+  color: var(--accent-hover);
+}
+.compose-bottom .ooc-toggle.pending::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: currentColor;
 }
 /* Per-turn switches read as toggle chips; the checkbox stays the real control. */
 .turn-options {
@@ -747,12 +786,15 @@
 }
 /* Phone width: keep the actions on one row; the regenerate label moves to its tooltip. */
 @container composer (max-width: 440px) {
+  .compose-bottom .ooc-toggle,
   .compose-bottom .regenerate-toggle {
     padding-inline: 8px;
   }
+  .compose-bottom .ooc-toggle .ooc-label,
   .compose-bottom .regenerate-toggle .regenerate-label {
     display: none;
   }
+  .compose-bottom .ooc-toggle > .icon,
   .compose-bottom .regenerate-toggle > .icon {
     margin: 0;
   }
@@ -926,6 +968,22 @@
   outline: 1px solid var(--border-control);
   outline-offset: 6px;
   box-shadow: none;
+}
+.inline-edit-ooc {
+  display: block;
+  margin: 12px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-control);
+}
+.inline-edit-ooc small {
+  color: var(--text-faint);
+  font-size: var(--fs-2xs);
+}
+.inline-message-editor .inline-edit-ooc textarea {
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  font-family: inherit;
+  color: var(--text-muted);
 }
 .inline-edit-actions {
   display: flex;

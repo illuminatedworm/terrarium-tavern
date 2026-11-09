@@ -57,6 +57,7 @@ class Writer:
             input_message_id=self.input_message_id,
             retrieval=self.retrieval,
             replay_records=load_trace(self.store, self.session["id"], self.history),
+            ooc=self.request.ooc,
         )
         prepare_context(self.compiled, self.session, self.history, self.snapshot, self.settings)
         if exceeds(

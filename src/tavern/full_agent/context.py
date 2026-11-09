@@ -91,8 +91,10 @@ def compile_window(
         ),
     }
 
-    def expand(value):
-        return macros(value, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"))
+    def expand(value, ooc=""):
+        return macros(
+            value, card, session["persona"], snapshot.get("state", {}), snapshot.get("scopes"), ooc=ooc
+        )
 
     def lore_block(entry, content):
         return wrap_lorebook(lore_text(entry, content, settings.lore_injection_title, expand))
@@ -206,7 +208,7 @@ def compile_window(
         else:
             by_owner.setdefault(owner, []).append(message)
 
-    history_text = {m["id"]: expand(m.get("model", m["raw"])) for m in visible}
+    history_text = {m["id"]: expand(m.get("model", m["raw"]), m.get("ooc", "")) for m in visible}
     for message in visible:
         by_owner[message["id"]] = committed_records(
             by_owner.get(message["id"], []),

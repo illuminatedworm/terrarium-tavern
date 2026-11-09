@@ -25,6 +25,7 @@ def archive_history(history, document=None, persona=None):
             persona,
             snapshot.get("state", {}),
             snapshot.get("scopes"),
+            ooc=message.get("ooc", ""),
         )
         result.append({**message, "model": text})
     return result

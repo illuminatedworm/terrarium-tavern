@@ -2,6 +2,7 @@
 import StoryMessage from './StoryMessage.vue';
 import CharacterPortrait from '../character/CharacterPortrait.vue';
 import InlineMessageEditor from './InlineMessageEditor.vue';
+import MessageOoc from './MessageOoc.vue';
 import Icon from '../common/Icon.vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { copyableText } from '../../lib/storyPresentation';
@@ -61,6 +62,7 @@ async function copyMessage() {
 }
 onBeforeUnmount(() => clearTimeout(copiedTimer));
 const editingMessageText = defineModel<string>('editingMessageText', { required: true });
+const editingMessageOoc = defineModel<string>('editingMessageOoc', { required: true });
 const emit = defineEmits<{
   cancelEdit: [];
   toggleCacheBreakpoint: [];
@@ -124,21 +126,27 @@ function forwardAction(
       <InlineMessageEditor
         v-if="editingMessageId === message.id"
         v-model="editingMessageText"
+        :ooc="message.role === 'user' ? editingMessageOoc : undefined"
         :original="message.raw"
+        :original-ooc="message.ooc || ''"
         :busy="savingEdit"
         :opening="message.role === 'assistant' && !message.parent"
+        @update:ooc="editingMessageOoc = $event ?? ''"
         @cancel="emit('cancelEdit')"
         @save="emit('saveEdit', message)"
       />
-      <StoryMessage
-        v-else
-        find-in-dialogue
-        :message="message"
-        :session="session"
-        :enabled="enabled"
-        :has-visuals="hasVisuals"
-        @action="forwardAction"
-      />
+      <template v-else>
+        <StoryMessage
+          v-if="message.role !== 'user' || message.raw.trim()"
+          find-in-dialogue
+          :message="message"
+          :session="session"
+          :enabled="enabled"
+          :has-visuals="hasVisuals"
+          @action="forwardAction"
+        />
+        <MessageOoc v-if="message.ooc" :text="message.ooc" />
+      </template>
       <button
         v-if="panelElsewhere && editingMessageId !== message.id"
         class="panel-elsewhere"

@@ -332,6 +332,9 @@ def without_nulls(value):
 
 class TurnRequest(BaseModel):
     text: str = ""
+    # Out-of-character text for a new input or a replaced latest input; plain
+    # regeneration reuses the stored message's value.
+    ooc: str = ""
     operation_id: str = Field(min_length=1, max_length=100)
     expected_revision: int
     mode: Literal["send", "regenerate"] = "send"
@@ -351,13 +354,20 @@ class TurnRequest(BaseModel):
     def drop_generate_nulls(cls, value):
         return without_nulls(value)
 
+    @field_validator("ooc")
+    @classmethod
+    def strip_ooc(cls, value):
+        return value.strip()
+
     @model_validator(mode="after")
     def validate_replacement(self):
         if self.replacement_text is not None:
             if self.mode != "regenerate" or self.scene_refresh:
                 raise ValueError("替换用户输入只能用于本轮重生成")
-            if not self.replacement_text.strip():
+            if not self.replacement_text.strip() and not self.ooc:
                 raise ValueError("消息不能为空")
+        elif self.ooc and self.mode == "regenerate":
+            raise ValueError("场外发言只能随新输入或修改后的输入提交")
         return self
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT, message_at, message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
+from tavern.core.ooc import with_ooc
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
@@ -441,7 +442,7 @@ class AgentTools:
 
     def archive(self):
         return [
-            {"ref": message_ref(position), "role": m["role"], "text": m["raw"]}
+            {"ref": message_ref(position), "role": m["role"], "text": with_ooc(m["raw"], m.get("ooc", ""))}
             for position, m in enumerate(self.owner.source_history, 1)
         ]
 

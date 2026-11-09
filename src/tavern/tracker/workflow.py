@@ -3,6 +3,7 @@
 from tavern.conversation.half_compaction import local_window_enabled
 from tavern.conversation.half_context import load_trace
 from tavern.conversation.window import plan_window
+from tavern.core.ooc import story_of
 from tavern.memories.memory import completed_rounds, fingerprint, window_history, window_valid
 from tavern.memories.memory_archive import read_archive
 from tavern.memories.memory_records import install_memory, read_memory, source_hash
@@ -43,13 +44,14 @@ async def before_story(
         prepared = await retrieval.prepare(
             document,
             visible,
-            request.text,
+            story_of(request.text, request.ooc),
             snapshot,
             settings,
             session,
             tid,
             turn_number=sum(m["role"] == "user" for m in history) + 1,
             archive=read_archive(history, snapshot),
+            ooc=request.ooc,
         )
         count, _ = plan_window(
             document,
@@ -61,6 +63,7 @@ async def before_story(
             tid,
             prepared,
             replay_records=load_trace(store, session["id"], history),
+            ooc=request.ooc,
         )
         old_count = (
             snapshot.get("context_window", {}).get("covered_count", 0)

@@ -41,6 +41,7 @@ import FullAgentDialogue from './components/story/FullAgentDialogue.vue';
 import HalfAgentDialogue from './components/story/HalfAgentDialogue.vue';
 import DialogueMessage from './components/story/DialogueMessage.vue';
 import InlineMessageEditor from './components/story/InlineMessageEditor.vue';
+import MessageOoc from './components/story/MessageOoc.vue';
 import ConversationRail from './components/story/ConversationRail.vue';
 import DialogueTools from './components/story/DialogueTools.vue';
 import ExpandableTextarea from './components/common/ExpandableTextarea.vue';
@@ -225,6 +226,9 @@ const eligibleCacheReplies = computed(() => {
   );
 });
 const input = ref(''),
+  // Out-of-character text sent with the input; collapsing the field keeps it.
+  ooc = ref(''),
+  oocOpen = ref(false),
   error = ref(''),
   busy = ref(false),
   activeTurn = ref<TurnRecord | null>(null),
@@ -333,7 +337,7 @@ const cacheUsage = ref<ConversationCacheUsage | null>(null);
 const contextEstimateError = ref('');
 let contextStatsRequest = 0;
 let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
-watch(input, () => {
+watch([input, ooc], () => {
   clearTimeout(contextRefreshTimer);
   contextRefreshTimer = setTimeout(() => {
     if (!busy.value) void refreshContextStats();
@@ -419,7 +423,7 @@ const visiblePendingInput = computed((): PendingInput | null => {
   const request = activeTurn.value?.request;
   if (!request || request.scene_refresh) return null;
   const text = request.mode === 'regenerate' ? request.replacement_text : request.text;
-  return text ? { raw: text } : null;
+  return text || request.ooc ? { raw: text || '', ooc: request.ooc } : null;
 });
 const pendingLore = ref<LoreRecord[]>([]);
 const pendingVisible = computed(
@@ -525,7 +529,8 @@ const pageMode = ref(''),
   regenerateIncludeReply = ref(false),
   quickEffort = ref('inherit');
 const editingMessageId = ref(''),
-  editingMessageText = ref('');
+  editingMessageText = ref(''),
+  editingMessageOoc = ref('');
 const savingMessageEdit = ref(false);
 let editingWasFollowing = false;
 const sceneSaving = ref<'memory' | null>(null);
@@ -1115,6 +1120,7 @@ async function refreshContextStats() {
     const [stats, records] = await Promise.allSettled([
       api(`/sessions/${sid}/preview`, {
         text: input.value,
+        ooc: ooc.value,
         update_variables: updateVariables.value,
         allow_content_edit: allowEdit.value,
       }),
@@ -1332,6 +1338,11 @@ async function applyAdvisorTitle(title: string) {
     savingSessionTitle.value = false;
   }
 }
+const oocField = ref<HTMLElement>();
+function toggleOoc() {
+  oocOpen.value = !oocOpen.value;
+  if (oocOpen.value) void nextTick(() => oocField.value?.querySelector('textarea')?.focus());
+}
 /** An advisor option only fills the main input; the user still edits and sends it. */
 function useAdvisorInput(text: string) {
   input.value = input.value.trim()
@@ -1468,7 +1479,7 @@ async function retryTurn(resume: boolean) {
   if (!retryableTurn.value || busy.value || variablePreferenceSaving.value || editingMessageId.value) return;
   if (resume && resumeBlocked.value) return;
   const turn = retryableTurn.value;
-  const sendNext = sendAfterRetry.value && !!input.value.trim();
+  const sendNext = sendAfterRetry.value && !!(input.value.trim() || ooc.value.trim());
   await submitStoryTurn(
     {
       ...turn.request,
@@ -1732,7 +1743,9 @@ async function send(
 ) {
   if (!session.value || busy.value || activeTurn.value?.status === 'awaiting_review') return;
   const value = text ?? input.value;
-  if (mode === 'send' && !value.trim()) return;
+  // Only the composer carries ooc text; plain regeneration reuses the stored message's.
+  const oocValue = mode === 'send' && text === undefined ? ooc.value.trim() : '';
+  if (mode === 'send' && !value.trim() && !oocValue) return;
   if (mode === 'send' && isFullAgent.value && retryableTurn.value) {
     input.value = value;
     sendAfterRetry.value = true;
@@ -1741,12 +1754,19 @@ async function send(
   const submitted = await submitStoryTurn({
     ...storyTurnOptions(),
     text: value,
+    ooc: oocValue,
     mode,
     message_id: message?.id,
     regenerate_note: note,
     regenerate_include_reply: mode === 'regenerate' && regenerateIncludeReply.value,
   });
-  if (submitted && mode === 'send' && input.value === value) input.value = '';
+  if (submitted && mode === 'send') {
+    if (input.value === value) input.value = '';
+    if (oocValue && ooc.value.trim() === oocValue) {
+      ooc.value = '';
+      oocOpen.value = false;
+    }
+  }
 }
 async function submitStoryTurn(request: TurnRequest, continueWithInput = false): Promise<TurnRecord | false> {
   if (!session.value || busy.value || sceneSubmitting.value || variablePreferenceSaving.value) return false;
@@ -1774,7 +1794,7 @@ async function submitStoryTurn(request: TurnRequest, continueWithInput = false):
     openStory().opening_editable = false;
     activeTurn.value = turn;
     const pendingText = request.mode === 'regenerate' ? request.replacement_text : request.text;
-    if (pendingText) pendingInput.value = { raw: pendingText };
+    if (pendingText || request.ooc) pendingInput.value = { raw: pendingText || '', ooc: request.ooc };
     regenerateNote.value = '';
     regenerateIncludeReply.value = false;
     rewriteExpanded.value = false;
@@ -1991,6 +2011,7 @@ function beginPendingEdit() {
   pauseForMessageEdit();
   editingMessageId.value = '__pending__';
   editingMessageText.value = visiblePendingInput.value.raw;
+  editingMessageOoc.value = visiblePendingInput.value.ooc || '';
 }
 async function savePendingEdit() {
   if (!retryableTurn.value) return;
@@ -2000,6 +2021,7 @@ async function savePendingEdit() {
     ...(previous.mode === 'regenerate'
       ? { replacement_text: editingMessageText.value }
       : { text: editingMessageText.value }),
+    ooc: editingMessageOoc.value.trim(),
   });
 }
 function pauseForMessageEdit() {
@@ -2028,12 +2050,14 @@ function beginMessageEdit(message: StoryMessageRecord) {
   pauseForMessageEdit();
   editingMessageId.value = message.id;
   editingMessageText.value = message.raw;
+  editingMessageOoc.value = message.ooc || '';
   editingMessageRevision = openStory().revision;
 }
 function cancelMessageEdit() {
   const previous = editingMessageId.value;
   editingMessageId.value = '';
   editingMessageText.value = '';
+  editingMessageOoc.value = '';
   savingMessageEdit.value = false;
   if (previous)
     void nextTick(() => {
@@ -2103,11 +2127,12 @@ async function saveMessageEdit(message: StoryMessageRecord) {
     mode: 'regenerate',
     message_id: latestReply.value.id,
     replacement_text: editingMessageText.value,
+    ooc: editingMessageOoc.value.trim(),
   });
 }
 async function submitInputEdit(request: TurnRequest) {
   if (
-    !editingMessageText.value.trim() ||
+    (!editingMessageText.value.trim() && !editingMessageOoc.value.trim()) ||
     busy.value ||
     switchingVersion.value ||
     savingMessageEdit.value ||
@@ -2133,6 +2158,7 @@ async function inspectContext() {
   await guarded(async () => {
     preview.value = await viewApi(`/sessions/${openStory().id}/preview`, {
       text: input.value,
+      ooc: ooc.value,
       update_variables: updateVariables.value,
       allow_content_edit: allowEdit.value,
       local_estimate: true,
@@ -2151,6 +2177,7 @@ async function exportNextMessages() {
       const sid = openStory().id;
       const messages = await viewApi(`/sessions/${sid}/messages-preview`, {
         text: input.value,
+        ooc: ooc.value,
         update_variables: updateVariables.value,
         allow_content_edit: allowEdit.value,
       });
@@ -2203,6 +2230,8 @@ async function createFork() {
       panel.value = '';
       forkMessage.value = null;
       input.value = '';
+      ooc.value = '';
+      oocOpen.value = false;
       regenerateNote.value = '';
       await load();
       await openSession(created.id);
@@ -2950,6 +2979,7 @@ useTimedError(error);
                   :editing-message-id="editingMessageId"
                   :saving-edit="savingMessageEdit"
                   v-model:editing-message-text="editingMessageText"
+                  v-model:editing-message-ooc="editingMessageOoc"
                   :reviewing="activeTurn?.status === 'awaiting_review'"
                   :enabled="!!sessionCard?.permission"
                   @cancel-edit="cancelMessageEdit"
@@ -2982,16 +3012,20 @@ useTimedError(error);
                       <InlineMessageEditor
                         v-if="editingMessageId === '__pending__'"
                         v-model="editingMessageText"
+                        v-model:ooc="editingMessageOoc"
                         :original="visiblePendingInput.raw"
+                        :original-ooc="visiblePendingInput.ooc || ''"
                         :busy="savingMessageEdit"
                         @cancel="cancelMessageEdit"
                         @save="savePendingEdit"
                       />
                       <template v-else>
                         <StoryProse
+                          v-if="visiblePendingInput.raw.trim()"
                           :text="visiblePendingInput.display || visiblePendingInput.raw"
                           :breaks="true"
                         />
+                        <MessageOoc v-if="visiblePendingInput.ooc" :text="visiblePendingInput.ooc" />
                         <footer v-if="retryableTurn" class="message-foot">
                           <div class="message-actions">
                             <button
@@ -3171,6 +3205,19 @@ useTimedError(error);
                   @submit="send()"
                   :disabled="busy"
                 />
+                <div v-if="oocOpen" ref="oocField" class="compose-ooc">
+                  <ExpandableTextarea
+                    v-model="ooc"
+                    label="场外发言"
+                    placeholder="以作者身份给出指令或提醒，例如调整走向、修正设定；不属于故事内容"
+                    compact
+                    :rows="1"
+                    submit-on-enter
+                    :send-shortcut="loadedSettings().shared.send_shortcut"
+                    @submit="send()"
+                    :disabled="busy"
+                  />
+                </div>
                 <div class="compose-bottom">
                   <div class="compose-actions">
                     <button
@@ -3184,6 +3231,19 @@ useTimedError(error);
                       @click="rewriteExpanded = !rewriteExpanded"
                     >
                       <Icon name="refresh" :size="16" /><span class="regenerate-label">重新生成</span></button
+                    ><button
+                      class="quiet ooc-toggle"
+                      :class="{ pending: !oocOpen && !!ooc.trim() }"
+                      :aria-pressed="oocOpen"
+                      aria-label="场外发言"
+                      :title="
+                        !oocOpen && ooc.trim()
+                          ? '场外发言已填写，发送时一并提交'
+                          : '场外发言：以作者身份给出指令或提醒'
+                      "
+                      @click="toggleOoc"
+                    >
+                      <Icon name="feather" :size="16" /><span class="ooc-label">场外</span></button
                     ><ConversationModelControls
                       v-if="session?.channel_origin"
                       :profile="activeModel"
@@ -3255,7 +3315,7 @@ useTimedError(error);
                       contextBusy ||
                       !channelModelsReady ||
                       !session?.channel_origin ||
-                      !input.trim() ||
+                      (!input.trim() && !ooc.trim()) ||
                       activeTurn?.status === 'awaiting_review'
                     "
                     @click="send()"

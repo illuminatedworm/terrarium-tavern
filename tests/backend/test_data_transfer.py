@@ -13,6 +13,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 
 from tavern.application.api import create_app
 from tavern.core.models import PersonaEdit, SessionCreate, TurnRequest
+from tavern.core.ooc import ooc_block
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.storage.store import Conflict, Store, dump, uid
 from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
@@ -91,7 +92,12 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert source.card(card["id"])["document"] == card["document"]
         turn = engine.submit(
             session["id"],
-            TurnRequest(text="一起去钟楼", operation_id="source", expected_revision=session["revision"]),
+            TurnRequest(
+                text="一起去钟楼",
+                ooc="保持叙事视角",
+                operation_id="source",
+                expected_revision=session["revision"],
+            ),
         )
         await engine.tasks[turn["id"]]
         assert source.turn(turn["id"])["status"] == "committed"
@@ -107,13 +113,20 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         # A deleted library card remains playable from its session-owned resources.
         source.delete_card(card["id"])
         payload, blobs = package(source, settings=False, sessions=[session["id"]])
+        inconsistent = copy.deepcopy(payload)
+        inconsistent["sessions"][0]["messages"][1]["ooc"] = "改用另一个叙事视角"
+        with pytest.raises(ValueError, match="场外发言与模型消息不一致"):
+            import_package(target, inconsistent, blobs)
+        assert target.sessions() == []
         imported = import_package(target, payload, blobs)
         restored = target.session(imported["sessions"][0])
         assert restored["agent_mode"] == mode
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
+        assert restored["messages"][1]["ooc"] == "保持叙事视角"
+        assert restored["messages"][1]["model"].endswith(ooc_block("保持叙事视角"))
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 10
+        assert payload["version"] == 11
         assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":

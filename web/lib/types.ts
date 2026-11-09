@@ -88,6 +88,8 @@ export interface StoryMessageRecord {
   raw: string;
   model: string;
   display: string;
+  /** The user's out-of-character text; empty for replies and older messages. */
+  ooc?: string;
   snapshot: JsonObject;
   created: number;
   versions?: string[];
@@ -103,6 +105,8 @@ export interface TurnRequest {
   expected_revision: number;
   mode?: 'send' | 'regenerate';
   text?: string;
+  /** Out-of-character text for a new or replaced input; plain regeneration reuses the stored one. */
+  ooc?: string;
   message_id?: string | null;
   replacement_text?: string | null;
   regenerate_note?: string;
@@ -203,7 +207,7 @@ export interface MemoryRebuildEstimate {
 
 /** A user input shown before its turn commits: the sent text, then the stored message. */
 export type PendingInput = Pick<StoryMessageRecord, 'raw'> &
-  Partial<Pick<StoryMessageRecord, 'id' | 'display'>>;
+  Partial<Pick<StoryMessageRecord, 'id' | 'display' | 'ooc'>>;
 
 /** `POST /sessions/{id}/preview`: complete next-request sources and the latest provider observation. */
 export type StoryContextPreview = JsonObject & {

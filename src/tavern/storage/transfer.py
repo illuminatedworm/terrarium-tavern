@@ -20,6 +20,7 @@ from tavern.character.worldbooks import REGISTRY, validate_book
 from tavern.core.kemini import AuxiliaryPart
 from tavern.core.message_adapter import MessageAdapterConfig
 from tavern.core.models import ContextRecipe, PersonaEdit, WorldbookEdit
+from tavern.core.ooc import story_of, with_ooc
 from tavern.core.settings import SettingsDocument, migrate_settings
 from tavern.core.story_segments import validate_segments
 from tavern.memories.memory import fingerprint, window_valid
@@ -138,7 +139,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 10,
+        "version": 11,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -315,7 +316,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+    if package.get("format") != FORMAT or package.get("version") not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -484,6 +485,8 @@ def validate_package(store, package, blobs):
             for message in messages:
                 if package["version"] < 9:
                     message.setdefault("story_segments", {"raw": [], "display": []})
+                if package["version"] < 11:
+                    message.setdefault("ooc", "")
                 required = {
                     "id",
                     "session",
@@ -496,8 +499,18 @@ def validate_package(store, package, blobs):
                     "created",
                     "auxiliary",
                     "story_segments",
+                    "ooc",
                 }
                 validate_row(schema, "messages", message, required)
+                # Without a separate field value, tags are part of the saved story
+                # text. Older messages could contain identical literal markup.
+                ooc = message["ooc"]
+                if ooc:
+                    if message["role"] != "user":
+                        raise ValueError("只有用户消息可以包含场外发言")
+                    model = message["model"]
+                    if ooc != ooc.strip() or model != with_ooc(story_of(model, ooc), ooc):
+                        raise ValueError("数据包的场外发言与模型消息不一致")
                 validate_segments(message["story_segments"], message["raw"], message["display"])
                 if message["story_segments"]["raw"] and (
                     session["agent_mode"] != "full_agent" or kemini or message["role"] != "assistant"
@@ -845,7 +858,7 @@ def import_package(store, package, blobs, restore_settings=False, expected_revis
                         cloned["snapshot"][STATE] = copy.deepcopy(message["snapshot"][STATE])
                         remap_state(cloned["snapshot"], ids)
                     # User-authored strings are content, not identity references.
-                    for key in ("raw", "model", "display", "retrieval_query", "auxiliary"):
+                    for key in ("raw", "model", "display", "retrieval_query", "auxiliary", "ooc"):
                         if key in message:
                             cloned[key] = message[key]
                     for key in ("context_window", "memory_archive"):
