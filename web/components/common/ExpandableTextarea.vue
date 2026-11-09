@@ -16,6 +16,8 @@ const props = defineProps<{
   submitOnEnter?: boolean;
   sendShortcut?: SendShortcut;
   expandOnFocus?: boolean;
+  dialogOnly?: boolean;
+  dialogAction?: string;
   validate?: (value: string) => string;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string]; change: [value: string]; submit: [] }>();
@@ -32,8 +34,11 @@ async function openEditor() {
     end = inline.value?.selectionEnd || 0;
   expanded.value = true;
   await nextTick();
-  large.value?.focus();
-  large.value?.setSelectionRange(start, end);
+  const field = large.value;
+  if (!field) return;
+  field.focus();
+  field.setSelectionRange(start, end);
+  if (props.dialogOnly) field.scrollTop = 0;
 }
 async function closeEditor() {
   expanded.value = false;
@@ -63,13 +68,26 @@ function trapFocus(event: KeyboardEvent) {
   }
 }
 useTimedError(error);
+defineExpose({ openEditor });
 function composerKeydown(event: KeyboardEvent) {
   if (props.submitOnEnter && handleComposerKeydown(event, props.sendShortcut)) emit('submit');
 }
 </script>
 
 <template>
+  <button
+    v-if="dialogOnly"
+    ref="trigger"
+    type="button"
+    class="dialog-editor-trigger"
+    :disabled="disabled"
+    :aria-label="dialogAction ? `${dialogAction}：${label}` : undefined"
+    @click="openEditor"
+  >
+    <Icon name="pencil" :size="16" />{{ dialogAction || '放大编辑' }}
+  </button>
   <div
+    v-else
     class="expandable-textarea"
     :class="{ 'is-code': code, 'is-compact': compact, 'expand-on-focus': expandOnFocus }"
   >

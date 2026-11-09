@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { openingProse } from '../../lib/storyText';
 
-const props = defineProps<{ text: string; opening?: boolean }>();
+const props = defineProps<{ text: string; opening?: boolean; excerpt?: boolean }>();
 const html = computed(() => {
   const source = props.opening ? openingProse(props.text) : props.text;
   // A reading preview is not the card runtime. Keep text/structure but prevent
@@ -45,6 +45,7 @@ const html = computed(() => {
       'span',
     ],
     ALLOWED_ATTR: [],
+    FORBID_TAGS: props.excerpt ? ['details', 'summary'] : [],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
   });

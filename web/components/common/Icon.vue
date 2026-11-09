@@ -65,6 +65,7 @@ const icons: Record<string, string> = {
   file: '<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5l-5-5Z"/><path d="M14 3.5v5h5M9 13h6M9 16.5h4"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   more: '<path d="M6 12h.1M12 12h.1M18 12h.1"/>',
+  grip: '<path d="M9 6h.1M15 6h.1M9 12h.1M15 12h.1M9 18h.1M15 18h.1"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   clock: '<circle cx="12" cy="12" r="8.8"/><path d="M12 7.5V12l3 2"/>',
   memory:

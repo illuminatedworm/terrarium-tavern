@@ -3,6 +3,8 @@ import Icon from '../common/Icon.vue';
 import CharacterPortrait from './CharacterPortrait.vue';
 import CardSyncDialog from './CardSyncDialog.vue';
 import CardDefaults from './CardDefaults.vue';
+import CardGreetingsEditor from './CardGreetingsEditor.vue';
+import CardTextField from './CardTextField.vue';
 import WorldbookMountDialog from './WorldbookMountDialog.vue';
 import { cardPortraitUrl, sessionPortraitUrl } from '../../lib/portraits';
 import LoreBookEditor from './LoreBookEditor.vue';
@@ -37,6 +39,25 @@ onBeforeUnmount(() => {
 const card = ref(clone(props.card)),
   document = ref(clone(props.card.document));
 const data = computed(() => document.value.data || document.value);
+const greetingsVersion = ref(0);
+watch(document, () => greetingsVersion.value++);
+const greetingsError = computed(() => {
+  const { first_mes, alternate_greetings } = data.value;
+  if (first_mes !== undefined && typeof first_mes !== 'string') return '开场白必须为文本。';
+  if (
+    alternate_greetings !== undefined &&
+    (!Array.isArray(alternate_greetings) || alternate_greetings.some((text) => typeof text !== 'string'))
+  )
+    return '候选开场白必须为文本数组。';
+  return '';
+});
+const greetings = computed<string[]>({
+  get: () => [data.value.first_mes ?? '', ...(data.value.alternate_greetings ?? [])],
+  set: ([first, ...alternatives]) => {
+    data.value.first_mes = first;
+    if (alternatives.length || data.value.alternate_greetings) data.value.alternate_greetings = alternatives;
+  },
+});
 const workspace = ref<any>(null),
   agentRunning = ref(false);
 const loreFilter = ref(emptyLoreFilter());
@@ -55,7 +76,6 @@ const regexFile = ref<HTMLInputElement>();
 const loreEditor = ref<InstanceType<typeof LoreBookEditor>>();
 const syncing = ref(false),
   mounting = ref(false);
-const deletedGreetings = ref<{ index: number; text: string; cleared: boolean }[]>([]);
 // Entry ID → library book it was mounted from, shown beside conversation entries.
 const loreSources = computed<Record<string, string>>(() =>
   Object.fromEntries(
@@ -209,7 +229,6 @@ async function restoreSaved() {
     workspace.value = null;
     sessionStorage.removeItem(previousKey);
     sessionStorage.removeItem(draftKey());
-    deletedGreetings.value = [];
     loreEditor.value?.close();
     closeRestore();
     notice.value = props.draftMode
@@ -264,7 +283,6 @@ async function save() {
     sessionStorage.removeItem(previousKey);
     document.value = clone(card.value.document);
     raw.value = JSON.stringify(document.value, null, 2);
-    deletedGreetings.value = [];
     notice.value = '角色卡已保存。';
     emit('saved', card.value);
   });
@@ -310,7 +328,6 @@ async function changeTab(next: string) {
   if (tab.value === 'raw') {
     try {
       document.value = JSON.parse(raw.value);
-      deletedGreetings.value = [];
     } catch {
       error.value = '原始 JSON 格式无效，请先修正。';
       return;
@@ -318,31 +335,6 @@ async function changeTab(next: string) {
   }
   if (next === 'raw') raw.value = JSON.stringify(document.value, null, 2);
   tab.value = next;
-}
-function deleteGreeting(index: number) {
-  const alternatives = data.value.alternate_greetings || [];
-  const text = index === 0 ? data.value.first_mes || '' : alternatives[index - 1];
-  if (typeof text !== 'string') return;
-  const cleared = index === 0 && alternatives.length === 0;
-  deletedGreetings.value.push({ index, text, cleared });
-  if (index === 0) data.value.first_mes = alternatives.length ? alternatives.shift() : '';
-  else alternatives.splice(index - 1, 1);
-  notice.value = cleared
-    ? '已清空最后一个开场白，保存角色后生效。'
-    : `已删除开场 ${index + 1}，其余开场顺延；保存角色后生效。`;
-}
-function undoDeleteGreeting() {
-  const removed = deletedGreetings.value.pop();
-  if (!removed) return;
-  if (removed.cleared) data.value.first_mes = removed.text;
-  else if (removed.index === 0) {
-    (data.value.alternate_greetings ||= []).unshift(data.value.first_mes || '');
-    data.value.first_mes = removed.text;
-  } else (data.value.alternate_greetings ||= []).splice(removed.index - 1, 0, removed.text);
-  notice.value = '已撤销删除开场白，保存角色后生效。';
-}
-function addGreeting() {
-  (data.value.alternate_greetings ||= []).push('');
 }
 async function permission(enabled: boolean) {
   await act(async () => {
@@ -502,51 +494,48 @@ useTimedError(error);
     </div>
     <div class="editor-layout character-editor-layout">
       <div class="editor-fields">
-        <template v-if="tab === 'profile'"
-          ><label>角色名称<input v-model="data.name" /></label
-          ><label>角色描述<ExpandableTextarea v-model="data.description" label="角色描述" /></label
-          ><label>性格<ExpandableTextarea v-model="data.personality" label="性格" /></label
-          ><label>场景<ExpandableTextarea v-model="data.scenario" label="场景" /></label
-          ><label>作者备注<ExpandableTextarea v-model="data.creator_notes" label="作者备注" /></label
-          ><label
-            >标签（逗号分隔）<input
-              :value="data.tags?.join(', ')"
-              @change="
-                data.tags = ($event.target as HTMLInputElement).value
-                  .split(/[,，]/)
-                  .map((x) => x.trim())
-                  .filter(Boolean)
-              " /></label
-        ></template>
+        <KeepAlive :max="1">
+          <CardGreetingsEditor
+            v-if="tab === 'prompts' && !greetingsError"
+            :key="greetingsVersion"
+            v-model:greetings="greetings"
+            :disabled="busy"
+            @notice="notice = $event"
+          />
+        </KeepAlive>
+        <div v-if="tab === 'profile'" class="card-profile">
+          <div class="card-profile-basics">
+            <label><strong>角色名称</strong><input v-model="data.name" :disabled="busy" /></label>
+            <label
+              ><strong>标签</strong><span>逗号分隔</span
+              ><input
+                :value="data.tags?.join(', ')"
+                :disabled="busy"
+                @change="
+                  data.tags = ($event.target as HTMLInputElement).value
+                    .split(/[,，]/)
+                    .map((x) => x.trim())
+                    .filter(Boolean)
+                "
+            /></label>
+          </div>
+          <CardTextField v-model="data.description" label="角色描述" :disabled="busy" spacious />
+          <CardTextField v-model="data.personality" label="性格" :disabled="busy" />
+          <CardTextField v-model="data.scenario" label="场景" :disabled="busy" />
+          <CardTextField v-model="data.creator_notes" label="作者备注" :disabled="busy" />
+        </div>
         <template v-else-if="tab === 'prompts'">
-          <p class="muted">
-            开场编号与进入故事时一致。删除后其余开场顺延，保存角色后生效；删除最后一个开场会清空内容。
-          </p>
-          <div>
-            <label>开场 1（默认）<ExpandableTextarea v-model="data.first_mes" label="开场白" /></label
-            ><button class="danger" :disabled="busy" @click="deleteGreeting(0)">删除开场 1</button>
-          </div>
-          <details v-for="(_, i) in data.alternate_greetings" :key="i">
-            <summary>开场 {{ i + 2 }}</summary>
-            <ExpandableTextarea v-model="data.alternate_greetings[i]" :label="'开场 ' + (i + 2)" /><button
-              class="danger"
+          <p v-if="greetingsError" role="alert">{{ greetingsError }}请在原始 JSON 中修正。</p>
+          <div class="card-prompt-fields">
+            <CardTextField v-model="data.mes_example" label="示例对话" :disabled="busy" plain />
+            <CardTextField v-model="data.system_prompt" label="角色系统提示" :disabled="busy" plain />
+            <CardTextField
+              v-model="data.post_history_instructions"
+              label="历史后提示"
               :disabled="busy"
-              @click="deleteGreeting(i + 1)"
-            >
-              删除开场 {{ i + 2 }}
-            </button>
-          </details>
-          <div class="toolbar">
-            <button :disabled="busy" @click="addGreeting"><Icon name="plus" :size="16" />添加候选开场</button
-            ><button v-if="deletedGreetings.length" :disabled="busy" @click="undoDeleteGreeting">
-              撤销删除开场白
-            </button>
+              plain
+            />
           </div>
-          <label>示例对话<ExpandableTextarea v-model="data.mes_example" label="示例对话" /></label
-          ><label>角色系统提示<ExpandableTextarea v-model="data.system_prompt" label="角色系统提示" /></label
-          ><label
-            >历史后提示<ExpandableTextarea v-model="data.post_history_instructions" label="历史后提示"
-          /></label>
         </template>
         <template v-else-if="tab === 'lore'">
           <LoreBookEditor
@@ -691,3 +680,48 @@ useTimedError(error);
     </div>
   </section>
 </template>
+
+<style scoped>
+.card-profile,
+.card-prompt-fields {
+  padding-inline: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+}
+.card-profile-basics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  padding-block: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* Same heading style as the CardTextField rows below. */
+.card-profile-basics label {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+}
+.card-profile-basics label > span {
+  margin-inline-start: 8px;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.card-profile-basics input {
+  display: block;
+  width: 100%;
+}
+.card-prompt-fields {
+  margin-top: 16px;
+}
+@media (max-width: 620px) {
+  .card-profile,
+  .card-prompt-fields {
+    padding-inline: 12px;
+  }
+  .card-profile-basics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>
