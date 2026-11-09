@@ -27,7 +27,7 @@ export const keminiFields: SettingField[] = [
     path: 'kemini.enabled',
     label: '启用 Kemini 式实验功能',
     type: 'checkbox',
-    help: '允许新建和继续 Kemini 实验对话。实验对话使用创作提示改写与小说填充，Full Agent 每轮通过 submit_story 提交一次完整正文。',
+    help: '允许新建和继续 Kemini 实验对话。实验对话使用创作提示改写与小说填充，Full Agent 每轮通过 submit_story 追加最多三段正文。',
   },
   {
     path: 'kemini.normal_disclaimer_enabled',

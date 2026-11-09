@@ -6,9 +6,9 @@
 
 ## 正文与收尾
 
-- 普通 Full Agent 用始终启用的 `submit_story({"content":"新增故事段落"})` 追加正文。content 须为非空白字符串，本地不截断、不设字符上限，每段保持完整的 Markdown/HTML 结构。
+- Full Agent 用始终启用的 `submit_story({"content":"新增故事段落"})` 追加正文。content 须为非空白字符串，本地不截断、不设字符上限，每段保持完整的 Markdown/HTML 结构。
 - 每轮成功接收 1–3 段即可结束，各段以空行合成一条回复，共用同一个 H。失败调用不占次数；第四次返回 `STORY_LIMIT_REACHED`，已有正文不变。
-- Kemini 实验对话也用 `submit_story`，每轮只接收一次完整正文。之后再次调用返回 `STORY_LIMIT_REACHED`。显式自检和启用的免责声明从参数中解析为辅助记录。
+- Kemini 实验对话沿用三段上限，从每段参数中提取显式自检和启用的免责声明作为辅助记录。
 - 第一段的成功结果示例：`{"ok":true,"data":{"saved_to_draft":true,"ref":"H3","message":"已接收第 1/3 段；可继续追加或结束。"}}`；第三段的结果提示完成收尾后结束。
 - 其他工具可在正文之前、段间、同批或之后调用，三段之后仍可收尾；`new_context` 仍须单独调用。
 - 交付与提交的关系、多段回复的显示和回放见[架构：正文交付](../design/full-agent.md#正文交付submit_story)。

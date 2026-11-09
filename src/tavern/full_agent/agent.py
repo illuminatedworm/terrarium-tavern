@@ -69,7 +69,6 @@ class FullAgent:
         self.history, self.snapshot, self.request, self.script = history, snapshot, request, script
         self.regenerate_reply = reply_for_regeneration(request, session)
         self.settings, self.user_message, self.lane = settings, user_message, retrieval
-        self.story_limit = 1 if settings.kemini.enabled else MAX_SEGMENTS
         self.output_id = output_id
         self.source_history = history + [user_message]
         self.state = full_state(snapshot)
@@ -203,8 +202,8 @@ class FullAgent:
         return self.story["content"]
 
     async def receive_story(self, text):
-        if self.story is not None and len(self.story["breaks"]) + 1 >= self.story_limit:
-            raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {self.story_limit} 段正文，不能再追加。")
+        if self.story is not None and len(self.story["breaks"]) + 1 >= MAX_SEGMENTS:
+            raise ToolError("STORY_LIMIT_REACHED", f"本轮已接收 {MAX_SEGMENTS} 段正文，不能再追加。")
         if self.must_rollover:
             await self.stop_for_user("CONTEXT_ROLLOVER_REQUIRED", "当前须先换窗，本次正文未接收")
         auxiliary = []
@@ -230,10 +229,11 @@ class FullAgent:
         else:
             # All deliveries belong to the same message and H reference.
             self.source_history[-1] = source
-        self.story = {"content": text, "auxiliary": auxiliary, "breaks": breaks}
+        all_auxiliary = [*(self.story["auxiliary"] if self.story else []), *auxiliary]
+        self.story = {"content": text, "auxiliary": all_auxiliary, "breaks": breaks}
         self.preview.replace(text, breaks=breaks)
         if auxiliary:
-            self.event("kemini_auxiliary", {"items": auxiliary})
+            self.event("kemini_auxiliary", {"items": all_auxiliary})
         return {"input_id": self.user_message["id"], "content_hash": fingerprint(text)}
 
     def restore_preview(self):
@@ -565,7 +565,7 @@ class FullAgent:
                     # continuation acknowledges forwarding the newly received reports.
                     dispatching_reports = reports.copy()
                     complete = getattr(provider, "chat_complete_with_preview", None)
-                    remaining = self.story_limit - (len(self.story["breaks"]) + 1 if self.story else 0)
+                    remaining = MAX_SEGMENTS - (len(self.story["breaks"]) + 1 if self.story else 0)
 
                     def preview_story(chunk):
                         self.preview.append_segment(

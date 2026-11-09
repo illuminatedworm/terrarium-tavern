@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT, message_at, message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
 from tavern.core.ooc import with_ooc
+from tavern.core.story_segments import MAX_SEGMENTS
 from tavern.core.tokens import count_text
 from tavern.full_agent.argument_errors import ToolArgumentError
 from tavern.full_agent.config import FullAgentConfig
@@ -354,18 +355,14 @@ SPECS.update(MAIN_SPECS)
 SPECS["present_ui"] = (PresentUI, VISUAL_DESCRIPTION)
 SPECS["submit_story"] = (
     Story,
-    "Append a new story segment to this turn's draft. At most 3 successful submissions per turn; "
+    f"Append a new story segment to this turn's draft. At most {MAX_SEGMENTS} successful submissions per turn; "
     "1 or 2 segments are sufficient when the story is complete. Failed submissions do not use a slot. "
     "Segments share one H reference and are joined with blank lines. Never repeat or revise accepted prose. "
     "Ordinary assistant text is commentary. Tools may run before, between or after segments, including after "
     "the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.",
 )
 
-KEMINI_STORY_DESCRIPTION = (
-    "Submit the complete story in content exactly once per turn. Put the requested Interleaving "
-    "output, including any auxiliary sections, inside content. Ordinary assistant text is commentary. "
-    "Failed submissions do not use the slot. Finish any remaining tools and end normally."
-)
+KEMINI_STORY_FORMAT = " Put the requested Interleaving output for each new segment, including any auxiliary sections, inside content."
 
 
 def tool_definitions(session, config=None, *, settings=None, catalog=False):
@@ -412,9 +409,8 @@ def tool_definitions(session, config=None, *, settings=None, catalog=False):
             "type": "function",
             "function": {
                 "name": name,
-                "description": KEMINI_STORY_DESCRIPTION
-                if kemini and name == "submit_story"
-                else description + limits.get(name, ""),
+                "description": description
+                + (KEMINI_STORY_FORMAT if kemini and name == "submit_story" else limits.get(name, "")),
                 "parameters": model.model_json_schema(),
             },
         }
@@ -502,13 +498,12 @@ class AgentTools:
         if name == "submit_story":
             await owner.receive_story(args.content)
             count = len(owner.story["breaks"]) + 1
-            limit = owner.story_limit
             return {
                 "saved_to_draft": True,
                 "ref": message_ref(len(owner.source_history)),
-                "message": f"已接收第 {count}/{limit} 段；可继续追加或结束。"
-                if count < limit
-                else f"已接收第 {limit}/{limit} 段；请完成收尾后结束。",
+                "message": f"已接收第 {count}/{MAX_SEGMENTS} 段；可继续追加或结束。"
+                if count < MAX_SEGMENTS
+                else f"已接收第 {MAX_SEGMENTS}/{MAX_SEGMENTS} 段；请完成收尾后结束。",
             }
         if name in MAIN_SPECS:
             if owner.novel is None:

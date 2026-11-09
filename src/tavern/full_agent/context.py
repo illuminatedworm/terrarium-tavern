@@ -17,14 +17,14 @@ from tavern.core.cache_policy import fingerprint
 from tavern.core.context_usage import context_tokens
 from tavern.core.history_refs import labeled, message_ref, span_ref
 from tavern.core.message_adapter import adapt_messages, project_context, runtime_messages
-from tavern.core.story_segments import MAX_SEGMENTS
+from tavern.core.story_segments import MAX_SEGMENTS, split_segments
 from tavern.full_agent.config import tool_protocol
 from tavern.full_agent.content_history import content_history
 from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.handoff import render_chapters, render_current
 from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
-from tavern.full_agent.story import committed_records, committed_story, story_history
+from tavern.full_agent.story import committed_records, project_story_segments, story_history
 
 
 def load_trace(store, sid, history):
@@ -105,7 +105,6 @@ def compile_window(
     # This absolute prefix is outside all application ordering and history
     # offsets; no runtime rules or worldbook entries can split its four blocks.
     items = prefix_frames(settings.kemini)
-    request_tail = turn_frames(settings.kemini, full_agent=True)
 
     def add(role, content, source, **metadata):
         if content:
@@ -116,7 +115,6 @@ def compile_window(
         settings.full_agent_config,
         compact=compact,
         plot_enabled=session.get("plot_enabled", False),
-        kemini=settings.kemini.enabled,
     )
     if session.get("novel_enabled"):
         from tavern.novel.config import MAIN_PROTOCOL
@@ -186,11 +184,11 @@ def compile_window(
     ]
     records.extend({**message, "_content_owner": None} for message in continuation)
     records, _ = story_history(records)
-    if story is not None:
-        # Kemini's accepted draft excludes auxiliary tags and holds one segment.
+    if settings.kemini.enabled and story is not None:
+        parts = split_segments(story["content"], story["breaks"])
         records = [
-            committed_story(message, story["content"])
-            if settings.kemini.enabled and message.get("_story_received", {}).get("input_id") == input_id
+            project_story_segments(message, parts)
+            if message.get("_story_received", {}).get("input_id") == input_id
             else message
             for message in records
         ]
@@ -210,10 +208,21 @@ def compile_window(
 
     history_text = {m["id"]: expand(m.get("model", m["raw"]), m.get("ooc", "")) for m in visible}
     for message in visible:
+        records = by_owner.get(message["id"], [])
+        text = history_text[message["id"]]
+        breaks = message.get("story_segments", {}).get("raw", [])
+        if settings.kemini.enabled and breaks and text == message["raw"]:
+            # Saved offsets still locate the clean prose. If the model text was
+            # changed by callbacks or macros, let committed_records replay it whole.
+            parts = split_segments(text, breaks)
+            records = [
+                project_story_segments(record, parts) if record.get("_story_received") else record
+                for record in records
+            ]
         by_owner[message["id"]] = committed_records(
-            by_owner.get(message["id"], []),
-            history_text[message["id"]],
-            len(message.get("story_segments", {}).get("raw", [])) + 1,
+            records,
+            text,
+            len(breaks) + 1,
         )
     records = [m for message in visible for m in by_owner.get(message["id"], [])] + list(continuation)
     ledger = ContextLedger(
@@ -357,13 +366,14 @@ def compile_window(
         ):
             covered_segments.update(range(1, value.get("segment_count", 1) + 1))
     segment_count = len((story or {}).get("breaks", [])) + 1
+    request_tail = turn_frames(
+        settings.kemini, full_agent=True, story_limit_reached=segment_count == MAX_SEGMENTS
+    )
     story_in_context = set(range(1, segment_count + 1)) <= covered_segments
     update(
         "roleplay_draft",
         (
-            f"本轮正文 {message_ref(len(history) + 2)} 已接收，不再调用 submit_story；"
-            if settings.kemini.enabled
-            else f"本轮正文 {message_ref(len(history) + 2)} 已接收 {segment_count}/{MAX_SEGMENTS} 段并保存到草稿，"
+            f"本轮正文 {message_ref(len(history) + 2)} 已接收 {segment_count}/{MAX_SEGMENTS} 段并保存到草稿，"
             + (
                 "可按需追加后续段落，不重写或重复前文；"
                 if segment_count < MAX_SEGMENTS
@@ -371,10 +381,9 @@ def compile_window(
             )
             + "所有段落共用此 H 引用，read_history 返回已接收的累计全文。普通文本仅作备注；"
         )
-        # Only ordinary turns can continue to add another segment.
         + (
             "如需追加段落或有未完成的工具调用就继续，否则直接结束本次回复。"
-            if not settings.kemini.enabled and segment_count < MAX_SEGMENTS
+            if segment_count < MAX_SEGMENTS
             else "如有未完成的工具调用就继续，否则直接结束本次回复。"
         )
         + ("" if story_in_context else "\n<roleplay_draft>\n" + story["content"] + "\n</roleplay_draft>")
@@ -384,11 +393,8 @@ def compile_window(
             "input_id": input_id,
             "content_hash": fingerprint(story["content"]),
             "in_response": story_in_context,
-            **(
-                {}
-                if settings.kemini.enabled
-                else {"delivery": "submit_story", "segment_count": segment_count}
-            ),
+            "delivery": "submit_story",
+            "segment_count": segment_count,
         }
         if story is not None
         else False,

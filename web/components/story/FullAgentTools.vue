@@ -273,8 +273,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
           </div>
           <p v-if="tool.name === 'recall_lore'">默认直接返回命中条目的完整正文。</p>
           <p v-if="tool.controlled_by === 'story_protocol'">
-            {{ session.kemini ? '每轮接收一次完整正文。' : '每轮可追加最多三段正文。' }}
-            普通文本回复仅记录为备注。
+            每轮可追加最多三段正文。普通文本回复仅记录为备注。
           </p>
           <p v-if="tool.controlled_by === 'novel_enabled'">主 agent 不能直接读取原文，只接收调查者的报告。</p>
           <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available">

@@ -18,11 +18,6 @@ PROTOCOL_TEMPLATE = """# Full Agent 工具协议
    - 本轮授权更新变量时，`patch_state` 至少要成功一次；失败可以修正后重试。变量没有变化就提交空的 `operations`，无需先读取。
    - 有值得长期记住的事，更新笔记。"""
 
-KEMINI_PROTOCOL_INTRO = PROTOCOL_TEMPLATE.format(
-    story="- 用 `submit_story` 的 `content` 参数一次提交完整正文，每轮仅接收一次。\n"
-    "- 普通文本回复仅作过程备注，失败的提交不占次数。",
-)
-
 PROTOCOL_INTRO = PROTOCOL_TEMPLATE.format(
     story="- 用 `submit_story` 的 `content` 参数追加本轮故事正文，每轮成功接收 1–3 段即可结束，不必写满三段。\n"
     "- 各段按顺序以空行拼为同一条回复，共用一个 H 引用；后续调用只写新增正文，不重复、替换或改写前段。\n"
@@ -129,12 +124,10 @@ class FullAgentConfig(BaseModel):
     plot_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
 
 
-def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False, kemini=False):
+def tool_protocol(config: FullAgentConfig, *, compact=False, plot_enabled=False):
     # Gemini has no native single-call switch. Keep the instruction and runtime
     # guard consistent for every provider, including relays ignoring API flags.
-    intro = (KEMINI_PROTOCOL_INTRO if kemini else PROTOCOL_INTRO) + (
-        "\n" + PROTOCOL_PLOT_STEP if plot_enabled else ""
-    )
+    intro = PROTOCOL_INTRO + ("\n" + PROTOCOL_PLOT_STEP if plot_enabled else "")
     # Cloud compaction has no handoff or window switching to describe.
     memory = [PROTOCOL_NOTE, *([] if compact else [PROTOCOL_HANDOFF])]
     memory += [PROTOCOL_PLOT_ON if plot_enabled else PROTOCOL_PLOT_OFF, PROTOCOL_RETRIEVAL]

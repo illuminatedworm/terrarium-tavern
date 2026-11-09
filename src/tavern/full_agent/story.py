@@ -90,6 +90,27 @@ def committed_story(message, text):
     return portable({**message, "content": text})
 
 
+def project_story_segments(message, parts):
+    """Replay each accepted Kemini call with its own clean prose."""
+    segments = message.get("_story_segments")
+    if not segments:
+        return committed_story(message, parts[0])
+
+    replacements = {}
+    for call in message["tool_calls"]:
+        if call["id"] in segments:
+            text = parts[segments[call["id"]] - 1]
+            if json.loads(call["function"]["arguments"])["content"] != text:
+                replacements[call["id"]] = json.dumps({"content": text}, ensure_ascii=False)
+    if not replacements:
+        return message
+    item = portable(message)
+    for call in item["tool_calls"]:
+        if call["id"] in replacements:
+            call["function"]["arguments"] = replacements[call["id"]]
+    return item
+
+
 def committed_records(records, text, segment_count):
     """Replay accepted segments once, or project the final text at the last delivery.
 
