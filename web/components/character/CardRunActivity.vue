@@ -13,7 +13,6 @@ import type { EditorRun } from '../../lib/cardAuthor';
 import AgentActivityItem from '../story/AgentActivityItem.vue';
 import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardMessage from './CardMessage.vue';
-import CardModelRequests from './CardModelRequests.vue';
 import WebSources from '../common/WebSources.vue';
 import { webSources } from '../../lib/webSearch';
 import { failedUsageText } from '../../lib/contextUsage';
@@ -36,7 +35,9 @@ const sources = computed(() =>
 );
 const blocks = computed(() => {
   const result = editorActivityBlocks(mergeEditorEvents(saved.value, props.events || []), props.run.status);
-  return result.length ? result : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
+  return result.length || !live.value
+    ? result
+    : [{ kind: 'tools' as const, id: 'pending', actions: [] as EditorAction[] }];
 });
 const failedUsage = computed(() =>
   mergeEditorEvents(saved.value, props.events || []).filter(
@@ -45,8 +46,6 @@ const failedUsage = computed(() =>
 );
 // The run outcome belongs to its latest step; earlier blocks already finished.
 const blockStatus = (id: string) => (id === blocks.value.at(-1)?.id ? props.run.status : 'completed');
-const tools = (actions: EditorAction[]) => actions.filter((step) => !step.id.startsWith('model-'));
-const requests = (actions: EditorAction[]) => actions.filter((step) => step.id.startsWith('model-'));
 
 function toggleBlock(id: string, event: Event) {
   opened.value[id] = (event.currentTarget as HTMLDetailsElement).open;
@@ -122,11 +121,6 @@ onBeforeUnmount(() => {
         :status="block.status"
         :data-activity-id="block.id"
       />
-      <CardModelRequests
-        v-else-if="!tools(block.actions).length && requests(block.actions).length"
-        class="cw-request-only"
-        :requests="requests(block.actions)"
-      />
       <details
         v-else
         class="cw-run"
@@ -137,7 +131,7 @@ onBeforeUnmount(() => {
         <summary>
           <CardWorkspaceIcon name="chevron" /><span class="cw-run-title">工具与过程</span>
           <span v-if="loaded || block.actions.length" class="cw-run-count">
-            {{ tools(block.actions).length }} 项工具与联网活动
+            {{ block.actions.length }} 项工具与联网活动
           </span>
           <span class="cw-run-status" :aria-live="live ? 'polite' : undefined">{{
             actionStatus(blockStatus(block.id))
@@ -145,7 +139,7 @@ onBeforeUnmount(() => {
         </summary>
         <div class="cw-run-body">
           <AgentActivityItem
-            v-for="step in tools(block.actions)"
+            v-for="step in block.actions"
             :key="step.id"
             :item="item(step)"
             :title="step.title"
@@ -160,14 +154,7 @@ onBeforeUnmount(() => {
                 : undefined,
             }"
           />
-          <CardModelRequests
-            v-if="requests(block.actions).length"
-            class="run-requests"
-            :requests="requests(block.actions)"
-          />
-          <p v-if="!block.actions.length" class="run-note">
-            {{ live ? '等待模型或工具记录…' : '本回合没有工具调用记录。' }}
-          </p>
+          <p v-if="!block.actions.length" class="run-note">等待模型或工具记录…</p>
         </div>
       </details>
     </template>
@@ -239,14 +226,6 @@ onBeforeUnmount(() => {
 .cw-run-body :deep(.agent-activity) {
   margin: 8px 0 0;
 }
-.cw-request-only {
-  margin: 0 0 16px 52px;
-}
-.run-requests {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
-}
 .run-note {
   color: var(--text-muted);
   font-size: var(--fs-sm);
@@ -262,7 +241,6 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 620px) {
   .cw-run,
-  .cw-request-only,
   .run-failure {
     margin-left: 0;
   }

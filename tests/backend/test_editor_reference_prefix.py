@@ -56,9 +56,8 @@ async def test_initial_and_mid_conversation_references_share_append_only_frames(
             [editor.tool(1, "read_field", {"card_ref": "C1", "path": "/description"}), blocks(api, "已读取")],
         )
         assert len(frames(editor, "overview")) == len(frames(editor, "persona_attachments")) == 1
-        assert (
-            persona["description"].replace("\n", "\\n") in frames(editor, "persona_attachments")[0]["content"]
-        )
+        assert "初始用户角色" in frames(editor, "persona_attachments")[0]["content"]
+        assert "完整角色资料" not in json.dumps(editor.wire(editor.requests[0]), ensure_ascii=False)
         before = editor.wire(editor.requests[-1])
         epoch = edits.context(wid)["epoch"]
         evidence = copy.deepcopy(edits.context(wid)["read_versions"])
@@ -77,7 +76,8 @@ async def test_initial_and_mid_conversation_references_share_append_only_frames(
         assert not any(e["kind"] == "context_baseline" for e in edits.events(result["id"]))
         assert len(frames(editor, "overview")) == len(frames(editor, "persona_attachments")) == 2
         assert c2 in frames(editor, "overview")[-1]["content"]
-        assert "第二份完整设定" in frames(editor, "persona_attachments")[-1]["content"]
+        assert "中途用户角色" in frames(editor, "persona_attachments")[-1]["content"]
+        assert "第二份完整设定" not in json.dumps(after, ensure_ascii=False)
         await execute(editor, [blocks(api, "未改变资料")])
         assert len(frames(editor, "overview")) == len(frames(editor, "persona_attachments")) == 2
         before = editor.wire(editor.requests[-1])

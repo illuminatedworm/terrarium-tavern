@@ -138,8 +138,8 @@ describe('public editor intermediate replies', () => {
   ];
   it('keeps public prose between tool groups after completion without duplicating the final reply', () => {
     const blocks = editorActivityBlocks(source, 'completed');
-    expect(blocks.map((block) => block.kind)).toEqual(['tools', 'assistant', 'tools']);
-    expect(blocks[1]).toMatchObject({ text: '我会先检查。\n完整中间说明。', status: 'intermediate' });
+    expect(blocks.map((block) => block.kind)).toEqual(['assistant', 'tools']);
+    expect(blocks[0]).toMatchObject({ text: '我会先检查。\n完整中间说明。', status: 'intermediate' });
     expect(JSON.stringify(blocks)).not.toContain('最终回复');
     expect(JSON.stringify(blocks)).not.toContain('不可展示的推理');
     expect(JSON.stringify(blocks)).not.toContain('opaque');
@@ -147,9 +147,9 @@ describe('public editor intermediate replies', () => {
   it('does not clear earlier text when a new request begins, including requests with no text', () => {
     const before = editorActivityBlocks(source.slice(0, 3), 'running');
     const next = editorActivityBlocks(source.slice(0, 7), 'running');
-    expect(before[1]).toMatchObject({ status: 'streaming' });
-    expect(next[1]).toMatchObject({
-      id: before[1].id,
+    expect(before[0]).toMatchObject({ status: 'streaming' });
+    expect(next[0]).toMatchObject({
+      id: before[0].id,
       text: '我会先检查。\n完整中间说明。',
       status: 'intermediate',
     });
@@ -164,7 +164,7 @@ describe('public editor intermediate replies', () => {
   });
   it('handles ordinary text-only and tool-only responses without phase metadata', () => {
     const plain = [event(1, 'model_call', { call: 1 }), event(2, 'text', { text: '普通 API 回复' })];
-    expect(editorActivityBlocks(plain, 'completed').every((block) => block.kind === 'tools')).toBe(true);
+    expect(editorActivityBlocks(plain, 'completed')).toEqual([]);
     const tools = source.filter((item) => item.kind !== 'text');
     expect(editorActivityBlocks(tools, 'completed')).toHaveLength(1);
   });

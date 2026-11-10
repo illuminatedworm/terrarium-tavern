@@ -30,31 +30,31 @@ async def test_persona_reference_enters_actual_messages_without_storage_metadata
             ]
             == current["revision"]
         )
-        model = ToolLLM([])
+        store.delete_persona(persona["id"])
+        model = ToolLLM([("read_persona_reference", {"persona_ref": ref})])
         result = await run(editor, wid, model, "按引用的用户角色讨论互动，不修改用户角色")
         assert result["status"] == "completed", result["error"]
         outbound = dump(model.call_log)
-        assert description in outbound and persona["id"] not in outbound
+        assert description not in dump(model.call_log[0])
+        assert description in dump(model.call_log[1]) and persona["id"] not in outbound
         assert "未选择的私有角色" not in outbound and "不要泄漏的介绍" not in outbound
         frames = [
-            message
-            for message in model.call_log[0]
-            if "用户主动引用的用户角色完整快照" in str(message.get("content"))
+            message for message in model.call_log[0] if "当前用户角色引用" in str(message.get("content"))
         ]
         assert len(frames) == 1 and '"version"' not in frames[0]["content"]
-        assert store.persona(persona["id"]) == persona
-        store.delete_persona(persona["id"])
+        assert ref in frames[0]["content"] and '"读者"' in frames[0]["content"]
         assert editor.edits.conversation(wid)["state"]["persona_attachments"][ref] == snapshot
         current = editor.edits.conversation(wid)
         editor.edits.detach_persona(wid, ref, current["revision"])
-        model = ToolLLM([])
+        model = ToolLLM([("read_persona_reference", {"persona_ref": ref})])
         result = await run(editor, wid, model, "继续讨论")
         assert result["status"] == "completed", result["error"]
         # Detaching replaces the effective reference frame, without rewriting
         # the already-sent prefix or pretending historical input never existed.
-        frames = [m for m in model.call_log[0] if "用户主动引用的用户角色完整快照" in m.get("content", "")]
-        assert description in frames[0]["content"]
+        frames = [m for m in model.call_log[0] if "当前用户角色引用" in m.get("content", "")]
+        assert description not in dump(frames)
         assert frames[-1]["content"].endswith("[]")
+        assert "该用户角色未在本对话中引用，或引用已移除" in dump(model.call_log[1])
     finally:
         await editor.close()
 

@@ -212,6 +212,7 @@ async def test_editor_tools_save_undo_and_recovery(tmp_path):
             "search_history",
             "read_history",
             "list_personas",
+            "read_persona_reference",
             "read_persona",
             "create_persona",
             "update_persona",

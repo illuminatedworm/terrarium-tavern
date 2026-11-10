@@ -31,6 +31,14 @@ class PersonaRead(PersonaRequest):
     )
 
 
+class PersonaReferenceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    persona_ref: str = Field(
+        pattern=r"^P[1-9]\d*$",
+        description="Exact P handle from the current list of user-attached persona snapshots.",
+    )
+
+
 class PersonaCreate(PersonaRequest):
     name: str = Field(
         min_length=1,
@@ -69,6 +77,10 @@ class PersonaUpdate(PersonaRead):
 
 
 PERSONA_SPECS = {
+    "read_persona_reference": (
+        PersonaReferenceRead,
+        "Read the complete name and introduction of a currently attached user persona snapshot when relevant to card authoring. The user authorizes this read by attaching the persona. This does not read the live library or grant edit permission.",
+    ),
     "list_personas": (
         PersonaList,
         "List user persona names and P handles only on an explicit user request. Does not load introductions. Ordinary card authoring never calls this automatically.",
@@ -126,6 +138,12 @@ class PersonaTools:
     @staticmethod
     def persona_content(record):
         return {key: record[key] for key in ("name", "description")}
+
+    async def read_persona_reference(self, args):
+        snapshot = self.owner.working["state"].get("persona_attachments", {}).get(args.persona_ref)
+        if snapshot is None:
+            raise ValueError("该用户角色未在本对话中引用，或引用已移除")
+        return {"persona_ref": args.persona_ref, **self.persona_content(snapshot)}
 
     async def list_personas(self, args):
         self.require_persona_request(args.request_ref)

@@ -17,8 +17,6 @@ export interface EditorAction {
   argumentsTruncated?: boolean;
   resultTruncated?: boolean;
   duration?: number;
-  model?: string;
-  searchFallback?: boolean;
 }
 const labels: Record<string, string> = {
   overview: '查看草稿概览',
@@ -41,6 +39,7 @@ const labels: Record<string, string> = {
   search_history: '搜索编辑历史',
   read_history: '读取完整历史',
   list_personas: '查看用户角色目录',
+  read_persona_reference: '读取用户角色引用',
   read_persona: '读取用户角色',
   create_persona: '新增用户角色',
   update_persona: '修改用户角色',
@@ -56,17 +55,7 @@ export function editorActions(events: EditorEvent[], runStatus: string): EditorA
   const actions = new Map<string, EditorAction>();
   for (const event of events) {
     const p = event.payload;
-    if (event.kind === 'model_call') {
-      actions.set(`model-${event.seq}`, {
-        id: `model-${event.seq}`,
-        seq: event.seq,
-        title: '思考与处理',
-        target: `第 ${p.call} 次模型请求`,
-        status: 'requested',
-        model: typeof p.model === 'string' ? p.model : undefined,
-        searchFallback: p.search_fallback === true,
-      });
-    } else if (event.kind === 'web_activity') {
+    if (event.kind === 'web_activity') {
       const id = `web-${p.action_id || p.call_id || event.seq}`;
       actions.set(id, {
         id,
@@ -128,7 +117,6 @@ export function actionStatus(status: string) {
         cancelled: '已取消',
         interrupted: '已中断',
         unknown: '结果未记录',
-        requested: '已请求',
       } as Record<string, string>
     )[status] || status
   );

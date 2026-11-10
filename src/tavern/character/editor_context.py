@@ -228,11 +228,10 @@ class EditorContext:
         if personas or "persona_attachments" in self.frames:
             self.update(
                 "persona_attachments",
-                [
-                    {"persona_ref": ref, "name": item["name"], "description": item["description"]}
-                    for ref, item in personas.items()
-                ],
-                "用户主动引用的用户角色完整快照（仅供本对话参考，不授权修改用户角色库；空列表表示已移除）：",
+                {ref: item["version"] for ref, item in personas.items()},
+                "当前用户角色引用（取代此前列表；按需用 read_persona_reference 读取完整快照。"
+                "重新引用后需重读；空列表表示无引用；引用不授权修改用户角色库）：",
+                content=[{"persona_ref": ref, "name": item["name"]} for ref, item in personas.items()],
             )
         self.update(
             "briefs",
