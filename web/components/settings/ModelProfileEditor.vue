@@ -313,6 +313,7 @@ async function action(check: boolean) {
         :model="profile.model"
         :api="profile.api_mode"
         :official-api="official && !subscription"
+        :card-author="role === 'card_author'"
         @validity="cacheValid = $event"
       />
       <p v-if="!subscription" class="muted">

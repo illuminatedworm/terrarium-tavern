@@ -156,6 +156,16 @@ def effective_retention(settings):
     return kind, value if value in options else options[0] if options else None
 
 
+def shares_editor_cloud_prefix(settings):
+    return (
+        settings._adapter_lane == "card_author"
+        and settings.auth_mode == "openai_api_key"
+        and settings.api_mode == "responses"
+        and settings.cache.mode == "cloud"
+        and retention_policy(settings)[0] == "openai_ttl"
+    )
+
+
 def retention_request(settings):
     kind, value = effective_retention(settings)
     if settings.auth_mode == "openai_api_key" and settings.cache.retention == "default":

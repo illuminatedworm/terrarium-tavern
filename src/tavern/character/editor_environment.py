@@ -41,7 +41,7 @@ def capture_environment(timestamp=None):
     }
 
 
-def environment_message(snapshot):
+def environment_message(snapshot, *, header=True):
     content = (
         "对话开始时的时间与系统环境（固定快照，不随后续消息更新）：\n"
         f"操作系统：{snapshot['system']}\n"
@@ -53,7 +53,7 @@ def environment_message(snapshot):
     return {
         "role": "system",
         "message_type": "editor_environment",
-        "runtime_phase": "header",
+        "runtime_phase": "header" if header else "body",
         "content": content,
-        "_cache_static": True,
+        "_cache_static": header,
     }

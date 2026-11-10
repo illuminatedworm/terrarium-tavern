@@ -6,19 +6,22 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, MockTransport
 
 from tavern.application.api import create_app
 from tavern.character import editor_environment as environment
 from tavern.character.card_author import CardAuthorService
+from tavern.chatgpt.provider import ChatGPTProvider
 from tavern.core.message_adapter import APIS, default_rule
 from tavern.core.models import CardAuthorRequest
+from tavern.search.retrieval_config import Provider
 from tavern.storage.store import Store, dump
 from tests.backend.test_card_author import ToolLLM
 from tests.backend.test_card_author_alignment import Editor
 from tests.backend.test_card_author_prompt import strings
 from tests.backend.test_card_authoring import run
-from tests.backend.test_half_agent_alignment import blocks
+from tests.backend.test_full_agent_alignment import reply
+from tests.backend.test_half_agent_alignment import blocks, sse
 
 SNAPSHOT = {"system": "Windows 11", "local_time": "2026-10-15 19:30:45", "utc_offset": "UTC+8"}
 
@@ -214,3 +217,50 @@ async def test_existing_conversation_recovers_first_request_time_without_rewriti
     assert "旧对话补录" in provider.call_log[0][1]["content"]
     assert editor.edits.run(first["id"])["created"] == first["created"]
     await editor.close()
+
+
+async def test_official_cloud_editor_shares_only_the_stable_opening_prefix(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    settings = store.settings_document()
+    settings.shared.providers.append(Provider(id="official", auth_mode="openai_api_key", api_key="test"))
+    profile = settings.shared.card_author
+    profile.provider_id, profile.model = "official", "gpt-6.1-sol"
+    profile.api_mode, profile.api_path = "responses", "v1"
+    store.save_settings(settings)
+    editor = CardAuthorService(store)
+    bodies = []
+
+    def route(request):
+        bodies.append(json.loads(request.content))
+        return sse("responses", reply("responses", blocks("responses", "完成")))
+
+    async def factory(cfg, capture):
+        return ChatGPTProvider(
+            cfg, cfg.api_key, capture, http_client=AsyncClient(transport=MockTransport(route))
+        )
+
+    monkeypatch.setattr("tavern.character.card_author.make_provider", factory)
+    try:
+        for i in (1, 2):
+            snapshot = {**SNAPSHOT, "local_time": f"2026-10-15 19:30:4{i}"}
+            monkeypatch.setattr("tavern.character.editor_storage.capture_environment", lambda _: snapshot)
+            ws = editor.edits.create_conversation()
+            task = editor.submit(
+                ws["id"],
+                CardAuthorRequest(text=f"开始 {i}", operation_id="first", expected_revision=ws["revision"]),
+            )
+            await editor.tasks[task["id"]]
+            assert editor.edits.run(task["id"])["status"] == "completed"
+            first, user, environment_item = bodies[-1]["input"][:3]
+            assert (first["role"], user["role"], environment_item["role"]) == (
+                "developer",
+                "user",
+                "developer",
+            )
+            assert snapshot["local_time"] in environment_item["content"]
+            assert "prompt_cache_options" not in bodies[-1]
+        a, b = bodies
+        assert a["input"][0] == b["input"][0] and a["tools"] == b["tools"]
+        assert a["prompt_cache_key"] == b["prompt_cache_key"]
+    finally:
+        await editor.close()

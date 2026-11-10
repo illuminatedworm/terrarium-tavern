@@ -63,7 +63,7 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 
 ## 请求身份
 
-会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；普通渠道 Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`；官方渠道只发送 `prompt_cache_key`，不发送这些兼容路由头。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
+会话身份独立于缓存开关。Anthropic 使用 `X-Claude-Code-Session-Id` 与 `metadata.user_id` 中的设备／会话信息；普通渠道 Responses 使用 `session-id`、`thread-id` 和默认 `prompt_cache_key`；官方渠道只发送 `prompt_cache_key`。官方 API 的 GPT-5.6 及更新模型在制卡 agent 使用云端默认缓存时，缓存键按应用数据目录与制卡用途分组，以复用固定提示和工具定义；默认会话键继续用于其他官方请求。设备 ID 是数据库中随机生成的应用标识，account UUID 留空。
 
 Half Agent 前台使用剧情会话 UUID，Tracker 前置、后置、重建和脚本调用按会话与用途派生身份。Full Agent 的失败续接保持同一会话身份，分支使用新身份；制卡 agent 每个编辑对话有独立稳定身份。
 

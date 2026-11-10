@@ -2,7 +2,13 @@
 import { computed, inject, onBeforeUnmount, ref, useId, watch, type Ref } from 'vue';
 import { cachePreset, cacheRetention, type CacheSettings } from '../../lib/cachePolicy';
 import { geminiControls } from '../../lib/geminiCapabilities';
-const props = defineProps<{ cache: CacheSettings; model: string; api: string; officialApi?: boolean }>();
+const props = defineProps<{
+  cache: CacheSettings;
+  model: string;
+  api: string;
+  officialApi?: boolean;
+  cardAuthor?: boolean;
+}>();
 const emit = defineEmits<{ validity: [valid: boolean] }>();
 const valueText = ref('');
 const requestText = ref('');
@@ -134,6 +140,9 @@ function edit(kind: 'value' | 'request', event: Event) {
       </template>
       <p v-if="cache.mode === 'cloud'" class="muted">
         不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
+        <template v-if="cardAuthor && officialApi && retention.kind === 'openai_ttl'">
+          同一应用数据目录内的制卡对话共用缓存计费分组，可复用尚有效的固定提示与工具定义。
+        </template>
       </p>
       <template v-else>
         <p class="muted">

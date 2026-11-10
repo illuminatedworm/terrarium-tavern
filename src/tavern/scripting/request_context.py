@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from uuid import UUID, uuid5
 
-from tavern.core.cache_policy import endpoint, fingerprint
+from tavern.core.cache_policy import endpoint, fingerprint, shares_editor_cloud_prefix
 from tavern.scripting.sent_breakpoints import SentBreakpoints
 
 
@@ -86,7 +86,12 @@ class ProviderRequestContext:
         elif settings.api_mode == "responses":
             if settings.auth_mode == "openai_api_key" and settings.cache.mode == "cloud":
                 # Cloud mode explicitly leaves saved custom JSON inactive.
-                body.setdefault("prompt_cache_key", self.session_id)
+                key = (
+                    fingerprint(["card_author", self.device_id])
+                    if shares_editor_cloud_prefix(settings)
+                    else self.session_id
+                )
+                body.setdefault("prompt_cache_key", key)
                 return
             body.setdefault(
                 "prompt_cache_key",

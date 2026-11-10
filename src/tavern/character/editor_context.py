@@ -8,7 +8,7 @@ from tavern.character.editor_draft_state import draft_changes, draft_versions
 from tavern.character.editor_environment import environment_message
 from tavern.character.editor_images import IMAGE_REFS, image_refs, image_stats
 from tavern.character.editor_reads import reconcile
-from tavern.core.cache_policy import fingerprint
+from tavern.core.cache_policy import fingerprint, shares_editor_cloud_prefix
 from tavern.core.context_usage import context_usage, pressure_tokens
 from tavern.core.message_adapter import adapt_messages, runtime_messages
 from tavern.core.model_view import HANDLE, ModelView
@@ -50,10 +50,14 @@ class EditorContext:
         }
 
     def header(self):
-        return [
-            self.system_message(),
-            *([environment_message(self.owner.environment)] if self.owner.environment else []),
-        ]
+        messages = [self.system_message()]
+        if self.owner.environment:
+            messages.append(
+                environment_message(
+                    self.owner.environment, header=not shares_editor_cloud_prefix(self.owner.cfg)
+                )
+            )
+        return messages
 
     def __init__(self, saved, owner):
         self.owner = owner
@@ -172,6 +176,16 @@ class EditorContext:
         refs = image_refs(files)
         if refs:
             message[IMAGE_REFS] = refs
+        if role == "user" and len(self.messages) == 2:
+            environment = self.messages[1]
+            if (
+                environment.get("message_type") == "editor_environment"
+                and environment["runtime_phase"] == "body"
+            ):
+                # End the initial developer group before the conversation's
+                # timestamp, so OpenAI can implicitly reuse the shared rules.
+                self.messages.insert(1, message)
+                return
         self.messages.append(message)
 
     def recall_images(self, ref):
