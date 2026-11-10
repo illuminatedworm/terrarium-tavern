@@ -79,13 +79,13 @@ const controlLabel = computed(() => {
 });
 const retentionOff = computed(() => {
   const { control, options } = props.retention;
-  if (control === 'subscription') return '订阅通道不支持显式缓存控制，时效由服务端决定。';
+  if (control === 'subscription') return 'SIWC 的缓存时效由服务端决定。';
   if (control === 'implicit') return props.retention.note;
   return options.length ? '' : '当前接入方式没有可选的缓存时效参数。';
 });
 const breakpointOff = computed(() => {
   const { control } = props.retention;
-  if (control === 'subscription') return { text: '订阅通道不发送本地断点。' };
+  if (control === 'subscription') return { text: 'SIWC 由服务端管理缓存。' };
   if (control === 'implicit') return { text: '隐式缓存不使用本地断点。' };
   if (control === 'cloud') return { text: '云端默认不发送本地断点。', link: '切换为本地运行时控制' };
   return { text: '自动格式下由服务端匹配缓存前缀，不发送断点。', link: '改为自定义参数' };

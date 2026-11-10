@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { rawApi } from '../../lib/api';
+import { channelLabels } from '../../lib/channels';
 import {
   novelChanges,
   novelConnectionError,
@@ -381,14 +382,15 @@ onBeforeUnmount(() => {
         <p class="novel-model">
           <button type="button" @click="emit('settings')">
             调查模型：{{ providerName(state.effective.profile.provider_id) }} /
-            {{ state.effective.profile.model || '尚未配置' }} ·
-            {{ state.effective.channel === 'chatgpt' ? 'GPT 渠道' : '普通 API' }} ·
+            {{ state.effective.profile.model || '尚未配置' }} · {{ channelLabels[state.effective.channel] }} ·
             {{ state.effective.follows_main ? '跟随主模型' : '用户指定'
             }}<Icon name="arrow-right" :size="12" />
           </button>
           <FieldHelp
             :tooltip="
-              (state.effective.channel === 'chatgpt' ? 'GPT 渠道使用云端压缩。' : '普通 API 使用摘要压缩。') +
+              (state.effective.channel === 'chatgpt'
+                ? 'OpenAI 官方渠道使用云端压缩。'
+                : '普通 API 使用摘要压缩。') +
               (state.effective.follows_main
                 ? '实际创建时跟随委派主 agent 的运行配置，包括本轮临时思考档位；已启动主生成的配置不受中途全局修改影响。'
                 : '')
@@ -505,7 +507,7 @@ onBeforeUnmount(() => {
         <div v-if="expanded === job.ref" class="novel-trace">
           <p class="muted">
             固定模型：{{ providerName(job.config.profile.provider_id) }} / {{ job.config.profile.model }} ·
-            {{ job.config.channel === 'chatgpt' ? 'GPT' : 'API'
+            {{ channelLabels[job.config.channel]
             }}{{ job.config.follows_main ? '（创建时跟随主模型）' : '（用户指定）' }}
           </p>
           <p v-if="job.usage.tokens !== undefined" class="muted">

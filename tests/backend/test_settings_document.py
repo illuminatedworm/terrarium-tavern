@@ -132,6 +132,30 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
+def test_migration_renames_only_legacy_siwc_defaults():
+    raw = SettingsDocument().model_dump()
+    original = raw["shared"]["providers"]
+    original[0]["name"] = "OpenAI Official"
+    original.extend(
+        {
+            **original[0],
+            "id": f"siwc-{index}",
+            "name": name,
+            "auth_mode": "chatgpt_subscription",
+            "chatgpt_account_id": f"{index:032x}",
+            "use_proxy": True,
+        }
+        for index, name in enumerate(("OpenAI Official", "ChatGPT 订阅", "我的工作区"), start=1)
+    )
+    migrated = migrate_settings(raw)
+    expected = deepcopy(original)
+    for provider in expected[1:3]:
+        provider["name"] = "Sign In With ChatGPT"
+    assert migrated.model_dump()["shared"]["providers"] == expected
+    assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
+    assert migrate_settings(migrated.model_dump()) == migrated
+
+
 def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     store = Store(tmp_path)
     card = store.import_card(json.dumps({"name": "向导", "first_mes": "玩家走进旧港。"}).encode())

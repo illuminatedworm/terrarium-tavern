@@ -7,7 +7,7 @@ export function webServiceLabel(name: string) {
         searxng: 'SearXNG',
         duckduckgo: 'DuckDuckGo',
         local: '本地网页读取',
-        openai: 'ChatGPT 云端搜索',
+        openai: 'OpenAI 云端搜索',
       } as Record<string, string>
     )[name] || name
   );

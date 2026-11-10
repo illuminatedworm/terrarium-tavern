@@ -205,7 +205,7 @@ async def subscription_models(accounts, provider, url):
                 )
         accounts.require_account(provider.chatgpt_account_id, account["generation"])
         if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-            raise ChatGPTError("ChatGPT 未返回有效模型目录", code="invalid_model_catalog")
+            raise ChatGPTError("SIWC 未返回有效模型目录", code="invalid_model_catalog")
         choices = []
         for item in payload["models"]:
             if (
@@ -223,6 +223,6 @@ async def subscription_models(accounts, provider, url):
             "updated_at": time.time(),
         }
     except httpx.HTTPError:
-        raise ChatGPTError("无法连接 ChatGPT 模型目录，请检查网络设置", code="catalog_unavailable") from None
+        raise ChatGPTError("无法连接 SIWC 模型目录，请检查网络设置", code="catalog_unavailable") from None
     finally:
         accounts.detach(provider.chatgpt_account_id, owner)

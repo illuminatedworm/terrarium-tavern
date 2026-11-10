@@ -30,7 +30,7 @@ def register_chatgpt_routes(app, store):
             (item for item in store.settings_document().shared.providers if item.id == provider_id), None
         )
         if provider is None or provider.auth_mode != "chatgpt_subscription":
-            raise ValueError("请先保存 ChatGPT 订阅提供商")
+            raise ValueError("请先保存 SIWC 连接")
         return provider.use_proxy
 
     @app.get("/api/auth/chatgpt/accounts")

@@ -50,7 +50,7 @@ const providerOptions = computed(() =>
     value: item.id,
     label:
       item.name +
-      (item.auth_mode === 'openai_api_key' ? ' · API' : subscriptionProvider(item) ? ' · 订阅' : ''),
+      (item.auth_mode === 'openai_api_key' ? ' · API' : subscriptionProvider(item) ? ' · SIWC' : ''),
   })),
 );
 function switchEditorChannel(channel: Channel) {
@@ -244,7 +244,7 @@ async function action(check: boolean) {
           >API 路径<input v-model="profile.api_path" :placeholder="`默认：${defaultPath}`" :disabled="busy"
         /></label>
         <p v-else class="muted">
-          {{ subscription ? 'ChatGPT 订阅' : 'OpenAI 官方 API · API 计费' }} · Responses · /v1
+          {{ subscription ? 'SIWC · 订阅计费' : 'OpenAI 官方 API · API 计费' }} · Responses · /v1
         </p>
         <div class="settings-select-field">
           <span>模型名称</span>
@@ -300,10 +300,7 @@ async function action(check: boolean) {
     <p v-if="!subscription && !gemini.sampling" class="muted">
       当前 Gemini 模型已废弃温度、top-p、top-k，由服务端控制采样；此前保存的这些值不发送。
     </p>
-    <p v-if="subscription" class="muted">
-      输出预留预算用于本地上下文计算，不是服务端输出上限。ChatGPT
-      订阅通道不支持温度、采样及显式缓存控制；普通渠道的模型配置独立保存。
-    </p>
+    <p v-if="subscription" class="muted">输出预留预算仅用于本地上下文计算。SIWC 的采样与缓存由服务端控制。</p>
     <details class="settings-advanced">
       <summary>更多参数：采样细项、分词器与提示缓存</summary>
       <SettingsFields :value="profile" :fields="advanced" :error-prefix="errorPrefix" />

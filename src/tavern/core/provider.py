@@ -16,9 +16,9 @@ def require_model_connection(settings):
         raise ValueError("请先设置模型名称")
     if settings.auth_mode == "chatgpt_subscription":
         if settings._chatgpt is None:
-            raise ValueError("ChatGPT 账号服务不可用，请从此应用的设置中连接账号")
+            raise ValueError("SIWC 账号服务不可用，请在提供商设置中连接账号")
         if settings.chatgpt_account_id in settings._auth_generations and not settings._auth_generation:
-            raise ValueError("此任务开始时尚未连接 ChatGPT 账号，请连接后重新开始任务")
+            raise ValueError("此任务开始时尚未连接 SIWC 账号，请连接后重新开始任务")
         settings._chatgpt.require_account(settings.chatgpt_account_id, settings._auth_generation)
         return
     if settings.auth_mode == "openai_api_key" and not settings.api_key:

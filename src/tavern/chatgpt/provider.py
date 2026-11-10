@@ -1,4 +1,4 @@
-"""Official Responses transport for ChatGPT subscriptions and OpenAI API keys."""
+"""Official Responses transport for SIWC and OpenAI API keys."""
 
 import copy
 import json
@@ -142,7 +142,7 @@ class ChatGPTProvider(ModelTransport):
                     "tools": [{"type": "function", "name": forced}],
                 }
         elif choice not in ("auto", "none", "required"):
-            raise ValueError("此 ChatGPT 工具选择方式不受支持")
+            raise ValueError("Responses 接口不支持此工具选择方式")
         self._allowed_tools = (
             ({forced} if forced else {tool.get("function", tool)["name"] for tool in selected})
             if choice != "none"
@@ -198,7 +198,7 @@ class ChatGPTProvider(ModelTransport):
                 "status": "cloud",
                 "kind": "implicit",
                 "parameters": {},
-                "reason": "ChatGPT 订阅由服务端管理缓存；未发送显式缓存控制",
+                "reason": "SIWC 由服务端管理缓存，未发送显式缓存控制",
                 "planned_index": None,
                 "sent_index": None,
             }
@@ -349,7 +349,7 @@ class ChatGPTProvider(ModelTransport):
             # Full Agent previews the prose carried by submit_story.
             tools = self._begin_kemini(tools, kwargs)
         else:
-            # Other ChatGPT requests keep plain transport; never inherit the
+            # Other Responses requests keep plain transport; never inherit the
             # previous story request's Kemini state on a reused provider.
             self._reset_kemini()
         event_sink = kwargs.get("_web_event") or (lambda kind, payload: None)
@@ -360,7 +360,7 @@ class ChatGPTProvider(ModelTransport):
                 if self.subscription:
                     self.accounts.require_account(self.account_id, self.generation)
                 if not isinstance(event, dict):
-                    raise ChatGPTError("ChatGPT 流事件格式无效，本轮未提交", code="invalid_stream")
+                    raise ChatGPTError("Responses 流事件格式无效，本轮未提交", code="invalid_stream")
                 kind = event.get("type")
                 if kind in ("response.completed", "response.incomplete", "response.failed"):
                     terminal = event.get("response")
@@ -400,7 +400,7 @@ class ChatGPTProvider(ModelTransport):
                     yield delta
             if not state.completion_seen:
                 raise ChatGPTError(
-                    "ChatGPT 连接在完成事件之前结束，本轮未提交",
+                    "Responses 连接在完成事件之前结束，本轮未提交",
                     code="stream_incomplete",
                     request_id=self._request_id(),
                 )
@@ -425,7 +425,7 @@ class ChatGPTProvider(ModelTransport):
             raise
         except (httpx.HTTPError, json.JSONDecodeError):
             error = ChatGPTError(
-                "ChatGPT 连接中断或响应无效，本轮未提交",
+                "Responses 连接中断或响应无效，本轮未提交",
                 code="stream_interrupted",
                 request_id=self._request_id(),
             )

@@ -51,7 +51,7 @@ def _dpapi(data: bytes, *, decrypt=False) -> bytes:
         args = [ctypes.byref(source), "Terrarium Tavern ChatGPT", None, None, None, 1, ctypes.byref(target)]
     fn.restype = wintypes.BOOL
     if not fn(*args):
-        raise ValueError("无法保护或读取 ChatGPT 凭据，请使用原操作系统用户重新登录")
+        raise ValueError("无法保护或读取 SIWC 凭据，请使用原操作系统用户重新登录")
     try:
         return ctypes.string_at(target.data, target.size)
     finally:
@@ -65,7 +65,7 @@ class CredentialVault:
 
     def prepare(self):
         if self.directory.is_symlink() or self.path.is_symlink():
-            raise ValueError("ChatGPT 凭据目录不能使用符号链接")
+            raise ValueError("SIWC 凭据目录不能使用符号链接")
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if os.name != "nt":
             self.directory.chmod(0o700)
@@ -80,7 +80,7 @@ class CredentialVault:
             with FileLock(self.directory / "accounts.lock", timeout=5, mode=0o600):
                 yield
         except Timeout:
-            raise ValueError("ChatGPT 凭据正在更新，请稍后重试") from None
+            raise ValueError("SIWC 凭据正在更新，请稍后重试") from None
 
     def load(self):
         if not self.path.exists():
@@ -104,7 +104,7 @@ class CredentialVault:
                 raise ValueError("凭据版本不匹配")
             return value
         except (OSError, ValueError, TypeError):
-            raise ValueError("无法读取受保护的 ChatGPT 连接，请检查原用户凭据存储；未覆盖原文件") from None
+            raise ValueError("无法读取受保护的 SIWC 连接。请检查原用户凭据存储，原文件已保留") from None
 
     def save(self, value):
         self.prepare()

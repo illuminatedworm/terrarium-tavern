@@ -204,8 +204,8 @@ useTimedError(error);
                 实验对话</label
               >
               <p class="muted">
-                仅此类对话应用 Kemini 式实验规则，头像以梅紫色描边区分；创建后不能与普通对话互相转换，ChatGPT
-                官方渠道不可用。
+                仅此类对话应用 Kemini 式实验规则，头像以梅紫色描边区分。对话类型在创建时固定，且仅限普通 API
+                渠道。
               </p>
             </template>
             <div class="story-channel-model">

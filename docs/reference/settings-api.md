@@ -31,7 +31,7 @@
 
 `GET /api/settings` 返回 `version`、三个配置范围、`revisions`、设置页面目录 `pages` 和提示词目录 `prompt_definitions`。提供商只返回 `has_api_key`，不返回密钥原文。
 
-`GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。它不联网，不修改设置或模型列表缓存；在 Gemini 原生预算档位中，`description` 包含对应的思考 tokens。设置页和输入框共用此接口，ChatGPT 官方仍使用账号模型目录。
+`GET /api/settings/reasoning?api_mode=...&model=...` 只读取普通 API 的本地思考规则，返回 `id/display_name`、`supported_reasoning_levels: [{effort, description}]` 和说明 `note`。它不联网，不修改设置或模型列表缓存；在 Gemini 原生预算档位中，`description` 包含对应的思考 tokens。设置页和输入框共用此接口，SIWC 使用账号模型目录。
 
 `PATCH /api/settings/{scope}` 接受：
 
@@ -64,7 +64,7 @@ Content-Type: application/json
 
 **`full_agent.tools.parallel_tool_calls`**：严格布尔值，默认 `true`，旧设置缺少时按开启处理。对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent。关闭示例：`PATCH /api/settings/full_agent`，`changes` 为 `{"tools.parallel_tool_calls":false}`。
 
-**`shared.model_request_mode`**：`auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一流式）或 `non_stream`（普通 API 统一非流式）。通过 `PATCH /api/settings/shared` 写入，如 `{"model_request_mode":"stream"}`；属于 `shared.web` 页面（“联网与代理”），支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求。ChatGPT 订阅通道始终流式；独立的 compact、向量、目录和缓存管理端点使用各自的请求方式。
+**`shared.model_request_mode`**：`auto`（默认，保持各调用方原有方式）、`stream`（普通 API 统一流式）或 `non_stream`（普通 API 统一非流式）。通过 `PATCH /api/settings/shared` 写入，如 `{"model_request_mode":"stream"}`；属于 `shared.web` 页面（“联网与代理”），支持该页撤回。配置进入每次操作的运行时快照，覆盖各角色的模型生成请求。OpenAI 官方渠道始终流式；独立的 compact、向量、目录和缓存管理端点使用各自的请求方式。
 
 **`shared.debug_failed_requests`**：严格布尔值，默认 `false`，属于 `shared.misc` 页，支持自动保存、页面撤回和个人设置导入导出，从下一次操作生效。开启后保留失败的模型生成请求的原始 HTTP 证据，成功请求不落盘。
 
@@ -98,7 +98,7 @@ Full Agent 流式接收时，只把正文工具的 content 参数通过 `text` �
 
 `PUT /api/sessions/{sid}/opening` 接受 `text` 与 `expected_revision`，只允许用于未锁定、且当前只有开场的对话。隔离初始化成功后复核修订号与锁定状态，原子保存原文、model、display 和快照，并增加修订号。`GET /api/sessions/{sid}` 的 `opening_editable` 表示当前是否可编辑。锁定规则见 [schema 14](#数据库-schema-变更)。
 
-## ChatGPT 账号接口
+## SIWC 账号接口
 
 提供商保存 `auth_mode: api_key | chatgpt_subscription`（缺省为 `api_key`）及可空的 `chatgpt_account_id`。账号引用可以随设置迁移，但账号元数据、Client ID、host ID 和令牌不进入设置数据库及导出包。没有本地注册记录的引用显示为需要重新连接。
 
@@ -113,13 +113,13 @@ Full Agent 流式接收时，只把正文工具的 content 参数通过 `text` �
 | `DELETE /api/auth/chatgpt/login/{id}` | 取消待完成的登录 |
 | `POST /api/auth/chatgpt/accounts/{id}/logout` | 可传 `provider_id` 选择代理选项；停止请求、清除本地令牌，返回 `revocation_confirmed` |
 | `DELETE /api/auth/chatgpt/accounts/{id}` | 退出并删除未被提供商引用的注册；被引用时拒绝删除 |
-| `POST /api/auth/chatgpt/welcome` | 保存首次订阅用量说明已确认状态 |
+| `POST /api/auth/chatgpt/welcome` | 保存首次 SIWC 用量说明的确认状态 |
 
 API 不返回授权 URL、state、nonce、PKCE verifier 或令牌。OAuth 回调由独立的 `127.0.0.1` 临时监听器处理，路径固定为 `/auth/callback`。`generation` 是授权会话的非秘密版本号，仅用于账号切换后刷新客户端缓存。
 
-模型列表接口保持 `models: string[]`，订阅模式额外返回 `model_details`：每项包含 `id/display_name`，目录提供能力时还包含 `supported_reasoning_levels: [{effort, description}]`、`default_reasoning_level` 和 `unavailable_reasoning_levels: [{effort, reason}]`。支持的档位是账号目录与当前订阅接口契约的交集，保持目录顺序。
+模型列表接口保持 `models: string[]`，SIWC 额外返回 `model_details`：每项包含 `id/display_name`，目录提供能力时还包含 `supported_reasoning_levels: [{effort, description}]`、`default_reasoning_level` 和 `unavailable_reasoning_levels: [{effort, reason}]`。支持的档位是账号目录与当前 SIWC 接口契约的交集，保持目录顺序。
 
-可操作的 ChatGPT 错误响应包含 `detail/code/upstream_status/request_id/usage_url`。程序不会从额度错误推算套餐重置时间，也不会回退到其他计费凭据。
+可操作的 SIWC 错误响应包含 `detail/code/upstream_status/request_id/usage_url`。程序不会从额度错误推算套餐重置时间，也不会回退到其他计费凭据。
 
 ## 世界书库与挂载
 

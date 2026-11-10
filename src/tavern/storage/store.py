@@ -695,7 +695,7 @@ class Store(MessageAdapters):
         settings.context_strategy = session.get("context_strategy", "new_context")
         settings.compact_auto = bool(session.get("compact_auto", True))
         if settings.context_strategy == "openai_compact" and channel != "chatgpt":
-            raise ValueError("只有 ChatGPT 官方渠道的对话可以使用云端 compact")
+            raise ValueError("只有 OpenAI 官方渠道的对话可以使用云端 compact")
         selection = session.get("model_selection") or {}
         if isinstance(selection, str):
             selection = json.loads(selection)
@@ -744,7 +744,7 @@ class Store(MessageAdapters):
         if options.kemini and not document.shared.kemini.enabled:
             raise ValueError("请先在全局设置 → 杂项启用 Kemini 式实验功能")
         if options.kemini and channel != "standard":
-            raise ValueError("ChatGPT 官方渠道不能创建 Kemini 实验对话")
+            raise ValueError("OpenAI 官方渠道不能创建 Kemini 实验对话")
         card = self.card(options.card_id)
         data = normalize(card["document"])
         greetings = [data.get("first_mes", ""), *data.get("alternate_greetings", [])]

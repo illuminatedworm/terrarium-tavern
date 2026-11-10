@@ -109,17 +109,17 @@ async def main():
                 await page.goto(base)
                 dialog = await settings_page(page, "shared.providers")
                 height = (await dialog.bounding_box())["height"]
-                await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
-                await dialog.get_by_role("button", name="连接 ChatGPT 账号", exact=True).click()
+                await dialog.get_by_role("tab", name="OpenAI 官方", exact=True).click()
+                await dialog.get_by_role("button", name="添加 SIWC 连接", exact=True).click()
                 provider = dialog.locator(".provider-editor").last
-                await provider.get_by_label("名称", exact=True).fill("ChatGPT 订阅测试")
+                await provider.get_by_label("名称", exact=True).fill("SIWC 测试")
                 before = app.state.store.settings_document()
                 await provider.get_by_role("button", name="Continue with ChatGPT", exact=True).click()
                 await expect(
                     provider.get_by_text("请在系统浏览器中完成授权。十分钟内有效。", exact=False)
                 ).to_be_visible()
                 assert (await finish_login(page, identity)).status == 200
-                welcome = page.get_by_role("dialog", name="正在使用 ChatGPT 订阅", exact=True)
+                welcome = page.get_by_role("dialog", name="正在使用 SIWC", exact=True)
                 await expect(welcome).to_be_visible()
                 assert await dialog.evaluate(
                     "element => element.inert || element.closest('[inert]') !== null"
@@ -127,7 +127,7 @@ async def main():
                 await welcome.get_by_role("button", name="知道了", exact=True).click()
                 await provider.locator("summary").click()
                 await expect(
-                    provider.get_by_text("已连接 · 已启用 ChatGPT 订阅使用", exact=True)
+                    provider.get_by_text("SIWC 已连接 · 已授权使用订阅额度", exact=True)
                 ).to_be_visible()
                 assert abs((await dialog.bounding_box())["height"] - height) < 1
                 current = app.state.store.settings_document()
@@ -155,14 +155,16 @@ async def main():
                 await provider.get_by_role("button", name="Continue with ChatGPT", exact=True).click()
                 await expect(provider.get_by_role("button", name="取消登录", exact=True)).to_be_visible()
                 assert (await finish_login(page, identity, client_id="oaiapp_browser_second")).status == 200
-                await expect(provider.get_by_text("已登录 · 未启用订阅使用权限", exact=True)).to_be_visible()
-                await provider.get_by_role("button", name="启用订阅使用", exact=True).click()
+                await expect(
+                    provider.get_by_text("SIWC 已登录 · 未授权使用订阅额度", exact=True)
+                ).to_be_visible()
+                await provider.get_by_role("button", name="授权使用订阅额度", exact=True).click()
                 await expect(provider.get_by_role("button", name="取消登录", exact=True)).to_be_visible()
                 assert identity.params["prompt"] == "consent"
                 identity.token_overrides.clear()
                 assert (await finish_login(page, identity)).status == 200
                 await expect(
-                    provider.get_by_text("已连接 · 已启用 ChatGPT 订阅使用", exact=True)
+                    provider.get_by_text("SIWC 已连接 · 已授权使用订阅额度", exact=True)
                 ).to_be_visible()
                 assert not await welcome.is_visible()
                 checks.append("multiple registrations, explicit plan consent, welcome shown once")
@@ -179,18 +181,16 @@ async def main():
                 assert "id_token_hint" not in identity.params
                 assert (await finish_login(page, identity)).status == 200
                 await expect(
-                    provider.get_by_text("已连接 · 已启用 ChatGPT 订阅使用", exact=True)
+                    provider.get_by_text("SIWC 已连接 · 已授权使用订阅额度", exact=True)
                 ).to_be_visible()
                 checks.append("logout and unconfirmed revocation feedback, returning login")
                 markup = await page.content()
                 assert all(secret not in markup for secret in (ACCESS, REFRESH, "fixture-id-token-only"))
 
                 dialog = await settings_page(page, "full_agent.model")
-                await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                await dialog.get_by_role("tab", name="OpenAI 官方", exact=True).click()
                 await dialog.get_by_role("button", name="配置模型连接", exact=True).click()
-                await choose_menu(
-                    dialog.get_by_role("button", name="提供商", exact=True), label="ChatGPT 订阅测试"
-                )
+                await choose_menu(dialog.get_by_role("button", name="提供商", exact=True), label="SIWC 测试")
                 await expect(dialog.get_by_label("输出预留预算（tokens）", exact=True)).to_be_visible()
                 assert not await dialog.get_by_label("接口方式", exact=True).count()
                 assert not await dialog.get_by_label("温度 temperature", exact=True).count()
@@ -210,7 +210,7 @@ async def main():
                 assert await (await menu_option(effort, "none")).count() == 0
                 assert app.state.store.settings_document().full_agent.model == before.full_agent.model
                 checks.append("official reasoning levels and selectable xhigh, unchanged ordinary API model")
-                await expect(dialog.get_by_text("使用 ChatGPT 订阅", exact=True)).to_be_visible()
+                await expect(dialog.get_by_text("使用 SIWC", exact=True)).to_be_visible()
                 checks.append("account catalogue, fixed protocol, unsupported controls, output budget label")
                 await context.close()
 
@@ -228,7 +228,7 @@ async def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     await page.goto(base)
                     dialog = await settings_page(page, "shared.providers")
-                    await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                    await dialog.get_by_role("tab", name="OpenAI 官方", exact=True).click()
                     provider = dialog.locator(".provider-editor").last
                     await provider.locator("summary").click()
                     await provider.get_by_role(

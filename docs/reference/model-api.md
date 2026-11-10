@@ -4,7 +4,7 @@
 
 ## 连接与协议
 
-提供商保存认证方式、主域名、密钥或本地 ChatGPT 账号引用，以及是否使用 API 代理；模型分别保存提供商引用、模型名、接口协议与 API 路径。以下普通 API 规则适用于 `auth_mode=api_key`；订阅模式见下一节。
+提供商保存认证方式、主域名、密钥或本地 ChatGPT 账号引用，以及是否使用 API 代理；模型分别保存提供商引用、模型名、接口协议与 API 路径。以下普通 API 规则适用于 `auth_mode=api_key`；SIWC 见下一节。
 
 | `api_mode` | 默认 API 路径 | 生成端点 |
 |---|---|---|
@@ -29,7 +29,7 @@ Chat Completions 的原生结束原因不封闭流式内容接收：在 HTTP 响
 
 Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`；HTTP 200 但结束原因缺失、为空或不受支持时整轮失败，不把部分正文或工具调用当作完整回复提交。
 
-## ChatGPT 订阅模式
+## Sign In With ChatGPT（SIWC）
 
 `auth_mode=chatgpt_subscription` 通过独立账号服务取得访问令牌，固定使用 `https://api.openai.com/v1/responses`。不使用 `TAVERN_API_KEY`、自定义域名或 Codex backend-api。OAuth discovery、令牌交换、刷新和撤销均限制在已验证的 OpenAI 身份端点；HTTP 客户端不跟随携带凭据的重定向。
 
@@ -37,24 +37,24 @@ Chat Completions 的非流式响应同样必须提供有效的 `finish_reason`�
 - 按 `output_index` 汇集 `response.output_item.done` 的完整输出，与最终响应合并去重；完成事件中的空 `output` 不清除已接收的正文、工具调用和加密推理。仅收到未完成项时拒绝提交。
 - system 消息原位转为 developer，保留完整原文和顺序；输入包含全部需要的历史，不发送 `previous_response_id`。
 - 函数工具放入 `tavern` namespace，工具调用及结果保留命名空间；仅接收本轮允许的工具。指定单个工具时只暴露它，并使用 `tool_choice=required`。
-- 请求体由订阅分支的允许字段构建，不发送普通采样、最大输出 token、显式缓存及其他通道自定义参数。缓存由服务端管理，仅使用稳定的 `prompt_cache_key`；不发送 `session-id`、`thread-id` 或 `x-codex-turn-state`。
+- SIWC 按允许字段构建请求体，不发送普通采样、最大输出 token、显式缓存及其他通道自定义参数。缓存由服务端管理，仅使用稳定的 `prompt_cache_key`；不发送 `session-id`、`thread-id` 或 `x-codex-turn-state`。
 - 官方 Full Agent 的云端 compact（触发条件与重建规则见 [Full Agent 架构](../design/full-agent.md#官方云端-compact)）：独立整理请求发送 `context_management` 与 `compact_threshold`，正文与工具续答不携带自动压缩配置；支持完整加密项续接，不使用独立的 `/responses/compact`。切回本地且需要换窗时，使用专用的 `prepare_handoff` 结构化调用，验证后再更新本地状态，不执行剧情工具。
 - 原生回复归属由账号注册、授权会话代次和模型确定。正常刷新保持归属，重新授权／退出和切换账号会隔离旧的原生状态；操作内固定授权代次，不能中途切换到新登录。
 - 模型目录使用相同账号的 OAuth 凭据请求 `/v1/models`，读取 `models` 中 `visibility=list` 的 `slug/display_name`，保留服务端顺序。缓存按账号和授权代次隔离。
-- 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。订阅档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
+- 目录附带 `supported_reasoning_levels`、`default_reasoning_level` 和接口不支持的 `unavailable_reasoning_levels`。SIWC 的档位按模型能力过滤，`xhigh` 与 `max` 各自原样发送；当前直连接口不接受的 `ultra` 标为不可用。已载入目录时，“模型默认”发送目录声明的默认档位；未知能力时省略字段，由接口决定。
 
-实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类；Writer、Tracker、Full Agent、参谋 agent、制卡 agent、脚本嵌套调用和探测共用同一入口。字段要求依据 [OpenAI 订阅通道限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。后续章节的通用协议／缓存预设不覆盖订阅分支的限制。
+实现位于 `chatgpt/`，通过 `core/provider.py` 返回兼容 Terrarium 的 `ModelTransport` 子类。Writer、Tracker、Full Agent、参谋 agent、制卡 agent、脚本嵌套调用和探测共用同一入口。SIWC 的协议与缓存行为遵循 [SIWC 订阅共享限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 
 ## OpenAI 官方 API 模式
 
-`auth_mode=openai_api_key` 与订阅并列属于官方渠道，已有 `api_key` 配置保持普通渠道归属。提供商只配置 Base URL（默认 `https://api.openai.com`）与 API Key；主机可自定义，协议固定 Responses、路径固定 `/v1`。保存或导入与固定协议冲突的模型连接会报错。设置格式为 17，升级前沿用整库备份机制。
+`auth_mode=openai_api_key` 与 SIWC 同属 OpenAI 官方渠道，已有 `api_key` 配置保持普通渠道归属。提供商只配置 Base URL（默认 `https://api.openai.com`）与 API Key；主机可自定义，协议固定 Responses、路径固定 `/v1`。保存或导入与固定协议冲突的模型连接会报错。设置格式为 17，升级前沿用整库备份机制。
 
-- 使用填写的 API Key，不回退到 `TAVERN_API_KEY`。共享官方流式完成校验、完整原生回放和授权校验；API 使用标准扁平函数列表，订阅保留 `tavern` 命名空间；发送 `store:false`，不依赖服务端保存的 response ID，不发送兼容路线的会话路由头。
+- 使用填写的 API Key，不回退到 `TAVERN_API_KEY`。共享官方流式完成校验、完整原生回放和授权校验；API 使用标准扁平函数列表，SIWC 保留 `tavern` 命名空间；发送 `store:false`，不依赖服务端保存的 response ID，不发送兼容路线的会话路由头。
 - 保留实际 `max_output_tokens`、可选采样及思考参数，始终请求加密推理项。模型目录显式刷新 `/v1/models`，解析 `data[].id`；目录没有声明的能力不推断为已支持。
 - 缓存复用 Responses 编译与已发送断点记录，默认隐式且不指定时效。支持新协议的 Responses 模型可选择 `30m` 或 `12h` 最低保留时长；12 小时写入价格更高。切模型后保留已保存值，不支持则在请求前报错。设置页与缓存侧栏读写同一角色、同一渠道的 `cache.retention`。
 - 附加缓存 JSON 仅在本地控制模式生效：支持 `prompt_cache_key` 和 `prompt_cache_options.mode`（`implicit` / `explicit`）；请求时效只由 `cache.retention` 控制，JSON 中重复的 `ttl` / `prompt_cache_retention` 明确报错并保留原值供修正。自定义断点固定使用 `prompt_cache_breakpoint`，值为 `mode:explicit`；时效统一由选择器控制，不支持在断点 JSON 中另设 TTL，以免恢复旧断点时重新带回旧时效。生成请求不接受 `prewarm` 或缓存诊断参数。云端默认不读取此前保存的附加 JSON（包括缓存 key）。
 - 强制指定工具时保留完整函数定义、顺序和 schema，通过 `allowed_tools` / `required` 限制可调用集合；Runtime 再次拒绝集合外的调用。未声明 `strict` 的函数显式发送 `strict:false`，保留“省略参数使用本地默认值”的语义；显式声明的 strict schema 保持其选择，不把可选字段偷偷改为必填或 null。
-- 思考档位使用官方文档中的已知模型规则，匹配准确模型名及其日期快照；未知别名明确提示能力未知并交由服务端判断。已知不支持的档位在请求前报错，不换档。设置页和输入区共用此规则，普通渠道与订阅目录的处理保持独立。
+- 思考档位使用官方文档中的已知模型规则，匹配准确模型名及其日期快照；未知别名明确提示能力未知并交由服务端判断。已知不支持的档位在请求前报错，不换档。设置页和输入区共用此规则，普通渠道与 SIWC 目录的处理保持独立。
 - `incomplete` / `failed` 响应中的实际 usage 单独记录为失败请求用量，并计入所属任务的累计消耗；没有 usage 时不补零或复用旧值。正文、工具和原生状态不提交，也不调用窗口计量的成功完成路径。`max_output_tokens` 包含内部思考，上限耗尽时提示检查输出预算和思考档位。
 - 复用独立维护请求上的 `context_management` 压缩机制，正常正文和工具续答不携带该字段。密文、计量和缓存断点按连接类型、端点、密钥、模型与工具传输格式隔离，切换后从本地完整历史按既有规则重建。
 - 参谋 agent、制卡 agent 的托管联网共用既有开关、授权及本地搜索回退，事件标明 `api_key` 计费来源；不扩展其他角色的联网权限。

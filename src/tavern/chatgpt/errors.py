@@ -6,15 +6,15 @@ from tavern.chatgpt import USAGE_URL
 from tavern.scripting.http_errors import upstream_detail
 
 MESSAGES = {
-    "invalid_client": "ChatGPT 客户端注册无效，请检查连接配置",
-    "subscription_sharing_user_not_eligible": "此账号或工作区目前不能使用 ChatGPT 订阅接入",
-    "subscription_sharing_usage_limit_exceeded": "已达到 ChatGPT 订阅或本应用的用量限制，请管理用量",
-    "subscription_sharing_usage_unavailable": "暂时无法核实 ChatGPT 订阅用量，请稍后重试",
-    "subscription_sharing_unsupported_capability": "ChatGPT 订阅通道不支持此次请求的模型或能力",
-    "subscription_sharing_route_not_supported": "ChatGPT 订阅通道不支持此次请求的接口",
+    "invalid_client": "SIWC 客户端注册无效，请检查连接配置",
+    "subscription_sharing_user_not_eligible": "此账号或工作区目前无法通过 SIWC 使用订阅额度",
+    "subscription_sharing_usage_limit_exceeded": "SIWC 用量已达订阅或应用的上限，请管理用量",
+    "subscription_sharing_usage_unavailable": "暂时无法核实 SIWC 用量，请稍后重试",
+    "subscription_sharing_unsupported_capability": "SIWC 不支持此次请求的模型或能力",
+    "subscription_sharing_route_not_supported": "SIWC 不支持此次请求的接口",
     "subscription_sharing_invalid_user": "无法验证 ChatGPT 账号，请检查连接或重新登录",
-    "chatpass_v2_scope_not_authorized": "ChatGPT 订阅使用权限不足，请重新授权",
-    "chatpass_v2_invalid_authorization_context": "ChatGPT 授权上下文无效，请重新登录",
+    "chatpass_v2_scope_not_authorized": "SIWC 订阅额度权限不足，请重新授权",
+    "chatpass_v2_invalid_authorization_context": "SIWC 授权上下文无效，请重新登录",
     "subscription_sharing_user_unavailable": "暂时无法获取 ChatGPT 账号信息，请稍后重试",
 }
 TERMINAL_REFRESH = {
@@ -91,11 +91,11 @@ def response_error(payload, status=None, request_id=None, *, secrets=(), subscri
     message = MESSAGES.get(
         code,
         {
-            401: "ChatGPT 授权未被接受，请检查账号权限或重新登录",
-            403: "ChatGPT 拒绝此请求，请检查账号、工作区权限及服务地区",
-            429: "ChatGPT 请求达到限制，请管理用量或稍后重试",
-            503: "ChatGPT 服务暂不可用，请稍后重试",
-        }.get(status, "ChatGPT 请求未完成"),
+            401: "SIWC 授权未被接受，请检查账号权限或重新登录",
+            403: "SIWC 请求被拒绝，请检查账号、工作区权限及服务地区",
+            429: "SIWC 请求达到限制，请管理用量或稍后重试",
+            503: "SIWC 服务暂不可用，请稍后重试",
+        }.get(status, "SIWC 请求未完成"),
     )
     if not subscription:
         message = {

@@ -17,8 +17,8 @@ const subscriptionLimit = computed(
   <span v-if="active" class="chatgpt-usage" :class="{ 'chatgpt-limit': subscriptionLimit }">
     <span>{{
       subscriptionLimit
-        ? 'ChatGPT 用量已达限制'
-        : label || (officialApi ? 'OpenAI 官方 API · API 计费' : '使用 ChatGPT 订阅')
+        ? 'SIWC 用量已达限制'
+        : label || (officialApi ? 'OpenAI 官方 API · API 计费' : '使用 SIWC')
     }}</span>
     <a
       :href="officialApi ? 'https://platform.openai.com/usage' : CHATGPT_USAGE_URL"

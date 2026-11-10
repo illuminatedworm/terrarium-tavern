@@ -35,7 +35,7 @@ import CardFileReference from './CardFileReference.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
 import ReferenceTag from './ReferenceTag.vue';
 import ConversationModelControls from '../settings/ConversationModelControls.vue';
-import { providerChannel, type Channel } from '../../lib/channels';
+import { channelLabels, providerChannel, type Channel } from '../../lib/channels';
 import ConversationMessageAdapter from '../settings/ConversationMessageAdapter.vue';
 import ChatGPTUsage from '../common/ChatGPTUsage.vue';
 import CacheRateStat from '../common/CacheRateStat.vue';
@@ -733,7 +733,7 @@ onBeforeUnmount(() => {
           <strong>请确认此旧制卡对话的渠道归属，确认后不能更换渠道。</strong>
           <div class="cw-toolbar">
             <button :disabled="busy" @click="classifyChannel('standard')">普通 API</button>
-            <button :disabled="busy" @click="classifyChannel('chatgpt')">ChatGPT 官方</button>
+            <button :disabled="busy" @click="classifyChannel('chatgpt')">{{ channelLabels.chatgpt }}</button>
           </div>
         </div>
         <form class="cw-composer" @submit.prevent="send(!!workspace?.pending)">

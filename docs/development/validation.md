@@ -65,7 +65,7 @@ npm.cmd run build
 
 `browser_release` 使用 8015/8016 端口，覆盖设置、角色编辑、故事、工作记录、上下文、分支和 MVU；CSS 视口为 2560×1440、1920×1080、360×792/DPR 3（1080×2376 设备像素）和 960×540/DPR 2（1920×1080 的 200% 缩放等效布局），布局专项使用同一组视口。DPR 场景验证的是对应的 CSS 布局，原生浏览器缩放和真实手机交互可另行实测。
 
-ChatGPT 订阅专项：
+SIWC 专项
 
 ```powershell
 .venv/Scripts/python.exe -m pytest -q tests/backend/test_chatgpt_auth.py tests/backend/test_chatgpt_provider.py tests/backend/test_chatgpt_integration.py

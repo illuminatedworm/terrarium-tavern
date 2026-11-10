@@ -1,7 +1,7 @@
 import type { ModelProfile, Provider } from './settingsDocument';
 
 export type Channel = 'standard' | 'chatgpt';
-export const channelLabels: Record<Channel, string> = { standard: '普通 API', chatgpt: 'ChatGPT 官方' };
+export const channelLabels: Record<Channel, string> = { standard: '普通 API', chatgpt: 'OpenAI 官方' };
 export const providerChannel = (provider?: Provider): Channel =>
   provider?.auth_mode === 'chatgpt_subscription' || provider?.auth_mode === 'openai_api_key'
     ? 'chatgpt'

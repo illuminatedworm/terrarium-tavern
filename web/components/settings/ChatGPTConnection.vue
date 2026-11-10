@@ -111,7 +111,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="chatgpt-connection">
-    <p class="muted">使用符合资格的 ChatGPT 付费账号订阅额度。登录与允许消耗额度是两项独立授权。</p>
+    <p class="muted">SIWC 使用符合资格的 ChatGPT 账号的订阅额度。登录与允许消耗额度是两项独立授权。</p>
     <label
       >ChatGPT 账号
       <select v-model="provider.chatgpt_account_id" :disabled="busy || pending" aria-label="ChatGPT 账号">
@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
             item.status === 'signed_out'
               ? '（已退出）'
               : item.status === 'permission_required'
-                ? '（未授权订阅使用）'
+                ? '（未授权使用订阅额度）'
                 : ''
           }}
         </option>
@@ -134,9 +134,9 @@ onBeforeUnmount(() => {
     <p v-if="account" class="chatgpt-status" role="status">
       {{
         account.status === 'connected'
-          ? '已连接 · 已启用 ChatGPT 订阅使用'
+          ? 'SIWC 已连接 · 已授权使用订阅额度'
           : account.status === 'permission_required'
-            ? '已登录 · 未启用订阅使用权限'
+            ? 'SIWC 已登录 · 未授权使用订阅额度'
             : '已退出，请重新登录'
       }}
     </p>
@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
         Continue with ChatGPT
       </button>
       <button v-if="account" type="button" :disabled="busy || loginPending()" @click="login(true)">
-        {{ account.status === 'permission_required' ? '启用订阅使用' : '重新登录此账号' }}
+        {{ account.status === 'permission_required' ? '授权使用订阅额度' : '重新登录此账号' }}
       </button>
       <button
         v-if="account && account.status !== 'signed_out'"
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
       }}
       <button type="button" :disabled="busy" @click="cancel">取消登录</button>
     </p>
-    <p v-else-if="loginPending()" class="muted">另一个提供商正在登录 ChatGPT，请先完成或取消。</p>
+    <p v-else-if="loginPending()" class="muted">另一个 SIWC 连接正在登录，请先完成或取消。</p>
     <p v-if="feedback" role="status" class="inline-feedback">{{ feedback }}</p>
     <p class="muted">
       账号连接与退出立即生效，不随设置撤回。退出会停止此账号的运行中请求；订阅额度不足时不会自动切换计费方式。

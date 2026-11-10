@@ -321,9 +321,9 @@ const trackerSubscription = computed(
 const storySubscriptionLabel = computed(() =>
   activeSubscription.value
     ? trackerSubscription.value || isFullAgent.value
-      ? '使用 ChatGPT 订阅'
-      : '正文使用 ChatGPT 订阅'
-    : '后台使用 ChatGPT 订阅',
+      ? '使用 SIWC'
+      : '正文使用 SIWC'
+    : '后台使用 SIWC',
 );
 function closePanel() {
   if (panel.value === 'settings' && settingsPanel.value) void settingsPanel.value.requestClose();
@@ -2854,7 +2854,7 @@ useTimedError(error);
         <div v-if="!session.channel_origin" class="channel-notice" role="status">
           <span>此旧对话需要确认渠道归属，确认后不可跨渠道更改。</span>
           <button @click="classifyChannel('standard')">归入普通 API</button>
-          <button @click="classifyChannel('chatgpt')">归入 ChatGPT 官方</button>
+          <button @click="classifyChannel('chatgpt')">归入 {{ channelLabels.chatgpt }}</button>
         </div>
         <div v-if="contextOps.active.value" class="channel-notice" role="status">
           <span

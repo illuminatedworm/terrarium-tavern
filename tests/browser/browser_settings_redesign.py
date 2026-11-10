@@ -184,7 +184,7 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     before = await read()
                     if official_api_only:
                         await select("full agent 模型与生成")
-                        await dialog.get_by_role("tab", name="ChatGPT 官方", exact=True).click()
+                        await dialog.get_by_role("tab", name="OpenAI 官方", exact=True).click()
                         profile = dialog.locator(".profile-editor")
                         await expect(profile.get_by_label("接口方式", exact=True)).to_have_count(0)
                         effort = profile.get_by_role("button", name="思考强度", exact=True)

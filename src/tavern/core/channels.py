@@ -4,7 +4,7 @@ from typing import Literal
 
 Channel = Literal["standard", "chatgpt"]
 CHANNELS = ("standard", "chatgpt")
-LABELS = {"standard": "普通 API", "chatgpt": "ChatGPT 官方"}
+LABELS = {"standard": "普通 API", "chatgpt": "OpenAI 官方"}
 
 
 def provider_channel(provider):

@@ -27,7 +27,7 @@ from tavern.core.errors import NotFound
 def _tokens(payload, *, old=None):
     now = time.time()
     if not isinstance(payload, dict):
-        raise ChatGPTError("ChatGPT 凭据响应无效", code="invalid_token_response")
+        raise ChatGPTError("SIWC 凭据响应无效", code="invalid_token_response")
     scope = payload.get("scope")
     if scope is not None and not isinstance(scope, str):
         raise ChatGPTError("ChatGPT 返回的权限无效", code="invalid_token_response")
@@ -50,7 +50,7 @@ def _tokens(payload, *, old=None):
         if not math.isfinite(earliest) or earliest < 0:
             raise ValueError("invalid refresh time")
     except (TypeError, ValueError, KeyError, OverflowError):
-        raise ChatGPTError("ChatGPT 凭据有效期无效", code="invalid_token_response") from None
+        raise ChatGPTError("SIWC 凭据有效期无效", code="invalid_token_response") from None
     refresh = payload.get("refresh_token", "")
     if not isinstance(refresh, str) or (access and "offline_access" in granted and not refresh):
         raise ChatGPTError("ChatGPT 未返回可续期凭据", code="invalid_token_response")
@@ -124,11 +124,9 @@ class ChatGPTAccounts:
             or not account.get("tokens")
             or (generation and generation != account["generation"])
         ):
-            raise ChatGPTError("ChatGPT 连接已退出或改变，请重新登录或重新开始任务", code="sign_in_required")
+            raise ChatGPTError("SIWC 连接已退出或改变，请重新登录或重新开始任务", code="sign_in_required")
         if PLAN_SCOPE not in account["tokens"]["scopes"]:
-            raise ChatGPTError(
-                "已登录，但未授权使用 ChatGPT 订阅，请启用订阅使用权限", code="plan_permission_required"
-            )
+            raise ChatGPTError("SIWC 已登录，请授权使用订阅额度", code="plan_permission_required")
         return account
 
     def public(self):
@@ -195,9 +193,9 @@ class ChatGPTAccounts:
                 return account
             if not tokens["refresh_token"]:
                 self._clear(account_id, account["generation"])
-                raise ChatGPTError("ChatGPT 登录已到期，请重新登录", code="sign_in_required")
+                raise ChatGPTError("SIWC 登录已到期，请重新登录", code="sign_in_required")
             if tokens["earliest_refresh_at"] > now:
-                raise ChatGPTError("ChatGPT 凭据暂不能刷新，请稍后重试", code="refresh_not_ready")
+                raise ChatGPTError("SIWC 凭据暂不能刷新，请稍后重试", code="refresh_not_ready")
             try:
                 async with self.client(use_proxy) as client:
                     config = await metadata(client)
@@ -228,7 +226,7 @@ class ChatGPTAccounts:
                         if error.code in TERMINAL_REFRESH:
                             self._clear(account_id, account["generation"])
                             raise ChatGPTError(
-                                str(error) + "；ChatGPT 登录已失效，请重新登录",
+                                str(error) + "；SIWC 登录已失效，请重新登录",
                                 code="sign_in_required",
                                 status=error.status,
                                 request_id=error.request_id,
@@ -236,7 +234,7 @@ class ChatGPTAccounts:
                             )
                         raise error
                     if not isinstance(payload, dict):
-                        raise ChatGPTError("ChatGPT 凭据响应无效", code="invalid_token_response")
+                        raise ChatGPTError("SIWC 凭据响应无效", code="invalid_token_response")
                     if payload.get("id_token"):
                         await validate_identity(
                             client,
@@ -250,7 +248,7 @@ class ChatGPTAccounts:
                 if isinstance(error, ChatGPTError):
                     raise
                 raise ChatGPTError(
-                    "ChatGPT 凭据刷新失败，连接已保留，请稍后重试", code="refresh_unavailable"
+                    "SIWC 凭据刷新失败，连接已保留，请稍后重试", code="refresh_unavailable"
                 ) from None
             with self.vault.locked():
                 value = self.vault.load()
@@ -260,7 +258,7 @@ class ChatGPTAccounts:
                     or current["generation"] != account["generation"]
                     or account_id in self._blocked
                 ):
-                    raise ChatGPTError("ChatGPT 连接已改变，请重新开始任务", code="sign_in_required")
+                    raise ChatGPTError("SIWC 连接已改变，请重新开始任务", code="sign_in_required")
                 current["tokens"] = replacement
                 self.vault.save(value)
             return self.require_account(account_id, account["generation"])
@@ -357,7 +355,7 @@ class ChatGPTAccounts:
                 "signed_out": True,
                 "revocation_confirmed": confirmed,
                 "usage_url": USAGE_URL,
-                "message": "已退出 ChatGPT"
+                "message": "已退出 SIWC"
                 if confirmed
                 else (revocation_detail + "；" if revocation_detail else "")
                 + "已在本地退出，但未确认远程撤销；请在 ChatGPT 设置中断开应用",
@@ -376,7 +374,7 @@ class ChatGPTAccounts:
     async def start_login(self, *, account_id=None, use_proxy=True, enable_plan=False, provider_id=None):
         async with self._login_lock:
             if self.attempt and self.attempt["status"] in ("pending", "exchanging"):
-                raise ChatGPTError("已有 ChatGPT 登录正在进行，请先完成或取消", code="login_busy")
+                raise ChatGPTError("已有 SIWC 登录正在进行，请先完成或取消", code="login_busy")
             if account_id in self._blocked:
                 raise ChatGPTError("ChatGPT 账号正在退出，请稍后重试", code="account_busy")
             account = self._read(account_id) if account_id else None
@@ -509,7 +507,7 @@ class ChatGPTAccounts:
                 or (attempt["client_id"] and issued != attempt["client_id"])
                 or not query.get("code")
             ):
-                raise ChatGPTError("ChatGPT 客户端注册回调不完整或不匹配", code="invalid_registration")
+                raise ChatGPTError("SIWC 客户端注册回调不完整或不匹配", code="invalid_registration")
             attempt["client_id"] = issued
             async with self.client(attempt["use_proxy"]) as client:
                 response = await client.post(
@@ -536,13 +534,13 @@ class ChatGPTAccounts:
                     if error.code == "invalid_grant" and not attempt["account_id"]:
                         attempt["retry_client_id"] = issued
                     raise ChatGPTError(
-                        str(error) + "；ChatGPT 登录交换失败，请重新发起登录",
+                        str(error) + "；SIWC 登录交换失败，请重新发起登录",
                         code="code_exchange_failed",
                         diagnostic=error.diagnostic,
                     )
                 payload = response.json()
                 if not isinstance(payload, dict):
-                    raise ChatGPTError("ChatGPT 登录响应无效", code="invalid_token_response")
+                    raise ChatGPTError("SIWC 登录响应无效", code="invalid_token_response")
                 old = self._read(attempt["account_id"]) if attempt["account_id"] else None
                 claims = await validate_identity(
                     client,
@@ -563,7 +561,7 @@ class ChatGPTAccounts:
                 if existing:
                     account_id, old = existing
                     if old["subject"] != claims["sub"] or old["issuer"] != ISSUER:
-                        raise ChatGPTError("ChatGPT 注册与已保存身份不匹配", code="account_changed")
+                        raise ChatGPTError("SIWC 注册与已保存身份不匹配", code="account_changed")
                     attempt.update(account_id=account_id, generation=old["generation"])
             account_id = attempt["account_id"] or uuid.uuid4().hex
             async with self.account_lock(account_id):
@@ -599,16 +597,16 @@ class ChatGPTAccounts:
                     self.vault.save(value)
                 attempt.update(status="completed", account_id=account_id)
                 attempt.pop("retry_client_id", None)
-            return 200, "ChatGPT 登录已完成。请回到 Terrarium Tavern 查看账号权限并选择模型。"
+            return 200, "SIWC 登录已完成。请回到 Terrarium Tavern 查看账号权限并选择模型。"
         except (ChatGPTError, httpx.HTTPError, ValueError) as error:
             if attempt["status"] == "exchanging":
                 attempt.update(
                     status="failed",
                     error=str(error)
                     if isinstance(error, ChatGPTError)
-                    else "ChatGPT 登录暂不可用，未保存此次登录，请重试",
+                    else "SIWC 登录暂不可用，未保存此次登录，请重试",
                 )
-            return 400, "ChatGPT 登录未完成。请回到 Terrarium Tavern 查看详情。"
+            return 400, "SIWC 登录未完成。请回到 Terrarium Tavern 查看详情。"
         finally:
             # The expiry task may currently be waiting for this callback to close.
             if attempt["status"] != "expired":

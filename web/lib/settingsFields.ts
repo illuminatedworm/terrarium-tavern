@@ -234,7 +234,7 @@ export const requestFields: SettingField[] = [
       { value: 'stream', label: '流式' },
       { value: 'non_stream', label: '非流式' },
     ],
-    help: '作用于普通 API 的正文、后台和制卡请求，从下一次操作生效；ChatGPT 订阅通道始终流式。Full Agent 的流式正文先显示为未保存预览，完整校验通过后才保存。',
+    help: '作用于普通 API 的正文、后台和制卡请求，从下一次操作生效。OpenAI 官方渠道始终流式。Full Agent 的流式正文先显示为未保存预览，完整校验通过后才保存。',
   },
 ];
 export const proxyFields: SettingField[] = [

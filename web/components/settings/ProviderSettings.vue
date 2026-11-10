@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { Provider } from '../../lib/settingsDocument';
-import { channelProviders, type Channel } from '../../lib/channels';
+import { channelLabels, channelProviders, type Channel } from '../../lib/channels';
 import ChannelSwitch from '../common/ChannelSwitch.vue';
 import { chatgptState, loginPending, subscriptionProvider } from '../../lib/chatgptAccounts';
 import ChatGPTConnection from './ChatGPTConnection.vue';
@@ -20,7 +20,8 @@ function add(officialApi = false) {
     ...props.providers,
     {
       id: crypto.randomUUID(),
-      name: channel.value === 'chatgpt' ? (officialApi ? 'OpenAI 官方 API' : 'ChatGPT 订阅') : '新提供商',
+      name:
+        channel.value === 'chatgpt' ? (officialApi ? 'OpenAI 官方 API' : 'Sign In With ChatGPT') : '新提供商',
       base_url: 'https://api.openai.com',
       api_key: '',
       use_proxy: false,
@@ -38,17 +39,17 @@ function add(officialApi = false) {
   <ChannelSwitch v-model="channel" />
   <div class="settings-section-heading">
     <div>
-      <h3>{{ channel === 'chatgpt' ? 'ChatGPT 官方' : '普通 API' }}</h3>
+      <h3>{{ channelLabels[channel] }}</h3>
       <p class="muted">
         {{
           channel === 'chatgpt'
-            ? '可连接 ChatGPT 订阅或 OpenAI 官方 API，各角色独立选择连接与计费来源。'
+            ? '可通过 Sign In With ChatGPT（SIWC）使用订阅额度，也可连接 OpenAI 官方 API。各角色独立选择连接与计费来源。'
             : '使用 API Key 连接提供商，支持各类兼容接口。'
         }}
       </p>
     </div>
     <div class="actions">
-      <button @click="add()">{{ channel === 'chatgpt' ? '连接 ChatGPT 账号' : '添加提供商' }}</button>
+      <button @click="add()">{{ channel === 'chatgpt' ? '添加 SIWC 连接' : '添加提供商' }}</button>
       <button v-if="channel === 'chatgpt'" @click="add(true)">添加官方 API</button>
     </div>
   </div>
@@ -64,7 +65,7 @@ function add(officialApi = false) {
           ><strong>{{ provider.name || '新提供商' }}</strong
           ><small>{{
             subscriptionProvider(provider)
-              ? '工作区账号 · 订阅连接'
+              ? 'SIWC · 工作区账号 · 订阅计费'
               : provider.auth_mode === 'openai_api_key'
                 ? 'OpenAI 官方 API · API 计费'
                 : 'API Key 连接'

@@ -150,9 +150,7 @@ class LoopbackCallback:
             body = (
                 "<!doctype html><html lang=zh-CN><meta charset=utf-8>"
                 "<meta name=viewport content='width=device-width,initial-scale=1'>"
-                "<title>Terrarium Tavern · ChatGPT</title><h1>Terrarium Tavern</h1><p>"
-                + message
-                + "</p></html>"
+                "<title>Terrarium Tavern · SIWC</title><h1>Terrarium Tavern</h1><p>" + message + "</p></html>"
             ).encode()
             try:
                 writer.write(

@@ -169,7 +169,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 
 ## 上手指南
 
-1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或连接 ChatGPT 账号；再到对应运行模式的「模型与生成」选择提供商和模型。Full Agent 与 Half Agent 的 Tracker 需要模型支持工具调用；Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
+1. **配置模型** — 在「设置 → 通用 → 提供商」添加普通 API 的连接，或在「OpenAI 官方」添加 SIWC 或 OpenAI 官方 API 连接。再到对应运行模式的「模型与生成」选择提供商和模型。Full Agent 与 Half Agent 的 Tracker 需要模型支持工具调用；Half Agent 的「正文生成」与「后台整理」分别对应 Writer 和 Tracker。同一提供商的模型列表在各处共享。普通参数自动保存，提示词通过绿色勾保存。
 2. **导入角色卡** — 从侧栏「角色卡」导入文件，或从空白卡开始编辑。仓库附带两张示例卡：
    - [雾港来信](samples/雾港来信.json)：体验文本故事
    - [星航状态卡](samples/星航状态卡.json)：体验 HTML/MVU，进入故事前需启用该卡的脚本权限
@@ -177,7 +177,7 @@ Terrarium Tavern 是基于 [Kohaku Terrarium](LICENSE/KohakuTerrarium.txt) 的�
 4. **调整开场** — 在首次模型任务（生成、参谋 agent 咨询或上下文整理）开始前，可点击开场白旁的「编辑」修改开场原文；保存只影响当前对话，并重新初始化开场变量和脚本状态。任务开始后开场白永久锁定。
 5. **阅读与调整** — 在对话中续写行动，按需修改最新用户输入并重试、重生成或创建分支；通过上下文预览、记忆和工作记录查看故事状态。变量更新与设定修改按界面提示授权。
 
-**模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 ChatGPT 订阅接入的操作见[设置指南](docs/guides/settings.md)；编辑与分支规则见[阅读、编辑与分支](docs/guides/story-history.md)。
+**模型接入**支持 Chat Completions、Responses、Anthropic Messages 与 Gemini。API 连接与 Sign In With ChatGPT（SIWC）的配置方法见[设置指南](docs/guides/settings.md)；编辑与分支规则见[阅读、编辑与分支](docs/guides/story-history.md)。
 
 > [!IMPORTANT]
 > 剧情、角色资源和模型配置默认保存在 `data/`。升级或迁移前请先备份该目录；v0.8.10 升级了数据库与设置格式，旧版程序不能直接打开升级后的数据。ChatGPT 账号在换机后需要重新连接。

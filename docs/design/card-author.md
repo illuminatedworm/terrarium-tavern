@@ -78,7 +78,7 @@
 - 图片跟随所属消息与换窗边界。`read_history` 回读时，在整批工具结果之后追加尚不在上下文中的原图；待恢复引用与工具结果一起保存，取消后续接不重复读取已完成的工具。
 - 切换模型或规则而重建上下文时，保留当前窗口明确回读过的图片；已退出且未回读的历史图片不会当作新输入重新加入。
 - 图片缺失、损坏或被服务商拒绝时保留进度，不静默丢弃图片。
-- 各接口的图片块：Chat Completions 用 `image_url` data URL，Responses 用 `input_image`，Anthropic 用 `image.source` 的 Base64 与 MIME 类型，Gemini 的 `generateContent` 用 `parts[].inlineData`；ChatGPT 订阅走独立 provider 的 Responses 路线，保留认证和工具命名空间约束。
+- 各接口的图片块：Chat Completions 用 `image_url` data URL，Responses 用 `input_image`，Anthropic 用 `image.source` 的 Base64 与 MIME 类型，Gemini 的 `generateContent` 用 `parts[].inlineData`；SIWC 通过独立提供商走 Responses 路线，保留认证和工具命名空间约束。
 - Base64 只在传输用的请求副本中展开：预览返回图片元数据，请求事件保留图片位置与类型并标明省略了二进制，实际 HTTP 请求不受影响。统计接口与事件返回 `image_count` 及接口实测快照；图片以稳定的附件引用匹配请求，未发送图片的占用保持未知，不按编码文本估算。
 
 ### 系统消息与工具

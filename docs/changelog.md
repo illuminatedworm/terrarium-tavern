@@ -18,7 +18,7 @@
 | [v0.7.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.7.0) | 2026-10-20 | Kemini 实验层、制卡兼容改写与世界书管理 |
 | [v0.6.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.6.0) | 2026-10-18 | 制卡创作、参谋交互与上下文稳定性 |
 | [v0.5.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.5.0) | 2026-10-17 | 参谋 agent、联网制卡与界面重做 |
-| [v0.4.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.4.0) | 2026-10-14 | 订阅渠道、云端压缩与剧情规划 |
+| [v0.4.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.4.0) | 2026-10-14 | SIWC、云端压缩与剧情规划 |
 | [v0.3.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.3.0) | 2026-10-06 | 工具流程、数据迁移与 Linux 支持 |
 | [v0.2.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.2.0) | 2026-09-28 | Half Agent 与 Full Agent 双模式 |
 | [v0.1.0](https://github.com/illuminatedworm/terrarium-tavern/tree/v0.1.0) | 2026-09-22 | 初始基线 |
@@ -148,12 +148,12 @@
 
 ## v0.4.0 — 2026-10-14
 
-- 接入 ChatGPT 订阅渠道，分离渠道与模型配置；两种运行模式支持云端上下文压缩，统一完整交流边界。
+- 接入 Sign In With ChatGPT（SIWC），分离渠道与模型配置；两种运行模式支持云端上下文压缩，统一完整交流边界。
 - Full Agent 增加可选剧情规划、单次多工具调用配置与当前上下文可见版本校验，完善工具参数错误指引和有效读取依据复用。
 - 改善 MVU 兼容、面板渲染和资源生命周期；移除独立开场初始化及隐藏数据覆盖机制。
 - 完善角色卡原稿恢复与文本编辑工具，增加全局流式开关及 Full Agent 正文预览；更新固定的 Kohaku Terrarium 依赖。
 
-升级注意：ChatGPT 登录凭据绑定当前安装，换机需重新连接。开场初始化、工具修改依据与压缩行为有调整，使用复杂脚本卡时应核对[兼容说明](guides/compatibility.md)。
+升级注意：SIWC 登录凭据绑定当前安装，换机需重新连接。开场初始化、工具修改依据与压缩行为有调整，使用复杂脚本卡时应核对[兼容说明](guides/compatibility.md)。
 
 ## v0.3.0 — 2026-10-06
 

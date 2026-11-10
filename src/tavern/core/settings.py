@@ -530,6 +530,14 @@ def migrate_settings(raw: dict) -> SettingsDocument:
         if migrate_web_settings(raw.setdefault("shared", {})):
             changed_scopes.add("shared")
         providers = {p["id"]: p for p in raw.get("shared", {}).get("providers", [])}
+        for provider in providers.values():
+            # Rename only the defaults previously assigned to SIWC connections.
+            if provider.get("auth_mode") == "chatgpt_subscription" and provider.get("name") in (
+                "OpenAI Official",
+                "ChatGPT 订阅",
+            ):
+                provider["name"] = "Sign In With ChatGPT"
+                changed_scopes.add("shared")
         standard = next((p["id"] for p in providers.values() if provider_channel(p) == "standard"), "")
         for scope, keys in (("full_agent", ("model",)), ("half_agent", ("foreground", "background"))):
             agent = raw.setdefault(scope, {})

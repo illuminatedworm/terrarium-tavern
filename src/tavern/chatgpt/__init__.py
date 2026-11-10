@@ -1,4 +1,4 @@
-"""Local Sign in with ChatGPT connections, separate from portable settings."""
+"""Local Sign In With ChatGPT connections, separate from portable settings."""
 
 API_ROOT = "https://api.openai.com/v1"
 ISSUER = "https://auth.openai.com"

@@ -65,7 +65,7 @@ class ContextOperations:
     def start(self, sid, request):
         session = self.store.session(sid)
         if session["channel_origin"] != "chatgpt":
-            raise ValueError("此操作仅适用于 ChatGPT 官方渠道的对话")
+            raise ValueError("此操作仅适用于 OpenAI 官方渠道的对话")
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(

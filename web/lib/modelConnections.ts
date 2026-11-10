@@ -77,7 +77,7 @@ export function modelConnectionSummary(profile: ModelProfile, provider?: Provide
     provider?.auth_mode === 'openai_api_key'
       ? 'OpenAI 官方 API · API 计费 · '
       : provider?.auth_mode === 'chatgpt_subscription'
-        ? 'ChatGPT 订阅 · '
+        ? 'SIWC · 订阅计费 · '
         : '';
   return `${billing}${labels[mode]} · /${path}。${official ? '官方连接固定使用此协议和路径；切换连接会重建云端压缩状态，可能增加输入量。' : '连接参数来自该角色的模型设置，可在设置中选择此提供商编辑；'}模型选择保存在当前对话。`;
 }

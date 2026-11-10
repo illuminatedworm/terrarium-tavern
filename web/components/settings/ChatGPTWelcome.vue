@@ -54,8 +54,8 @@ onBeforeUnmount(restore);
       class="modal-backdrop chatgpt-welcome"
       @keydown.esc.prevent.stop="dismiss"
     >
-      <AppModal label="正在使用 ChatGPT 订阅" size="small" @close="dismiss">
-        <h2>正在使用你的 ChatGPT 订阅</h2>
+      <AppModal label="正在使用 SIWC" size="small" @close="dismiss">
+        <h2>正在使用 Sign In With ChatGPT（SIWC）</h2>
         <p>
           选择此连接的 Agent 请求将计入你的 ChatGPT 订阅额度，并遵循你在 ChatGPT 中设置的额度及 credits
           使用权限。连接应用不会增加独立额度。
