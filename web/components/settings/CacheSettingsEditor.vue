@@ -139,15 +139,25 @@ function edit(kind: 'value' | 'request', event: Event) {
         <p class="muted">{{ retention.note }}</p>
       </template>
       <p v-if="cache.mode === 'cloud'" class="muted">
-        不发送本地断点或缓存对象引用，由服务商管理缓存前缀。支持的时效参数可在右侧缓存页选择。
+        由服务商按单次模型请求管理缓存前缀，工具续答也各自计为一次请求。实际缓存读写以接口用量为准。<template
+          v-if="!cardAuthor"
+          >支持的时效参数可在右侧缓存页选择。</template
+        >
         <template v-if="cardAuthor && officialApi && retention.kind === 'openai_ttl'">
           同一应用数据目录内的制卡对话共用缓存计费分组，可复用尚有效的固定提示与工具定义。
         </template>
       </p>
       <template v-else>
-        <p class="muted">
-          断点默认每新增 2 轮推进一次，每次定位到倒数第 2 个已完成 AI
-          回复，也可在对话中手动固定。断点不代表已命中缓存。
+        <p v-if="cardAuthor && officialApi && retention.kind === 'openai_ttl'" class="muted">
+          在制卡对话右侧打开“缓存”可调整断点策略。新对话默认每完成 1
+          轮跟进到最新回复所在回合的末尾。同轮工具续答不推进。
+        </p>
+        <p v-else-if="cardAuthor && selected.kind !== 'implicit'" class="muted">
+          当前制卡接入使用固定前缀，按回复跟进适用于支持显式断点的 OpenAI 官方 API 模型。
+        </p>
+        <p v-else-if="!cardAuthor" class="muted">
+          断点默认每新增 1 轮推进一次，每次定位到倒数第 2 个已完成 AI
+          回复，也可在对话中手动固定。同轮工具续答不推进。断点不代表已命中缓存。
         </p>
         <label v-if="customCache"
           >参数格式<select v-model="cache.preset" aria-label="参数格式">
@@ -162,7 +172,9 @@ function edit(kind: 'value' | 'request', event: Event) {
           没有匹配的断点格式。请选择自定义参数；未配置时使用云端默认。
         </p>
         <p v-else-if="selected.kind === 'implicit'" class="muted">
-          当前模型由服务端管理缓存前缀，不发送显式断点；时效可在右侧缓存页选择。
+          当前模型由服务端管理缓存前缀，不发送显式断点。<template v-if="!cardAuthor"
+            >时效可在右侧缓存页选择。</template
+          >
         </p>
         <p v-else-if="cache.preset === 'auto'" class="muted">
           匹配参数：{{ selected.field }} =

@@ -28,6 +28,7 @@ class EditorRun:
         with self.store.connection() as db:
             workspace = self.edits.load(db, self.wid)
         self.environment = workspace.get("environment")
+        self.cache_follow = workspace["cache_follow"]
         self.files = copy.deepcopy([f for f in workspace.get("files", []) if f.get("message_ref")])
         progress = self.edits.progress(self.wid) if self.request.get("resume_run_id") else None
         self.working = copy.deepcopy(
@@ -282,7 +283,7 @@ class EditorRun:
             self.edits.write(db, workspace, increment=changed)
             history_ref = self.edits.message(db, self.wid, "assistant", response, self.rid)
             self.context.seen.append(history_ref)
-            self.context.update("final_ref", history_ref, "上条最终回复的历史引用：")
+            self.context.final_reply(history_ref)
             db.execute(
                 "INSERT OR REPLACE INTO card_edit_contexts VALUES (?,?)",
                 (self.wid, dump(self.context.saved())),

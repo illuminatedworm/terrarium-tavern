@@ -9,9 +9,12 @@ import httpx
 import pytest
 
 from tavern.character.card_author import CardAuthorService
+from tavern.character.editor_cache import DEFAULT_FOLLOW
 from tavern.character.editor_context import EditorContext
+from tavern.chatgpt.provider import ChatGPTProvider
 from tavern.core.models import CardAuthorRequest, Settings
 from tavern.scripting.model_transport import ModelTransport
+from tavern.search.retrieval_config import Provider
 from tavern.storage.backup import backup, restore
 from tavern.storage.maintenance import cleanup
 from tavern.storage.store import Store
@@ -21,7 +24,7 @@ from tests.backend.test_half_agent_alignment import blocks, sse
 
 
 class Editor:
-    def __init__(self, tmp_path, monkeypatch, api, mode="runtime"):
+    def __init__(self, tmp_path, monkeypatch, api, mode="runtime", *, official=False):
         self.store = Store(tmp_path)
         settings = self.store.settings_document()
         settings.full_agent.model.api_mode = api
@@ -33,6 +36,13 @@ class Editor:
         settings.shared.network.api_proxy = False
         settings.shared.card_author.model = "editor-model"
         settings.shared.card_author.cache.mode = mode
+        if official:
+            settings.shared.providers.append(
+                Provider(id="official", auth_mode="openai_api_key", api_key="editor-test-secret")
+            )
+            settings.shared.card_author.provider_id = "official"
+            settings.shared.card_author.api_path = "v1"
+            settings.shared.card_author.model = "gpt-6.1-sol"
         self.store.save_settings(settings)
         self.service = CardAuthorService(self.store)
         self.workspace = self.service.edits.create(import_fixture(self.store)["id"])
@@ -50,7 +60,8 @@ class Editor:
                     payload["stop_reason"] = "tool_use"
                 return sse(api, payload)
 
-            return ModelTransport(
+            provider = ChatGPTProvider if official else ModelTransport
+            return provider(
                 cfg, cfg.api_key, capture, http_client=httpx.AsyncClient(transport=httpx.MockTransport(route))
             )
 
@@ -400,6 +411,65 @@ async def test_editor_rebuilds_stale_context(tmp_path, monkeypatch, change):
         await editor.service.close()
 
 
+async def test_official_editor_cache_follow_marks_committed_turns_on_wire(tmp_path, monkeypatch):
+    editor = Editor(tmp_path, monkeypatch, "responses", official=True)
+    edits, wid = editor.service.edits, editor.workspace["id"]
+
+    def planned(run):
+        return [
+            event["payload"]["cache"].get("message_id")
+            for event in edits.events(run["id"])
+            if event["kind"] == "provider_request"
+        ]
+
+    async def finish(text):
+        return await editor.run([blocks("responses", text)], text)
+
+    try:
+        assert edits.conversation(wid)["cache_follow"] == {
+            "mode": "auto",
+            "interval": 1,
+            "offset": 1,
+            "baseline": 0,
+            "reply_ref": None,
+        }
+        first = await finish("第一轮")
+        assert planned(first) == [None]
+        assert planned(await finish("第二轮")) == ["H2"]
+        ws = edits.conversation(wid)
+        edits.set_cache_follow(wid, ws["revision"], "auto", 2, 1, None)
+        third = await editor.run(
+            [
+                editor.tool(1, "read_field", {"card_ref": "C1", "path": "/description"}),
+                blocks("responses", "完成"),
+            ]
+        )
+        assert planned(third) == ["H4", "H4"]
+        for request in editor.requests[-2:]:
+            mark = next(
+                item
+                for item in editor.wire(request)
+                if isinstance(item.get("content"), list)
+                and any("prompt_cache_breakpoint" in block for block in item["content"])
+                and item["content"][-1].get("text", "").endswith("H4")
+            )
+            assert mark["role"] == "developer"
+            assert mark["content"][-1]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert planned(await finish("第四轮")) == ["H4"]
+        assert planned(await finish("第五轮")) == ["H8"]
+        ws = edits.conversation(wid)
+        with pytest.raises(ValueError, match="已完成"):
+            edits.set_cache_follow(wid, ws["revision"], "manual", 2, 1, "H1")
+        edits.set_cache_follow(wid, ws["revision"], "manual", 2, 1, "H2")
+        assert planned(await finish("第六轮")) == ["H2"]
+        rollover = await editor.run(
+            [editor.tool(2, "new_context", {"content": "保持创作方向"}), blocks("responses", "换窗完成")]
+        )
+        assert planned(rollover) == ["H2", None]
+    finally:
+        await editor.service.close()
+
+
 def test_editor_rollover_uses_observed_input_and_preserves_reasoning():
     cfg = Settings()
     cfg.context_tokens = 12000
@@ -409,6 +479,7 @@ def test_editor_rollover_uses_observed_input_and_preserves_reasoning():
         cfg=cfg,
         definitions=[],
         environment=None,
+        cache_follow=DEFAULT_FOLLOW,
         edits=SimpleNamespace(messages=lambda wid: []),
         tools=SimpleNamespace(overview=lambda: {"cards": []}),
         wid="context",

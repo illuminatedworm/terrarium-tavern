@@ -289,6 +289,12 @@
   flex: 0 0 auto;
   padding: 20px 22px 12px;
 }
+.cw-inspector-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
 .cw-inspector h2 {
   margin: 0 0 14px;
   font: 600 var(--fs-lg) / 1.5 var(--font-ui);

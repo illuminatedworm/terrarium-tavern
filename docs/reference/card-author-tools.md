@@ -95,6 +95,7 @@ Agent 优先使用专门工具：
 |---|---|
 | `GET/POST /api/card-author/conversations` | 列表及空对话创建 |
 | `GET/PUT/DELETE /api/card-author/conversations/{id}` | 读取、改名、删除 |
+| `PUT .../{id}/cache-follow` | 保存对话缓存策略，`mode` 为 `fixed`、`auto` 或 `manual`，`interval` 和 `offset` 均为必填整数，范围 1–2,147,483,647（含边界），分别以已完成回合和回复计数。`manual` 必须用 `reply_ref` 指定已完成回复的 H 编号 |
 | `POST .../{id}/references` | 引用书架卡，可携带当前表单和原卡版本 |
 | `POST .../{id}/worldbook-references` | 引用世界书库中的一本书：`worldbook_id`、可选 `expected_worldbook_revision`；草稿项带 `worldbook` 字段，其余引用、修改、撤销、重新载入、移除接口按 ref 通用 |
 | `DELETE .../{id}/references/{ref}` | 移除该卡的引用、草稿和撤销历史 |

@@ -183,12 +183,12 @@ async def test_writer_turn_marks_second_latest_reply_in_responses_request(story)
         await service.tasks[turn["id"]]
         assert store.turn(turn["id"])["status"] == "committed"
         committed = store.session(session["id"])
-        assert committed["cache_breakpoint_effective_id"] == replies[1]
+        assert committed["cache_breakpoint_effective_id"] == replies[2]
         assert committed["cache_breakpoint_follow"] == {
-            "interval": 2,
+            "interval": 1,
             "offset": 2,
-            "anchor": replies[1],
-            "progress": 1,
+            "anchor": replies[2],
+            "progress": 0,
         }
         assert len(requests) == 1
         wire = requests[0]

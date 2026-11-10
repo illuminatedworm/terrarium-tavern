@@ -61,19 +61,17 @@ def commit_reply(store, session, regenerate=False):
     return store.session(session["id"])
 
 
-def test_default_follow_advances_every_two_replies_to_second_latest(story):
+def test_default_follow_advances_each_reply_to_second_latest(story):
     store, session = story
-    assert session["cache_breakpoint_follow"] == {"interval": 2, "offset": 2, "anchor": None, "progress": 0}
-    anchor = None
+    assert session["cache_breakpoint_follow"] == {"interval": 1, "offset": 2, "anchor": None, "progress": 0}
     for count in range(1, 7):
         session = commit_reply(store, session)
-        if count % 2 == 0:
-            anchor = session["messages"][-3]["id"]
+        anchor = session["messages"][-3]["id"] if count >= 2 else None
         assert session["cache_breakpoint_follow"] == {
-            "interval": 2,
+            "interval": 1,
             "offset": 2,
             "anchor": anchor,
-            "progress": count % 2,
+            "progress": 0,
         }
         assert session["cache_breakpoint_effective_id"] == anchor
         if count == 3:
@@ -168,7 +166,7 @@ async def test_api_validation_legacy_updates_and_additive_migration(story):
     migrated = Store(store.root).session(session["id"])
     assert migrated["cache_breakpoint_auto"] is False
     assert migrated["cache_breakpoint_message"] == session["head"]
-    assert migrated["cache_breakpoint_follow"]["interval"] == 2
+    assert migrated["cache_breakpoint_follow"]["interval"] == 1
     assert migrated["cache_breakpoint_follow"]["offset"] == 2
 
 

@@ -9,6 +9,7 @@ from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from tavern.character.editor_cache import follows_replies
 from tavern.character.editor_context import EditorContext
 from tavern.character.editor_runtime_config import editor_runtime_config
 from tavern.character.editor_sandbox import test_card
@@ -31,6 +32,13 @@ class Revision(Body):
 
 class Title(Revision):
     title: str = Field(min_length=1, max_length=100)
+
+
+class CacheFollow(Revision):
+    mode: Literal["fixed", "auto", "manual"]
+    interval: int = Field(ge=1, le=2**31 - 1, strict=True)
+    offset: int = Field(ge=1, le=2**31 - 1, strict=True)
+    reply_ref: str | None = Field(default=None, max_length=20, pattern=r"^H[1-9][0-9]*$")
 
 
 class Reference(Revision):
@@ -90,6 +98,14 @@ def register_conversation_routes(app, editor):
     @app.put(base + "/{wid}")
     async def rename(wid: str, payload: Title):
         return editor.edits.title(wid, payload.title, payload.expected_revision)
+
+    @app.put(base + "/{wid}/cache-follow")
+    async def save_cache_follow(wid: str, payload: CacheFollow):
+        if not follows_replies(editor_runtime_config(editor.store, wid, {})):
+            raise ValueError("当前制卡模型或缓存方式不支持按回复设置断点")
+        return editor.edits.set_cache_follow(
+            wid, payload.expected_revision, payload.mode, payload.interval, payload.offset, payload.reply_ref
+        )
 
     @app.delete(base + "/{wid}")
     async def delete(wid: str, payload: Revision):
@@ -230,6 +246,7 @@ def register_conversation_routes(app, editor):
             rid="preview",
             legacy=False,
             environment=environment,
+            cache_follow=workspace["cache_follow"],
             files=copy.deepcopy(workspace.get("files", [])),
             working=copy.deepcopy(working),
             cfg=editor_runtime_config(editor.store, wid, payload.model_dump()),
@@ -279,6 +296,7 @@ def register_conversation_routes(app, editor):
             **owner.context.image_stats(),
             "usage": json.loads(row[0]).get("usage") if row else None,
             "cache_usage": editor.edits.conversation_cache_usage(wid),
+            "cache_breakpoint": owner.context.cache_breakpoint,
         }
 
     @app.post(base + "/{wid}/preview")

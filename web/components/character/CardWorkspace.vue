@@ -7,6 +7,7 @@ import {
   editorTimeline,
   isWorldbook,
   type EditorCard,
+  type EditorCacheFollow,
   type EditorConversation,
   type EditorPersona,
 } from '../../lib/cardAuthor';
@@ -28,6 +29,7 @@ import CardWorkspaceIcon from './CardWorkspaceIcon.vue';
 import CardRunActivity from './CardRunActivity.vue';
 import CardMessage from './CardMessage.vue';
 import CardDraftPreview from './CardDraftPreview.vue';
+import CardCachePanel from './CardCachePanel.vue';
 import CardSkills from './CardSkills.vue';
 import CardFileReference from './CardFileReference.vue';
 import CardReferencePicker from './CardReferencePicker.vue';
@@ -117,11 +119,18 @@ const composer = ref<HTMLTextAreaElement>(),
 const chat = ref<HTMLElement>(),
   shell = ref<HTMLElement>(),
   modalOverlay = ref<HTMLElement>();
+const inspectorToggle = ref<HTMLButtonElement>();
+const closeInspector = ref<HTMLButtonElement>();
 const followingLatest = ref(true);
-const narrow = ref(window.innerWidth <= 1100);
+const narrow = ref(window.innerWidth <= 1200);
 const onResize = () => {
-  narrow.value = window.innerWidth <= 1100;
+  narrow.value = window.innerWidth <= 1200;
 };
+watch(inspectorOpen, async (open) => {
+  if (!narrow.value) return;
+  await nextTick();
+  (open ? closeInspector.value : inspectorToggle.value)?.focus();
+});
 const activities = ref<Record<string, EditorEvent[]>>({});
 let alive = true;
 let refreshVersion = 0;
@@ -492,7 +501,21 @@ async function chooseReference(option: CardReferenceOption) {
 function inspectReference(item: EditorCard) {
   referencePicker.close();
   selected.value = item.ref;
+  if (tab.value === 'cache') tab.value = 'preview';
   inspectorOpen.value = true;
+}
+async function saveCacheFollow(policy: EditorCacheFollow) {
+  if (!workspace.value || locked.value) return;
+  await guard(async () => {
+    const value = await api(
+      base + '/cache-follow',
+      { ...policy, expected_revision: workspace.value!.revision },
+      'PUT',
+    );
+    if (!alive) return;
+    workspace.value = value;
+    scheduleStats();
+  });
 }
 async function removeReference(kind: 'card' | 'persona', ref: string) {
   if (locked.value) return;
@@ -657,6 +680,7 @@ onBeforeUnmount(() => {
               <CardWorkspaceIcon name="trash" />删除对话
             </button>
             <button
+              ref="inspectorToggle"
               class="cw-inspector-toggle"
               :aria-expanded="inspectorOpen"
               @click="inspectorOpen = !inspectorOpen"
@@ -665,7 +689,13 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </header>
-        <p v-if="error" class="cw-notice danger" role="alert">{{ error }}</p>
+        <p
+          v-if="error && (tab !== 'cache' || (narrow && !inspectorOpen))"
+          class="cw-notice danger"
+          role="alert"
+        >
+          {{ error }}
+        </p>
         <p v-if="notice" class="cw-notice" role="status">{{ notice }}</p>
         <div class="cw-chat-wrap">
           <div ref="chat" class="cw-chat" aria-label="制卡对话" @scroll="trackScroll">
@@ -835,25 +865,55 @@ onBeforeUnmount(() => {
           </p>
         </form>
       </div>
-      <aside class="cw-inspector" :class="{ open: inspectorOpen }" aria-label="卡片与修改">
-        <button class="cw-close-inspector" @click="inspectorOpen = false">返回对话</button>
+      <aside
+        class="cw-inspector"
+        :class="{ open: inspectorOpen }"
+        aria-label="卡片与修改"
+        @keydown.esc="inspectorOpen = false"
+      >
+        <button ref="closeInspector" class="cw-close-inspector" @click="inspectorOpen = false">
+          返回对话
+        </button>
         <div class="cw-inspector-top">
-          <h2>当前草稿</h2>
-          <label
-            ><span class="sr-only">当前卡片</span
-            ><select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
-              <option v-if="!items.length" value="">暂无卡片</option>
-              <option v-for="item in items" :key="item.ref" :value="item.ref">
-                {{ cardName(item) }}
-              </option>
-            </select></label
-          >
-          <label v-if="workspace?.pending" class="check"
-            ><input v-model="pendingView" type="checkbox" />查看本轮未完成版本</label
-          >
-          <p v-if="pendingView" class="cw-notice">未完成版本仅供查看，继续完成后才成为草稿。</p>
+          <div class="cw-inspector-heading">
+            <h2>{{ tab === 'cache' ? '缓存' : '当前草稿' }}</h2>
+            <button
+              v-if="workspace"
+              type="button"
+              class="quiet"
+              @click="tab = tab === 'cache' ? 'preview' : 'cache'"
+            >
+              {{ tab === 'cache' ? '卡片与修改' : '缓存' }}
+            </button>
+          </div>
+          <template v-if="tab !== 'cache'">
+            <label
+              ><span class="sr-only">当前卡片</span
+              ><select v-model="selected" aria-label="选择卡片" :disabled="!items.length">
+                <option v-if="!items.length" value="">暂无卡片</option>
+                <option v-for="item in items" :key="item.ref" :value="item.ref">
+                  {{ cardName(item) }}
+                </option>
+              </select></label
+            >
+            <label v-if="workspace?.pending" class="check"
+              ><input v-model="pendingView" type="checkbox" />查看本轮未完成版本</label
+            >
+            <p v-if="pendingView" class="cw-notice">未完成版本仅供查看，继续完成后才成为草稿。</p>
+          </template>
         </div>
-        <template v-if="current">
+        <CardCachePanel
+          v-if="tab === 'cache' && workspace"
+          class="cw-inspector-scroll"
+          :policy="workspace.cache_follow"
+          :plan="contextStats?.cache_breakpoint"
+          :messages="workspace.messages"
+          :locked="locked"
+          :error="error"
+          :stats-error="statsError"
+          @save="saveCacheFollow"
+        />
+        <template v-else-if="current">
           <nav class="cw-tabs" aria-label="卡片信息">
             <button
               v-for="t in [

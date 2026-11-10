@@ -35,11 +35,11 @@ const emit = defineEmits<{
   settings: [];
 }>();
 const automatic = ref(true);
-const interval = ref(2);
+const interval = ref(1);
 const offset = ref(2);
 function reset() {
   automatic.value = props.session.cache_breakpoint_auto;
-  interval.value = props.session.cache_breakpoint_follow?.interval || 2;
+  interval.value = props.session.cache_breakpoint_follow?.interval || 1;
   offset.value = props.session.cache_breakpoint_follow?.offset || 2;
 }
 watch(() => [props.session.id, props.session.revision], reset, { immediate: true });
@@ -183,7 +183,7 @@ function save() {
         <h3>
           断点<FieldHelp
             v-if="runtime"
-            tooltip="选择稳定前缀的结束位置。悬停 AI 回复末尾，点击黄点可手动固定。自动跟进在保存后立即定位，再按新增的已完成回复计数；重新生成不计轮次。"
+            tooltip="选择稳定前缀的结束位置。悬停 AI 回复末尾，点击黄点可手动固定。自动跟进在保存后立即定位，之后只按成功提交的新增回合计数。同轮工具续答和重生成都不增加轮次。"
           />
         </h3>
       </div>

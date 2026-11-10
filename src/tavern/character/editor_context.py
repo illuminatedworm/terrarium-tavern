@@ -4,6 +4,7 @@ import copy
 import json
 
 from tavern.character.editor_attachments import message_content
+from tavern.character.editor_cache import FINAL_REF_PREFIX, follows_replies, reply_breakpoint
 from tavern.character.editor_draft_state import draft_changes, draft_versions
 from tavern.character.editor_environment import environment_message
 from tavern.character.editor_images import IMAGE_REFS, image_refs, image_stats
@@ -64,6 +65,7 @@ class EditorContext:
         self.origin = response_origin(owner.cfg)
         self.refresh_tool_policy()
         history = owner.edits.messages(owner.wid)
+        self.reply_refs = [message["ref"] for message in history if message["role"] == "assistant"]
         seed = {
             "documents": [c["document"] for c in owner.working["cards"]],
             "history": [m["content"] for m in history],
@@ -170,6 +172,15 @@ class EditorContext:
         )
         if message["ref"] not in self.seen:
             self.seen.append(message["ref"])
+        if (
+            message["role"] == "assistant"
+            and follows_replies(self.owner.cfg)
+            and self.owner.cache_follow["mode"] != "fixed"
+        ):
+            self.final_reply(message["ref"])
+
+    def final_reply(self, ref):
+        self.update("final_ref", ref, FINAL_REF_PREFIX)
 
     def add_message(self, role, text, files):
         message = {"role": role, "content": self.view.text(message_content(text, files))}
@@ -290,7 +301,16 @@ class EditorContext:
             # A pressure frame changes the request about to be sent; the stats
             # event reports that request rather than the one measured above.
             self.last_usage = self.usage()
-        return runtime_messages(self.messages, "card_author")
+        messages = runtime_messages(self.messages, "card_author")
+        self.cache_breakpoint = reply_breakpoint(owner.cfg, owner.cache_follow, self.reply_refs, messages)
+        index = self.cache_breakpoint.get("index")
+        if index is not None:
+            messages[index].update(
+                _cache_breakpoint=True,
+                _cache_message_id=self.cache_breakpoint["reply_ref"],
+                _cache_source="editor_final_ref",
+            )
+        return messages
 
     def usage(self):
         self.owner.cfg._context_generation = self.epoch

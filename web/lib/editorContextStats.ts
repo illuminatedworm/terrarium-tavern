@@ -1,4 +1,5 @@
 import type { ContextUsage } from './contextUsage';
+import type { EditorCacheBreakpoint } from './cardAuthor';
 
 export interface ConversationCacheUsage {
   prompt_tokens: number | null;
@@ -11,6 +12,7 @@ export interface EditorContextStats {
   model: string;
   usage?: Record<string, any> | null;
   cache_usage?: ConversationCacheUsage | null;
+  cache_breakpoint?: EditorCacheBreakpoint;
   image_count?: number;
 }
 

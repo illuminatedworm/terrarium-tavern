@@ -49,11 +49,26 @@ export interface EditorConversation {
   id: string;
   title: string;
   revision: number;
+  cache_follow: EditorCacheFollow;
   cards: EditorCard[];
   state: { handoff?: string; window?: number; persona_attachments?: Record<string, EditorPersona> };
   messages: EditorMessage[];
   runs: EditorRun[];
   pending: { run: string; cards: EditorCard[]; state: Record<string, any>; calls: number } | null;
+}
+
+export interface EditorCacheFollow {
+  mode: 'fixed' | 'auto' | 'manual';
+  interval: number;
+  offset: number;
+  reply_ref: string | null;
+}
+
+export interface EditorCacheBreakpoint {
+  enabled: boolean;
+  reason?: string | null;
+  reply_ref?: string | null;
+  remaining?: number | null;
 }
 
 export interface EditorPersona {

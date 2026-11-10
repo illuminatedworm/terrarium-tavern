@@ -6,6 +6,7 @@ import time
 
 from tavern.character.card_workflow import validate_document, validation_report
 from tavern.character.cards import diagnose, normalize
+from tavern.character.editor_cache import DEFAULT_FOLLOW
 from tavern.character.editor_environment import capture_environment
 from tavern.character.editor_worldbook import (
     NAME_LIMIT,
@@ -47,6 +48,10 @@ def initialize(store):
             db.execute("ALTER TABLE card_author_conversations ADD COLUMN channel_origin TEXT")
             db.execute(
                 "ALTER TABLE card_author_conversations ADD COLUMN model_selection TEXT NOT NULL DEFAULT '{}'"
+            )
+        if "cache_follow" not in columns:
+            db.execute(
+                "ALTER TABLE card_author_conversations ADD COLUMN cache_follow TEXT NOT NULL DEFAULT '{}'"
             )
         if "ref" not in {r[1] for r in db.execute("PRAGMA table_info(card_edit_versions)")}:
             db.execute("ALTER TABLE card_edit_versions ADD COLUMN ref TEXT NOT NULL DEFAULT 'C1'")
@@ -120,6 +125,8 @@ class Conversations:
             **dict(row),
             **json.loads(row["payload"]),
             "model_selection": json.loads(row["model_selection"]),
+            # Rows predating the strategy keep the fixed-prefix behavior.
+            "cache_follow": {**DEFAULT_FOLLOW, "mode": "fixed", **json.loads(row["cache_follow"])},
         }
 
     def write(self, db, workspace, *, increment=True):
@@ -167,6 +174,34 @@ class Conversations:
             raise Conflict("请先继续或丢弃本轮未完成进度")
         return workspace
 
+    def set_cache_follow(self, wid, revision, mode, interval, offset, reply_ref):
+        with self.store.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.check(db, wid, revision)
+            if mode == "manual" and (
+                not reply_ref
+                or not db.execute(
+                    "SELECT 1 FROM card_author_messages WHERE workspace=? AND seq=? AND role='assistant'",
+                    (wid, reply_ref[1:]),
+                ).fetchone()
+            ):
+                raise ValueError("请选择本对话中已完成的制卡回复")
+            baseline = db.execute(
+                "SELECT count(*) FROM card_author_messages WHERE workspace=? AND role='assistant'", (wid,)
+            ).fetchone()[0]
+            policy = {
+                "mode": mode,
+                "interval": interval,
+                "offset": offset,
+                "baseline": baseline,
+                "reply_ref": reply_ref,
+            }
+            db.execute(
+                "UPDATE card_author_conversations SET cache_follow=?,revision=revision+1 WHERE id=?",
+                (dump(policy), wid),
+            )
+        return self.conversation(wid)
+
     def initialize_channel(self, db, wid):
         from tavern.core.channels import provider_channel
 
@@ -174,8 +209,8 @@ class Conversations:
         cfg = self.store.settings().for_role("card_author")
         selection = {key: getattr(profile, key) for key in ("provider_id", "model")}
         db.execute(
-            "UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
-            (provider_channel(cfg), dump(selection) if profile.model else "{}", wid),
+            "UPDATE card_author_conversations SET channel_origin=?,model_selection=?,cache_follow=? WHERE id=?",
+            (provider_channel(cfg), dump(selection) if profile.model else "{}", dump(DEFAULT_FOLLOW), wid),
         )
 
     def create_conversation(self, title=""):
@@ -807,8 +842,13 @@ class Conversations:
                 (new_id, dump({"cards": workspace["cards"], "state": {}}), now, now, workspace["next_ref"]),
             )
             db.execute(
-                "UPDATE card_author_conversations SET channel_origin=?,model_selection=? WHERE id=?",
-                (workspace["channel_origin"], dump(workspace["model_selection"]), new_id),
+                "UPDATE card_author_conversations SET channel_origin=?,model_selection=?,cache_follow=? WHERE id=?",
+                (
+                    workspace["channel_origin"],
+                    dump(workspace["model_selection"]),
+                    dump(DEFAULT_FOLLOW),
+                    new_id,
+                ),
             )
             self.store.copy_message_adapter(db, "editor", wid, new_id)
         return self.get(new_id)
