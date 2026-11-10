@@ -34,7 +34,7 @@ Linux 安装沿用环境代理，也可通过 `--proxy '<完整的 HTTP(S) 代�
 
 **便携包**已附带 Python、锁定依赖（含 Playwright 自带的 Node 驱动）和界面，使用系统的 Edge/Chrome 稳定版。准备好浏览器后，解压并运行 `点击开始.cmd` / `start.ps1` 或 `./start.sh` 即可，无需运行源码安装脚本。Windows 包使用 embeddable Python，Linux 包要求 glibc x64。构建、系统要求和验证见[便携包说明](../development/desktop.md#便携包)。
 
-v0.8.10 的 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.10) 附件中，`terrarium-tavern-0.8.10-windows-x64.zip` 是可直接运行的 Windows 基础包，`terrarium-tavern-0.8.10-android-arm64-build7.apk` 是 Android 安装包，同名 `.sha256` 用于校验下载完整性。GitHub 自动生成的 Source code 归档是源码，需要另行准备开发环境。本次不提供 Linux 二进制包，Linux 可按源码安装。
+v0.8.15 的 [GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.15) 附件中，`terrarium-tavern-0.8.15-windows-x64.zip` 是可直接运行的 Windows 基础包，`terrarium-tavern-0.8.15-android-arm64-build8.apk` 是 Android 安装包，同名 `.sha256` 用于校验下载完整性。GitHub 自动生成的 Source code 归档是源码，需要另行准备开发环境。本次不提供 Linux 二进制包，Linux 可按源码安装。
 
 Android APK 使用 debug 签名，要求 Android 9+、ARM64 和 4 KiB 内存页，不支持 16 KiB 内存页设备。同签名可保留数据覆盖安装；更新前先导出备份，不要为处理签名冲突直接卸载旧应用。模型权重需单独导入，详见[Android 开发与设备范围](../development/android.md)。
 
@@ -61,7 +61,7 @@ Android APK 使用 debug 签名，要求 Android 9+、ARM64 和 4 KiB 内存页�
 
 ## 版本选择
 
-当前版本为 **v0.8.10（实验阶段）**，Windows、Linux 与 Android 共用版本标签。需要固定源码版本时可检出 `v0.8.10`，或从仓库标签页下载对应源码，再运行当前系统的安装脚本。`main` 和 `linux` 是开发分支，后续提交可能超出已标记版本；v0.8.10 标签对应两者同步后的提交。
+当前版本为 **v0.8.15（实验阶段）**，Windows、Linux 与 Android 共用版本标签。需要固定源码版本时可检出 `v0.8.15`，或从仓库标签页下载对应源码，再运行当前系统的安装脚本。`main` 和 `linux` 是开发分支，后续提交可能超出已标记版本；v0.8.15 标签对应两者同步后的提交。
 
 [版本记录](../changelog.md)列出历史标签及兼容说明。`v0.1.0`、`v0.2.0` 尚无 Linux Bash 安装脚本；Linux 支持从 `v0.3.0` 开始。标签用于固定源码，不代表已提供二进制安装包。
 

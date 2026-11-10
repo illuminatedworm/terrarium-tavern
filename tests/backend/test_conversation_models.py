@@ -327,7 +327,7 @@ def test_kemini_identity_is_fixed_at_creation_and_standard_only(tmp_path):
     document = store.settings_document()
     document.shared.kemini.enabled = True
     store.save_settings(document)
-    with pytest.raises(ValueError, match="ChatGPT"):
+    with pytest.raises(ValueError, match="OpenAI 官方渠道"):
         store.new_session(SessionCreate(card_id=card["id"], channel_origin="chatgpt", kemini=True))
     ordinary = store.new_session(SessionCreate(card_id=card["id"]))
     kemini = store.new_session(SessionCreate(card_id=card["id"], kemini=True))

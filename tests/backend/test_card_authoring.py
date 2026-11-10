@@ -64,7 +64,7 @@ class Batches(ToolLLM):
 
 def test_schemas_are_explicit_and_use_one_catalog():
     definitions = tool_definitions()
-    assert len(definitions) == 25
+    assert len({tool["function"]["name"] for tool in definitions}) == len(definitions)
     for tool in definitions:
         schema = tool["function"]["parameters"]
         assert schema["additionalProperties"] is False
@@ -470,7 +470,7 @@ async def test_api_empty_preview_reference_snapshot_and_revision(tmp_path):
             created = (await client.post("/api/card-author/conversations", json={})).json()
             base = "/api/card-author/conversations/" + created["id"]
             preview = (await client.post(base + "/preview", json={"text": "先讨论"})).json()
-            assert preview["preview_only"] and len(preview["tools"]) == 25
+            assert preview["preview_only"] and preview["tools"] == tool_definitions()
             assert editor.edits.messages(created["id"]) == []
             attached = (
                 await client.post(base + "/references", json={"card_id": card["id"], "expected_revision": 0})

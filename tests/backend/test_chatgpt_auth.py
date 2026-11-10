@@ -428,6 +428,6 @@ def test_corrupted_vault_is_not_overwritten(tmp_path, identity):
     service = identity.service(tmp_path)
     seed_account(service)
     service.vault.path.write_bytes(b"damaged")
-    with pytest.raises(ValueError, match="未覆盖"):
+    with pytest.raises(ValueError, match="原文件已保留"):
         service.public()
     assert service.vault.path.read_bytes() == b"damaged"

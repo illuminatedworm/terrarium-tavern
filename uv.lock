@@ -2284,7 +2284,7 @@ wheels = [
 
 [[package]]
 name = "terrarium-tavern"
-version = "0.8.10"
+version = "0.8.15"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

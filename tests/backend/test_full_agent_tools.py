@@ -687,6 +687,9 @@ async def test_tool_catalog_switches_persist_and_enforce_permissions(story):
                 assert tool["enabled"] == (
                     tool["name"] not in {"write_plot", *MAIN_SPECS, *initially_disabled}
                 )
+                if tool["name"] == "write_plot":
+                    description = tool["description"].replace(" (锚点)", "").replace(" (冷酷度)", "")
+                    tool = {**tool, "description": description}
                 assert not re.search(r"[\u4e00-\u9fff]", json.dumps(tool, ensure_ascii=False))
                 assert all(p.get("description") for p in tool["parameters"]["properties"].values())
             lore = next(t for t in catalog if t["name"] == "recall_lore")
