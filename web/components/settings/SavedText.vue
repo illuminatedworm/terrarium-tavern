@@ -40,7 +40,8 @@ function trap(event: KeyboardEvent) {
 <template>
   <div class="saved-text" :data-dirty="modelValue !== savedValue">
     <label :for="'text-' + label">{{ label }}</label>
-    <div class="saved-text-field">
+    <div class="saved-text-field" :class="{ 'has-toolbar': $slots.toolbar }">
+      <slot name="toolbar" />
       <textarea
         :id="'text-' + label"
         :aria-label="label"
@@ -145,6 +146,9 @@ function trap(event: KeyboardEvent) {
   padding-bottom: 44px;
   resize: vertical;
   line-height: 1.65;
+}
+.saved-text-field.has-toolbar > textarea {
+  border-start-start-radius: 0;
 }
 .saved-text-actions {
   display: flex;

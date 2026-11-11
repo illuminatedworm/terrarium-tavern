@@ -63,7 +63,7 @@ export interface WebSettings {
   timeout_seconds: number;
 }
 export interface CardAuthorConfig {
-  system_prompt: string;
+  system_prompt: PromptChoices;
   max_steps: number;
   pressure_ratio: number;
   handoff_tokens: number;
@@ -82,16 +82,28 @@ export interface PromptDefinition {
   label: string;
   description: string;
   default: string;
+  choices?: boolean;
+}
+export interface PromptChoice {
+  text: string;
+  name: string;
+}
+export interface PromptChoices {
+  active: number;
+  options: [PromptChoice, PromptChoice, PromptChoice, PromptChoice];
 }
 export interface SettingsDocument {
-  version: 18;
+  version: 19;
   full_agent: SettingsObject & {
+    system_prompt: PromptChoices;
     novel_research: NovelConfig;
     model: ModelProfile;
     official_model: ModelProfile | null;
     default_channel: 'standard' | 'chatgpt';
   };
   half_agent: SettingsObject & {
+    system_prompt: PromptChoices;
+    tracker_system_prompt: PromptChoices;
     foreground: ModelProfile;
     background: ModelProfile;
     official_foreground: ModelProfile | null;
@@ -111,7 +123,7 @@ export interface SettingsDocument {
     advisor: {
       model: ModelProfile;
       official_model: ModelProfile | null;
-      system_prompt: string;
+      system_prompt: PromptChoices;
       recent_exchanges: number;
       keep_recent: number;
       auto_compact: boolean;

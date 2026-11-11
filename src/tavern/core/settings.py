@@ -7,8 +7,9 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tavern.advisor.config import SYSTEM as ADVISOR_PROMPT
-from tavern.advisor.config import AdvisorConfig
-from tavern.character.editor_config import CardAuthorConfig
+from tavern.advisor.config import AdvisorConfig, AdvisorOptions
+from tavern.character.editor_config import SYSTEM as CARD_AUTHOR_PROMPT
+from tavern.character.editor_config import CardAuthorOptions
 from tavern.core.cache_policy import endpoint, fingerprint, runtime_cache
 from tavern.core.channels import Channel, provider_channel
 from tavern.core.kemini import KeminiConfig
@@ -19,6 +20,7 @@ from tavern.core.kemini_prompts import (
     migrate_interleaving_prompts,
 )
 from tavern.core.models import ContextRecipe, PreferencePreset, Settings
+from tavern.core.prompt_choices import PromptChoices
 from tavern.core.prompts import (
     DEFAULT_LOCAL_INSTRUCTION,
     DEFAULT_MAINTENANCE_PROMPT,
@@ -100,7 +102,7 @@ class FullSettings(AgentSettings):
     model: ModelProfile = Field(default_factory=lambda: ModelProfile(cache=runtime_cache()))
     official_model: ModelProfile | None = None
     tools: FullAgentConfig = Field(default_factory=FullAgentConfig)
-    system_prompt: str = FULL_AGENT_PROMPT
+    system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(FULL_AGENT_PROMPT))
     novel_research: NovelConfig = Field(default_factory=NovelConfig)
 
     @model_validator(mode="before")
@@ -117,8 +119,12 @@ class HalfSettings(AgentSettings):
     background: ModelProfile = Field(default_factory=lambda: ModelProfile(reply_tokens=8192))
     official_foreground: ModelProfile | None = None
     official_background: ModelProfile | None = None
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    tracker_system_prompt: str = DEFAULT_TRACKER_PROMPT
+    system_prompt: PromptChoices = Field(
+        default_factory=lambda: PromptChoices.from_text(DEFAULT_SYSTEM_PROMPT)
+    )
+    tracker_system_prompt: PromptChoices = Field(
+        default_factory=lambda: PromptChoices.from_text(DEFAULT_TRACKER_PROMPT)
+    )
     tracker_max_steps: int = Field(default=12, ge=2, le=100, strict=True)
     lore_injection_mode: Literal["conversation", "st_top"] = "conversation"
     context_recipe: ContextRecipe = Field(default_factory=ContextRecipe)
@@ -175,6 +181,19 @@ class LocalResources(StrictSettings):
         return self
 
 
+class AdvisorSettings(AdvisorOptions):
+    system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(ADVISOR_PROMPT))
+
+    def runtime(self) -> AdvisorConfig:
+        return AdvisorConfig(
+            **self.model_dump(exclude={"system_prompt"}), system_prompt=self.system_prompt.current
+        )
+
+
+class CardAuthorSettings(CardAuthorOptions):
+    system_prompt: PromptChoices = Field(default_factory=lambda: PromptChoices.from_text(CARD_AUTHOR_PROMPT))
+
+
 class SharedSettings(StrictSettings):
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
@@ -183,8 +202,8 @@ class SharedSettings(StrictSettings):
     model_request_mode: Literal["auto", "stream", "non_stream"] = "auto"
     providers: list[Provider] = Field(default_factory=lambda: [Provider(id="default")])
     card_author: ModelProfile = Field(default_factory=ModelProfile)
-    card_author_config: CardAuthorConfig = Field(default_factory=CardAuthorConfig)
-    advisor: AdvisorConfig = Field(default_factory=AdvisorConfig)
+    card_author_config: CardAuthorSettings = Field(default_factory=CardAuthorSettings)
+    advisor: AdvisorSettings = Field(default_factory=AdvisorSettings)
     web: WebConfig = Field(default_factory=WebConfig)
     preference_presets: list[PreferencePreset] = Field(default_factory=list)
     local_models: LocalResources = Field(default_factory=LocalResources)
@@ -202,7 +221,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[18] = 18
+    version: Literal[19] = 19
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -311,11 +330,19 @@ class SettingsDocument(StrictSettings):
                 "official_background",
                 "default_channel",
                 "novel_research",
+                "system_prompt",
+                "tracker_system_prompt",
             }
         )
         data["runtime_mode"] = mode
-        data.update(self.shared.model_dump())
-        data.pop("advisor", None)  # Advisor has its own operation-local projection.
+        # Only the selected text enters operation-local settings and request fingerprints.
+        data["system_prompt"] = agent.system_prompt.current
+        if mode == "half_agent":
+            data["tracker_system_prompt"] = agent.tracker_system_prompt.current
+        data.update(
+            self.shared.model_dump(exclude={"advisor": True, "card_author_config": {"system_prompt"}})
+        )
+        data["card_author_config"]["system_prompt"] = self.shared.card_author_config.system_prompt.current
         # shared.kemini.enabled only permits creating Kemini conversations; the
         # experiment applies per conversation via Store.session_settings.
         data["kemini"]["enabled"] = False
@@ -324,7 +351,7 @@ class SettingsDocument(StrictSettings):
         data.update(
             full_agent=full_profile.model_dump(),
             full_agent_config=self.full_agent.tools.model_dump(),
-            full_agent_system_prompt=self.full_agent.system_prompt,
+            full_agent_system_prompt=self.full_agent.system_prompt.current,
         )
         if mode == "full_agent":
             # Script adapters use role-shaped access too; they must never reach Half Agent.
@@ -444,6 +471,19 @@ def migrate_context_window_settings(raw):
     raw.pop("context_pressure_target", None)
 
 
+def migrate_prompt_choices(raw):
+    shared = raw["shared"]
+    for owner, key in (
+        (raw["full_agent"], "system_prompt"),
+        (raw["half_agent"], "system_prompt"),
+        (raw["half_agent"], "tracker_system_prompt"),
+        (shared.get("advisor", {}), "system_prompt"),
+        (shared.get("card_author_config", {}), "system_prompt"),
+    ):
+        if isinstance(owner.get(key), str):
+            owner[key] = PromptChoices.from_text(owner[key]).model_dump()
+
+
 def migrate_settings(raw: dict) -> SettingsDocument:
     raw = deepcopy(raw)
     renamed = rename_card_author(raw)
@@ -551,20 +591,8 @@ def migrate_settings(raw: dict) -> SettingsDocument:
                         if key in ("model", "foreground"):
                             agent["default_channel"] = "chatgpt"
                 changed_scopes.add(scope)
-        if migrate_tracker_settings(raw.setdefault("half_agent", {})):
+        if raw["version"] < 19 and migrate_tracker_settings(raw["half_agent"]):
             changed_scopes.add("half_agent")
-        # Upgrade only the exact previous application default. Custom story
-        # instructions remain user-owned; tool descriptions carry the new rule too.
-        if fingerprint(raw["full_agent"].get("system_prompt")) in LEGACY_FULL_AGENT_PROMPT_HASHES:
-            raw["full_agent"]["system_prompt"] = FULL_AGENT_PROMPT
-            changed_scopes.add("full_agent")
-        if fingerprint(raw["half_agent"].get("system_prompt")) in LEGACY_HALF_AGENT_PROMPT_HASHES:
-            raw["half_agent"]["system_prompt"] = DEFAULT_SYSTEM_PROMPT
-            changed_scopes.add("half_agent")
-        advisor = raw.get("shared", {}).get("advisor", {})
-        if fingerprint(advisor.get("system_prompt")) in LEGACY_ADVISOR_PROMPT_HASHES:
-            advisor["system_prompt"] = ADVISOR_PROMPT
-            changed_scopes.add("shared")
         for scope, key in (
             ("full_agent", "model"),
             ("half_agent", "foreground"),
@@ -599,19 +627,32 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             raw["version"] = 18
             if raw.setdefault("shared", {}).pop("reply_locate_start", None) is not None:
                 changed_scopes.add("shared")
+        if raw["version"] == 18:
+            migrate_prompt_choices(raw)
+            raw["version"] = 19
+            changed_scopes.update(("full_agent", "half_agent", "shared"))
+        doc = SettingsDocument.model_validate(raw)
+        # Only the first option follows the existing exact-default upgrade rules.
+        for scope, choices, legacy_hashes, default in (
+            ("full_agent", doc.full_agent.system_prompt, LEGACY_FULL_AGENT_PROMPT_HASHES, FULL_AGENT_PROMPT),
+            (
+                "half_agent",
+                doc.half_agent.system_prompt,
+                LEGACY_HALF_AGENT_PROMPT_HASHES,
+                DEFAULT_SYSTEM_PROMPT,
+            ),
+            ("shared", doc.shared.advisor.system_prompt, LEGACY_ADVISOR_PROMPT_HASHES, ADVISOR_PROMPT),
+        ):
+            first = choices.options[0]
+            if fingerprint(first.text) in legacy_hashes:
+                first.text = default
+                changed_scopes.add(scope)
         for scope in changed_scopes:
-            revisions = raw.setdefault(
-                "revisions", {name: 0 for name in ("full_agent", "half_agent", "shared")}
-            )
-            revisions[scope] = revisions.get(scope, 0) + 1
-        return SettingsDocument.model_validate(raw)
+            doc.revisions[scope] = doc.revisions.get(scope, 0) + 1
+        return doc
     migrate_tracker_settings(raw)
     migrate_context_window_settings(raw)
     old = Settings.model_validate(raw)
-    if fingerprint(old.full_agent_system_prompt) in LEGACY_FULL_AGENT_PROMPT_HASHES:
-        old.full_agent_system_prompt = FULL_AGENT_PROMPT
-    if fingerprint(old.system_prompt) in LEGACY_HALF_AGENT_PROMPT_HASHES:
-        old.system_prompt = DEFAULT_SYSTEM_PROMPT
     if old.retrieval.protocol_prompt == LEGACY_DEFAULT_RETRIEVAL_PROTOCOL:
         old.retrieval.protocol_prompt = DEFAULT_RETRIEVAL_PROTOCOL
     values = old.model_dump()
@@ -635,7 +676,9 @@ def migrate_settings(raw: dict) -> SettingsDocument:
     shared["local_models"] = {
         key: deepcopy(values["local_models"][key]) for key in LocalResources.model_fields
     }
-    result = SettingsDocument(full_agent=full, half_agent=half, shared=shared).model_dump()
+    scoped = {"full_agent": full, "half_agent": half, "shared": shared}
+    migrate_prompt_choices(scoped)
+    result = SettingsDocument.model_validate(scoped).model_dump()
     for scope, key, profile in (
         ("full_agent", "model", old.full_agent or old.foreground),
         ("half_agent", "foreground", old.foreground),
@@ -665,9 +708,21 @@ def from_runtime(value: Settings) -> SettingsDocument:
     doc = value._settings_source.model_copy(deep=True)
     data = value.model_dump()
     mode = value._settings_mode
+    doc.full_agent.system_prompt.replace_current(value.full_agent_system_prompt)
+    if mode == "half_agent":
+        doc.half_agent.system_prompt.replace_current(value.system_prompt)
+        doc.half_agent.tracker_system_prompt.replace_current(value.tracker_system_prompt)
+    doc.shared.card_author_config.system_prompt.replace_current(value.card_author_config.system_prompt)
     agent = getattr(doc, mode).model_dump()
     for key in agent:
-        if key in data and key not in {"model", "tools", "local_runtime", "novel_research"}:
+        if key in data and key not in {
+            "model",
+            "tools",
+            "local_runtime",
+            "novel_research",
+            "system_prompt",
+            "tracker_system_prompt",
+        }:
             agent[key] = deepcopy(data[key])
     agent["local_runtime"] = {
         key: deepcopy(data["local_models"][key]) for key in RetrievalRuntime.model_fields
@@ -678,7 +733,6 @@ def from_runtime(value: Settings) -> SettingsDocument:
             {
                 key: data["full_agent"],
                 "tools": data["full_agent_config"],
-                "system_prompt": data["full_agent_system_prompt"],
             }
         )
     else:
@@ -693,10 +747,10 @@ def from_runtime(value: Settings) -> SettingsDocument:
             value.full_agent.model_copy(deep=True),
         )
         doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
-        doc.full_agent.system_prompt = value.full_agent_system_prompt
     setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
     shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields if key != "advisor"}
     shared["advisor"] = doc.shared.advisor.model_dump()
+    shared["card_author_config"]["system_prompt"] = doc.shared.card_author_config.system_prompt.model_dump()
     shared["providers"] = [p for p in shared["providers"] if not p["id"].startswith("unconfigured-")]
     shared["local_models"] = {key: deepcopy(data["local_models"][key]) for key in LocalResources.model_fields}
     doc.shared = SharedSettings.model_validate(shared)

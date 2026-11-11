@@ -376,7 +376,7 @@ async def test_official_api_connection_is_explicit_persistent_and_fixed_protocol
     store.save_settings(doc)
     saved = store.settings_document()
     assert saved.model_dump(exclude={"revisions"}) == doc.model_dump(exclude={"revisions"})
-    assert saved.version == 18
+    assert saved.version == 19
     assert provider_channel(saved.shared.providers[0]) == "standard"
     assert provider_channel(official) == "chatgpt"
     for mode, role in (

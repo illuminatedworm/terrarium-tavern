@@ -29,16 +29,19 @@ SYSTEM = """你是角色扮演游戏的参谋 agent 和辅助，另有一个 Age
 给出具体可行的下一步行动或台词时，可以调用 offer_inputs 把它们作为可点击选项显示在回复下方，用户点击后会填入主对话输入框，由用户修改和发送；选项写成用户在主对话里会直接发送的完整输入，不要把普通讨论硬塞成选项。只有用户在当前咨询消息中明确要求修改或起对话标题时，才调用 offer_titles 给出候选标题；标题只在用户点击后才修改，不要说成已改名。"""
 
 
-class AdvisorConfig(BaseModel):
+class AdvisorOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: ModelProfile = Field(
         default_factory=lambda: ModelProfile(provider_id="", model="", reply_tokens=8192)
     )
     official_model: ModelProfile | None = None
-    system_prompt: str = SYSTEM
     recent_exchanges: int = Field(default=6, ge=0, le=1000, strict=True)
     keep_recent: int = Field(default=4, ge=1, le=100, strict=True)
     auto_compact: bool = True
     context_strategy: Literal["local", "openai_compact"] = "local"
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
     web: AgentWebConfig = Field(default_factory=AgentWebConfig)
+
+
+class AdvisorConfig(AdvisorOptions):
+    system_prompt: str = SYSTEM

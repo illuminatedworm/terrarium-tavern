@@ -126,7 +126,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         assert restored["messages"][1]["ooc"] == "保持叙事视角"
         assert restored["messages"][1]["model"].endswith(ooc_block("保持叙事视角"))
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 11
+        assert payload["version"] == 12
         assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
@@ -261,7 +261,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     store = Store(tmp_path)
     settings = store.settings_document()
     settings.shared.providers[0].api_key = "source-secret"
-    settings.half_agent.system_prompt = "个人提示词"
+    settings.half_agent.system_prompt.replace_current("个人提示词")
     store.save_settings(settings)
     payload, blobs = package(
         store, browser_preferences={"layout": {"fontSize": 20, "fontFamily": "serif", "glass": False}}
@@ -277,7 +277,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
     target.save_settings(local)
     imported = import_package(target, payload, blobs)
     assert not imported["settings_restored"]
-    assert target.settings_document().half_agent.system_prompt != "个人提示词"
+    assert target.settings_document().half_agent.system_prompt.current != "个人提示词"
     revisions = target.settings_document().revisions
     card = target.import_card(b'{"name":"running consultation"}')
     session = target.new_session(SessionCreate(card_id=card["id"]))
@@ -294,7 +294,7 @@ def test_settings_secrets_and_browser_preferences_are_explicit_and_revision_chec
         db.execute("UPDATE advisor_runs SET status='cancelled' WHERE id='active-advisor'")
     imported = import_package(target, payload, blobs, True, revisions)
     assert imported["settings_restored"]
-    assert target.settings_document().half_agent.system_prompt == "个人提示词"
+    assert target.settings_document().half_agent.system_prompt.current == "个人提示词"
     assert target.settings_document().shared.providers[0].api_key == "local-secret"
     assert target.settings_document().revisions["shared"] == revisions["shared"] + 1
     with pytest.raises(Conflict):

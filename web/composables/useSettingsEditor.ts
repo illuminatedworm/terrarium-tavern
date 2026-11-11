@@ -29,6 +29,7 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   const webSecretChanged = ref(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
+  let blurSave: Promise<void> | undefined;
   let disposed = false;
   let applying = false;
   const changes = computed(
@@ -156,19 +157,39 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
   async function saveText(scope: SettingsScope, path: string) {
     await saveValue(scope, path);
   }
-  async function saveValue(scope: SettingsScope, path: string) {
+  async function saveValue(scope: SettingsScope, path: string, replacement = draftValue(scope, path)) {
     const key = `${scope}.${path}`;
-    const value = clone(draftValue(scope, path));
+    const value = clone(replacement);
     if (textBusy.value || equal(value, getPath(saved.value?.[scope] || {}, path))) return;
     textBusy.value = key;
+    try {
+      await commitTextValue(scope, path, value);
+    } finally {
+      textBusy.value = '';
+    }
+  }
+  async function saveOnBlur(scope: SettingsScope, path: string) {
+    const value = clone(draftValue(scope, path));
+    if (equal(value, getPath(saved.value?.[scope] || {}, path))) return;
+    const pending = commitTextValue(scope, path, value);
+    blurSave = pending;
+    try {
+      await pending;
+    } finally {
+      if (blurSave === pending) blurSave = undefined;
+    }
+  }
+  function pendingBlurSave() {
+    return blurSave;
+  }
+  async function commitTextValue(scope: SettingsScope, path: string, value: unknown) {
+    const key = `${scope}.${path}`;
     delete textErrors.value[key];
     try {
       await enqueue(() => commit(scope, { [path]: value }, true));
       if (equal(textDrafts.value[key], value)) delete textDrafts.value[key];
     } catch (e) {
       textErrors.value[key] = String(e);
-    } finally {
-      textBusy.value = '';
     }
   }
   function discard(page?: SettingsPage) {
@@ -280,6 +301,8 @@ export function useSettingsEditor(updated: (settings: SettingsDocument) => void)
     editValue,
     saveText,
     saveValue,
+    saveOnBlur,
+    pendingBlurSave,
     discard,
     pageChanged,
     undo,

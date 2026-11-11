@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from tavern.application.api import create_app
 from tavern.core.models import SessionCreate, Settings
-from tavern.core.settings import SettingsDocument, migrate_settings
+from tavern.core.settings import SettingsDocument, from_runtime, migrate_settings
 from tavern.storage.store import Store
 
 
@@ -128,7 +128,7 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     raw["version"] = 17
     raw["shared"]["reply_locate_start"] = False
     migrated = migrate_settings(raw)
-    assert migrated.version == 18 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert migrated.version == 19 and "reply_locate_start" not in migrated.shared.model_dump()
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
@@ -172,12 +172,15 @@ def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
         raw[scope]["regenerate_prompt"] = "本次 player 要求："
         raw[scope]["local_runtime"]["instruction_prompt"] = "Retrieve the player's setting."
     raw["half_agent"]["maintenance_system_prompt"] = "完成玩家明确提出的修改。"
+    raw["half_agent"]["tracker_system_prompt"] = raw["half_agent"]["tracker_system_prompt"]["options"][0][
+        "text"
+    ]
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 18 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.version == 19 and migrated.full_agent.tools.max_duration_seconds == 900
     assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
     assert raw == original
-    assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 7}
+    assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 8}
     assert migrate_settings(migrated.model_dump()) == migrated
     custom_timeout = migrated.model_copy(deep=True)
     custom_timeout.half_agent.retrieval.index_timeout = 180
@@ -223,8 +226,8 @@ def test_migration_copies_effective_values_and_keeps_secrets(tmp_path):
         == "custom-local"
     )
     assert doc.shared.providers[0].api_key == "migration-secret"
-    assert doc.full_agent.system_prompt == "custom-full"
-    assert doc.half_agent.system_prompt == "custom-half"
+    assert doc.full_agent.system_prompt.current == "custom-full"
+    assert doc.half_agent.system_prompt.current == "custom-half"
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
@@ -246,10 +249,19 @@ def test_explicit_full_model_and_operation_snapshot_are_independent():
     doc.full_agent.model.reply_tokens = 1024
     doc.full_agent.lore_max_entries = 2
     doc.full_agent.local_runtime.reranker_prompt = "full-ranking"
+    choices = doc.full_agent.system_prompt
+    choices.active = 2
+    choices.replace_current("本次使用的规则")
+    choices.options[2].text = "保留的备用规则"
     full = doc.runtime().for_role("full_agent")
     half = doc.runtime()
     doc.full_agent.model.model = "changed-later"
     assert full.model == "full-before"
+    assert full.full_agent_system_prompt == "本次使用的规则"
+    full.full_agent_system_prompt = "内部更新后的规则"
+    restored = from_runtime(full).full_agent.system_prompt
+    assert restored.active == 2 and restored.current == "内部更新后的规则"
+    assert restored.options[2].text == "保留的备用规则"
     assert full.context_tokens == 6000
     assert full.for_role("background").model == "full-before"
     assert full.lore_max_entries == 2 and half.lore_max_entries == 5
@@ -282,7 +294,11 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
 
         response = await patch(
             "full_agent",
-            {"model.model": "new-full", "lore_max_entries": 9, "system_prompt": "new-full-prompt"},
+            {
+                "model.model": "new-full",
+                "lore_max_entries": 9,
+                "system_prompt.options.0.text": "new-full-prompt",
+            },
         )
         assert response.status_code == 200, response.text
         saved = response.json()
@@ -300,7 +316,7 @@ async def test_scoped_updates_undo_and_secret_preservation(tmp_path):
         )
         assert undo.status_code == 200, undo.text
         assert undo.json()["full_agent"]["model"] == original["full_agent"]["model"]
-        assert undo.json()["full_agent"]["system_prompt"] == "new-full-prompt"
+        assert undo.json()["full_agent"]["system_prompt"]["options"][0]["text"] == "new-full-prompt"
         providers = deepcopy(original["shared"]["providers"])
         providers[0].update(name="changed-name", api_key="")
         assert (await patch("shared", {"providers": providers})).status_code == 200

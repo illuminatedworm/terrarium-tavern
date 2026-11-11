@@ -2,12 +2,11 @@
 import { computed, nextTick, onMounted, provide, ref } from 'vue';
 import { api } from '../../lib/api';
 import { useSettingsEditor } from '../../composables/useSettingsEditor';
-import {
-  getPath,
-  type SettingsDocument,
-  type SettingsPage,
-  type SettingsScope,
-  type SettingsObject,
+import type {
+  SettingsDocument,
+  SettingsPage,
+  SettingsScope,
+  SettingsObject,
 } from '../../lib/settingsDocument';
 import {
   loreFields,
@@ -33,7 +32,7 @@ import FailedRequestLogs from './FailedRequestLogs.vue';
 import KeminiSettings from './KeminiSettings.vue';
 import DataTransferSettings from './DataTransferSettings.vue';
 import type { TransferResult } from '../../lib/dataTransfer';
-import SavedText from './SavedText.vue';
+import PromptSettingsEditor from './PromptSettingsEditor.vue';
 import SaveStatus from './SaveStatus.vue';
 import Icon from '../common/Icon.vue';
 import RecipeSettings from './RecipeSettings.vue';
@@ -136,6 +135,12 @@ const status = computed(() =>
               : '已保存',
 );
 function guard(action: () => void, all = false) {
+  const blurSave = editor.pendingBlurSave();
+  if (blurSave) {
+    // The click can reach the guard before the name's blur save is acknowledged.
+    void blurSave.then(() => guard(action, all));
+    return;
+  }
   if (
     Object.keys(localErrors.value).length ||
     textDirty.value.length ||
@@ -540,35 +545,12 @@ onMounted(async () => {
                   {{ item.label }}
                 </button>
               </div>
-              <div class="settings-prompt-editor">
-                <p v-if="prompt.path === 'system_prompt'" class="settings-prompt-warning">
-                  除非你知道自己在做什么，否则不要修改。
-                </p>
-                <SavedText
-                  :key="prompt.path"
-                  :label="prompt.label"
-                  :model-value="editor.textValue(scope, prompt.path)"
-                  :saved-value="getPath(saved![scope], prompt.path)"
-                  :saving="textBusy === scope + '.' + prompt.path"
-                  :error="textErrors[scope + '.' + prompt.path]"
-                  :guard="guard"
-                  @update:model-value="editor.editText(scope, prompt.path, $event)"
-                  @save="editor.saveText(scope, prompt.path)"
-                />
-                <p class="muted">{{ prompt.description }}</p>
-                <p
-                  v-if="
-                    scope === 'full_agent' &&
-                    prompt.path === 'system_prompt' &&
-                    /handoff|new_context|tavern_memory/.test(editor.textValue(scope, prompt.path))
-                  "
-                  class="muted"
-                >
-                  此自定义主规则包含本地换窗要求；使用云端 compact
-                  前请移除其中的换窗命令，或恢复通用默认文本。
-                </p>
-                <button @click="editor.editText(scope, prompt.path, prompt.default)">恢复默认文本</button>
-              </div>
+              <PromptSettingsEditor
+                :key="scope + '.' + prompt.path"
+                :definition="prompt"
+                :editor="editor"
+                :guard="guard"
+              />
             </div>
           </template>
           <RecipeSettings
@@ -611,22 +593,12 @@ onMounted(async () => {
             :flush="editor.flush"
             @checked="refreshAfterProbe"
           >
-            <SavedText
-              :model-value="editor.textValue('shared', 'advisor.system_prompt')"
-              :saved-value="saved!.shared.advisor.system_prompt"
-              label="参谋 agent 系统提示词"
-              :guard="guard"
-              :saving="textBusy === 'shared.advisor.system_prompt'"
-              :error="textErrors['shared.advisor.system_prompt']"
-              @update:model-value="editor.editText('shared', 'advisor.system_prompt', $event)"
-              @save="editor.saveText('shared', 'advisor.system_prompt')"
-            />
-            <button
+            <PromptSettingsEditor
               v-if="advisorPrompt"
-              @click="editor.editText('shared', 'advisor.system_prompt', advisorPrompt.default)"
-            >
-              恢复默认文本
-            </button>
+              :definition="advisorPrompt"
+              :editor="editor"
+              :guard="guard"
+            />
           </AdvisorSettings>
           <CardAuthorSettings
             v-else-if="page.key === 'editor'"
@@ -639,22 +611,12 @@ onMounted(async () => {
             @checked="refreshAfterProbe"
             @services="navigate('shared.web')"
           >
-            <SavedText
-              :model-value="editor.textValue('shared', 'card_author_config.system_prompt')"
-              :saved-value="saved!.shared.card_author_config.system_prompt"
-              label="制卡 agent 系统提示词"
-              :guard="guard"
-              :saving="textBusy === 'shared.card_author_config.system_prompt'"
-              :error="textErrors['shared.card_author_config.system_prompt']"
-              @update:model-value="editor.editText('shared', 'card_author_config.system_prompt', $event)"
-              @save="editor.saveText('shared', 'card_author_config.system_prompt')"
-            />
-            <button
+            <PromptSettingsEditor
               v-if="cardAuthorPrompt"
-              @click="editor.editText('shared', 'card_author_config.system_prompt', cardAuthorPrompt.default)"
-            >
-              恢复默认文本
-            </button>
+              :definition="cardAuthorPrompt"
+              :editor="editor"
+              :guard="guard"
+            />
           </CardAuthorSettings>
           <template v-else-if="page.key === 'web'">
             <h4>模型请求方式</h4>

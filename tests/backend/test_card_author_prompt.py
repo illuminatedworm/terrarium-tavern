@@ -31,11 +31,25 @@ def strings(value):
 def test_old_configuration_keeps_existing_rules_and_is_backed_up_once(tmp_path):
     store = Store(tmp_path)
     raw = store.settings_document().model_dump()
+    raw["version"] = 18
+    raw["full_agent"]["system_prompt"] = "保留完整规则\n  \n"
+    raw["half_agent"].update(system_prompt="", tracker_system_prompt="后台规则")
+    raw["shared"]["advisor"]["system_prompt"] = "咨询规则"
     raw["shared"]["card_author_config"].pop("system_prompt")
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (dump(raw),))
     reopened = Store(tmp_path)
-    assert reopened.settings_document().shared.card_author_config.system_prompt == SYSTEM
+    doc = reopened.settings_document()
+    for choices, current in (
+        (doc.full_agent.system_prompt, raw["full_agent"]["system_prompt"]),
+        (doc.half_agent.system_prompt, ""),
+        (doc.half_agent.tracker_system_prompt, "后台规则"),
+        (doc.shared.advisor.system_prompt, "咨询规则"),
+        (doc.shared.card_author_config.system_prompt, SYSTEM),
+    ):
+        assert choices.active == 1
+        assert [option.text for option in choices.options] == [current, "", "", ""]
+        assert all(option.name == "" for option in choices.options)
     backups = list(tmp_path.glob("before-upgrade-*.sqlite3"))
     assert len(backups) == 1
     with sqlite3.connect(backups[0]) as db:
@@ -61,11 +75,28 @@ async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_pat
             json={
                 "expected_revision": old["revisions"]["shared"],
                 "edit_session": opened["id"],
-                "changes": {"card_author_config.system_prompt": custom},
+                "changes": {
+                    "card_author_config.system_prompt.options.1.text": custom,
+                    "card_author_config.system_prompt.options.1.name": "短篇角色",
+                },
             },
         )
         assert saved.status_code == 200, saved.text
         assert saved.json()["shared"]["advisor"] == old["shared"]["advisor"]
+        inactive = await client.post(
+            f"/api/card-author/conversations/{workspace['id']}/preview", json={"text": "讨论角色"}
+        )
+        assert SYSTEM in list(strings(inactive.json()["messages"]))
+        assert custom not in list(strings(inactive.json()["messages"]))
+        activated = await client.patch(
+            "/api/settings/shared",
+            json={
+                "expected_revision": saved.json()["revisions"]["shared"],
+                "edit_session": opened["id"],
+                "changes": {"card_author_config.system_prompt.active": 2},
+            },
+        )
+        assert activated.status_code == 200, activated.text
         preview = await client.post(
             f"/api/card-author/conversations/{workspace['id']}/preview", json={"text": "讨论角色"}
         )
@@ -75,13 +106,16 @@ async def test_prompt_save_preview_default_and_page_undo_share_one_field(tmp_pat
         provider = ToolLLM([])
         assert (await run(editor, workspace["id"], provider))["status"] == "completed"
         assert custom in list(strings(provider.call_log[0]))
-        assert Store(tmp_path).settings_document().shared.card_author_config.system_prompt == custom
+        assert Store(tmp_path).settings_document().shared.card_author_config.system_prompt.current == custom
         undone = await client.post(
             f"/api/settings/edit-sessions/{opened['id']}/undo",
-            json={"page": "shared.editor", "expected_revision": saved.json()["revisions"]["shared"]},
+            json={"page": "shared.editor", "expected_revision": activated.json()["revisions"]["shared"]},
         )
         assert undone.status_code == 200, undone.text
-        assert undone.json()["shared"]["card_author_config"]["system_prompt"] == SYSTEM
+        assert (
+            undone.json()["shared"]["card_author_config"]["system_prompt"]
+            == old["shared"]["card_author_config"]["system_prompt"]
+        )
     await editor.close()
     await app.state.service.close()
 
@@ -94,7 +128,7 @@ async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next
     doc = editor.store.settings_document()
     prompt = "自定义规则开始\n" + "保留用户原文与资料。" * 5000 + "\n规则尾部 {{char}} {{user}}"
     doc.shared.card_author.context_tokens = 200000
-    doc.shared.card_author_config.system_prompt = prompt
+    doc.shared.card_author_config.system_prompt.replace_current(prompt)
     editor.store.save_settings(doc)
     try:
         await editor.run(
@@ -104,7 +138,7 @@ async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next
             body = json.loads(request.content)
             assert prompt in list(strings(body))
             assert SYSTEM not in list(strings(body))
-        doc.shared.card_author_config.system_prompt = "更新后的完整系统规则"
+        doc.shared.card_author_config.system_prompt.replace_current("更新后的完整系统规则")
         editor.store.save_settings(doc)
         before = len(editor.requests)
         await editor.run([blocks(api, "新的回复")])
@@ -117,7 +151,7 @@ async def test_complete_custom_prompt_reaches_wire_and_rollover_and_changes_next
 async def test_empty_prompt_is_not_silently_replaced_by_default(tmp_path):
     store = Store(tmp_path)
     doc = store.settings_document()
-    doc.shared.card_author_config.system_prompt = ""
+    doc.shared.card_author_config.system_prompt.active = 2
     store.save_settings(doc)
     editor = CardAuthorService(store)
     workspace = editor.edits.create_conversation()
@@ -156,7 +190,7 @@ async def test_prompt_change_on_resume_preserves_staged_edit_without_repeating_w
     assert failed["status"] == "error"
     assert editor.edits.get(workspace["id"])["document"]["description"] == "原人物设定"
     doc = store.settings_document()
-    doc.shared.card_author_config.system_prompt = "续接使用的完整新规则"
+    doc.shared.card_author_config.system_prompt.replace_current("续接使用的完整新规则")
     store.save_settings(doc)
     second = ToolLLM([])
     result = await run(editor, workspace["id"], second, "", resume=failed["id"])
@@ -172,10 +206,14 @@ async def test_prompt_change_on_resume_preserves_staged_edit_without_repeating_w
 def test_prompt_survives_settings_export_and_import(tmp_path):
     source, target = Store(tmp_path / "source"), Store(tmp_path / "target")
     doc = source.settings_document()
-    doc.shared.card_author_config.system_prompt = "需要迁移的自定义提示词"
+    choices = doc.shared.card_author_config.system_prompt
+    choices.active = 3
+    choices.options[2].name = "当前规则"
+    choices.replace_current("需要迁移的自定义提示词")
+    choices.options[3].text = "备用规则"
     source.save_settings(doc)
     package, blobs = read_package(export_package(source, ExportSelection(settings=True)), target)
     import_package(
         target, package, blobs, restore_settings=True, expected_revisions=target.settings_document().revisions
     )
-    assert target.settings_document().shared.card_author_config.system_prompt == "需要迁移的自定义提示词"
+    assert target.settings_document().shared.card_author_config.system_prompt == choices

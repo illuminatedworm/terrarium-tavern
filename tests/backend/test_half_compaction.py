@@ -729,7 +729,9 @@ async def test_setting_change_during_compact_prevents_publish_and_stale_resume(t
         task = manager.tasks[operation["id"]]
         await asyncio.wait_for(entered.wait(), 10)
         config = store.settings_document()
-        config.half_agent.system_prompt += "\n新的正文规则。"
+        choices = config.half_agent.system_prompt
+        choices.options[1].text = choices.current + "\n新的正文规则。"
+        choices.active = 2
         store.save_settings(config)
         release.set()
         await task

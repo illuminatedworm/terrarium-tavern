@@ -32,7 +32,7 @@ from tests.support.memory_fixtures import memory_snapshot
 
 def read_path(value, path):
     for part in path.split("."):
-        value = value[part]
+        value = value[int(part)] if isinstance(value, list) else value[part]
     return value
 
 
@@ -43,9 +43,7 @@ def test_defaults_and_custom_prompts():
         assert read_path(defaults, item["path"]) == item["default"]
     assert "<tavern_memory>" in DEFAULT_SYSTEM_PROMPT
     assert "MVU" not in DEFAULT_RETRIEVAL_PROTOCOL
-    assert all(
-        "人物不会因为你知道就知道" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT)
-    )
+    assert all("人物不会因为你知道就知道" in prompt for prompt in (DEFAULT_SYSTEM_PROMPT, FULL_AGENT_PROMPT))
     assert "handoff" not in FULL_AGENT_PROMPT and "new_context" not in FULL_AGENT_PROMPT
     # Keep the source excerpts as evidence; only the requested boundary markers
     # and references to omitted ST wrappers differ from these saved originals.
@@ -136,7 +134,7 @@ def test_defaults_and_custom_prompts():
     old["full_agent"]["tools"].pop("chapter_tokens")
     old["full_agent"]["tools"].pop("chapters_total_tokens")
     migrated = migrate_settings(old)
-    assert migrated.version == 18
+    assert migrated.version == 19
     assert migrated.shared.kemini.identity_prompt == "已保存的身份"
     assert all(getattr(migrated.shared.kemini, field) == getattr(kemini, field) for field in added)
     assert (migrated.half_agent.memory_recall_count, migrated.half_agent.memory_recall_filter) == (3, True)
@@ -182,7 +180,7 @@ def test_kemini_tail_upgrade_backs_up_defaults_and_preserves_custom_text(tmp_pat
     with store.connection() as db:
         db.execute("UPDATE meta SET value=? WHERE key='settings'", (json.dumps(raw),))
     upgraded = Store(tmp_path).settings_document()
-    assert upgraded.version == 18 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
+    assert upgraded.version == 19 and upgraded.revisions["shared"] == raw["revisions"]["shared"] + 1
     for key, value in upgraded.shared.kemini.model_dump().items():
         assert value == expected.get(key, fields[key])
     assert migrate_settings(upgraded.model_dump()) == upgraded
@@ -228,22 +226,24 @@ def test_advisor_default_upgrade_preserves_custom_text_and_is_idempotent(tmp_pat
     old = (Path(__file__).parents[1] / "fixtures" / fixture).read_text("utf-8")
     store = Store(tmp_path)
     config = store.settings_document()
-    config.shared.advisor.system_prompt = old
+    config.shared.advisor.system_prompt.options[0].text = old
+    config.shared.advisor.system_prompt.options[1].text = old
     store.save_settings(config)
     revision = store.settings_document().revisions["shared"]
 
     upgraded = Store(tmp_path).settings_document()
-    assert upgraded.shared.advisor.system_prompt == SYSTEM
+    assert upgraded.shared.advisor.system_prompt.options[0].text == SYSTEM
+    assert upgraded.shared.advisor.system_prompt.options[1].text == old
     assert upgraded.revisions["shared"] == revision + 1
     assert Store(tmp_path).settings_document() == upgraded
 
     # Even a small user change to the old default must survive reopening.
     custom = old + "\n\n请保留我自行补充的要求。"
-    upgraded.shared.advisor.system_prompt = custom
+    upgraded.shared.advisor.system_prompt.options[0].text = custom
     store.save_settings(upgraded)
     saved = store.settings_document()
     assert Store(tmp_path).settings_document() == saved
-    assert saved.shared.advisor.system_prompt == custom
+    assert saved.shared.advisor.system_prompt.current == custom
 
 
 async def test_all_prompts_save_reload_and_restore_default(tmp_path):
@@ -268,8 +268,22 @@ async def test_all_prompts_save_reload_and_restore_default(tmp_path):
                 "工具授权、记录职责和提交规则由运行时协议提供" in system_prompts["full_agent"]["description"]
             )
             assert "前台 Writer" in system_prompts["half_agent"]["description"]
+            assert {
+                (item["scope"], item["path"])
+                for item in response["prompt_definitions"]
+                if item.get("choices")
+            } == {
+                ("full_agent", "system_prompt"),
+                ("half_agent", "system_prompt"),
+                ("half_agent", "tracker_system_prompt"),
+                ("shared", "advisor.system_prompt"),
+                ("shared", "card_author_config.system_prompt"),
+            }
             for scope in ("full_agent", "half_agent", "shared"):
                 prompts = [item for item in response["prompt_definitions"] if item["scope"] == scope]
+                for item in prompts:
+                    if item.get("choices"):
+                        item["path"] += ".options.0.text"
                 changes = {item["path"]: "CUSTOM " + scope + item["path"] for item in prompts}
                 saved = await client.patch(
                     f"/api/settings/{scope}",

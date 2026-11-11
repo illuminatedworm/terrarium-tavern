@@ -696,7 +696,7 @@ def test_schema_six_renames_card_editor_storage_and_settings_in_place(tmp_path):
         db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
     reopened = Store(tmp_path)
     assert reopened.settings_document().version == SettingsDocument().version
-    assert reopened.settings_document().shared.card_author_config.system_prompt == "旧版自定义规则"
+    assert reopened.settings_document().shared.card_author_config.system_prompt.current == "旧版自定义规则"
     assert CardAuthorService(reopened).edits.conversation(wid)["title"] == "旧制卡"
     assert reopened.message_adapter("editor", wid, "card_author")
     with reopened.connection() as db:

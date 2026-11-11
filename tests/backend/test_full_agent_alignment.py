@@ -1429,17 +1429,18 @@ def test_only_exact_old_default_memory_prompt_is_migrated(previous):
 
     raw = SettingsDocument().model_dump()
     old = Path(f"tests/fixtures/full_agent_prompt_{previous}.txt").read_text(encoding="utf-8")
-    raw["full_agent"]["system_prompt"] = old
+    raw["full_agent"]["system_prompt"]["options"][0]["text"] = old
     migrated = migrate_settings(raw)
-    assert migrated.full_agent.system_prompt == FULL_AGENT_PROMPT != old
+    assert migrated.full_agent.system_prompt.current == FULL_AGENT_PROMPT != old
     assert migrated.revisions["full_agent"] == raw["revisions"]["full_agent"] + 1
     assert migrate_settings(migrated.model_dump()) == migrated
-    raw["full_agent"]["system_prompt"] = old + "\nA custom instruction."
-    assert migrate_settings(raw).full_agent.system_prompt == raw["full_agent"]["system_prompt"]
+    custom = old + "\nA custom instruction."
+    raw["full_agent"]["system_prompt"]["options"][0]["text"] = custom
+    assert migrate_settings(raw).full_agent.system_prompt.current == custom
     legacy = Settings(full_agent_system_prompt=old).model_dump()
-    assert migrate_settings(legacy).full_agent.system_prompt == FULL_AGENT_PROMPT
-    legacy["full_agent_system_prompt"] = old + "\nA custom instruction."
-    assert migrate_settings(legacy).full_agent.system_prompt == legacy["full_agent_system_prompt"]
+    assert migrate_settings(legacy).full_agent.system_prompt.current == FULL_AGENT_PROMPT
+    legacy["full_agent_system_prompt"] = custom
+    assert migrate_settings(legacy).full_agent.system_prompt.current == custom
 
 
 @pytest.mark.parametrize("api", ["anthropic", "responses"])

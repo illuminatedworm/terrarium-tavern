@@ -1,6 +1,6 @@
 # 设置持久化与 API
 
-设置按范围保存，用修订号处理并发修改。当前版本：设置格式 18、数据库 schema 23、个人数据包格式 11。旧设置和旧包中的非对话资料可以导入；旧剧情对话与整轮重试格式不兼容，读取或导入时明确拒绝，见[数据库与设置迁移](#数据库与设置迁移)。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
+设置按范围保存，用修订号处理并发修改。当前版本为设置格式 19、数据库 schema 23、个人数据包格式 12。旧设置和旧包中的非对话资料可以导入；旧剧情对话与整轮重试格式不兼容，读取或导入时明确拒绝，见[数据库与设置迁移](#数据库与设置迁移)。界面操作见[设置指南](../guides/settings.md)，模型传输字段见[模型接入参考](model-api.md)。
 
 ## 配置范围与修订号
 
@@ -55,12 +55,14 @@ Content-Type: application/json
 
 - 成功响应为完整的公开设置文档，下一次修改使用其中的修订号。
 - 字段路径使用点分形式，如 `model.reply_tokens`。提供商引用、预算关联和字段类型整体校验后写入。
-- 数组整体更新；更新 `shared.providers` 时应带上其余提供商。已有提供商的 `api_key` 留空或省略表示保留密钥，不能用空字符串清空。
+- 更新 `shared.providers` 时应带上其余提供商。已有提供商的 `api_key` 留空或省略表示保留密钥，不能用空字符串清空。
 - `capability` 与 `capability_key` 由连接检查维护，不能通过 PATCH 写入。
 
 常用偏好保存在 `shared.preference_presets`，默认为空数组。每项包含唯一的 `id`、`name`（最多 80 个字符）和 `content`，三者都不能只含空白，偏好原文保留换行和空格。通过 `PATCH /api/settings/shared` 整体更新列表；设置页标识为 `shared.preference_presets`，支持修订检查和页级撤回。常用偏好只是可复用内容，不会自动关联或更新会话的 `turn_preference`。
 
 ## 单项设置字段
+
+**主提示词选项**。Full Agent 和前台 Writer 各自的 `system_prompt`、后台 Tracker 的 `half_agent.tracker_system_prompt`，以及 `shared.advisor.system_prompt` 和 `shared.card_author_config.system_prompt` 使用同一种结构。每项包含 `active`（整数 1～4，初始 1）及四个按编号排列的 `options`。每个选项保存 `text` 和 `name` 字符串，空名称显示编号。可通过相对路径 `system_prompt.options.1.text` 或 `system_prompt.options.1.name` 单独更新第二项，索引从 0 开始。通过 `system_prompt.active` 切换生效项，运行时读取对应的完整文本，包含显式空白。提示词目录中这五项的 `choices` 为 `true`，`default` 给出第一项的内置文本。
 
 **`full_agent.tools.parallel_tool_calls`**：严格布尔值，默认 `true`，旧设置缺少时按开启处理。对应“工具与记忆”页的“单次允许多个工具调用”，只控制 Full Agent。关闭示例：`PATCH /api/settings/full_agent`，`changes` 为 `{"tools.parallel_tool_calls":false}`。
 
@@ -225,10 +227,10 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 | 格式 | 当前版本 |
 |---|---|
 | 数据库 schema | **23** |
-| 设置文档 | **18** |
+| 设置文档 | **19** |
 | 剧情快照 `memory_document.version`（Half Agent 记忆） | **3** |
 | Full Agent 快照 `full_agent.version` | **4**（handoff 由模型维护，不含章节手工标记） |
-| 个人数据包 | **11** |
+| 个人数据包 | **12** |
 
 整轮重试从 schema 9 开始：用户节点快照必须早于本轮脚本和 Tracker，Full Agent 状态为 4，Half Agent 记忆格式为 3。schema 1–8 中已有的剧情不迁移：打开数据库时在任何写入前拒绝，恢复旧备份也不会迁移其剧情。原数据库保留，可用旧版导出非对话资料，再在新目录导入；个人数据包 1、2 中的对话同样拒绝。**下文的旧格式升级只适用于没有剧情对话的数据库和独立的设置资料。**
 
@@ -280,6 +282,7 @@ ZIP 只包含 `dataset.json` 和 `blobs/<sha256>`。清单格式为 `terrarium-t
 - **17 → 18**：移除 `shared.reply_locate_start`（回复完成后定位到正文开头）。生成期间改为跟随到正文开头即停，完成时不再跳转，见[阅读、编辑与分支](../guides/story-history.md#定位历史)。保存值存在时删除并使 shared 修订号加一；设置导入同样丢弃该键。
 
 - **16 → 17**：缓存时效增加 `12h`。已有时效、缓存 JSON 和思考档位原样保留；官方 API 在请求前拒绝不适用或冲突的配置，界面提示修正，不自动替换。官方 API 工具传输改用扁平函数列表，旧云端状态按来源协议变化重建，本地正文与工具记录保留。
+- **18 → 19**：五个角色的主提示词迁移至各自第 1 项并启用，显式空值保留，其余选项的名称和文本为空。原有内置默认文本的更新规则只作用于第 1 项。三个设置范围的修订号各加一，个人数据包 version 12 携带完整的选项设置，旧数据包中的设置使用同一迁移规则。
 
 以上升级都在写入前做整库备份。
 

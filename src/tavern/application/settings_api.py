@@ -60,6 +60,7 @@ def prompt_catalog():
             "label": "参谋 agent 系统提示词",
             "description": "参谋 agent 的咨询方式与项目资料说明；实际写入权限由 Runtime 控制。",
             "default": SYSTEM,
+            "choices": True,
         }
     )
     result.append(
@@ -69,6 +70,7 @@ def prompt_catalog():
             "label": "制卡 agent 系统提示词",
             "description": "制卡 agent 的创作方式与工作规则；保存后从下一次发送或继续生效，工具权限仍由 Runtime 控制。",
             "default": EDITOR_SYSTEM,
+            "choices": True,
         }
     )
     for scope in ("full_agent", "half_agent"):
@@ -86,15 +88,17 @@ def prompt_catalog():
                 "retrieval.protocol_prompt",
             }:
                 continue
-            result.append(
-                {
-                    **prompt,
-                    "scope": scope,
-                    "path": path,
-                    "label": prompt["label"].replace("Reranker", "重排模型"),
-                    "default": get_path(defaults, path),
-                }
-            )
+            default = get_path(defaults, path)
+            definition = {
+                **prompt,
+                "scope": scope,
+                "path": path,
+                "label": prompt["label"].replace("Reranker", "重排模型"),
+                "default": default,
+            }
+            if isinstance(default, dict):
+                definition.update(choices=True, default=default["options"][0]["text"])
+            result.append(definition)
     return result
 
 
@@ -342,7 +346,7 @@ def register_settings_routes(app, store):
                     raise ValueError("模型能力只能通过连接检查更新")
                 try:
                     original = get_path(raw[scope], path)
-                except (KeyError, TypeError):
+                except (IndexError, KeyError, TypeError, ValueError):
                     raise ValueError("未知设置字段") from None
                 if path == "providers" and scope == "shared":
                     existing = {p["id"]: p for p in original}

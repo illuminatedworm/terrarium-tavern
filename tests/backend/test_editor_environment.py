@@ -122,7 +122,7 @@ async def test_preview_does_not_freeze_and_first_submit_survives_restart_rebuild
             reopened = CardAuthorService(Store(tmp_path))
             try:
                 settings = reopened.store.settings_document()
-                settings.shared.card_author_config.system_prompt = "新的系统规则"
+                settings.shared.card_author_config.system_prompt.replace_current("新的系统规则")
                 reopened.store.save_settings(settings)
                 second = ToolLLM([])
                 assert (await run(reopened, wid, second))["status"] == "completed"
@@ -184,11 +184,11 @@ async def test_environment_reaches_final_transport_after_rules_before_references
             serialized = list(strings(body))
             assert serialized.count(content) == 1
             assert serialized.index(
-                editor.store.settings_document().shared.card_author_config.system_prompt
+                editor.store.settings_document().shared.card_author_config.system_prompt.current
             ) < serialized.index(content)
             if api == "anthropic":
                 system_texts = [part["text"] for part in body["system"]]
-                prompt = editor.store.settings_document().shared.card_author_config.system_prompt
+                prompt = editor.store.settings_document().shared.card_author_config.system_prompt.current
                 assert system_texts.index(content) == system_texts.index(prompt) + 1
             else:
                 assert body["input"][1]["role"] == "system"

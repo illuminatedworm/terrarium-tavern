@@ -118,6 +118,16 @@ async def test_official_checkpoint_is_independent_and_requires_valid_state(tmp_p
     assert "advisor-only-encrypted-state" in dump(preview["messages"])
     assert "云端咨询2" in dump(preview["messages"])
     settings = store.settings_document()
+    choices = settings.shared.advisor.system_prompt
+    choices.options[1].text = "这是一套备用咨询规则。"
+    store.save_settings(settings)
+    assert advisor.preview(session["id"])["opaque"]
+    choices.active = 2
+    store.save_settings(settings)
+    changed = advisor.preview(session["id"])
+    assert not changed["opaque"]
+    assert changed["messages"][0]["content"] == choices.current
+    choices.active = 1
     settings.shared.advisor.official_model.model = "another-advisor-model"
     store.save_settings(settings)
     preview = advisor.preview(session["id"])

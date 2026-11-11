@@ -548,12 +548,16 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                         page.get_by_role("button", name="保存此文本：顶级规则/引导", exact=True)
                     ).to_have_count(0)
                     await saved()
-                    assert (await read())["full_agent"]["system_prompt"] == "尚未保存的独立提示词"
+                    assert (await read())["full_agent"]["system_prompt"]["options"][0]["text"] == (
+                        "尚未保存的独立提示词"
+                    )
                     assert (await read())["half_agent"]["system_prompt"] == before["half_agent"][
                         "system_prompt"
                     ]
                     await page.get_by_role("button", name="撤回本页修改", exact=True).click()
-                    await expect(text).to_have_value(before["full_agent"]["system_prompt"])
+                    await expect(text).to_have_value(
+                        before["full_agent"]["system_prompt"]["options"][0]["text"]
+                    )
                     # Expanded editing uses the same explicit commit, and closing is guarded.
                     await page.get_by_role("button", name="放大编辑：顶级规则/引导", exact=True).click()
                     expanded = page.get_by_role("dialog", name="编辑：顶级规则/引导", exact=True)
@@ -563,7 +567,9 @@ console.log('http://127.0.0.1:' + server.httpServer.address().port);
                     await page.screenshot(path=str(output / "unsaved-confirm.png"))
                     await confirm.get_by_role("button", name="放弃修改").click()
                     await expect(expanded).to_have_count(0)
-                    await expect(text).to_have_value(before["full_agent"]["system_prompt"])
+                    await expect(text).to_have_value(
+                        before["full_agent"]["system_prompt"]["options"][0]["text"]
+                    )
                     await text.fill("关闭设置也必须提示")
                     await dialog.get_by_role("button", name="关闭", exact=True).click()
                     await expect(confirm).to_be_visible()

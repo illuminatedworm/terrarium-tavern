@@ -3,8 +3,14 @@ import { clone, difference, rebaseSettings, type SettingsDocument } from '../../
 
 const fixture = () =>
   ({
-    version: 14,
-    full_agent: { model: { model: 'full', reply_tokens: 2048 }, system_prompt: 'full prompt' },
+    version: 19,
+    full_agent: {
+      model: { model: 'full', reply_tokens: 2048 },
+      system_prompt: {
+        active: 1,
+        options: [{ text: 'full prompt', name: '' }, ...Array(3).fill({ text: '', name: '' })],
+      },
+    },
     half_agent: { foreground: { model: 'writer' }, background: { model: 'tracker' } },
     shared: { providers: [{ id: 'p', name: 'Provider', has_api_key: true }] },
     revisions: { full_agent: 0, half_agent: 0, shared: 0 },

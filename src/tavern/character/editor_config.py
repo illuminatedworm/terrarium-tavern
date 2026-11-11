@@ -88,13 +88,16 @@ SYSTEM = """你是 Card Author（制卡 agent），帮助用户从零创作、�
 最终回复简述实际改动、验证范围和下一步，卡片内容通过工具写入，不在回复中贴整张 JSON。工具成功仅表示本轮临时修改成功，卡片草稿和用户角色修改在正常结束时共同提交；卡片仍由用户审阅后保存，用户角色则保存到用户角色库。停止后可续接，补充要求优先于旧计划。"""
 
 
-class CardAuthorConfig(BaseModel):
+class CardAuthorOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    system_prompt: str = SYSTEM
     max_steps: int = Field(default=24, ge=2, le=100, strict=True)
     pressure_ratio: float = Field(default=0.80, ge=0.25, le=0.9)
     handoff_tokens: int = Field(default=8192, ge=128, le=16384, strict=True)
     web: AgentWebConfig = Field(default_factory=AgentWebConfig)
+
+
+class CardAuthorConfig(CardAuthorOptions):
+    system_prompt: str = SYSTEM
 
 
 FIELD_PURPOSES = {

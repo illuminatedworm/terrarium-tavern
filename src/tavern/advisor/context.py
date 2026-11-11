@@ -17,7 +17,7 @@ from tavern.scripting.request_context import response_origin
 
 
 def runtime_config(store, session, options):
-    config = store.settings_document().shared.advisor.model_copy(deep=True)
+    config = store.settings_document().shared.advisor.runtime()
     channel = session.get("channel_origin")
     if not channel:
         raise ValueError("请先确认故事的渠道归属")

@@ -81,6 +81,7 @@ def memory_write(messages):
 
 def test_tracker_settings_migration_and_validation():
     old = SettingsDocument().model_dump()
+    old["version"] = 18
     old["half_agent"].pop("tracker_system_prompt")
     old["half_agent"].pop("tracker_max_steps")
     old["half_agent"].update(
@@ -89,14 +90,14 @@ def test_tracker_settings_migration_and_validation():
     original = copy.deepcopy(old)
     current = migrate_settings(old)
     assert old == original
-    assert current.half_agent.tracker_system_prompt == DEFAULT_TRACKER_PROMPT
+    assert current.half_agent.tracker_system_prompt.current == DEFAULT_TRACKER_PROMPT
     assert current.half_agent.tracker_max_steps == 8
     assert current.revisions["half_agent"] == old["revisions"]["half_agent"] + 1
     assert migrate_settings(current.model_dump()) == current
     old["half_agent"].update(
         memory_system_prompt="原样保留 {{user}} 的自定义。\n", maintenance_system_prompt="保留另一段。"
     )
-    custom = migrate_settings(old).half_agent.tracker_system_prompt
+    custom = migrate_settings(old).half_agent.tracker_system_prompt.current
     assert "## 记忆整理时\n原样保留 {{user}} 的自定义。\n" in custom
     assert "## 设定维护时\n保留另一段。" in custom
     for invalid in (1, 101, True, "8"):
@@ -109,6 +110,7 @@ def test_tracker_upgrade_backs_up_before_writing_and_only_once(tmp_path):
 
     store = Store(tmp_path)
     old = store.settings_document().model_dump()
+    old["version"] = 18
     old["half_agent"].pop("tracker_system_prompt")
     old["half_agent"].pop("tracker_max_steps")
     old["half_agent"]["memory_system_prompt"] = "保留自定义记忆要求"
@@ -121,7 +123,7 @@ def test_tracker_upgrade_backs_up_before_writing_and_only_once(tmp_path):
     with sqlite3.connect(backups[0].resolve().as_uri() + "?mode=ro", uri=True) as db:
         saved = json.loads(db.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
         assert saved == old
-    assert "保留自定义记忆要求" in current.settings_document().half_agent.tracker_system_prompt
+    assert "保留自定义记忆要求" in current.settings_document().half_agent.tracker_system_prompt.current
     assert Store(tmp_path).settings_document() == current.settings_document()
     assert len(list(tmp_path.glob("before-upgrade-*.sqlite3"))) == 1
 
