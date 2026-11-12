@@ -20,7 +20,7 @@ CLI 入口为 [__main__.py](../../src/tavern/__main__.py)。模块直接导入�
 | `chatgpt/` | SIWC 账号授权、凭据存储、模型目录与 OpenAI 官方 Responses 传输 |
 | `web/` | 参谋 agent 与制卡 agent 共用的联网服务、分页和来源记录 |
 | `search/` | 召回、准入、文本解析、本地模型进程和索引 |
-| `storage/` | SQLite、事务、分支、备份与存储清理 |
+| `storage/` | [schema.py](../../src/tavern/storage/schema.py) 负责 SQLite 建表和升级顺序，[store.py](../../src/tavern/storage/store.py) 负责读写、事务和分支，同目录另有备份与存储清理 |
 | `scripting/` | 共享模型传输、原生回复、隔离脚本、依赖和 MVU 处理 |
 | `android/` | Android 专属的本地模型、文档解析与启动；桌面只导入其中的平台判断 `platform.py`，分叉点见 [Android 开发](android.md#与桌面的边界) |
 

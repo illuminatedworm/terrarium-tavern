@@ -4,7 +4,8 @@ import json
 import time
 
 from tavern.core.errors import NotFound
-from tavern.storage.store import Conflict, add_columns, dump, uid
+from tavern.storage.schema import add_columns
+from tavern.storage.store import Conflict, dump, uid
 
 MAX_LIVING = 3  # Investigators not yet destroyed, per branch.
 MAX_STARTS = 5  # Starts per story turn, including destroyed and regenerated attempts.
