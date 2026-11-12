@@ -340,7 +340,7 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 6px;
   top: 32px;
-  bottom: calc(var(--composer-height, 0px) + 32px);
+  bottom: calc(var(--reading-navigation-bottom) + 32px);
   width: 30px;
   z-index: 9;
   pointer-events: none;

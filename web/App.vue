@@ -491,7 +491,7 @@ const chat = ref<HTMLElement>(),
   draftArticle = ref<HTMLElement>();
 // The glass composer floats over the message list so prose scrolls beneath it;
 // its measured height reserves matching space at the end of the list and lifts
-// the overlays (rail, jump buttons, regeneration panel) above it.
+// the regeneration panel above it.
 const composer = ref<HTMLElement>();
 const composerHeight = ref(0);
 let composerObserver: ResizeObserver | undefined;

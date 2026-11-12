@@ -369,8 +369,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .dialogue-tools {
   position: absolute;
-  /* Stay clear of the floating composer measured by App.vue. */
-  inset: 0 0 var(--composer-height, 0px);
+  inset: 0 0 var(--reading-navigation-bottom);
   pointer-events: none;
   z-index: 8;
 }

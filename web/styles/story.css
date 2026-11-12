@@ -215,6 +215,8 @@
      mirrors it so the prose stays centred in the sheet. */
   --reading-side: max(88px, calc((100% - var(--reading-content-width)) / 2));
   --dialogue-right-gutter: var(--reading-side);
+  /* Keep the side navigation above the lower reading area regardless of composer height. */
+  --reading-navigation-bottom: 20%;
   position: relative;
   display: flex;
   flex: 1;
@@ -864,6 +866,12 @@
 .jump-latest:hover:not(:disabled) {
   background: var(--glass-float);
 }
+@media (width > 760px) and (max-height: 650px) {
+  /* The right gutter stays clear beside the composer in short desktop windows. */
+  html:not(.android-host) .jump-latest {
+    bottom: 12px;
+  }
+}
 /* Android only (main.ts marks <html>): away from the latest message the composer
    slides below the reading area unless it holds focus. Visibility hides its card
    but not the jump arrow it carries, which settles above the bottom edge. */
@@ -1255,6 +1263,8 @@
   .dialogue-viewport {
     --reading-side: 16px;
     --dialogue-right-gutter: 64px;
+    /* The wider composer extends into the navigation gutter at this width. */
+    --reading-navigation-bottom: 40%;
   }
   .composer {
     padding: 0 12px calc(10px + var(--safe-bottom));
