@@ -80,6 +80,15 @@ function when(seconds: number) {
 function percent(value: number, limit: number) {
   return `${Math.min(100, (value / limit) * 100)}%`;
 }
+// The server reports elapsed only when something changes; a running investigator's clock
+// advances locally from the moment its state arrived, and the next state corrects it.
+const received = ref(0),
+  now = ref(0);
+function elapsed(job: NovelJob) {
+  return job.status === 'running'
+    ? Math.min(job.config.timeout_seconds, job.elapsed + Math.max(0, now.value - received.value) / 1000)
+    : job.elapsed;
+}
 let disposed = false,
   generation = 0,
   loading = false,
@@ -99,6 +108,7 @@ function accept(value: NovelState) {
     ];
   }
   state.value = value;
+  received.value = now.value = performance.now();
   emit('changed', { enabled: value.enabled, active: value.active });
 }
 async function load() {
@@ -231,7 +241,16 @@ watch(novelConnectionEpoch, () => {
   state.value = null;
   void load();
 });
+let clock: number | undefined;
+watch(
+  () => !!state.value?.jobs.some((job) => job.status === 'running'),
+  (running) => {
+    window.clearInterval(clock);
+    if (running) clock = window.setInterval(() => (now.value = performance.now()), 1000);
+  },
+);
 onBeforeUnmount(() => {
+  window.clearInterval(clock);
   disposed = true;
   generation++;
 });
@@ -489,8 +508,8 @@ onBeforeUnmount(() => {
           </div>
           <div>
             <small
-              >时长<b>{{ job.elapsed.toFixed(0) }} / {{ job.config.timeout_seconds }} 秒</b></small
-            ><i :style="{ '--fill': percent(job.elapsed, job.config.timeout_seconds) }"></i>
+              >时长<b>{{ Math.floor(elapsed(job)) }} / {{ job.config.timeout_seconds }} 秒</b></small
+            ><i :style="{ '--fill': percent(elapsed(job), job.config.timeout_seconds) }"></i>
           </div>
         </div>
         <p v-if="job.pending_messages" class="novel-pending">

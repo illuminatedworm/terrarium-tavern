@@ -29,6 +29,7 @@ class NovelService:
     def __init__(self, store):
         self.store, self.data = store, NovelStore(store)
         self.tasks = {}
+        self.workers = {}
         self.restart_requested = set()
         self.provider_factory = None
         self.changed = asyncio.Event()
@@ -109,6 +110,12 @@ class NovelService:
             raise ValueError("原著调查仅限 Full Agent 对话")
         binding = self.data.binding(sid)
         jobs = self.data.jobs(sid)
+        for job in jobs:
+            # SQLite only records elapsed at each save; a model request can run for a long time
+            # between saves, so the panel's clock starts from the worker's live reading.
+            worker = self.workers.get(job["id"])
+            if worker and job["status"] == "running":
+                job["elapsed"] = min(worker.live_elapsed(), job["config"]["timeout_seconds"])
         with self.store.connection() as db:
             history = [
                 dict(r)
@@ -264,7 +271,7 @@ class NovelService:
             context = ProviderRequestContext(
                 job_id, job_id, "research", self.store.device_id(), routing=job["progress"].get("routing", {})
             )
-            worker = NovelWorker(self, job, cfg, context)
+            worker = self.workers[job_id] = NovelWorker(self, job, cfg, context)
             async with asyncio.timeout(job["config"]["timeout_seconds"] - job["elapsed"]):
                 provider = (
                     self.provider_factory(cfg)
@@ -303,6 +310,8 @@ class NovelService:
                 },
             )
         finally:
+            if worker:
+                del self.workers[job_id]
             if provider:
                 try:
                     await asyncio.wait_for(provider.close(), 5)

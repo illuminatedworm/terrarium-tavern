@@ -59,6 +59,10 @@ class NovelWorker:
         self.view.reserved.difference_update(self.view.reverse)
         self.header = self.view.messages(self.header)
 
+    def live_elapsed(self):
+        """Elapsed including the still-unsaved stretch of an in-flight request, for display only."""
+        return self.job["elapsed"] + time.monotonic() - self.tick
+
     def account_time(self):
         now = time.monotonic()
         self.job["elapsed"] += now - self.tick
