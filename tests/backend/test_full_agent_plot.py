@@ -33,6 +33,14 @@ def test_legacy_database_is_backed_up_before_additive_plot_migration(story):
     original = copy.deepcopy(session["snapshot"])
     original["full_agent"].pop("plot", None)
     raw = store.settings_document().model_dump()
+    raw["version"] = 18
+    for owner, key in (
+        (raw["half_agent"], "system_prompt"),
+        (raw["half_agent"], "tracker_system_prompt"),
+        (raw["shared"]["advisor"], "system_prompt"),
+        (raw["shared"]["card_author_config"], "system_prompt"),
+    ):
+        owner[key] = owner[key]["options"][0]["text"]
     raw["full_agent"]["tools"].pop("plot_tokens")
     raw["full_agent"]["system_prompt"] = Path("tests/fixtures/full_agent_prompt_before_plot.txt").read_text(
         encoding="utf-8"

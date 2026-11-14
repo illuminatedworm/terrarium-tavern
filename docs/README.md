@@ -2,7 +2,7 @@
 
 按安装、使用、角色卡制作和开发任务查阅。Full Agent 与 Half Agent 是并列的两种游玩模式，模型编排和记忆机制分别说明。
 
-当前版本：**v0.8.15（实验阶段）**。[GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.15) 提供 Windows x64 便携包和 Android ARM64 APK。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
+当前版本：**v0.8.16（实验阶段）**。[GitHub Release](https://github.com/illuminatedworm/terrarium-tavern/releases/tag/v0.8.16) 提供 Windows x64 便携包和 Android ARM64 APK。历史里程碑、版本变化与升级注意事项见[版本记录](changelog.md)。
 
 ## 开始使用
 
