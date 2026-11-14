@@ -24,7 +24,12 @@ from tavern.full_agent.context_ledger import ContextLedger
 from tavern.full_agent.handoff import render_chapters, render_current
 from tavern.full_agent.plot import plan_message, plan_value
 from tavern.full_agent.state import full_state
-from tavern.full_agent.story import committed_records, project_story_segments, story_history
+from tavern.full_agent.story import (
+    committed_records,
+    project_story_segments,
+    story_history,
+    without_encoded_failures,
+)
 
 
 def load_trace(store, sid, history):
@@ -184,7 +189,11 @@ def compile_window(
     ]
     records.extend({**message, "_content_owner": None} for message in continuation)
     records, _ = story_history(records)
-    if settings.kemini.enabled and story is not None:
+    if any(record.get("_unicode_story_rejected") for record in records):
+        records = without_encoded_failures(records)
+    if story is not None and (
+        settings.kemini.enabled or any(m.get("_unicode_story_arguments") for m in continuation)
+    ):
         parts = split_segments(story["content"], story["breaks"])
         records = [
             project_story_segments(message, parts)
@@ -211,7 +220,11 @@ def compile_window(
         records = by_owner.get(message["id"], [])
         text = history_text[message["id"]]
         breaks = message.get("story_segments", {}).get("raw", [])
-        if settings.kemini.enabled and breaks and text == message["raw"]:
+        if (
+            breaks
+            and text == message["raw"]
+            and (settings.kemini.enabled or any(record.get("_unicode_story_arguments") for record in records))
+        ):
             # Saved offsets still locate the clean prose. If the model text was
             # changed by callbacks or macros, let committed_records replay it whole.
             parts = split_segments(text, breaks)
@@ -476,6 +489,7 @@ def compile_window(
         "_response_origin",
         "_response_digest",
         "_tool_error",
+        "_gemini_synthetic_calls",
     }
 
     def wire():

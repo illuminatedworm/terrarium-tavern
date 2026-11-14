@@ -11,7 +11,7 @@ import pytest
 from tavern.core.models import TurnRequest
 from tavern.full_agent.activity import turn_items
 from tavern.full_agent.context import load_trace
-from tavern.full_agent.tools import AgentTools
+from tavern.full_agent.tools import AgentTools, Story
 from tavern.storage.store import Store
 from tests.backend.test_full_agent import (
     Model,
@@ -292,6 +292,106 @@ async def test_retry_keeps_unfinished_call_but_drops_its_failed_batch_sibling(tm
         ]
         assert store.session(session["id"])["messages"][-1]["raw"] == "续接正文"
         assert current_text(store.session(session["id"])["snapshot"]["full_agent"]) == "MEMORY_B"
+    finally:
+        await service.close()
+
+
+@pytest.mark.parametrize("old_checkpoint", [False, True], ids=["partial", "legacy-full"])
+async def test_unicode_story_resume_decodes_unfinished_call_with_saved_format(
+    tmp_path, monkeypatch, old_checkpoint
+):
+    store, service, session = game(tmp_path, "chat_completions")
+    settings = store.settings_document()
+    settings.shared.unicode_story_enabled = True
+    store.save_settings(settings)
+    with store.connection() as db:
+        db.execute("UPDATE sessions SET unicode_story=1 WHERE id=?", (session["id"],))
+    session = store.session(session["id"])
+    first, last = "前段🙂", "再接一段。"
+    if old_checkpoint:
+        encoded_first, encoded_last = (
+            " ".join(f"{ord(char):04X}" for char in text) for text in (first, last)
+        )
+    else:
+        encoded_first, encoded_last = "前段⟦1F642⟧", "再接⟦4E00 6BB5⟧。"
+    original = AgentTools.execute
+    interrupted = False
+
+    async def execute(tools, name, arguments):
+        nonlocal interrupted
+        if isinstance(arguments, Story) and arguments.content == last and not interrupted:
+            interrupted = True
+            raise RuntimeError("interrupted before receipt")
+        return await original(tools, name, arguments)
+
+    monkeypatch.setattr(AgentTools, "execute", execute)
+    try:
+        initial = Model(
+            {
+                "calls": [
+                    ("submit_story", {"content": encoded_first}),
+                    ("submit_story", {"content": encoded_last}),
+                ]
+            }
+        )
+        with monkeypatch.context() as settings_override:
+            if old_checkpoint:
+                settings_override.setattr(
+                    "tavern.full_agent.runtime.new_story_format", lambda *_: "unicode_full"
+                )
+            failed, _ = await turn(service, session, initial)
+        assert failed["status"] == "error"
+        progress = store.full_agent_progress(failed["id"])
+        assert progress["story"]["content"] == first and progress["version"] == 7
+        assert progress["story_format"] == ("unicode_full" if old_checkpoint else "unicode_partial")
+        assert next(item["message"] for item in progress["new_trace"] if item["message"].get("tool_calls"))[
+            "tool_calls"
+        ][1]["function"]["arguments"] == json.dumps({"content": encoded_last})
+        if old_checkpoint:
+            progress["version"] = 6
+            progress["unicode_story"] = True
+            del progress["story_format"]
+            store.save_full_agent_progress(failed["id"], progress)
+            with store.connection() as db:
+                db.execute("UPDATE meta SET value='24' WHERE key='schema_version'")
+    finally:
+        await service.close()
+
+    store = Store(tmp_path)
+    if old_checkpoint:
+        assert list(store.root.glob("before-upgrade-schema24-*.sqlite3"))
+    settings = store.settings_document()
+    settings.shared.unicode_story_enabled = False
+    store.save_settings(settings)
+    service = runtime(store)
+    model = Model("")
+    service.full.provider_factory = lambda: model
+    try:
+        resumed = service.submit(
+            session["id"],
+            TurnRequest(
+                text=failed["request"]["text"],
+                operation_id=uuid4().hex,
+                expected_revision=0,
+                resume_turn_id=failed["id"],
+            ),
+        )
+        await service.tasks[resumed["id"]]
+        result = store.turn(resumed["id"])
+        assert result["status"] == "committed", result["error"]
+        sent = model.requests[0]
+        assert sent["extra_body"]["tools"] == initial.requests[0]["extra_body"]["tools"]
+        assert [
+            json.loads(c["function"]["arguments"])["content"]
+            for m in sent["messages"]
+            for c in m.get("tool_calls", [])
+            if c["function"]["name"] == "submit_story"
+        ] == [first, last]
+        current = store.session(session["id"])
+        assert current["messages"][-1]["raw"] == first + "\n\n" + last
+        assert current["unicode_story"]
+        fork = store.fork_session(current["id"], current["head"], current["revision"])
+        assert fork["unicode_story"] and fork["messages"][-1]["raw"] == current["messages"][-1]["raw"]
     finally:
         await service.close()
 

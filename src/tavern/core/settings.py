@@ -196,6 +196,7 @@ class CardAuthorSettings(CardAuthorOptions):
 
 class SharedSettings(StrictSettings):
     kemini: KeminiConfig = Field(default_factory=KeminiConfig)
+    unicode_story_enabled: bool = Field(default=False, strict=True)
     send_shortcut: Literal["enter", "ctrl_enter", "shift_enter", "button_only"] = "ctrl_enter"
     debug_failed_requests: bool = Field(default=False, strict=True)
     debug_full_agent_prefix: bool = Field(default=False, strict=True)
@@ -221,7 +222,7 @@ class SharedSettings(StrictSettings):
 
 
 class SettingsDocument(StrictSettings):
-    version: Literal[19] = 19
+    version: Literal[20] = 20
     full_agent: FullSettings = Field(default_factory=FullSettings)
     half_agent: HalfSettings = Field(default_factory=HalfSettings)
     shared: SharedSettings = Field(default_factory=SharedSettings)
@@ -339,8 +340,16 @@ class SettingsDocument(StrictSettings):
         data["system_prompt"] = agent.system_prompt.current
         if mode == "half_agent":
             data["tracker_system_prompt"] = agent.tracker_system_prompt.current
+        # The submit_story experiment is selected from the saved document and
+        # conversation at turn entry, outside shared transport and cache settings.
         data.update(
-            self.shared.model_dump(exclude={"advisor": True, "card_author_config": {"system_prompt"}})
+            self.shared.model_dump(
+                exclude={
+                    "advisor": True,
+                    "unicode_story_enabled": True,
+                    "card_author_config": {"system_prompt"},
+                }
+            )
         )
         data["card_author_config"]["system_prompt"] = self.shared.card_author_config.system_prompt.current
         # shared.kemini.enabled only permits creating Kemini conversations; the
@@ -631,6 +640,10 @@ def migrate_settings(raw: dict) -> SettingsDocument:
             migrate_prompt_choices(raw)
             raw["version"] = 19
             changed_scopes.update(("full_agent", "half_agent", "shared"))
+        if raw["version"] == 19:
+            raw["version"] = 20
+            raw["shared"]["unicode_story_enabled"] = False
+            changed_scopes.add("shared")
         doc = SettingsDocument.model_validate(raw)
         # Only the first option follows the existing exact-default upgrade rules.
         for scope, choices, legacy_hashes, default in (
@@ -748,7 +761,12 @@ def from_runtime(value: Settings) -> SettingsDocument:
         )
         doc.full_agent.tools = value.full_agent_config.model_copy(deep=True)
     setattr(doc, mode, (FullSettings if mode == "full_agent" else HalfSettings).model_validate(agent))
-    shared = {key: deepcopy(data[key]) for key in SharedSettings.model_fields if key != "advisor"}
+    shared = {
+        key: deepcopy(data[key])
+        for key in SharedSettings.model_fields
+        if key not in {"advisor", "unicode_story_enabled"}
+    }
+    shared["unicode_story_enabled"] = doc.shared.unicode_story_enabled
     shared["advisor"] = doc.shared.advisor.model_dump()
     shared["card_author_config"]["system_prompt"] = doc.shared.card_author_config.system_prompt.model_dump()
     shared["providers"] = [p for p in shared["providers"] if not p["id"].startswith("unconfigured-")]

@@ -4,16 +4,30 @@ import copy
 import json
 
 from tavern.full_agent.protocol import failed as tool_failed
+from tavern.full_agent.story import StoryFormat
 from tavern.scripting.native_response import portable
+
+PROGRESS_VERSION = 7
+
+
+def saved_story_format(progress: dict) -> StoryFormat:
+    version = progress.get("version", 1)
+    if version == 7:
+        return progress["story_format"]
+    return "unicode_full" if version == 6 and progress["unicode_story"] else "plain"
 
 
 def load_progress(progress):
     """Read the persisted envelope before any of its draft fields are used."""
     version = progress.get("version", 1)
-    if type(version) is not int or version not in (1, 2, 3, 4, 5):
+    if type(version) is not int or not 1 <= version <= PROGRESS_VERSION:
         raise ValueError("Full Agent 回合进度格式不受支持；原进度未修改")
     if version >= 2 and (not isinstance(progress.get("output_id"), str) or not progress["output_id"]):
         raise ValueError("Full Agent 回合进度缺少有效的正文身份；原进度未修改")
+    if (version == 6 and type(progress.get("unicode_story")) is not bool) or (
+        version == 7 and progress.get("story_format") not in ("plain", "unicode_full", "unicode_partial")
+    ):
+        raise ValueError("Full Agent 回合进度缺少有效的正文传输格式；原进度未修改")
     if version < 3:
         progress = copy.deepcopy(progress)
         if version == 1:

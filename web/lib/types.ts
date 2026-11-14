@@ -150,6 +150,7 @@ export interface Session {
   agent_mode: AgentMode;
   channel_origin: Channel | null;
   kemini: boolean;
+  unicode_story: boolean;
   opening_editable: boolean;
   policy: string | null;
   policy_effective: string;
@@ -161,6 +162,7 @@ export interface Session {
   update_variables: boolean;
   plot_enabled: boolean;
   disabled_tools: string[];
+  tool_result_options: Record<string, Record<string, boolean>>;
   turn_preference: string;
   lore_injection_mode: string;
   cache_breakpoint_auto: boolean;

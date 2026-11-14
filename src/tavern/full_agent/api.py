@@ -35,6 +35,7 @@ class ToolSettings(BaseModel):
     expected_revision: int = Field(ge=0)
     disabled_tools: list[str] = Field(max_length=len(SPECS))
     tool_result_options: dict[str, dict[str, bool]] | None = None
+    unicode_story: bool | None = Field(default=None, strict=True)
 
 
 class PlotEdit(BaseModel):
@@ -131,7 +132,7 @@ def register_full_agent_routes(app, store, context_operations=None):
 
     @app.put("/api/sessions/{sid}/full-agent/tools")
     def save_tools(sid: str, edit: ToolSettings):
-        require_full(store, sid)
+        session = require_full(store, sid)
         if set(edit.disabled_tools) - set(SPECS):
             raise ValueError("未知的 Full Agent 工具")
         if "write_plot" in edit.disabled_tools:
@@ -140,7 +141,6 @@ def register_full_agent_routes(app, store, context_operations=None):
             raise ValueError("submit_story 是本轮正文交付工具，不能关闭")
         if set(edit.disabled_tools) & MAIN_SPECS.keys():
             raise ValueError("原著调查工具由原著面板的授权开关统一控制")
-        session = require_full(store, sid)
         options = (
             session["tool_result_options"] if edit.tool_result_options is None else edit.tool_result_options
         )
@@ -162,9 +162,16 @@ def register_full_agent_routes(app, store, context_operations=None):
             ).fetchone():
                 raise Conflict("请先完成或取消当前回合")
             result = db.execute(
-                "UPDATE sessions SET disabled_tools=?,tool_result_options=?,revision=revision+1 "
+                "UPDATE sessions SET disabled_tools=?,tool_result_options=?,"
+                "unicode_story=COALESCE(?,unicode_story),revision=revision+1 "
                 "WHERE id=? AND revision=?",
-                (dump(sorted(set(edit.disabled_tools))), dump(options), sid, edit.expected_revision),
+                (
+                    dump(sorted(set(edit.disabled_tools))),
+                    dump(options),
+                    edit.unicode_story,
+                    sid,
+                    edit.expected_revision,
+                ),
             )
             if result.rowcount != 1:
                 raise Conflict("会话已改变，请刷新后重试")

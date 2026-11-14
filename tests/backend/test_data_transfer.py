@@ -14,6 +14,7 @@ from kohakuterrarium.testing.llm import ScriptedLLM
 from tavern.application.api import create_app
 from tavern.core.models import PersonaEdit, SessionCreate, TurnRequest
 from tavern.core.ooc import ooc_block
+from tavern.full_agent.activity import message_items
 from tavern.memories.memory import fingerprint, window_valid
 from tavern.storage.store import Conflict, Store, dump, uid
 from tavern.storage.transfer import ExportSelection, export_package, import_package, read_package
@@ -53,11 +54,18 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
             ]
         },
     )
+    if mode == "full_agent":
+        settings = source.settings_document()
+        settings.shared.unicode_story_enabled = True
+        source.save_settings(settings)
+        with source.connection() as db:
+            db.execute("UPDATE sessions SET unicode_story=1 WHERE id=?", (session["id"],))
+    delivery = "她⟦70B9 5934⟧。"
     model = (
         Model(
             ("read_history", {"ref": "H2"}),
             ("write_note", {"key": "约定", "content": "一起去钟楼", "kind": "fact", "sources": ["H2"]}),
-            "她点头。",
+            {"calls": [("submit_story", {"content": delivery})], "finish_reason": "stop"},
         )
         if mode == "full_agent"
         else ScriptedLLM(["她点头。"])
@@ -110,6 +118,7 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
                 (dump(auxiliary), session["id"]),
             )
         current = source.session(session["id"])
+        assert current["messages"][-1]["raw"] == "她点头。"
         # A deleted library card remains playable from its session-owned resources.
         source.delete_card(card["id"])
         payload, blobs = package(source, settings=False, sessions=[session["id"]])
@@ -121,12 +130,13 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         imported = import_package(target, payload, blobs)
         restored = target.session(imported["sessions"][0])
         assert restored["agent_mode"] == mode
+        assert restored["unicode_story"] is (mode == "full_agent")
         assert restored["persona_data"]["description"] == persona["description"]
         assert [m["raw"] for m in restored["messages"]] == [m["raw"] for m in current["messages"]]
         assert restored["messages"][1]["ooc"] == "保持叙事视角"
         assert restored["messages"][1]["model"].endswith(ooc_block("保持叙事视角"))
         assert restored["messages"][-1]["auxiliary"] == auxiliary
-        assert payload["version"] == 12
+        assert payload["version"] == 13
         assert restored["opening_locked"] and not restored["opening_editable"]
         assert not set(m["id"] for m in restored["messages"]) & set(m["id"] for m in current["messages"])
         if mode == "full_agent":
@@ -150,6 +160,13 @@ async def test_imported_story_commits_next_round_with_pinned_resources_and_conte
         await target_engine.tasks[turn["id"]]
         assert target.turn(turn["id"])["status"] == "committed", target.turn(turn["id"])["error"]
         assert target.session(restored["id"])["messages"][-1]["raw"] == "钟楼到了。"
+        if mode == "full_agent":
+            history = json.dumps(next_model.requests[0]["messages"], ensure_ascii=False)
+            assert "她点头。" in history and delivery not in history
+            reply_id = restored["messages"][-1]["id"]
+            activities = message_items(target, restored, [reply_id])[reply_id]
+            story = next(item for item in activities if item.get("name") == "submit_story")
+            assert json.loads(story["details"]["arguments"])["content"] == "她点头。"
     finally:
         await engine.close()
         await target_engine.close()

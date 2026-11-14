@@ -5,8 +5,11 @@ import json
 
 import httpx
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+from tavern.application.api import create_app
 from tavern.core.models import TurnRequest
+from tavern.full_agent.activity import message_items, turn_items
 from tavern.scripting.model_transport import ModelTransport
 from tavern.storage.store import Conflict, Store
 from tests.backend.test_full_agent import (
@@ -284,6 +287,116 @@ async def test_kemini_keeps_business_tool_progress_and_commits_only_clean_story(
             assert "创作安排" not in history and "续写安排" not in history
     finally:
         await service.close()
+
+
+async def test_unicode_story_publishes_accepted_segments_and_replays_plaintext(tmp_path):
+    app = create_app(tmp_path)
+    store, service = app.state.store, app.state.service
+    card = store.import_card(b'{"name":"fixture","first_mes":"Opening"}')
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        settings = (await client.get("/api/settings")).json()
+        assert settings["shared"]["unicode_story_enabled"] is False
+        enabled = await client.patch(
+            "/api/settings/shared",
+            json={
+                "expected_revision": settings["revisions"]["shared"],
+                "changes": {"unicode_story_enabled": True, "kemini.enabled": True},
+            },
+        )
+        assert enabled.status_code == 200, enabled.text
+        response = await client.post(
+            "/api/sessions", json={"card_id": card["id"], "agent_mode": "full_agent", "kemini": True}
+        )
+        assert response.status_code == 200, response.text
+        session = response.json()
+        tools_url = f"/api/sessions/{session['id']}/full-agent/tools"
+        assert not session["unicode_story"]
+        response = await client.put(
+            tools_url, json={"expected_revision": 0, "disabled_tools": ["present_ui"], "unicode_story": True}
+        )
+        assert response.status_code == 200, response.text
+        session = response.json()
+        first, last = "**夜雨。**\n月光🌙和⟦标记⟧。", "窗关上了。"
+        wrapped = f"<Interleaving><thinking>创作安排</thinking>{first}</Interleaving>"
+        opening = "<Interleaving><thinking>创作安排</thinking>**夜雨。**⟦000A 6708 "
+        tail = "5149 1F319⟧和⟦27E6⟧标记⟦27E7⟧。</Interleaving>"
+        encoded_first = opening + tail
+        broken = "丢弃本段⟦591C⟧，后半段⟦96E8 D800 3002⟧"
+        initial_gate, second_gate = Gate(), Gate()
+        _, sent = connect(
+            store,
+            service,
+            WireStream(
+                body_start(opening), initial_gate, body_delta(tail), *body_end()[:-1], terminal("tool_calls")
+            ),
+            WireStream(second_gate, *tool_events("submit_story", {"content": broken})),
+            WireStream(*story_events(last)),
+        )
+        try:
+            tid = submit(service, session)
+            await asyncio.wait_for(initial_gate.reached.wait(), 5)
+            assert replay(store, tid) == "" and store.turn(tid)["draft"] == ""
+            initial_gate.release.set()
+            await asyncio.wait_for(second_gate.reached.wait(), 5)
+            assert replay(store, tid) == first
+            second_gate.release.set()
+            await service.tasks[tid]
+            result, current = store.turn(tid), store.session(session["id"])
+            assert result["status"] == "committed", result["error"]
+            reply = current["messages"][-1]
+            assert (
+                reply["raw"]
+                == reply["model"]
+                == reply["display"]
+                == replay(store, tid)
+                == first + "\n\n" + last
+            )
+            assert reply["auxiliary"] == [{"kind": "thinking", "text": "创作安排"}]
+            assert "⟦" in json.dumps(sent[0]["tools"], ensure_ascii=False)
+            for request in sent[1:]:
+                messages = request["messages"]
+                history = json.dumps(messages, ensure_ascii=False)
+                contents = [
+                    json.loads(call["function"]["arguments"])["content"]
+                    for message in messages
+                    for call in message.get("tool_calls", [])
+                    if call["function"]["name"] == "submit_story"
+                ]
+                assert contents == [first]
+                assert encoded_first not in history and broken not in history
+            assert any("第 2 个码点片段内第 2 个码点" in m.get("content", "") for m in sent[-1]["messages"])
+            raw_submissions = [
+                json.loads(e["payload"]["arguments"])["content"]
+                for e in store.events(tid)
+                if e["kind"] == "full_agent_tool_started" and e["payload"]["name"] == "submit_story"
+            ]
+            assert raw_submissions == [encoded_first, broken, last]
+            for items in (
+                turn_items(store, session["id"], tid),
+                message_items(store, current, [reply["id"]])[reply["id"]],
+            ):
+                deliveries = [item for item in items if item.get("name") == "submit_story"]
+                assert [item["status"] for item in deliveries] == ["returned", "error", "returned"]
+                assert [json.loads(item["details"]["arguments"])["content"] for item in deliveries] == [
+                    wrapped,
+                    broken,
+                    last,
+                ]
+
+            doc = store.settings_document()
+            doc.shared.unicode_story_enabled = False
+            store.save_settings(doc)
+            assert store.session(session["id"])["unicode_story"]
+            _, sent = connect(store, service, WireStream(*story_events("下一轮明文")))
+            following = submit(service, current, operation_id="after-encoding")
+            await service.tasks[following]
+            result = store.turn(following)
+            assert result["status"] == "committed", result["error"]
+            assert "⟦" not in json.dumps(sent[0]["tools"], ensure_ascii=False)
+            history = json.dumps(sent[0]["messages"], ensure_ascii=False)
+            assert history.count(last) == 1 and encoded_first not in history and broken not in history
+        finally:
+            await service.close()
 
 
 async def test_prefix_debug_observes_tool_continuation_and_survives_provider_recreation(tmp_path):

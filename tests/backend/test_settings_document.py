@@ -128,7 +128,7 @@ def test_removed_reply_locate_switch_is_dropped_from_strict_v17_settings():
     raw["version"] = 17
     raw["shared"]["reply_locate_start"] = False
     migrated = migrate_settings(raw)
-    assert migrated.version == 19 and "reply_locate_start" not in migrated.shared.model_dump()
+    assert migrated.version == 20 and "reply_locate_start" not in migrated.shared.model_dump()
     assert migrated.revisions["shared"] == raw["revisions"]["shared"] + 1
 
 
@@ -177,7 +177,7 @@ def test_upgrade_keeps_custom_prompt_wording_and_story_data_verbatim(tmp_path):
     ]
     original = deepcopy(raw)
     migrated = migrate_settings(raw)
-    assert migrated.version == 19 and migrated.full_agent.tools.max_duration_seconds == 900
+    assert migrated.version == 20 and migrated.full_agent.tools.max_duration_seconds == 900
     assert migrated.full_agent.retrieval.index_timeout == migrated.half_agent.retrieval.index_timeout == 60
     assert raw == original
     assert migrated.revisions == {"full_agent": 4, "half_agent": 9, "shared": 8}

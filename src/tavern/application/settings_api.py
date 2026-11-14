@@ -167,6 +167,7 @@ def page_catalog():
                 "debug_failed_requests",
                 "debug_full_agent_prefix",
                 "kemini",
+                "unicode_story_enabled",
             ],
         ),
     ]:

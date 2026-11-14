@@ -3501,8 +3501,13 @@ useTimedError(error);
             :disabled="storyLocked"
             :update-variables="updateVariables"
             :allow-content-edit="allowEdit"
+            :unicode-story-enabled="settings?.shared.unicode_story_enabled ?? false"
             @saved="applyFullSession"
             @navigate="showInspector"
+            @settings="
+              settingsInitialPage = 'shared.misc';
+              panel = 'settings';
+            "
           />
           <MvuInspector
             v-show="inspectorTab === 'mvu'"

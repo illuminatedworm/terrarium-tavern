@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { api } from '../../lib/api';
+import type { Session } from '../../lib/types';
 import FieldHelp from '../common/FieldHelp.vue';
 import Icon from '../common/Icon.vue';
 
 const props = defineProps<{
-  session: any;
+  session: Session;
   disabled?: boolean;
   updateVariables: boolean;
   allowContentEdit: boolean;
+  unicodeStoryEnabled: boolean;
 }>();
-const emit = defineEmits<{ saved: [session: any]; navigate: [page: string] }>();
+const emit = defineEmits<{ saved: [session: Session]; navigate: [page: string]; settings: [] }>();
 const tools = ref<any[]>([]);
 const loading = ref(false);
 const saving = ref(false);
@@ -107,6 +109,7 @@ watch(
     props.session.novel_enabled,
     props.updateVariables,
     props.allowContentEdit,
+    props.unicodeStoryEnabled,
   ],
   async () => {
     const current = ++requestId;
@@ -172,7 +175,7 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
       `/sessions/${sid}/full-agent/tools`,
       {
         expected_revision: props.session.revision,
-        disabled_tools: props.session.disabled_tools || [],
+        disabled_tools: props.session.disabled_tools,
         tool_result_options: options,
       },
       'PUT',
@@ -183,6 +186,30 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
       if (tool) tool.result_options[key] = !enabled;
       error.value = e.message;
     }
+  } finally {
+    saving.value = false;
+  }
+}
+async function toggleUnicodeStory(event: Event) {
+  const control = event.target as HTMLInputElement;
+  const enabled = control.checked;
+  control.checked = props.session.unicode_story;
+  const sid = props.session.id;
+  saving.value = true;
+  error.value = '';
+  try {
+    const updated = await api(
+      `/sessions/${sid}/full-agent/tools`,
+      {
+        expected_revision: props.session.revision,
+        disabled_tools: props.session.disabled_tools,
+        unicode_story: enabled,
+      },
+      'PUT',
+    );
+    if (props.session.id === sid) emit('saved', updated);
+  } catch (e: any) {
+    if (props.session.id === sid) error.value = e.message;
   } finally {
     saving.value = false;
   }
@@ -272,9 +299,26 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
             </button>
           </div>
           <p v-if="tool.name === 'recall_lore'">默认直接返回命中条目的完整正文。</p>
-          <p v-if="tool.controlled_by === 'story_protocol'">
-            每轮可追加最多三段正文。普通文本回复仅记录为备注。
-          </p>
+          <template v-if="tool.controlled_by === 'story_protocol'">
+            <p>每轮可追加最多三段正文。普通文本回复仅记录为备注。</p>
+            <label class="tool-switch">
+              <span>局部 Unicode 码点传输</span>
+              <input
+                type="checkbox"
+                class="switch"
+                role="switch"
+                :checked="session.unicode_story"
+                :disabled="disabled || loading || saving || !unicodeStoryEnabled"
+                @change="toggleUnicodeStory"
+              />
+            </label>
+            <p v-if="unicodeStoryEnabled">
+              从下一新回合生效。模型只编码情色描写、血腥与重伤细节。本地解码后分段显示，历史以明文回放。
+            </p>
+            <p v-else class="tool-setting-source">
+              全局已关闭 · <button type="button" @click="emit('settings')">前往实验性功能</button>
+            </p>
+          </template>
           <p v-if="tool.controlled_by === 'novel_enabled'">主 agent 不能直接读取原文，只接收调查者的报告。</p>
           <p v-if="tool.name === 'patch_state' && tool.enabled && !tool.available">
             工具定义保持稳定；勾选本轮“更新变量”后才允许执行，收尾前须至少成功调用一次。
@@ -477,6 +521,20 @@ async function toggleResultOption(name: string, key: string, enabled: boolean) {
   color: var(--text-muted);
   font-size: var(--fs-xs);
   line-height: 1.6;
+}
+.tool-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+.tool-setting-source button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: inherit;
 }
 .tool-options {
   display: flex;

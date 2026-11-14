@@ -732,6 +732,7 @@ class Store(MessageAdapters):
             result["persona_data"] = json.loads(result["persona_data"])
             result["disabled_tools"] = json.loads(result["disabled_tools"])
             result["tool_result_options"] = json.loads(result["tool_result_options"])
+            result["unicode_story"] = bool(result["unicode_story"])
             result["card_data"] = json.loads(result["card_data"]) if result["card_data"] else None
             result["turns"] = turns
             novel = db.execute("SELECT enabled FROM novel_bindings WHERE session=?", (sid,)).fetchone()
@@ -1326,6 +1327,10 @@ class Store(MessageAdapters):
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                                 (tid, "full_agent_tool_started", dump(activity), time.time()),
                             )
+                            if call["id"] in message.get("_unicode_story_arguments", {}):
+                                activity["decoded_arguments"] = message["_unicode_story_arguments"][
+                                    call["id"]
+                                ]
                             db.execute(
                                 "INSERT INTO events(turn,kind,payload,created) VALUES (?,?,?,?)",
                                 (

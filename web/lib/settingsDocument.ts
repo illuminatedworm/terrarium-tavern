@@ -93,7 +93,7 @@ export interface PromptChoices {
   options: [PromptChoice, PromptChoice, PromptChoice, PromptChoice];
 }
 export interface SettingsDocument {
-  version: 19;
+  version: 20;
   full_agent: SettingsObject & {
     system_prompt: PromptChoices;
     novel_research: NovelConfig;
@@ -112,6 +112,7 @@ export interface SettingsDocument {
   };
   shared: SettingsObject & {
     kemini: KeminiSettings;
+    unicode_story_enabled: boolean;
     providers: Provider[];
     card_author: ModelProfile;
     card_author_config: CardAuthorConfig;

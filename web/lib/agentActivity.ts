@@ -66,7 +66,8 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
         details: { content: String(p.content) },
       });
     } else if (['full_agent_tool_started', 'full_agent_tool'].includes(event.kind)) {
-      let args: any = p.arguments;
+      const argumentsText = p.decoded_arguments ?? p.arguments;
+      let args: any = argumentsText;
       try {
         if (typeof args === 'string') args = JSON.parse(args);
       } catch {
@@ -96,7 +97,7 @@ export function liveActivity(events: any[], turnId: string, status: string): Age
             : 'returned'
           : 'running',
         details: {
-          arguments: activityText(p.arguments),
+          arguments: activityText(argumentsText),
           ...(finished ? { result: activityText(p.result) } : {}),
         },
         ...(finished && p.name === 'present_ui' && p.result?.ok === true ? { visual: args.spec } : {}),

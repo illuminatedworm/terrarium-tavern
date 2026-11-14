@@ -44,7 +44,9 @@ def tool_item(key, order, name, arguments):
     )
     if name == "write_plot":
         summary = "包含未来剧情，展开查看"
-    elif name in ("roleplay", "submit_story", "kemini_emit_story"):
+    elif name == "submit_story":
+        summary = "正文交付；展开查看提交内容"
+    elif name in ("roleplay", "kemini_emit_story"):
         summary = "正文交付；展开查看原始参数"
     elif name == "finish_turn":
         summary = "申请正文回调与统一校验"
@@ -71,7 +73,9 @@ def tool_item(key, order, name, arguments):
     }
 
 
-def finish_tool(item, result):
+def finish_tool(item, result, *, arguments=None):
+    if arguments is not None:
+        item["details"]["arguments"] = pretty(arguments)
     item["details"]["result"] = pretty(result)
     try:
         result = json.loads(result) if isinstance(result, str) else result
@@ -153,11 +157,14 @@ def from_trace(rows):
                 )
             for index, call in enumerate(message.get("tool_calls", [])):
                 function = call.get("function", {})
+                arguments = message.get("_unicode_story_arguments", {}).get(
+                    call.get("id"), function.get("arguments", "")
+                )
                 item = tool_item(
                     f"call-{seq}-{index}",
                     seq * 10 + index + 1,
                     function.get("name", "tool"),
-                    function.get("arguments", ""),
+                    arguments,
                 )
                 items.append(item)
                 pending[call.get("id")] = item
@@ -216,7 +223,7 @@ def turn_items(store, sid, tid):
             if key not in items:
                 items[key] = tool_item(key, order, payload["name"], payload.get("arguments", ""))
             if kind == "full_agent_tool":
-                finish_tool(items[key], payload.get("result"))
+                finish_tool(items[key], payload.get("result"), arguments=payload.get("decoded_arguments"))
         items[key]["event_seq"] = event["seq"]
     if turn["status"] not in ("running", "queued"):
         for item in items.values():

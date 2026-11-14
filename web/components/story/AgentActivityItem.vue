@@ -87,8 +87,15 @@ watch(
 );
 watch(
   () => props.item.status,
-  () => {
-    if (opened.value) void load('result');
+  (status, previous) => {
+    if (!opened.value) return;
+    if (isStoryDelivery.value && status === 'returned' && previous === 'running') {
+      generation++;
+      loading.value.clear();
+      delete pages.value.arguments;
+      void load('arguments');
+    }
+    void load('result');
   },
 );
 onBeforeUnmount(() => {

@@ -21,6 +21,7 @@ import {
   miscFields,
   shortcutFields,
   debugFields,
+  experimentFields,
 } from '../../lib/settingsFields';
 import SettingsFields from './SettingsFields.vue';
 import PolicySelect from './PolicySelect.vue';
@@ -645,6 +646,8 @@ onMounted(async () => {
           <template v-else-if="page.key === 'misc'">
             <h4>输入</h4>
             <SettingsFields :value="draft.shared" :fields="shortcutFields" layout="rows" />
+            <h4>实验性功能</h4>
+            <SettingsFields :value="draft.shared" :fields="experimentFields" layout="rows" />
             <KeminiSettings
               :value="draft.shared"
               :saved="saved!.shared"

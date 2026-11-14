@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 
 # Persistent database format; bump together with docs/guides/maintenance.md.
-SCHEMA_VERSION = 23
-SETTINGS_VERSIONS = range(2, 20)
+SCHEMA_VERSION = 25
+SETTINGS_VERSIONS = range(2, 21)
 # Columns added to sessions after schema 1, in introduction order. Missing ones are
 # appended on open; fresh databases get the original CREATE TABLE plus these.
 SESSION_COLUMNS = {
@@ -37,6 +37,7 @@ SESSION_COLUMNS = {
     "kemini": "INTEGER NOT NULL DEFAULT 0",
     # Old stories have no durable first-request fact; never infer it from prunable logs.
     "opening_locked": "INTEGER NOT NULL DEFAULT 1",
+    "unicode_story": "INTEGER NOT NULL DEFAULT 0",
 }
 MESSAGE_COLUMNS = {
     "auxiliary": "TEXT NOT NULL DEFAULT '[]'",

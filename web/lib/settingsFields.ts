@@ -8,6 +8,14 @@ export const shortcutFields: SettingField[] = [
     help: '用于剧情、参谋 agent 和制卡 agent 的输入框，保存后立即生效；Ctrl+Enter 方案在 macOS 上也接受 Command+Enter。放大编辑和历史编辑保留各自的快捷键。',
   },
 ];
+export const experimentFields: SettingField[] = [
+  {
+    path: 'unicode_story_enabled',
+    label: '启用局部 Unicode 码点传输',
+    type: 'checkbox',
+    help: '允许在 Full Agent 的「工具 → 正文与图形 → 提交正文」单独开启。模型只编码新正文中的情色描写、血腥与重伤细节。本地解码后分段显示，历史以明文回放。',
+  },
+];
 export const debugFields: SettingField[] = [
   {
     path: 'debug_full_agent_prefix',

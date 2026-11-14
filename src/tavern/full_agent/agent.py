@@ -29,8 +29,9 @@ from tavern.full_agent.context import compile_window, load_trace
 from tavern.full_agent.lore import inject_lore, retain_lore
 from tavern.full_agent.preview import TurnPreview
 from tavern.full_agent.protocol import ToolError, TurnError, failed, success
+from tavern.full_agent.recovery import PROGRESS_VERSION, saved_story_format
 from tavern.full_agent.state import full_state
-from tavern.full_agent.story import LEGACY_TURN_TOOLS, story_history
+from tavern.full_agent.story import LEGACY_TURN_TOOLS, StoryFormat, story_history
 from tavern.full_agent.tools import AgentTools, encoded, tool_definitions
 from tavern.full_agent.visibility import context_messages
 from tavern.scripting.kemini import AuxiliaryParser
@@ -62,6 +63,7 @@ class FullAgent:
         output_id: str,
         script_mirror=None,
         novel=None,
+        story_format: StoryFormat = "plain",
     ):
         self.store, self.tid, self.document = store, tid, document
         self.novel, self.novel_operation = novel, ""
@@ -80,7 +82,10 @@ class FullAgent:
             document = self.document
         self.trace = load_trace(store, session["id"], history)
         self.continuation, self.new_trace = [], []
-        self.definitions = tool_definitions(session, settings.full_agent_config, settings=settings)
+        self.story_format = saved_story_format(progress) if progress is not None else story_format
+        self.definitions = tool_definitions(
+            session, settings.full_agent_config, settings=settings, story_format=self.story_format
+        )
         self.tools = AgentTools(self)
         # Tool exchanges survive turns/windows. Their short document handles
         # must keep the same meaning after document reorder or a new provider.
@@ -154,7 +159,7 @@ class FullAgent:
         return self.store.save_full_agent_progress(
             self.tid,
             {
-                "version": 5,
+                "version": PROGRESS_VERSION,
                 "user": self.user_message,
                 "output_id": self.output_id,
                 "snapshot": self.snapshot,
@@ -166,6 +171,7 @@ class FullAgent:
                 "must_rollover": self.must_rollover,
                 "patch_state_done": self.patch_state_done,
                 "story": self.story,
+                "story_format": self.story_format,
                 "model_completed": self.model_completed,
                 "resume_reason": self.resume_reason,
                 "legacy_protocol": self.legacy_protocol,
@@ -197,6 +203,14 @@ class FullAgent:
             missing.append("剧情规划已开启，但尚未建立初始大纲")
         if batch_failed:
             missing.append("本次结束响应包含失败的工具调用")
+            if self.story_format != "plain":
+                # Terminal batches wait for an explicit continuation. Preserve
+                # the usable correction after the failed exchange is retired.
+                for frame in reversed(self.continuation):
+                    if frame["role"] == "assistant":
+                        break
+                    if frame.get("_unicode_story_rejected"):
+                        missing.append(json.loads(frame["content"])["error"]["message"])
         if missing:
             await self.stop_for_user("TURN_NOT_READY", "；".join(missing))
         return self.story["content"]
@@ -559,6 +573,7 @@ class FullAgent:
                 await self.save_progress()
                 self.restore_preview()
                 self.preview.begin_segment()
+                plain_story = self.story_format == "plain"
                 try:
                     messages = provider_messages(provider, model_messages(compiled), self.settings)
                     # Compaction can send requests too; only this narrative/tool
@@ -575,9 +590,9 @@ class FullAgent:
                     if complete:
                         response = await complete(
                             messages,
-                            preview_story if remaining else None,
+                            preview_story if remaining and plain_story else None,
                             _full_agent_story=True,
-                            _submit_story=True,
+                            _submit_story=plain_story,
                             _story_segments_remaining=remaining,
                             extra_body=tool_options,
                         )
@@ -586,7 +601,7 @@ class FullAgent:
                             messages,
                             extra_body=tool_options,
                             _full_agent_story=True,
-                            _submit_story=True,
+                            _submit_story=plain_story,
                         )
                 except Exception as error:
                     record = getattr(provider, "last_response_record", {})
@@ -640,7 +655,8 @@ class FullAgent:
                 assistant = self.response_message(response, provider, calls)
                 text = response.content or ""
                 self.model_completed = completion.action == "end"
-                if self.settings.context_strategy == "openai_compact":
+                encoded_delivery = not plain_story and any(c.name == "submit_story" for c in calls)
+                if self.settings.context_strategy == "openai_compact" and not encoded_delivery:
                     from tavern.full_agent.compaction import capture_checkpoint
 
                     # The checkpoint covers the provider response. The tool
@@ -749,6 +765,11 @@ class FullAgent:
             if call["id"] in returned:
                 continue
             name, arguments = call["function"]["name"], call["function"]["arguments"]
+            encoded_story = self.story_format != "plain" and name == "submit_story"
+            if encoded_story:
+                # Following requests project this response to portable history.
+                # A saved routing token can still refer to the encoded parameters.
+                self.request_context.routing.clear()
             self.recall_ids = []
             activity = {
                 "activity_id": f"call-{assistant_seq}-{index}",
@@ -803,7 +824,8 @@ class FullAgent:
                     result = success({"story_received": True, "ref": message_ref(len(self.source_history))})
                 else:
                     self.novel_operation = self.request_context.turn_id + ":" + call["id"]
-                    result = await self.tools.execute(name, arguments)
+                    decoded = self.tools.decode_story_arguments(arguments) if encoded_story else None
+                    result = await self.tools.execute(name, decoded if decoded is not None else arguments)
                     if name == "submit_story":
                         # Attach the receipt to both saved copies of the calling response.
                         # Its ordinary text remains commentary; only the argument is prose.
@@ -827,6 +849,13 @@ class FullAgent:
                             record.setdefault("_story_segments", {})[call["id"]] = (
                                 len(self.story["breaks"]) + 1
                             )
+                        if decoded is not None:
+                            decoded_arguments = decoded.model_dump_json()
+                            activity = {**activity, "decoded_arguments": decoded_arguments}
+                            for record in records:
+                                record.setdefault("_unicode_story_arguments", {})[call["id"]] = (
+                                    decoded_arguments
+                                )
             except TurnError:
                 raise
             except ToolError as error:
@@ -866,6 +895,8 @@ class FullAgent:
                 message["lore_ids"] = self.recall_ids
             if tool_error:
                 message["_tool_error"] = True
+                if encoded_story:
+                    message["_unicode_story_rejected"] = True
             self.append(message, window_id)
             self.event(
                 "full_agent_tool",

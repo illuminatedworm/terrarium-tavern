@@ -14,6 +14,8 @@ from tavern.full_agent.agent import FullAgent
 from tavern.full_agent.lore import RetrievalLane
 from tavern.full_agent.prefix_debug import PrefixDebug
 from tavern.full_agent.protocol import TurnError
+from tavern.full_agent.story import StoryFormat
+from tavern.full_agent.tools import new_story_format
 from tavern.scripting.runtime import ScriptRuntime
 from tavern.scripting.story_display import transform_display
 from tavern.storage.store import dump, uid
@@ -47,7 +49,7 @@ class FullAgentRuntime:
             require_model_connection(settings)
         tid, created = self.store.create_turn(sid, request)
         if created:
-            self.tasks[tid] = asyncio.create_task(self.run(tid))
+            self.tasks[tid] = asyncio.create_task(self.run(tid, new_story_format(session, settings)))
 
             def completed(task):
                 for key in [k for k, v in self.tasks.items() if v.done()][:-30]:
@@ -88,11 +90,11 @@ class FullAgentRuntime:
             )
         return self.store.session(sid)
 
-    async def run(self, tid):
+    async def run(self, tid, story_format: StoryFormat):
         with self.retrieval.engine.dictionary.bind():
-            await self._run(tid)
+            await self._run(tid, story_format)
 
-    async def _run(self, tid):
+    async def _run(self, tid, story_format: StoryFormat):
         script = None
         await self.novel.cancel_invalidated(self.store.turn(tid)["session"])
         deadline = asyncio.timeout(None)
@@ -212,6 +214,7 @@ class FullAgentRuntime:
                     progress,
                     script_mirror=mirror,
                     novel=self.novel,
+                    story_format=story_format,
                     output_id=output_id,
                 )
                 self.agents[tid] = agent

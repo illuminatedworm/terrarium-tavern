@@ -546,6 +546,7 @@ WIRE_FIELDS = {
     "_response_origin",
     "_response_digest",
     "_tool_error",
+    "_gemini_synthetic_calls",
 }
 
 

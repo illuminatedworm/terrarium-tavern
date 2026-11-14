@@ -139,7 +139,7 @@ def export_package(store, selection):
         raise ValueError("请至少选择一种数据")
     package = {
         "format": FORMAT,
-        "version": 12,
+        "version": 13,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "includes_api_keys": selection.settings and selection.include_api_keys,
         "settings": None,
@@ -316,7 +316,7 @@ def validate_full_sources(messages):
 
 
 def validate_package(store, package, blobs):
-    if package.get("format") != FORMAT or package.get("version") not in range(1, 13):
+    if package.get("format") != FORMAT or package.get("version") not in range(1, 14):
         raise ValueError("不支持的数据包格式或版本，请选择本软件导出的个人数据 ZIP")
     if type(package.get("includes_api_keys")) is not bool:
         raise ValueError("数据包密钥选项无效")
@@ -469,6 +469,11 @@ def validate_package(store, package, blobs):
                 and session.get("channel_origin") != "standard"
             ):
                 raise ValueError("Kemini 实验对话标记无效")
+            unicode_story = session.get("unicode_story", 0)
+            if unicode_story not in (0, 1) or (
+                unicode_story and (package["version"] < 13 or session["agent_mode"] != "full_agent")
+            ):
+                raise ValueError("Unicode 码点传输设置无效")
             if session.get("context_strategy", "new_context") not in ("new_context", "openai_compact"):
                 raise ValueError("上下文模式无效")
             if (

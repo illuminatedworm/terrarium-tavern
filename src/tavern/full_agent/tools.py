@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from tavern.core.history_refs import SOURCE_REFERENCE_LIMIT, message_at, message_ref, parse_span_ref
 from tavern.core.model_view import state_for_model
+from tavern.core.models import Settings
 from tavern.core.ooc import with_ooc
 from tavern.core.story_segments import MAX_SEGMENTS
 from tavern.core.tokens import count_text
@@ -27,6 +28,12 @@ from tavern.full_agent.handoff import (
 from tavern.full_agent.protocol import ToolError, TurnError, success
 from tavern.full_agent.read_guards import DraftReads, state_scope
 from tavern.full_agent.state import note_view, rollover, rollover_start
+from tavern.full_agent.story import (
+    ENCODED_STORY_DESCRIPTIONS,
+    StoryFormat,
+    decode_partial_unicode_story,
+    decode_unicode_story,
+)
 from tavern.full_agent.visuals import DESCRIPTION as VISUAL_DESCRIPTION
 from tavern.full_agent.visuals import PresentUI, successful_specs, validate_spec
 from tavern.novel.tools import MAIN_SPECS
@@ -362,10 +369,28 @@ SPECS["submit_story"] = (
     "the third. Check variables and notes against the entire story, then end normally; delivery does not commit the turn.",
 )
 
+PARTIAL_UNICODE_TOOL_DESCRIPTION = (
+    "Append new story prose. Encode every erotic or sexually explicit description and every graphic description "
+    "of violence or bodily harm in ⟦…⟧. Keep ordinary prose in plaintext. "
+    f"At most {MAX_SEGMENTS} successful submissions per turn. Leave accepted prose as written. "
+    "Use ordinary assistant text only for commentary."
+)
 KEMINI_STORY_FORMAT = " Put the requested Interleaving output for each new segment, including any auxiliary sections, inside content."
+KEMINI_FULL_UNICODE_STORY_FORMAT = (
+    " Encode the complete Interleaving output, including all required tags and auxiliary text."
+)
 
 
-def tool_definitions(session, config=None, *, settings=None, catalog=False):
+def new_story_format(session: dict, settings: Settings | None) -> StoryFormat:
+    document = settings._settings_source if settings is not None else None
+    if session.get("unicode_story") and document and document.shared.unicode_story_enabled:
+        return "unicode_partial"
+    return "plain"
+
+
+def tool_definitions(
+    session, config=None, *, settings=None, catalog=False, story_format: StoryFormat | None = None
+):
     # Only tool settings and related features determine the model's catalog.
     # Per-turn authorization belongs to execution, keeping cached prefixes stable.
     config = config or FullAgentConfig()
@@ -383,6 +408,8 @@ def tool_definitions(session, config=None, *, settings=None, catalog=False):
             names.discard("write_plot")
     names.add("submit_story")
     kemini = settings is not None and settings.kemini.enabled
+    if story_format is None:
+        story_format = new_story_format(session, settings)
     if kemini:
         names.discard("present_ui")
     limits = {
@@ -404,19 +431,30 @@ def tool_definitions(session, config=None, *, settings=None, catalog=False):
         if settings.local_models.reranker_enabled:
             mechanism += " Reranking orders and filters candidates by relevance."
         limits["recall_lore"] = mechanism
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description
-                + (KEMINI_STORY_FORMAT if kemini and name == "submit_story" else limits.get(name, "")),
-                "parameters": model.model_json_schema(),
-            },
-        }
-        for name, (model, description) in SPECS.items()
-        if name in names
-    ]
+    if kemini:
+        limits["submit_story"] = (
+            KEMINI_FULL_UNICODE_STORY_FORMAT if story_format == "unicode_full" else KEMINI_STORY_FORMAT
+        )
+    result = []
+    for name, (model, description) in SPECS.items():
+        if name not in names:
+            continue
+        parameters = model.model_json_schema()
+        if name == "submit_story" and story_format != "plain":
+            parameters["properties"]["content"]["description"] = ENCODED_STORY_DESCRIPTIONS[story_format]
+            if story_format == "unicode_partial":
+                description = PARTIAL_UNICODE_TOOL_DESCRIPTION
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description + limits.get(name, ""),
+                    "parameters": parameters,
+                },
+            }
+        )
+    return result
 
 
 def encoded(value):
@@ -462,9 +500,29 @@ class AgentTools:
             results.append(item)
         return {"matches": results, **({"notice": "使用 read 工具读取完整原文。"} if results else {})}
 
-    async def execute(self, name, arguments):
+    async def execute(self, name, arguments: str | Story):
         # One boundary covers every successful result, including free-form source text.
         return success(self.owner.model_view.expose(await self._execute(name, arguments)))
+
+    def decode_story_arguments(self, arguments: str) -> Story:
+        try:
+            args = Story.model_validate_json(arguments)
+        except ValidationError as error:
+            raise ToolArgumentError("submit_story", Story, error) from None
+        full = self.owner.story_format == "unicode_full"
+        decode = decode_unicode_story if full else decode_partial_unicode_story
+        try:
+            text = decode(args.content)
+            if not text.strip():
+                raise ValueError("码点解码后的正文不能为空白。")
+        except ValueError as error:
+            action = (
+                "请按 submit_story 的码点格式重新交付该段。"
+                if full
+                else "请保留普通明文，只将需编码的片段写入 ⟦…⟧。码点用大写十六进制，以单空格分隔。请重新提交该段。"
+            )
+            raise ToolError("INVALID_ARGUMENTS", str(error), next_action=action) from None
+        return args.model_copy(update={"content": text})
 
     async def _execute(self, name, arguments):
         owner = self.owner
@@ -478,11 +536,14 @@ class AgentTools:
                 raise ToolError("PERMISSION_DENIED", "本轮未要求更新 MVU 变量，不允许调用 patch_state")
         if name == "revise_content" and not owner.request.allow_content_edit:
             raise ToolError("PERMISSION_DENIED", "本轮未授权修改设定，不允许调用 revise_content")
-        model = SPECS[name][0]
-        try:
-            args = model.model_validate_json(arguments)
-        except ValidationError as error:
-            raise ToolArgumentError(name, model, error) from None
+        if isinstance(arguments, Story):
+            args = arguments
+        else:
+            model = SPECS[name][0]
+            try:
+                args = model.model_validate_json(arguments)
+            except ValidationError as error:
+                raise ToolArgumentError(name, model, error) from None
         state = owner.state
         if name == "present_ui":
             if len(successful_specs(item["message"] for item in owner.new_trace)) >= 3:
